@@ -22,7 +22,7 @@ import type { Macro, UpdateInfo } from "./lib/settings";
 import { openUrl } from "@tauri-apps/plugin-opener";
 import { Sparkles, X as XIcon } from "lucide-react";
 import { listen } from "@tauri-apps/api/event";
-import { ConnStatus, Session, Tab, TabState } from "./types";
+import { ConnStatus, Session, Tab, TabState, tabTitle } from "./types";
 import { modLabel, shortcutFor } from "./lib/platform";
 import { resolvePreset, useSystemDark } from "./lib/theme";
 import { Settings, useSettings } from "./lib/settings";
@@ -226,7 +226,7 @@ function Workspace({
     if (settings.confirmClose && risky)
       setConfirm({
         title: "¿Cerrar la sesión?",
-        message: `Se cortará la conexión con ${tab.session.name}.`,
+        message: `Se cortará la conexión con ${tabTitle(tab)}.`,
         label: "Cerrar sesión",
         danger: true,
         action: () => closeTab(id),
@@ -517,6 +517,12 @@ function Workspace({
           toolsOpen={toolsOpen}
           onOpenTools={openTools}
           alerts={monitors.downCount}
+          onRename={(id, title) => setTabs((ts) => ts.map((t) => (t.id === id ? { ...t, title } : t)))}
+          onDuplicate={(id) => {
+            const t = tabs.find((x) => x.id === id);
+            if (t) openTab(t.session);
+          }}
+          onReconnect={(id) => controllers.current.get(id)?.reconnect()}
         />
 
         <div className="flex-1 min-h-0 flex">
@@ -549,7 +555,7 @@ function Workspace({
                 .filter((t) => t.session.type !== "local" && states[t.id]?.status === "connected")
                 .map((t) => ({
                   connId: controllers.current.get(t.id)?.connId() ?? "",
-                  name: t.session.name,
+                  name: tabTitle(t),
                   host: t.session.host,
                   highlight: t.session.highlight,
                 }))

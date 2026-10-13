@@ -1,4 +1,5 @@
 import { useEffect } from "react";
+import { useDragResize } from "../lib/useDragResize";
 
 interface Props {
   title: string;
@@ -10,6 +11,7 @@ interface Props {
 }
 
 export function ConfirmDialog({ title, message, confirmLabel, danger, onConfirm, onCancel }: Props) {
+  const win = useDragResize("confirmWindow", false);
   useEffect(() => {
     // En captura para que Enter/Esc no lleguen a la terminal que está detrás.
     const onKey = (e: KeyboardEvent) => {
@@ -27,10 +29,13 @@ export function ConfirmDialog({ title, message, confirmLabel, danger, onConfirm,
     <div className="fixed inset-0 z-50 grid place-items-center bg-black/25 p-4" onMouseDown={onCancel}>
       <div
         role="alertdialog"
+        {...win.box}
         className="w-[400px] max-w-full bg-panel border border-line rounded-xl shadow-pop p-5"
         onMouseDown={(e) => e.stopPropagation()}
       >
-        <h2 className="text-[14px] font-semibold mb-1">{title}</h2>
+        <h2 {...win.handle} className="text-[14px] font-semibold mb-1 select-none">
+          {title}
+        </h2>
         <p className="text-muted mb-5 whitespace-pre-wrap break-words max-h-40 overflow-hidden font-[inherit]">{message}</p>
         <div className="flex justify-end gap-2">
           <button onClick={onCancel} className="px-3.5 h-8 rounded-md border border-line hover:bg-hover">

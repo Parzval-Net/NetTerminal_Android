@@ -5,6 +5,7 @@ import { SerialPortInfo, Session, SessionType } from "../types";
 import { SessionIcon, typeLabel } from "./SessionIcon";
 import { vendorSchemes } from "../lib/highlight";
 import { normPath } from "../lib/folders";
+import { useDragResize } from "../lib/useDragResize";
 
 interface Props {
   initial?: Session;
@@ -71,18 +72,20 @@ export function SessionModal({ initial, defaultFolder, folders, onClose, onSave 
   };
 
   const remote = s.type === "ssh" || s.type === "telnet";
+  const win = useDragResize<HTMLFormElement>("sessionWindow");
 
   return (
     <div className="fixed inset-0 z-50 grid place-items-center bg-black/25 p-4" onMouseDown={onClose}>
       <form
-        className="w-[460px] max-w-full bg-panel border border-line rounded-xl shadow-pop"
+        {...win.box}
+        className="w-[460px] bg-panel border border-line rounded-xl shadow-pop resize overflow-hidden flex flex-col min-w-[360px] min-h-[260px] max-w-[96vw] max-h-[94vh]"
         onMouseDown={(e) => e.stopPropagation()}
         onSubmit={(e) => {
           e.preventDefault();
           submit(true);
         }}
       >
-        <header className="flex items-center justify-between px-5 h-12 border-b border-line">
+        <header {...win.handle} className="shrink-0 flex items-center justify-between px-5 h-12 border-b border-line select-none">
           <h2 className="text-[14px] font-semibold">{initial ? "Editar sesión" : "Nueva sesión"}</h2>
           <button
             type="button"
@@ -93,7 +96,7 @@ export function SessionModal({ initial, defaultFolder, folders, onClose, onSave 
           </button>
         </header>
 
-        <div className="p-5 space-y-4">
+        <div className="flex-1 min-h-0 overflow-y-auto p-5 space-y-4">
           <div className="grid grid-cols-4 gap-1 p-1 rounded-lg bg-hover">
             {(["ssh", "telnet", "serial", "local"] as SessionType[]).map((t) => (
               <button

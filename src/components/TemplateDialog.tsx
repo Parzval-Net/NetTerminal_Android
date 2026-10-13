@@ -1,4 +1,5 @@
 import { useEffect, useState } from "react";
+import { useDragResize } from "../lib/useDragResize";
 
 export const TEMPLATE_VAR = /\{\{\s*([\w.-]+)\s*\}\}/g;
 
@@ -40,6 +41,7 @@ export function TemplateDialog({ text, onSubmit, onCancel }: Props) {
     return () => window.removeEventListener("keydown", onKey);
   }, [onCancel]);
 
+  const win = useDragResize<HTMLFormElement>("templateWindow");
   const missing = names.filter((n) => !values[n]?.trim());
   const preview = fillTemplate(text, values).split("\n").slice(0, 6).join("\n");
 
@@ -56,18 +58,19 @@ export function TemplateDialog({ text, onSubmit, onCancel }: Props) {
   return (
     <div className="fixed inset-0 z-50 grid place-items-center bg-black/25 p-4" onMouseDown={onCancel}>
       <form
-        className="w-[440px] max-w-full bg-panel border border-line rounded-xl shadow-pop"
+        {...win.box}
+        className="w-[440px] bg-panel border border-line rounded-xl shadow-pop resize overflow-hidden flex flex-col min-w-[360px] min-h-[260px] max-w-[96vw] max-h-[94vh]"
         onMouseDown={(e) => e.stopPropagation()}
         onSubmit={(e) => {
           e.preventDefault();
           submit();
         }}
       >
-        <header className="px-5 pt-4 pb-2">
+        <header {...win.handle} className="shrink-0 px-5 pt-4 pb-2 select-none">
           <h2 className="text-[14px] font-semibold">Completar plantilla</h2>
           <p className="text-muted text-[12px]">Los valores se recuerdan para la próxima vez.</p>
         </header>
-        <div className="px-5 py-2 space-y-2.5 max-h-[40vh] overflow-y-auto">
+        <div className="flex-1 min-h-0 px-5 py-2 space-y-2.5 overflow-y-auto">
           {names.map((n, i) => (
             <label key={n} className="grid grid-cols-[140px_1fr] items-center gap-3">
               <span className="font-mono text-[12px] truncate" title={n}>

@@ -33,7 +33,11 @@ export type ConnStatus = "connecting" | "connected" | "closed";
 export interface Tab {
   id: string;
   session: Session;
+  /** Nombre puesto por el usuario solo para esta pestaña. */
+  title?: string;
 }
+
+export const tabTitle = (t: Tab) => t.title?.trim() || t.session.name;
 
 export interface TabState {
   status: ConnStatus;

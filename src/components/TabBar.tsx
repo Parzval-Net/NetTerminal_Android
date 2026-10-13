@@ -1,5 +1,7 @@
-import { PanelLeft, Plus, Wrench, X } from "lucide-react";
-import { ConnStatus, Tab, TabState } from "../types";
+import { useCallback, useState } from "react";
+import { Copy, Pencil, PanelLeft, Plus, RotateCcw, Undo2, Wrench, X } from "lucide-react";
+import { ConnStatus, Tab, TabState, tabTitle } from "../types";
+import { ContextMenu } from "./Sidebar";
 import { SessionIcon } from "./SessionIcon";
 import { modLabel } from "../lib/platform";
 
@@ -15,6 +17,9 @@ interface Props {
   onOpenTools: () => void;
   /** Sondas caídas: se muestran en la pestaña de herramientas. */
   alerts: number;
+  onRename: (id: string, title: string | undefined) => void;
+  onDuplicate: (id: string) => void;
+  onReconnect: (id: string) => void;
 }
 
 export const statusColor: Record<ConnStatus, string> = {
@@ -34,7 +39,22 @@ export function TabBar({
   toolsOpen,
   onOpenTools,
   alerts,
+  onRename,
+  onDuplicate,
+  onReconnect,
 }: Props) {
+  const [editing, setEditing] = useState<string | null>(null);
+  const [menu, setMenu] = useState<{ x: number; y: number; items: [string, React.ReactNode, () => void, boolean?][] } | null>(null);
+  const closeMenu = useCallback(() => setMenu(null), []);
+
+  const commit = (id: string, value: string) => {
+    setEditing(null);
+    const tab = tabs.find((t) => t.id === id);
+    if (!tab) return;
+    const v = value.trim();
+    onRename(id, v && v !== tab.session.name ? v : undefined);
+  };
+
   return (
     <div className="h-10 shrink-0 flex items-end gap-1 px-1.5 bg-chrome border-b border-line">
       <button
@@ -85,7 +105,23 @@ export function TabBar({
                   onClose(t.id);
                 } else onSelect(t.id);
               }}
-              title={`${t.session.name}\nClic medio: cerrar · ${modLabel}D: duplicar`}
+              onDoubleClick={() => setEditing(t.id)}
+              onContextMenu={(e) => {
+                e.preventDefault();
+                onSelect(t.id);
+                setMenu({
+                  x: e.clientX,
+                  y: e.clientY,
+                  items: [
+                    ["Renombrar", <Pencil size={13} />, () => setEditing(t.id)],
+                    ["Restaurar nombre original", <Undo2 size={13} />, () => onRename(t.id, undefined), !t.title],
+                    ["Duplicar", <Copy size={13} />, () => onDuplicate(t.id)],
+                    ["Reconectar", <RotateCcw size={13} />, () => onReconnect(t.id)],
+                    ["Cerrar", <X size={13} />, () => onClose(t.id)],
+                  ],
+                });
+              }}
+              title={`${tabTitle(t)}${t.title ? ` (${t.session.name})` : ""}\nDoble clic: renombrar · clic derecho: opciones · clic medio: cerrar`}
               className={`group relative flex items-center gap-2 h-8 pl-3 pr-1.5 min-w-[120px] max-w-[220px] rounded-t-lg text-[12.5px] ${
                 active
                   ? "bg-term text-term-fg border border-line border-b-transparent -mb-px"
@@ -93,7 +129,23 @@ export function TabBar({
               }`}
             >
               <SessionIcon type={t.session.type} size={13} />
-              <span className="truncate flex-1">{t.session.name}</span>
+              {editing === t.id ? (
+                <input
+                  autoFocus
+                  className="field !h-6 !px-1.5 flex-1 min-w-0 !text-[12px]"
+                  defaultValue={tabTitle(t)}
+                  onMouseDown={(e) => e.stopPropagation()}
+                  onFocus={(e) => e.currentTarget.select()}
+                  onBlur={(e) => commit(t.id, e.currentTarget.value)}
+                  onKeyDown={(e) => {
+                    e.stopPropagation();
+                    if (e.key === "Enter") e.currentTarget.blur();
+                    if (e.key === "Escape") setEditing(null);
+                  }}
+                />
+              ) : (
+                <span className={`truncate flex-1 ${t.title ? "italic" : ""}`}>{tabTitle(t)}</span>
+              )}
               <span
                 className="w-1.5 h-1.5 rounded-full shrink-0 group-hover:hidden"
                 style={{ background: statusColor[status] }}
@@ -109,6 +161,7 @@ export function TabBar({
             </div>
           );
         })}
+        {menu && <ContextMenu menu={menu} onClose={closeMenu} />}
         <button
           onClick={onNew}
           title={`Terminal local (${modLabel}T)`}

@@ -3,6 +3,7 @@ import { invoke } from "@tauri-apps/api/core";
 import { Blocks, Bot, Check, FolderOpen, Highlighter, Palette, ScrollText, SquareTerminal, X } from "lucide-react";
 import type { ModuleId } from "../lib/settings";
 import { AiSettings } from "./AiSettings";
+import { useDragResize } from "../lib/useDragResize";
 import type { ITheme } from "@xterm/xterm";
 import { HighlightSettings } from "./HighlightSettings";
 import { readText, writeText } from "@tauri-apps/plugin-clipboard-manager";
@@ -72,6 +73,7 @@ export function SettingsModal({
   onClose,
 }: Props) {
   const [section, setSection] = useState<Section>(initialSection ?? "appearance");
+  const win = useDragResize("settingsWindow");
   const [dataDir, setDataDir] = useState("");
   const [notice, setNotice] = useState("");
 
@@ -112,27 +114,31 @@ export function SettingsModal({
   return (
     <div className="fixed inset-0 z-50 grid place-items-center bg-black/25 p-4" onMouseDown={onClose}>
       <div
-        className="w-[800px] max-w-full h-[600px] max-h-full flex bg-panel border border-line rounded-xl shadow-pop overflow-hidden"
+        {...win.box}
+        className="@container w-[800px] h-[600px] min-w-[420px] min-h-[340px] max-w-[96vw] max-h-[94vh] resize flex bg-panel border border-line rounded-xl shadow-pop overflow-hidden"
         onMouseDown={(e) => e.stopPropagation()}
       >
-        <nav className="w-44 shrink-0 bg-chrome border-r border-line p-2 space-y-0.5">
-          <div className="px-2 pt-1.5 pb-3 text-[14px] font-semibold">Ajustes</div>
+        <nav className="w-12 @[640px]:w-44 shrink-0 bg-chrome border-r border-line p-2 space-y-0.5 overflow-y-auto">
+          <div {...win.handle} className="hidden @[640px]:block px-2 pt-1.5 pb-3 text-[14px] font-semibold select-none">
+            Ajustes
+          </div>
           {sections.map(({ id, label, Icon }) => (
             <button
               key={id}
               onClick={() => setSection(id)}
+              title={label}
               className={`w-full flex items-center gap-2 px-2 h-8 rounded-md text-left ${
                 section === id ? "bg-selected text-fg" : "text-muted hover:text-fg hover:bg-hover"
               }`}
             >
-              <Icon size={15} />
-              {label}
+              <Icon size={15} className="shrink-0" />
+              <span className="hidden @[640px]:inline truncate">{label}</span>
             </button>
           ))}
         </nav>
 
         <div className="flex-1 min-w-0 flex flex-col">
-          <header className="flex items-center justify-between h-12 px-5 border-b border-line">
+          <header {...win.handle} className="flex items-center justify-between h-12 px-5 border-b border-line select-none">
             <h2 className="text-[14px] font-semibold">{sections.find((x) => x.id === section)?.label}</h2>
             <button
               onClick={onClose}
