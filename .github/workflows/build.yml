@@ -1,0 +1,132 @@
+name: build
+
+on:
+  workflow_dispatch:
+  push:
+    tags: ["v*"]
+
+jobs:
+  # Dependencias con vulnerabilidades conocidas (RustSec y npm) detienen el build.
+  audit:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+      - run: npm ci && npm audit --audit-level=high
+      - run: |
+          sudo apt-get update
+          sudo apt-get install -y libwebkit2gtk-4.1-dev libayatana-appindicator3-dev librsvg2-dev libudev-dev
+      - uses: dtolnay/rust-toolchain@stable
+      - run: cargo install cargo-audit --locked
+      - run: cargo audit
+        working-directory: src-tauri
+      - run: cargo test
+        working-directory: src-tauri
+
+  build:
+    needs: audit
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - os: macos-latest
+            args: --target universal-apple-darwin
+          - os: windows-latest
+            args: ""
+          - os: ubuntu-22.04
+            args: ""
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Dependencias Linux
+        if: runner.os == 'Linux'
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y libwebkit2gtk-4.1-dev libayatana-appindicator3-dev librsvg2-dev libudev-dev patchelf
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: ${{ runner.os == 'macOS' && 'aarch64-apple-darwin,x86_64-apple-darwin' || '' }}
+
+      - uses: swatinem/rust-cache@v2
+        with:
+          workspaces: src-tauri
+
+      - run: npm ci
+
+      # Evita incrustar rutas del runner (usuario, carpetas) en los mensajes de pánico.
+      - name: Recortar rutas locales del binario
+        shell: bash
+        run: |
+          H="$HOME"; [ "$RUNNER_OS" = "Windows" ] && H="$(cygpath -w "$HOME")"
+          W="${{ github.workspace }}"
+          # Formato codificado (separador 0x1f): admite rutas con espacios.
+          printf 'CARGO_ENCODED_RUSTFLAGS=--remap-path-prefix=%s=~\x1f--remap-path-prefix=%s=.\n' "$H" "$W" >> "$GITHUB_ENV"
+
+      - run: npx tauri build ${{ matrix.args }}
+
+      # Pieza portable de cada sistema, en tar para conservar permisos de ejecución.
+      - name: Pieza portable
+        shell: bash
+        run: |
+          mkdir -p piece
+          case "${{ runner.os }}" in
+            Windows) cp src-tauri/target/release/net-terminal.exe piece/NetTerminal.exe ;;
+            macOS)   cp -R src-tauri/target/universal-apple-darwin/release/bundle/macos/NetTerminal.app piece/ ;;
+            Linux)   cp src-tauri/target/release/bundle/appimage/*.AppImage piece/NetTerminal.AppImage
+                     chmod +x piece/NetTerminal.AppImage ;;
+          esac
+          tar -czf portable-${{ runner.os }}.tgz -C piece .
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: portable-${{ runner.os }}
+          path: portable-${{ runner.os }}.tgz
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: instaladores-${{ runner.os }}
+          path: |
+            src-tauri/target/**/release/bundle/dmg/*.dmg
+            src-tauri/target/**/release/bundle/nsis/*.exe
+            src-tauri/target/**/release/bundle/appimage/*.AppImage
+            src-tauri/target/**/release/bundle/deb/*.deb
+
+  # Una sola carpeta con los tres ejecutables y los datos compartidos (para un pendrive).
+  portable:
+    needs: build
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          pattern: portable-*
+          merge-multiple: true
+      - name: Armar NetTerminal-portable
+        run: |
+          mkdir NetTerminal
+          for f in portable-*.tgz; do tar -xzf "$f" -C NetTerminal; done
+          touch NetTerminal/portable
+          mkdir -p NetTerminal/data
+          cat > NetTerminal/LEEME.txt <<'EOF'
+          NetTerminal portable (Windows, macOS y Linux)
+
+          Windows: NetTerminal.exe
+          macOS:   NetTerminal.app (la primera vez: clic derecho > Abrir)
+          Linux:   NetTerminal.AppImage
+
+          Sesiones, ajustes, notas y logs se guardan en la carpeta "data" y son
+          compartidos por los tres sistemas. No requiere permisos de administrador.
+          EOF
+          zip -qry NetTerminal-portable.zip NetTerminal
+      - uses: actions/upload-artifact@v4
+        with:
+          name: NetTerminal-portable
+          path: NetTerminal-portable.zip

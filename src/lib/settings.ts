@@ -1,0 +1,108 @@
+import { useCallback, useEffect, useRef, useState } from "react";
+import { invoke } from "@tauri-apps/api/core";
+import type { HlRule } from "./highlight";
+
+/** Botón de comando rápido: envía texto (con {{variables}}) o ejecuta un script Python. */
+export interface Macro {
+  id: string;
+  label: string;
+  kind: "send" | "script";
+  text?: string;
+  script?: string;
+}
+
+export interface Settings {
+  appTheme: "system" | "light" | "dark";
+  terminalTheme: string;
+  fontFamily: string;
+  fontSize: number;
+  lineHeight: number;
+  cursorStyle: "block" | "bar" | "underline";
+  cursorBlink: boolean;
+  scrollback: number;
+  copyOnSelect: boolean;
+  rightClickPaste: boolean;
+  confirmClose: boolean;
+  autoLog: boolean;
+  highlightEnabled: boolean;
+  /** Esquemas activos por defecto (las sesiones pueden fijar su fabricante). */
+  highlightSchemes: string[];
+  customRules: HlRule[];
+  /** Pausa entre líneas al enviar desde Notas (consolas lentas). */
+  sendLineDelay: number;
+  logTimestamps: boolean;
+  /** Carpetas creadas a mano (pueden estar vacías). */
+  extraFolders: string[];
+  confirmSend: boolean;
+  macros: Macro[];
+  showButtonBar: boolean;
+  mcpEnabled: boolean;
+  mcpPort: number;
+  mcpToken: string;
+  mcpApproval: boolean;
+  mcpReadOnly: boolean;
+}
+
+export const defaultSettings: Settings = {
+  appTheme: "system",
+  terminalTheme: "auto",
+  fontFamily: "",
+  fontSize: 13,
+  lineHeight: 1.15,
+  cursorStyle: "block",
+  cursorBlink: true,
+  scrollback: 10000,
+  copyOnSelect: true,
+  rightClickPaste: true,
+  confirmClose: true,
+  autoLog: false,
+  highlightEnabled: true,
+  highlightSchemes: ["cisco", "common"],
+  customRules: [],
+  sendLineDelay: 0,
+  logTimestamps: false,
+  extraFolders: [],
+  confirmSend: true,
+  macros: [
+    { id: "m1", label: "terminal length 0", kind: "send", text: "terminal length 0" },
+    { id: "m2", label: "Interfaces", kind: "send", text: "show ip interface brief" },
+  ],
+  showButtonBar: true,
+  mcpEnabled: false,
+  mcpPort: 47821,
+  mcpToken: "",
+  mcpApproval: true,
+  mcpReadOnly: false,
+};
+
+export function newToken(): string {
+  const bytes = new Uint8Array(24);
+  crypto.getRandomValues(bytes);
+  return Array.from(bytes, (b) => b.toString(16).padStart(2, "0")).join("");
+}
+
+/** Carga los ajustes desde el backend y los guarda (con debounce) en cada cambio. */
+export function useSettings() {
+  const [settings, setSettings] = useState<Settings | null>(null);
+  const timer = useRef<number | undefined>(undefined);
+
+  useEffect(() => {
+    invoke<Partial<Settings> | null>("get_settings")
+      .then((s) => setSettings({ ...defaultSettings, ...(s ?? {}) }))
+      .catch(() => setSettings(defaultSettings));
+  }, []);
+
+  const update = useCallback((patch: Partial<Settings> | ((s: Settings) => Partial<Settings>)) => {
+    setSettings((prev) => {
+      const base = prev ?? defaultSettings;
+      const next = { ...base, ...(typeof patch === "function" ? patch(base) : patch) };
+      window.clearTimeout(timer.current);
+      timer.current = window.setTimeout(() => {
+        invoke("save_settings", { settings: next }).catch(console.error);
+      }, 300);
+      return next;
+    });
+  }, []);
+
+  return [settings, update] as const;
+}

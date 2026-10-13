@@ -1,0 +1,424 @@
+/**
+ * Resaltado de la salida de terminal por expresiones regulares (modelo ChromaTerm /
+ * keyword highlighting de SecureCRT). Los colores con nombre usan la paleta ANSI del
+ * tema activo, así el resaltado se adapta a cualquier tema de terminal.
+ */
+import type { ITheme } from "@xterm/xterm";
+
+export const COLOR_NAMES = [
+  "red",
+  "green",
+  "yellow",
+  "blue",
+  "magenta",
+  "cyan",
+  "white",
+  "gray",
+  "brightRed",
+  "brightGreen",
+  "brightYellow",
+  "brightBlue",
+  "brightMagenta",
+  "brightCyan",
+] as const;
+
+export const colorLabel: Record<string, string> = {
+  red: "Rojo",
+  green: "Verde",
+  yellow: "Amarillo",
+  blue: "Azul",
+  magenta: "Magenta",
+  cyan: "Cian",
+  white: "Blanco",
+  gray: "Gris",
+  brightRed: "Rojo claro",
+  brightGreen: "Verde claro",
+  brightYellow: "Amarillo claro",
+  brightBlue: "Azul claro",
+  brightMagenta: "Magenta claro",
+  brightCyan: "Cian claro",
+};
+
+const ANSI_FG: Record<string, number> = {
+  black: 30,
+  red: 31,
+  green: 32,
+  yellow: 33,
+  blue: 34,
+  magenta: 35,
+  cyan: 36,
+  white: 37,
+  gray: 90,
+  brightRed: 91,
+  brightGreen: 92,
+  brightYellow: 93,
+  brightBlue: 94,
+  brightMagenta: 95,
+  brightCyan: 96,
+  brightWhite: 97,
+};
+
+export interface HlStyle {
+  /** Nombre ANSI (adaptable al tema) o color #rrggbb fijo. */
+  color?: string;
+  bg?: string;
+  bold?: boolean;
+  italic?: boolean;
+  underline?: boolean;
+}
+
+export interface HlRule {
+  id: string;
+  name: string;
+  pattern: string;
+  /** Sin distinguir mayúsculas. */
+  ignoreCase?: boolean;
+  /** Resaltar solo este grupo de captura (0 = coincidencia completa). */
+  group?: number;
+  style: HlStyle;
+  enabled?: boolean;
+}
+
+export interface HlScheme {
+  id: string;
+  name: string;
+  description: string;
+  rules: HlRule[];
+}
+
+let ruleSeq = 0;
+const r = (name: string, pattern: string, style: HlStyle, opts: Partial<HlRule> = {}): HlRule => ({
+  id: `b${++ruleSeq}`,
+  name,
+  pattern,
+  style,
+  ...opts,
+});
+
+const IF_STATE_BAD = String.raw`\b(?:administratively down|err-disabled|notconnect|down|disabled|failed|failure|error|denied|deny|unreachable|timed? ?out|critical|alarm|inactive|discard(?:ed)?|rejected?|invalid)\b`;
+const IF_STATE_OK = String.raw`\b(?:up|connected|established|enabled|permit|accept(?:ed)?|ok|success(?:ful)?|forwarding|full|valid|reachable)\b`;
+const IF_STATE_WARN = String.raw`\b(?:warning|warn|blocking|learning|listening|idle|opensent|openconfirm|init|2-?way|exstart|exchange|loading|standby|pending|degraded|flapping)\b`;
+const ERR_COUNTERS = String.raw`\b[1-9]\d*\s+(?:input errors|output errors|CRC|frame|overrun|ignored|runts|giants|throttles|collisions|interface resets|late collision|output drops|input drops|drops|discards|errors)\b`;
+
+const IPV4 = String.raw`\b(?:(?:25[0-5]|2[0-4]\d|1?\d?\d)\.){3}(?:25[0-5]|2[0-4]\d|1?\d?\d)(?:\/(?:3[0-2]|[12]?\d))?\b`;
+const IPV6 = String.raw`(?<![\w:.])(?:(?:[0-9a-f]{1,4}:){7}[0-9a-f]{1,4}|(?:[0-9a-f]{1,4}:){1,7}:(?:[0-9a-f]{1,4}(?::[0-9a-f]{1,4}){0,6})?|::[0-9a-f]{1,4}(?::[0-9a-f]{1,4}){0,6}|::(?=\/0))(?:\/\d{1,3})?(?![\w:])`;
+const MAC = String.raw`\b(?:[0-9a-f]{2}[:-]){5}[0-9a-f]{2}\b|\b(?:[0-9a-f]{4}\.){2}[0-9a-f]{4}\b`;
+
+export const schemes: HlScheme[] = [
+  {
+    id: "cisco",
+    name: "Cisco / Arista",
+    description: "IOS, IOS-XE, IOS-XR, NX-OS y EOS: interfaces, secciones, shutdown, syslog",
+    rules: [
+      r("Prompt", String.raw`^[\w.\-\/:]+(?:\([\w\-\/.]+\))?[#>](?=\s|$)`, { bold: true }),
+      r("Comentario", String.raw`(?<=^\s*)!.*$`, { color: "gray" }),
+      r("Error de comando", String.raw`(?<=^\s*)% .*$`, { color: "red", bold: true }),
+      r("Syslog crítico (0-3)", String.raw`%[A-Z0-9_]+-[0-3]-[A-Z0-9_]+`, { color: "red", bold: true }),
+      r("Syslog warning (4)", String.raw`%[A-Z0-9_]+-4-[A-Z0-9_]+`, { color: "yellow", bold: true }),
+      r("Syslog info (5-7)", String.raw`%[A-Z0-9_]+-[5-7]-[A-Z0-9_]+`, { color: "cyan" }),
+      r("Descripción", String.raw`\bdescription\s+(.+)$`, { color: "brightYellow", italic: true }, { group: 1 }),
+      r("no shutdown", String.raw`\bno shutdown\b`, { color: "green" }),
+      r("shutdown", String.raw`(?<=^\s*)shutdown\b`, { color: "red", bold: true }),
+      r("Negación", String.raw`(?<=^\s*)no(?=\s)`, { color: "yellow" }),
+      r(
+        "Sección",
+        String.raw`^(?:interface|router|vlan|line|vrf(?: definition| context)?|ip vrf|policy-map|class-map|route-map|ip access-list|ipv6 access-list|access-list|object-group|aaa|snmp-server|ntp|logging|hostname|username|crypto|key chain|track|ip prefix-list|ipv6 prefix-list|banner|control-plane|spanning-tree|feature|address-family|neighbor|ip route|ipv6 route)\b`,
+        { color: "brightBlue", bold: true },
+      ),
+      r(
+        "Interfaz",
+        String.raw`\b(?:(?:Hundred|Forty|TwentyFive|Ten|Two|Five)?Gig(?:abit)?E(?:thernet)?|FastEthernet|Ethernet|Port-channel|Bundle-Ether|Loopback|Tunnel|Serial|Vlan|BDI|nve|mgmt|Management|Hu|Fo|Twe|Te|Tw|Gi|Fa|Eth|Et|Po|BE|Lo|Tu|Se|Vl)\d+(?:[\/.:]\d+)*\b`,
+        { color: "cyan" },
+      ),
+    ],
+  },
+  {
+    id: "juniper",
+    name: "Juniper",
+    description: "Junos: set/delete, [edit], interfaces ge-/xe-/ae, inactive",
+    rules: [
+      r("Prompt", String.raw`^[\w.\-]+@[\w.\-]+[>#%](?=\s|$)`, { bold: true }),
+      r("Jerarquía", String.raw`^\[edit[^\]]*\]`, { color: "brightBlue", bold: true }),
+      r("Comentario", String.raw`(?<=^\s*)(?:#|\/\*).*$`, { color: "gray" }),
+      r("set", String.raw`(?<=^\s*)(?:set|activate)\b`, { color: "green", bold: true }),
+      r("delete", String.raw`(?<=^\s*)(?:delete|deactivate)\b`, { color: "red", bold: true }),
+      r("Descripción", String.raw`\bdescription\s+("[^"]*"|\S+)`, { color: "brightYellow", italic: true }, { group: 1 }),
+      r("commit", String.raw`\bcommit complete\b`, { color: "green", bold: true }),
+      r(
+        "Interfaz",
+        String.raw`\b(?:(?:ge|xe|et|fe|mge|xle|gr|lt|ip|st)-\d+\/\d+\/\d+(?::\d+)?|ae\d+|reth\d+|lo\d+|em\d+|fxp\d+|me\d+|(?:irb|vlan)(?=\.\d))(?:\.\d+)?\b`,
+        { color: "cyan" },
+      ),
+    ],
+  },
+  {
+    id: "huawei",
+    name: "Huawei / H3C",
+    description: "VRP y Comware: undo, display, interfaces GE/XGE/Eth-Trunk, Vlanif",
+    rules: [
+      r("Prompt", String.raw`^[<\[][\w.\-~]+(?:-[\w\-\/.:]+)?[>\]]`, { bold: true }),
+      r("Separador", String.raw`(?<=^\s*)#\s*$`, { color: "gray" }),
+      r("Error de comando", String.raw`(?<=^\s*)Error:.*$`, { color: "red", bold: true }),
+      r("Syslog crítico", String.raw`%%\d+[A-Z0-9_]+\/[0-3]\/[A-Z0-9_]+`, { color: "red", bold: true }),
+      r("Syslog warning", String.raw`%%\d+[A-Z0-9_]+\/4\/[A-Z0-9_]+`, { color: "yellow", bold: true }),
+      r("Syslog info", String.raw`%%\d+[A-Z0-9_]+\/[5-7]\/[A-Z0-9_]+`, { color: "cyan" }),
+      r("Descripción", String.raw`\bdescription\s+(.+)$`, { color: "brightYellow", italic: true }, { group: 1 }),
+      r("undo shutdown", String.raw`\bundo shutdown\b`, { color: "green" }),
+      r("shutdown", String.raw`(?<=^\s*)shutdown\b`, { color: "red", bold: true }),
+      r("undo", String.raw`(?<=^\s*)undo\b`, { color: "yellow" }),
+      r(
+        "Sección",
+        String.raw`^(?:interface|bgp|ospf|isis|vlan|acl|aaa|user-interface|ip vpn-instance|route-policy|ip ip-prefix|sysname|ntp-service|snmp-agent|info-center|ip route-static)\b`,
+        { color: "brightBlue", bold: true },
+      ),
+      r(
+        "Interfaz",
+        String.raw`\b(?:XGigabitEthernet|GigabitEthernet|100GE|40GE|25GE|10GE|XGE|GE|Ethernet|Eth-Trunk|Vlanif|LoopBack|MEth|NULL|Tunnel)\s?\d+(?:[\/.:]\d+)*\b`,
+        { color: "cyan" },
+      ),
+    ],
+  },
+  {
+    id: "fortinet",
+    name: "Fortinet",
+    description: "FortiOS: config/edit/set/next/end, strings y acciones de política",
+    rules: [
+      r("Prompt", String.raw`^[\w.\-]+(?: \([\w\-.]+\))? [#$](?=\s|$)`, { bold: true }),
+      r("Comentario", String.raw`(?<=^\s*)#.*$`, { color: "gray" }),
+      r("config / end", String.raw`(?<=^\s*)(?:config|end)\b`, { color: "brightBlue", bold: true }),
+      r("edit / next", String.raw`(?<=^\s*)(?:edit|next)\b`, { color: "cyan", bold: true }),
+      r("set", String.raw`(?<=^\s*)set\b`, { color: "green" }),
+      r("unset", String.raw`(?<=^\s*)(?:unset|delete|purge)\b`, { color: "yellow" }),
+      r("Texto", String.raw`"[^"]*"`, { color: "brightYellow" }),
+    ],
+  },
+  {
+    id: "common",
+    name: "Común",
+    description: "IPv4/IPv6, MAC, estados up/down, permit/deny y contadores de error",
+    rules: [
+      r("Contadores de error > 0", ERR_COUNTERS, { color: "red", bold: true }, { ignoreCase: true }),
+      r("Estado crítico", IF_STATE_BAD, { color: "red", bold: true }, { ignoreCase: true }),
+      r("Estado transitorio", IF_STATE_WARN, { color: "yellow" }, { ignoreCase: true }),
+      r("Estado OK", IF_STATE_OK, { color: "green" }, { ignoreCase: true }),
+      r("MAC", MAC, { color: "brightMagenta" }, { ignoreCase: true }),
+      r("IPv4", IPV4, { color: "magenta" }),
+      r("IPv6", IPV6, { color: "magenta" }, { ignoreCase: true }),
+    ],
+  },
+];
+
+export const vendorSchemes = schemes.filter((s) => s.id !== "common");
+
+// ---------- Motor ----------
+
+export interface Compiled {
+  re: RegExp;
+  style: HlStyle;
+  group: number;
+  on: string;
+  off: string;
+}
+
+function sgrColor(value: string, bg: boolean): string | null {
+  const named = ANSI_FG[value];
+  if (named !== undefined) return String(bg ? named + 10 : named);
+  const m = /^#?([0-9a-f]{2})([0-9a-f]{2})([0-9a-f]{2})$/i.exec(value);
+  if (!m) return null;
+  return `${bg ? 48 : 38};2;${parseInt(m[1], 16)};${parseInt(m[2], 16)};${parseInt(m[3], 16)}`;
+}
+
+function sgr(style: HlStyle): { on: string; off: string } {
+  const on: string[] = [];
+  const off: string[] = [];
+  if (style.bold) on.push("1"), off.push("22");
+  if (style.italic) on.push("3"), off.push("23");
+  if (style.underline) on.push("4"), off.push("24");
+  const fg = style.color && sgrColor(style.color, false);
+  if (fg) on.push(fg), off.push("39");
+  const bg = style.bg && sgrColor(style.bg, true);
+  if (bg) on.push(bg), off.push("49");
+  return { on: `\x1b[${on.join(";")}m`, off: `\x1b[${off.join(";")}m` };
+}
+
+/**
+ * Grupo que termina en cuantificador y además se repite, p. ej. (a+)+ o (\\w*)*: patrón
+ * clásico de backtracking catastrófico (ReDoS) que congelaría la interfaz. Se aplica a
+ * reglas propias o importadas; las incluidas en la app ya están probadas.
+ */
+const NESTED_QUANTIFIER = /\((?:[^()\\]|\\.)*[+*]\)(?:[+*]|\{\d+,\d*\})/;
+
+export function riskyRegex(pattern: string): string | null {
+  if (pattern.length > 500) return "Patrón demasiado largo (máx. 500 caracteres)";
+  const re = new RegExp(NESTED_QUANTIFIER.source, "g");
+  for (const m of pattern.matchAll(re)) {
+    // Si el grupo parte con un elemento obligatorio (p. ej. un separador como [/.:]),
+    // cada repetición queda delimitada y no hay backtracking explosivo.
+    const inner = m[0].replace(/^\((?:\?:)?/, "");
+    const atom = /^(\[(?:[^\]\\]|\\.)*\]|\\.|[^\\[(])/.exec(inner)?.[0] ?? "";
+    const next = inner.charAt(atom.length);
+    const mandatory = atom !== "" && !"?*+{".includes(next) && !/^\\[wWsSdD.]$|^\.$/.test(atom);
+    if (!mandatory) return "Cuantificadores anidados como (a+)+ pueden congelar la app. Simplifica el patrón.";
+  }
+  return null;
+}
+
+/** Valida un patrón; devuelve el mensaje de error o null. */
+export function regexError(pattern: string): string | null {
+  if (!pattern) return "Patrón vacío";
+  try {
+    new RegExp(pattern, "gmd");
+    return null;
+  } catch (e) {
+    return (e as Error).message;
+  }
+}
+
+export function compile(rules: HlRule[]): Compiled[] {
+  const out: Compiled[] = [];
+  for (const rule of rules) {
+    if (rule.enabled === false || regexError(rule.pattern)) continue;
+    if (!rule.id.startsWith("b") && riskyRegex(rule.pattern)) continue;
+    const { on, off } = sgr(rule.style);
+    if (on === "\x1b[m") continue;
+    out.push({
+      re: new RegExp(rule.pattern, `gmd${rule.ignoreCase ? "i" : ""}`),
+      style: rule.style,
+      group: rule.group ?? 0,
+      on,
+      off,
+    });
+  }
+  return out;
+}
+
+/**
+ * Asigna a cada carácter la primera regla que lo cubre (las reglas anteriores tienen
+ * prioridad) y devuelve tramos [inicio, fin, índiceRegla].
+ */
+export function runs(line: string, rules: Compiled[]): [number, number, number][] {
+  if (!line || !rules.length) return [];
+  const owner = new Int16Array(line.length).fill(-1);
+  rules.forEach((rule, i) => {
+    rule.re.lastIndex = 0;
+    let m: RegExpExecArray | null;
+    let guard = 0;
+    while ((m = rule.re.exec(line)) && guard++ < 1000) {
+      if (m[0] === "") {
+        rule.re.lastIndex++;
+        continue;
+      }
+      const span = m.indices?.[rule.group];
+      if (!span) continue;
+      for (let k = span[0]; k < span[1]; k++) if (owner[k] === -1) owner[k] = i;
+    }
+  });
+  const out: [number, number, number][] = [];
+  let start = 0;
+  for (let k = 1; k <= line.length; k++) {
+    if (k === line.length || owner[k] !== owner[start]) {
+      if (owner[start] !== -1) out.push([start, k, owner[start]]);
+      start = k;
+    }
+  }
+  return out;
+}
+
+function highlightLine(line: string, rules: Compiled[]): string {
+  // Líneas que ya traen secuencias de escape (prompts de shell con color, edición de
+  // línea, apps de pantalla completa) se dejan intactas para no romperlas.
+  if (line.includes("\x1b")) return line;
+  // El salto final queda fuera para que ^/$ funcionen igual que en el texto visible.
+  const body = line.replace(/\r?\n$/, "");
+  const tail = line.slice(body.length);
+  const spans = runs(body, rules);
+  if (!spans.length) return line;
+  let out = "";
+  let pos = 0;
+  for (const [s, e, i] of spans) {
+    out += body.slice(pos, s) + rules[i].on + body.slice(s, e) + rules[i].off;
+    pos = e;
+  }
+  return out + body.slice(pos) + tail;
+}
+
+export function highlightText(text: string, rules: Compiled[]): string {
+  if (!rules.length) return text;
+  return text
+    .split(/(?<=\n)/)
+    .map((l) => highlightLine(l, rules))
+    .join("");
+}
+
+/**
+ * Procesa el flujo por líneas completas. Una línea incompleta (prompt, eco de teclas)
+ * espera unos milisegundos por si llega el resto, y luego se escribe igual.
+ */
+export class StreamHighlighter {
+  private pending = "";
+  private timer: number | undefined;
+  private write: (s: string) => void;
+  private rules: () => Compiled[];
+  private bypass: () => boolean;
+
+  constructor(write: (s: string) => void, rules: () => Compiled[], bypass: () => boolean) {
+    this.write = write;
+    this.rules = rules;
+    this.bypass = bypass;
+  }
+
+  push(text: string) {
+    const rules = this.rules();
+    if (!rules.length || this.bypass()) {
+      this.flush();
+      this.write(text);
+      return;
+    }
+    // Eco de teclas: sin espera para que escribir se sienta inmediato.
+    if (!this.pending && text.length <= 4 && !text.includes("\n")) {
+      this.write(text);
+      return;
+    }
+    this.pending += text;
+    const cut = this.pending.lastIndexOf("\n");
+    if (cut >= 0) {
+      this.write(highlightText(this.pending.slice(0, cut + 1), rules));
+      this.pending = this.pending.slice(cut + 1);
+    }
+    window.clearTimeout(this.timer);
+    if (this.pending) this.timer = window.setTimeout(() => this.flush(), 12);
+  }
+
+  flush() {
+    window.clearTimeout(this.timer);
+    if (!this.pending) return;
+    const text = this.pending;
+    this.pending = "";
+    this.write(highlightText(text, this.rules()));
+  }
+
+  dispose() {
+    window.clearTimeout(this.timer);
+  }
+}
+
+/** Reglas efectivas: personalizadas > fabricante > comunes. */
+export function effectiveRules(
+  opts: { enabled: boolean; schemes: string[]; custom: HlRule[] },
+  sessionProfile?: string,
+): HlRule[] {
+  if (!opts.enabled || sessionProfile === "off") return [];
+  const ids =
+    sessionProfile && sessionProfile !== "default" ? [sessionProfile, "common"] : opts.schemes;
+  const chosen = schemes.filter((s) => s.id !== "common" && ids.includes(s.id));
+  const common = ids.includes("common") ? schemes.filter((s) => s.id === "common") : [];
+  return [...opts.custom, ...chosen.flatMap((s) => s.rules), ...common.flatMap((s) => s.rules)];
+}
+
+/** Color CSS de un estilo según el tema, para la vista previa. */
+export function cssColor(value: string | undefined, theme: ITheme): string | undefined {
+  if (!value) return undefined;
+  if (value.startsWith("#")) return value;
+  const key = value === "gray" ? "brightBlack" : value;
+  return (theme as Record<string, string | undefined>)[key];
+}

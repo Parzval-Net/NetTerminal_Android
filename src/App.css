@@ -1,0 +1,145 @@
+@import "tailwindcss";
+@import "@xterm/xterm/css/xterm.css";
+
+/* Tokens de color. El modo lo fija App en <html data-theme> (sistema, claro u oscuro). */
+:root {
+  --bg: #ffffff;
+  --chrome: #f4f5f7;
+  --panel: #ffffff;
+  --field: #ffffff;
+  --border: #e1e4e8;
+  --text: #1f2328;
+  --muted: #6a7280;
+  --accent: #2563eb;
+  --accent-fg: #ffffff;
+  --hover: rgba(15, 23, 42, 0.05);
+  --selected: rgba(37, 99, 235, 0.1);
+  --danger: #d1242f;
+  --ok: #1a7f37;
+  --warn: #b7791f;
+  --shadow: 0 12px 40px rgba(15, 23, 42, 0.18);
+  color-scheme: light;
+}
+
+:root[data-theme="dark"] {
+  --bg: #0e1116;
+  --chrome: #15181e;
+  --panel: #1b1f26;
+  --field: #12151a;
+  --border: #272c35;
+  --text: #e4e7eb;
+  --muted: #8a919c;
+  --accent: #5b8def;
+  --accent-fg: #ffffff;
+  --hover: rgba(255, 255, 255, 0.05);
+  --selected: rgba(91, 141, 239, 0.16);
+  --danger: #f2606a;
+  --ok: #4cc472;
+  --warn: #e0aa45;
+  --shadow: 0 16px 48px rgba(0, 0, 0, 0.55);
+  color-scheme: dark;
+}
+
+@theme inline {
+  --color-bg: var(--bg);
+  --color-chrome: var(--chrome);
+  --color-panel: var(--panel);
+  --color-field: var(--field);
+  --color-line: var(--border);
+  --color-fg: var(--text);
+  --color-muted: var(--muted);
+  --color-accent: var(--accent);
+  --color-accent-fg: var(--accent-fg);
+  --color-hover: var(--hover);
+  --color-selected: var(--selected);
+  --color-danger: var(--danger);
+  --color-term: var(--term-bg, var(--bg));
+  --color-term-fg: var(--term-fg, var(--text));
+  --color-ok: var(--ok);
+  --color-warn: var(--warn);
+  --shadow-pop: var(--shadow);
+  --font-sans: system-ui, -apple-system, "Segoe UI Variable Text", "Segoe UI", Roboto, Ubuntu,
+    Cantarell, "Noto Sans", sans-serif;
+}
+
+html,
+body,
+#root {
+  height: 100%;
+}
+
+body {
+  margin: 0;
+  overflow: hidden;
+  background: var(--bg);
+  color: var(--text);
+  font-family: var(--font-sans);
+  font-size: 13px;
+  -webkit-font-smoothing: antialiased;
+  user-select: none;
+  -webkit-user-select: none;
+}
+
+input,
+select,
+textarea {
+  user-select: text;
+  -webkit-user-select: text;
+}
+
+button {
+  cursor: default;
+}
+
+:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 1px;
+}
+
+.field {
+  width: 100%;
+  height: 30px;
+  padding: 0 10px;
+  border-radius: 6px;
+  border: 1px solid var(--border);
+  background: var(--field);
+  color: var(--text);
+  font-size: 13px;
+  outline: none;
+}
+
+.field:focus {
+  border-color: var(--accent);
+  box-shadow: 0 0 0 3px var(--selected);
+}
+
+.xterm {
+  padding: 6px 0 0 10px;
+  height: 100%;
+}
+
+.xterm .xterm-viewport {
+  background-color: transparent !important;
+}
+
+::-webkit-scrollbar {
+  width: 10px;
+  height: 10px;
+}
+
+::-webkit-scrollbar-thumb {
+  background: color-mix(in srgb, var(--muted) 35%, transparent);
+  border-radius: 10px;
+  border: 3px solid transparent;
+  background-clip: content-box;
+}
+
+::-webkit-scrollbar-track {
+  background: transparent;
+}
+
+/* El texto del editor es transparente (se ve la capa resaltada); el placeholder no. */
+.code-editor::placeholder {
+  -webkit-text-fill-color: var(--muted);
+  color: var(--muted);
+}
