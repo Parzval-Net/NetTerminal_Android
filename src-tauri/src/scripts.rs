@@ -107,6 +107,18 @@ fn hide_console(_c: &mut Command) {
     }
 }
 
+/// Qué ejecutar: un script de usuario o la acción de un plugin.
+pub struct RunSpec {
+    pub label: String,
+    pub path: PathBuf,
+    pub cwd: PathBuf,
+    /// Conexión sobre la que opera (None = sin sesión).
+    pub conn: Option<String>,
+    /// false = el script no puede enviar ni leer de la sesión (plugin sin permiso "session").
+    pub allow_session: bool,
+    pub env: Vec<(String, String)>,
+}
+
 impl ScriptRunner {
     pub fn run(&self, app: AppHandle, conn_id: String, script: String, data_dir: &Path) -> Result<String, String> {
         let dir = scripts_dir(data_dir);
@@ -118,27 +130,49 @@ impl ScriptRunner {
         if !path.is_file() {
             return Err(format!("No existe {script}"));
         }
-        let (bin, pre) = python().ok_or("No se encontró Python 3. Instálalo para usar scripts.")?;
+        self.run_spec(
+            app,
+            RunSpec { label: script, path, cwd: dir, conn: Some(conn_id), allow_session: true, env: vec![] },
+            data_dir,
+        )
+    }
+
+    pub fn run_spec(&self, app: AppHandle, spec: RunSpec, data_dir: &Path) -> Result<String, String> {
+        let RunSpec { label: script, path, cwd, conn, allow_session, env } = spec;
+        let (bin, pre) = python().ok_or("No se encontró Python 3. Instálalo para usar scripts y plugins.")?;
+        let helper_dir = scripts_dir(data_dir);
 
         let conns = &app.state::<crate::AppState>().conns;
-        let (_, session) = conns.info(&conn_id).ok_or("La sesión no está conectada")?;
-        let rx = conns.tap(&conn_id).ok_or("La sesión no está conectada")?;
+        let (session, rx) = match conn.as_deref() {
+            Some(id) => {
+                let (_, s) = conns.info(id).ok_or("La sesión no está conectada")?;
+                (Some(s), conns.tap(id))
+            }
+            None => (None, None),
+        };
+        let conn_id = conn.unwrap_or_default();
 
         let mut cmd = Command::new(bin);
         cmd.args(pre)
             .arg("-u")
             .arg(&path)
-            .current_dir(&dir)
+            .current_dir(&cwd)
             .env("PYTHONIOENCODING", "utf-8")
+            .env("PYTHONPATH", &helper_dir)
             .env("NT_DATA_DIR", data_dir)
             .env(
                 "NT_SESSION",
-                json!({
-                    "name": session.name, "type": session.session_type, "host": session.host,
-                    "port": session.port, "username": session.username, "serial_port": session.serial_port,
-                })
-                .to_string(),
+                session
+                    .map(|s| {
+                        json!({
+                            "name": s.name, "type": s.session_type, "host": s.host,
+                            "port": s.port, "username": s.username, "serial_port": s.serial_port,
+                        })
+                        .to_string()
+                    })
+                    .unwrap_or_else(|| "{}".into()),
             )
+            .envs(env)
             .stdin(Stdio::piped())
             .stdout(Stdio::piped())
             .stderr(Stdio::piped());
@@ -182,7 +216,15 @@ impl ScriptRunner {
                     }
                 };
                 let conns = &app.state::<crate::AppState>().conns;
-                let reply = handle(&req, conns, &conn_id, &rx, &mut pending, &emit);
+                let session_op = matches!(req["op"].as_str(), Some("send" | "wait" | "read" | "clear"));
+                let reply = match (&rx, session_op) {
+                    (_, true) if !allow_session => {
+                        json!({"ok": false, "error": "Este plugin no declaró el permiso 'session'"})
+                    }
+                    (None, true) => json!({"ok": false, "error": "No hay una sesión conectada"}),
+                    (Some(rx), _) => handle(&req, conns, &conn_id, rx, &mut pending, &emit),
+                    (None, false) => handle_offline(&req, &emit),
+                };
                 if writeln!(stdin, "{reply}").and_then(|_| stdin.flush()).is_err() {
                     break;
                 }
@@ -206,6 +248,16 @@ impl ScriptRunner {
         if let Some(child) = self.running.lock().unwrap().remove(run_id) {
             let _ = child.lock().unwrap().kill();
         }
+    }
+}
+
+fn handle_offline(req: &Value, emit: &dyn Fn(&'static str, String)) -> Value {
+    match req["op"].as_str().unwrap_or("") {
+        "log" => {
+            emit("log", req["msg"].as_str().unwrap_or("").to_string());
+            json!({"ok": true})
+        }
+        other => json!({"ok": false, "error": format!("operación desconocida: {other}")}),
     }
 }
 

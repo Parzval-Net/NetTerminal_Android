@@ -1,0 +1,430 @@
+//! Plugins instalables: carpeta con `plugin.json` + script Python que usa la API de
+//! `netterminal.py`.
+//!
+//! Seguridad:
+//! - Instalar siempre pasa por una revisión: se muestran manifiesto, permisos, archivos
+//!   y el código de entrada antes de confirmar.
+//! - Al aprobar se guarda el SHA-256 de todos los archivos. Si cambian después, el
+//!   plugin queda bloqueado hasta que el usuario lo revise y lo vuelva a habilitar.
+//! - Sin el permiso "session" el plugin no puede leer ni escribir en la sesión.
+//! - Los .zip se extraen sin rutas fuera de la carpeta (zip slip) y con límites de
+//!   tamaño. Los permisos son declarativos: Python corre con los privilegios del
+//!   usuario, por eso la revisión es obligatoria.
+
+use crate::scripts::{RunSpec, ScriptRunner};
+use serde::{Deserialize, Serialize};
+use sha2::{Digest, Sha256};
+use std::collections::BTreeMap;
+use std::fs;
+use std::io::Read;
+use std::path::{Path, PathBuf};
+use tauri::AppHandle;
+
+const MAX_FILES: usize = 200;
+const MAX_TOTAL: u64 = 20 * 1024 * 1024;
+const PERMISSIONS: [&str; 3] = ["session", "network", "files"];
+
+#[derive(Serialize, Deserialize, Clone)]
+pub struct Action {
+    pub id: String,
+    pub label: String,
+    #[serde(default)]
+    pub description: String,
+}
+
+#[derive(Serialize, Deserialize, Clone)]
+pub struct Manifest {
+    pub id: String,
+    pub name: String,
+    pub version: String,
+    #[serde(default)]
+    pub description: String,
+    #[serde(default)]
+    pub author: String,
+    #[serde(default = "default_entry")]
+    pub entry: String,
+    #[serde(default)]
+    pub permissions: Vec<String>,
+    pub actions: Vec<Action>,
+}
+
+fn default_entry() -> String {
+    "main.py".into()
+}
+
+#[derive(Serialize, Deserialize, Default)]
+struct State {
+    /// id -> hash aprobado (presente = habilitado)
+    approved: BTreeMap<String, String>,
+}
+
+#[derive(Serialize)]
+pub struct PluginInfo {
+    #[serde(flatten)]
+    manifest: Manifest,
+    enabled: bool,
+    /// Archivos modificados desde la aprobación.
+    tampered: bool,
+}
+
+#[derive(Serialize)]
+pub struct Preview {
+    staging: String,
+    manifest: Manifest,
+    files: Vec<(String, u64)>,
+    code: String,
+    replaces: Option<String>,
+}
+
+fn dir(data: &Path) -> PathBuf {
+    let d = data.join("plugins");
+    let _ = fs::create_dir_all(&d);
+    d
+}
+
+fn state_path(data: &Path) -> PathBuf {
+    dir(data).join(".state.json")
+}
+
+fn load_state(data: &Path) -> State {
+    fs::read_to_string(state_path(data)).ok().and_then(|s| serde_json::from_str(&s).ok()).unwrap_or_default()
+}
+
+fn save_state(data: &Path, st: &State) -> Result<(), String> {
+    let p = state_path(data);
+    fs::write(&p, serde_json::to_string_pretty(st).unwrap()).map_err(|e| e.to_string())?;
+    crate::session_store::restrict(&p);
+    Ok(())
+}
+
+fn valid_id(id: &str) -> bool {
+    !id.is_empty() && id.len() <= 64 && id.chars().all(|c| c.is_ascii_alphanumeric() || c == '-' || c == '_')
+}
+
+fn read_manifest(root: &Path) -> Result<Manifest, String> {
+    let raw = fs::read_to_string(root.join("plugin.json")).map_err(|_| "Falta plugin.json".to_string())?;
+    let m: Manifest = serde_json::from_str(&raw).map_err(|e| format!("plugin.json inválido: {e}"))?;
+    if !valid_id(&m.id) {
+        return Err("id inválido (solo letras, números, - y _)".into());
+    }
+    if m.entry.contains(['/', '\\']) || !m.entry.ends_with(".py") || !root.join(&m.entry).is_file() {
+        return Err(format!("Archivo de entrada inválido: {}", m.entry));
+    }
+    if let Some(p) = m.permissions.iter().find(|p| !PERMISSIONS.contains(&p.as_str())) {
+        return Err(format!("Permiso desconocido: {p}"));
+    }
+    if m.actions.is_empty() || m.actions.iter().any(|a| !valid_id(&a.id)) {
+        return Err("Se requiere al menos una acción con id válido".into());
+    }
+    Ok(m)
+}
+
+/// Lista de archivos (ruta relativa, tamaño), sin seguir enlaces simbólicos.
+fn walk(root: &Path) -> Result<Vec<(String, u64)>, String> {
+    let mut out = Vec::new();
+    let mut stack = vec![root.to_path_buf()];
+    while let Some(d) = stack.pop() {
+        for e in fs::read_dir(&d).map_err(|e| e.to_string())?.flatten() {
+            let ft = e.file_type().map_err(|e| e.to_string())?;
+            let path = e.path();
+            if ft.is_symlink() {
+                return Err("Los plugins no pueden contener enlaces simbólicos".into());
+            }
+            if ft.is_dir() {
+                if e.file_name() != "__pycache__" {
+                    stack.push(path);
+                }
+            } else {
+                let rel = path.strip_prefix(root).unwrap().to_string_lossy().replace('\\', "/");
+                out.push((rel, e.metadata().map(|m| m.len()).unwrap_or(0)));
+            }
+        }
+        if out.len() > MAX_FILES {
+            return Err("Demasiados archivos en el plugin".into());
+        }
+    }
+    out.sort();
+    if out.iter().map(|f| f.1).sum::<u64>() > MAX_TOTAL {
+        return Err("El plugin supera 20 MB".into());
+    }
+    Ok(out)
+}
+
+/// SHA-256 sobre rutas y contenidos (orden estable).
+fn hash(root: &Path) -> Result<String, String> {
+    let mut h = Sha256::new();
+    for (rel, _) in walk(root)? {
+        h.update(rel.as_bytes());
+        h.update([0]);
+        h.update(fs::read(root.join(&rel)).map_err(|e| e.to_string())?);
+        h.update([0]);
+    }
+    Ok(h.finalize().iter().map(|b| format!("{b:02x}")).collect())
+}
+
+pub fn list(data: &Path) -> Vec<PluginInfo> {
+    let st = load_state(data);
+    let mut out: Vec<PluginInfo> = fs::read_dir(dir(data))
+        .into_iter()
+        .flatten()
+        .flatten()
+        .filter(|e| e.path().is_dir() && !e.file_name().to_string_lossy().starts_with('.'))
+        .filter_map(|e| {
+            let m = read_manifest(&e.path()).ok()?;
+            let approved = st.approved.get(&m.id);
+            let tampered = approved.map(|h| hash(&e.path()).ok().as_ref() != Some(h)).unwrap_or(false);
+            Some(PluginInfo { enabled: approved.is_some() && !tampered, tampered, manifest: m })
+        })
+        .collect();
+    out.sort_by(|a, b| a.manifest.name.cmp(&b.manifest.name));
+    out
+}
+
+/// Prepara la instalación desde carpeta o .zip en un área temporal y devuelve la vista
+/// previa para que el usuario la revise.
+pub fn stage(data: &Path, source: &Path) -> Result<Preview, String> {
+    let staging_id = uuid::Uuid::new_v4().to_string();
+    let staging = dir(data).join(".staging").join(&staging_id);
+    fs::create_dir_all(&staging).map_err(|e| e.to_string())?;
+    let result = (|| {
+        if source.is_dir() {
+            copy_dir(source, &staging)?;
+        } else if source.extension().is_some_and(|e| e.eq_ignore_ascii_case("zip")) {
+            extract_zip(source, &staging)?;
+        } else {
+            return Err("Selecciona una carpeta o un archivo .zip".into());
+        }
+        // Un zip suele traer una carpeta raíz: se usa si plugin.json está dentro.
+        let root = plugin_root(&staging)?;
+        let manifest = read_manifest(&root)?;
+        let files = walk(&root)?;
+        let code: String = fs::read_to_string(root.join(&manifest.entry))
+            .unwrap_or_default()
+            .lines()
+            .take(400)
+            .collect::<Vec<_>>()
+            .join("\n");
+        let replaces = dir(data).join(&manifest.id).is_dir().then(|| manifest.id.clone());
+        Ok(Preview { staging: staging_id.clone(), manifest, files, code, replaces })
+    })();
+    if result.is_err() {
+        let _ = fs::remove_dir_all(&staging);
+    }
+    result
+}
+
+fn plugin_root(staging: &Path) -> Result<PathBuf, String> {
+    if staging.join("plugin.json").is_file() {
+        return Ok(staging.to_path_buf());
+    }
+    let subdirs: Vec<_> = fs::read_dir(staging).map_err(|e| e.to_string())?.flatten().filter(|e| e.path().is_dir()).collect();
+    match subdirs.as_slice() {
+        [one] if one.path().join("plugin.json").is_file() => Ok(one.path()),
+        _ => Err("No se encontró plugin.json".into()),
+    }
+}
+
+fn copy_dir(from: &Path, to: &Path) -> Result<(), String> {
+    for (rel, _) in walk(from)? {
+        let dst = to.join(&rel);
+        if let Some(p) = dst.parent() {
+            fs::create_dir_all(p).map_err(|e| e.to_string())?;
+        }
+        fs::copy(from.join(&rel), dst).map_err(|e| e.to_string())?;
+    }
+    Ok(())
+}
+
+fn extract_zip(zip_path: &Path, to: &Path) -> Result<(), String> {
+    let f = fs::File::open(zip_path).map_err(|e| e.to_string())?;
+    let mut z = zip::ZipArchive::new(f).map_err(|e| format!("Zip inválido: {e}"))?;
+    if z.len() > MAX_FILES * 2 {
+        return Err("Demasiados archivos en el zip".into());
+    }
+    let mut total = 0u64;
+    for i in 0..z.len() {
+        let mut entry = z.by_index(i).map_err(|e| e.to_string())?;
+        // enclosed_name() descarta rutas absolutas y con ".." (zip slip).
+        let Some(rel) = entry.enclosed_name() else {
+            return Err(format!("Ruta peligrosa en el zip: {}", entry.name()));
+        };
+        if entry.is_symlink() {
+            return Err("El zip contiene enlaces simbólicos".into());
+        }
+        let dst = to.join(rel);
+        if entry.is_dir() {
+            fs::create_dir_all(&dst).map_err(|e| e.to_string())?;
+            continue;
+        }
+        if let Some(p) = dst.parent() {
+            fs::create_dir_all(p).map_err(|e| e.to_string())?;
+        }
+        // Límite real de bytes descomprimidos (protege contra zip bombs).
+        let mut buf = Vec::new();
+        entry.by_ref().take(MAX_TOTAL - total + 1).read_to_end(&mut buf).map_err(|e| e.to_string())?;
+        total += buf.len() as u64;
+        if total > MAX_TOTAL {
+            return Err("El contenido descomprimido supera 20 MB".into());
+        }
+        fs::write(&dst, buf).map_err(|e| e.to_string())?;
+    }
+    Ok(())
+}
+
+/// Confirma la instalación revisada: mueve a plugins/<id> y la aprueba con su hash.
+pub fn confirm(data: &Path, staging_id: &str) -> Result<String, String> {
+    if !valid_id(&staging_id.replace('-', "")) {
+        return Err("Instalación inválida".into());
+    }
+    let staging = dir(data).join(".staging").join(staging_id);
+    let root = plugin_root(&staging)?;
+    let m = read_manifest(&root)?;
+    let target = dir(data).join(&m.id);
+    if target.exists() {
+        fs::remove_dir_all(&target).map_err(|e| e.to_string())?;
+    }
+    fs::rename(&root, &target).or_else(|_| copy_dir(&root, &target)).map_err(|e| e.to_string())?;
+    let _ = fs::remove_dir_all(&staging);
+    let mut st = load_state(data);
+    st.approved.insert(m.id.clone(), hash(&target)?);
+    save_state(data, &st)?;
+    Ok(m.name)
+}
+
+pub fn cancel(data: &Path, staging_id: &str) {
+    if valid_id(&staging_id.replace('-', "")) {
+        let _ = fs::remove_dir_all(dir(data).join(".staging").join(staging_id));
+    }
+}
+
+/// Habilitar = aprobar el contenido actual (vuelve a calcular el hash).
+pub fn set_enabled(data: &Path, id: &str, enabled: bool) -> Result<(), String> {
+    if !valid_id(id) {
+        return Err("id inválido".into());
+    }
+    let mut st = load_state(data);
+    if enabled {
+        let root = dir(data).join(id);
+        read_manifest(&root)?;
+        st.approved.insert(id.into(), hash(&root)?);
+    } else {
+        st.approved.remove(id);
+    }
+    save_state(data, &st)
+}
+
+pub fn uninstall(data: &Path, id: &str) -> Result<(), String> {
+    if !valid_id(id) {
+        return Err("id inválido".into());
+    }
+    let mut st = load_state(data);
+    st.approved.remove(id);
+    save_state(data, &st)?;
+    fs::remove_dir_all(dir(data).join(id)).map_err(|e| e.to_string())
+}
+
+pub fn read_code(data: &Path, id: &str) -> Result<String, String> {
+    if !valid_id(id) {
+        return Err("id inválido".into());
+    }
+    let root = dir(data).join(id);
+    let m = read_manifest(&root)?;
+    fs::read_to_string(root.join(m.entry)).map_err(|e| e.to_string())
+}
+
+pub fn run(
+    runner: &ScriptRunner,
+    app: AppHandle,
+    data: &Path,
+    id: &str,
+    action: &str,
+    conn: Option<String>,
+) -> Result<String, String> {
+    if !valid_id(id) || !valid_id(action) {
+        return Err("Plugin o acción inválida".into());
+    }
+    let root = dir(data).join(id);
+    let m = read_manifest(&root)?;
+    let st = load_state(data);
+    let approved = st.approved.get(id).ok_or("El plugin está deshabilitado")?;
+    if &hash(&root)? != approved {
+        return Err("El plugin cambió desde que lo aprobaste. Revísalo y vuelve a habilitarlo.".into());
+    }
+    if !m.actions.iter().any(|a| a.id == action) {
+        return Err("Acción no declarada en plugin.json".into());
+    }
+    let allow_session = m.permissions.iter().any(|p| p == "session");
+    runner.run_spec(
+        app,
+        RunSpec {
+            label: m.name.clone(),
+            path: root.join(&m.entry),
+            cwd: root.clone(),
+            conn: if allow_session { conn } else { None },
+            allow_session,
+            env: vec![("NT_ACTION".into(), action.into()), ("NT_PLUGIN_DIR".into(), root.to_string_lossy().into())],
+        },
+        data,
+    )
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn sample(dir: &Path) {
+        fs::create_dir_all(dir).unwrap();
+        fs::write(
+            dir.join("plugin.json"),
+            r#"{"id":"demo","name":"Demo","version":"1.0","permissions":["session"],
+               "actions":[{"id":"run","label":"Ejecutar"}]}"#,
+        )
+        .unwrap();
+        fs::write(dir.join("main.py"), "print('hola')\n").unwrap();
+    }
+
+    #[test]
+    fn install_approve_and_detect_tampering() {
+        let base = std::env::temp_dir().join(format!("nt-plug-{}", std::process::id()));
+        let data = base.join("data");
+        let src = base.join("src");
+        sample(&src);
+        let preview = stage(&data, &src).unwrap();
+        assert_eq!(preview.manifest.id, "demo");
+        assert!(preview.code.contains("hola"));
+        confirm(&data, &preview.staging).unwrap();
+        let l = list(&data);
+        assert!(l[0].enabled && !l[0].tampered);
+        // Modificación posterior -> bloqueado
+        fs::write(data.join("plugins/demo/main.py"), "import os\n").unwrap();
+        let l = list(&data);
+        assert!(!l[0].enabled && l[0].tampered);
+        // Re-aprobar
+        set_enabled(&data, "demo", true).unwrap();
+        assert!(list(&data)[0].enabled);
+        uninstall(&data, "demo").unwrap();
+        assert!(list(&data).is_empty());
+        let _ = fs::remove_dir_all(base);
+    }
+
+    #[test]
+    fn rejects_bad_manifests_and_zip_slip() {
+        let base = std::env::temp_dir().join(format!("nt-plug2-{}", std::process::id()));
+        let src = base.join("bad");
+        sample(&src);
+        fs::write(src.join("plugin.json"), r#"{"id":"../x","name":"x","version":"1","actions":[{"id":"a","label":"a"}]}"#).unwrap();
+        assert!(stage(&base.join("data"), &src).is_err());
+
+        // zip con ruta "../evil.py"
+        let zpath = base.join("evil.zip");
+        let f = fs::File::create(&zpath).unwrap();
+        let mut w = zip::ZipWriter::new(f);
+        w.start_file("../evil.py", zip::write::SimpleFileOptions::default()).unwrap();
+        std::io::Write::write_all(&mut w, b"x").unwrap();
+        w.finish().unwrap();
+        let err = stage(&base.join("data"), &zpath).err().unwrap();
+        assert!(err.contains("peligrosa"), "{err}");
+        assert!(!base.join("data/plugins/evil.py").exists() && !base.join("data/evil.py").exists());
+        let _ = fs::remove_dir_all(base);
+    }
+}

@@ -1,11 +1,12 @@
 import { useEffect, useState } from "react";
 import { invoke } from "@tauri-apps/api/core";
-import { Bot, Check, FolderOpen, Highlighter, Palette, ScrollText, SquareTerminal, X } from "lucide-react";
+import { Blocks, Bot, Check, FolderOpen, Highlighter, Palette, ScrollText, SquareTerminal, X } from "lucide-react";
+import type { ModuleId } from "../lib/settings";
 import { AiSettings } from "./AiSettings";
 import type { ITheme } from "@xterm/xterm";
 import { HighlightSettings } from "./HighlightSettings";
 import { readText, writeText } from "@tauri-apps/plugin-clipboard-manager";
-import { Settings, defaultSettings } from "../lib/settings";
+import { Settings, UpdateInfo, defaultSettings } from "../lib/settings";
 import { Session } from "../types";
 import { TermPreset, fontStack, presets } from "../lib/theme";
 import { isMac } from "../lib/platform";
@@ -22,12 +23,23 @@ interface Props {
   onClose: () => void;
 }
 
-export type Section = "appearance" | "highlight" | "terminal" | "ai" | "data";
+export type Section = "appearance" | "highlight" | "terminal" | "modules" | "ai" | "data";
+
+const MODULES: [ModuleId, string, string][] = [
+  ["monitor", "Monitoreo", "Sondas ICMP/TCP con gráfico y alarma sonora"],
+  ["diag", "Diagnóstico", "Ping continuo, traceroute y verificación de puertos"],
+  ["subnet", "Subredes", "Calculadora IPv4/IPv6 y división de redes"],
+  ["perf", "Velocidad", "Speedtest (Cloudflare) e iperf3"],
+  ["transfer", "TFTP / HTTP", "Servir firmware y recibir respaldos desde equipos"],
+  ["syslog", "Syslog", "Recibir logs de equipos en vivo"],
+  ["plugins", "Plugins", "Extensiones instalables en Python"],
+];
 
 const sections: { id: Section; label: string; Icon: typeof Palette }[] = [
   { id: "appearance", label: "Apariencia", Icon: Palette },
   { id: "highlight", label: "Resaltado", Icon: Highlighter },
   { id: "terminal", label: "Terminal", Icon: SquareTerminal },
+  { id: "modules", label: "Módulos", Icon: Blocks },
   { id: "ai", label: "Agentes IA", Icon: Bot },
   { id: "data", label: "Logs y datos", Icon: ScrollText },
 ];
@@ -232,6 +244,22 @@ export function SettingsModal({
               <HighlightSettings settings={s} theme={termTheme} onChange={onChange} />
             )}
 
+            {section === "modules" && (
+              <>
+                <p className="text-[12px] text-muted">
+                  Muestra u oculta herramientas en la pestaña Herramientas. Desactivar un módulo no borra su configuración.
+                </p>
+                {MODULES.map(([id, label, hint]) => (
+                  <Item key={id} label={label} hint={hint}>
+                    <Switch
+                      checked={s.modules[id] !== false}
+                      onChange={(v) => onChange({ modules: { ...s.modules, [id]: v } })}
+                    />
+                  </Item>
+                ))}
+              </>
+            )}
+
             {section === "ai" && <AiSettings settings={s} status={mcpStatus} onChange={onChange} />}
 
             {section === "terminal" && (
@@ -309,6 +337,7 @@ export function SettingsModal({
                   </div>
                 </Item>
                 {notice && <p className="text-[11.5px] text-accent -mt-2">{notice}</p>}
+                <UpdateSettings settings={s} onChange={onChange} />
                 <Item label="Carpeta de datos" hint={dataDir}>
                   <OpenBtn which="data" />
                 </Item>
@@ -332,6 +361,55 @@ export function SettingsModal({
           </footer>
         </div>
       </div>
+    </div>
+  );
+}
+
+function UpdateSettings({ settings: s, onChange }: { settings: Settings; onChange: (p: Partial<Settings>) => void }) {
+  const [status, setStatus] = useState("");
+  const [busy, setBusy] = useState(false);
+  const [version, setVersion] = useState("");
+  useEffect(() => {
+    invoke<string>("app_version").then(setVersion);
+  }, []);
+  const check = async () => {
+    setBusy(true);
+    setStatus("");
+    try {
+      const u = await invoke<UpdateInfo>("check_update", { repo: s.updateRepo, token: s.updateToken || null });
+      onChange({ updateLastCheck: Date.now(), updateDismissed: "" });
+      setStatus(u.newer ? `Hay una versión nueva: ${u.latest}. Reinicia la app para ver el aviso.` : `Estás al día (${u.latest || u.current}).`);
+    } catch (e) {
+      setStatus(String(e));
+    }
+    setBusy(false);
+  };
+  return (
+    <div className="rounded-lg border border-line p-3 space-y-2.5">
+      <div className="flex items-center justify-between">
+        <div>
+          <div>Actualizaciones</div>
+          <div className="text-[11.5px] text-muted">Versión instalada {version}. Solo avisa; la descarga es manual.</div>
+        </div>
+        <button onClick={check} disabled={busy} className="px-3 h-7 rounded-md border border-line hover:bg-hover disabled:opacity-40">
+          {busy ? "Buscando…" : "Buscar ahora"}
+        </button>
+      </div>
+      <div className="grid grid-cols-2 gap-2">
+        <input className="field !h-7 !text-[12px]" placeholder="dueño/repositorio" value={s.updateRepo} onChange={(e) => onChange({ updateRepo: e.target.value.trim() })} />
+        <input
+          className="field !h-7 !text-[12px] font-mono"
+          type="password"
+          placeholder="Token de GitHub (solo si es privado)"
+          value={s.updateToken}
+          onChange={(e) => onChange({ updateToken: e.target.value.trim() })}
+        />
+      </div>
+      <p className="text-[11px] text-muted">
+        Para un repositorio privado crea un token "fine-grained" con acceso de solo lectura a Contents de ese repositorio, con
+        vencimiento. Se guarda solo en este equipo.
+      </p>
+      {status && <p className="text-[12px] text-accent">{status}</p>}
     </div>
   );
 }

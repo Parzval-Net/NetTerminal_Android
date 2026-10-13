@@ -1,0 +1,182 @@
+//! Comandos de archivo sobre una sesión abierta (listar el flash, copy desde/hacia el
+//! servidor TFTP/HTTP local) respondiendo automáticamente las confirmaciones típicas
+//! del equipo y la paginación "--More--".
+
+use crate::expect;
+use regex::Regex;
+use serde::Serialize;
+use serde_json::json;
+use std::net::{ToSocketAddrs, UdpSocket};
+use std::sync::OnceLock;
+use std::time::{Duration, Instant};
+use tauri::{AppHandle, Emitter, Manager};
+
+#[derive(Serialize, Clone)]
+struct JobEvent {
+    job: String,
+    kind: &'static str,
+    text: String,
+    data: Option<serde_json::Value>,
+}
+
+struct Patterns {
+    more: Regex,
+    prompt: Regex,
+    confirm: Regex,
+    yes_no: Regex,
+    error: Regex,
+}
+
+fn patterns() -> &'static Patterns {
+    static P: OnceLock<Patterns> = OnceLock::new();
+    P.get_or_init(|| Patterns {
+        more: Regex::new(r"(?i)(--\s*more\s*--|-{2,}\s*more\s*-{2,}|\(more\)|press any key)\s*$").unwrap(),
+        // Prompt de Cisco/Arista (Router#), Huawei (<SW> / [SW]), Juniper (user@host>)
+        // y FortiOS ("fw01 #", "fw01 (global) #")
+        prompt: Regex::new(
+            r"(?m)^[\w.\-@()/:~]*[\w)\]>][#>$%]\s*$|^[<\[][\w.\-~/:]+[>\]]\s*$|^[\w.\-]+(?: \([\w\-.]+\))? [#$]\s*$",
+        )
+        .unwrap(),
+        // "Destination filename [ios.bin]?", "[confirm]", "Address or name of remote host []?"
+        confirm: Regex::new(r"(?i)(\[confirm\]|\[[^\]\n]*\]\s*\?)\s*$").unwrap(),
+        // Huawei / H3C: "(y/n)[n]:", "[Y/N]:"
+        yes_no: Regex::new(r"(?i)(\(y/n\)(\[\w\])?|\[y/n\])\s*:?\s*$").unwrap(),
+        error: Regex::new(r"(?im)^\s*(%\s*error|%\s*invalid|error:|.*timed out|.*no such file|.*permission denied|.*not enough space|.*failed)").unwrap(),
+    })
+}
+
+/// Ejecuta un comando en la sesión y transmite su salida. Responde Enter a
+/// confirmaciones con valor por defecto, "y" a preguntas sí/no y espacio a "--More--".
+/// Termina cuando vuelve a aparecer el prompt o vence el plazo.
+pub fn run(app: AppHandle, conn: String, command: String, timeout_secs: u64) -> Result<String, String> {
+    if command.contains(['\r', '\n']) {
+        return Err("Un solo comando por operación".into());
+    }
+    let state = app.state::<crate::AppState>();
+    state.conns.info(&conn).ok_or("La sesión no está conectada")?;
+    let rx = state.conns.tap(&conn).ok_or("La sesión no está conectada")?;
+    let job = uuid::Uuid::new_v4().to_string();
+    let id = job.clone();
+    let deadline = Duration::from_secs(timeout_secs.clamp(5, 7200));
+
+    std::thread::spawn(move || {
+        let emit = |kind: &'static str, text: String, data: Option<serde_json::Value>| {
+            let _ = app.emit("tool-job", JobEvent { job: id.clone(), kind, text, data });
+        };
+        let conns = &app.state::<crate::AppState>().conns;
+        let p = patterns();
+        expect::drain(&rx);
+        if let Err(e) = conns.write(&conn, format!("{command}\r").as_bytes()) {
+            emit("error", e, None);
+            return emit("done", String::new(), None);
+        }
+        let start = Instant::now();
+        let mut output = String::new();
+        let mut tail = String::new(); // texto desde la última respuesta automática
+        let mut answered = 0;
+        loop {
+            if start.elapsed() > deadline {
+                emit("error", "Tiempo agotado esperando al equipo".into(), None);
+                break;
+            }
+            let Ok(chunk) = rx.recv_timeout(Duration::from_millis(500)) else { continue };
+            output.push_str(&chunk);
+            tail.push_str(&chunk);
+            for line in chunk.split('\n').map(str::trim_end).filter(|l| !l.is_empty()) {
+                emit("line", line.to_string(), None);
+            }
+            let t = tail.trim_end_matches([' ', '\t']).to_string();
+            let reply = if p.more.is_match(&t) {
+                Some(" ")
+            } else if p.yes_no.is_match(&t) {
+                Some("y\r")
+            } else if p.confirm.is_match(&t) {
+                Some("\r")
+            } else {
+                None
+            };
+            if let Some(r) = reply {
+                answered += 1;
+                if answered > 200 {
+                    emit("error", "Demasiadas confirmaciones; se detuvo por seguridad".into(), None);
+                    break;
+                }
+                let _ = conns.write(&conn, r.as_bytes());
+                tail.clear();
+                continue;
+            }
+            if finished(p, &output, command.trim()) {
+                break;
+            }
+        }
+        let failed = p.error.is_match(&output);
+        emit("result", String::new(), Some(json!({ "ok": !failed, "output": output })));
+        emit("done", String::new(), None);
+    });
+    Ok(job)
+}
+
+/// El comando terminó si, después de su eco, la última línea es un prompt del equipo.
+/// Si el eco no aparece tal cual (líneas largas que el equipo recorta), se usa toda la
+/// salida, exigiendo al menos un salto de línea.
+fn finished(p: &Patterns, output: &str, command: &str) -> bool {
+    let after = output.find(command).map(|i| &output[i + command.len()..]).unwrap_or(output);
+    if !after.contains('\n') {
+        return false;
+    }
+    let last = after.trim_end_matches([' ', '\t']).rsplit('\n').next().unwrap_or("");
+    p.prompt.is_match(last)
+}
+
+/// IP local que el sistema usaría para llegar a `host` (la que el equipo debe usar
+/// para descargar desde este PC). No envía tráfico: solo consulta la tabla de rutas.
+pub fn source_ip_for(host: &str) -> Result<String, String> {
+    crate::monitor::validate_host(host)?;
+    let addr = (host.trim_matches(['[', ']']), 9)
+        .to_socket_addrs()
+        .map_err(|e| e.to_string())?
+        .find(|a| a.is_ipv4())
+        .ok_or("El host no tiene dirección IPv4")?;
+    let sock = UdpSocket::bind("0.0.0.0:0").map_err(|e| e.to_string())?;
+    sock.connect(addr).map_err(|e| e.to_string())?;
+    Ok(sock.local_addr().map_err(|e| e.to_string())?.ip().to_string())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn recognizes_prompts_and_confirmations() {
+        let p = patterns();
+        assert!(p.confirm.is_match("Destination filename [c2960.bin]?"));
+        assert!(p.confirm.is_match("Do you want to over write? [confirm]"));
+        assert!(p.confirm.is_match("Address or name of remote host [10.0.0.5]? "));
+        assert!(!p.confirm.is_match("copy tftp://10.0.0.5/a.bin flash:"));
+        assert!(p.yes_no.is_match("Are you sure to download file? (y/n)[n]:"));
+        assert!(p.more.is_match(" --More-- "));
+        assert!(p.more.is_match("  ---- More ----"));
+        for prompt in ["Router#", "SW-CORE(config)#", "<HUAWEI>", "[HUAWEI]", "noc@mx01>", "fw01 #"] {
+            assert!(p.prompt.is_match(prompt), "{prompt}");
+        }
+        assert!(!p.prompt.is_match("Accessing tftp://10.0.0.5/ios.bin..."));
+        assert!(p.error.is_match("%Error opening tftp://10.0.0.5/x.bin (Timed out)"));
+        assert!(!p.error.is_match("[OK - 33591768 bytes]"));
+    }
+
+    #[test]
+    fn detects_command_completion() {
+        let p = patterns();
+        let cmd = "dir flash:";
+        assert!(!finished(p, "Router#dir flash:", cmd));
+        assert!(!finished(p, "Router#dir flash:\nDirectory of flash:/\n  1  -rw-  33591768  ios.bin", cmd));
+        assert!(finished(p, "Router#dir flash:\nDirectory of flash:/\n  1  -rw- 1 a.bin\nRouter#", cmd));
+        assert!(finished(p, "<HUAWEI>dir\n  0  -rw-  1  x.cc\n<HUAWEI>", "dir"));
+    }
+
+    #[test]
+    fn source_ip_uses_routing_table() {
+        assert_eq!(source_ip_for("127.0.0.1").unwrap(), "127.0.0.1");
+        assert!(source_ip_for("-x").is_err());
+    }
+}

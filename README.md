@@ -18,6 +18,10 @@ Construido con [Tauri 2](https://tauri.app) (backend en Rust) y xterm.js. Usa el
 | Sesiones | Carpetas y subcarpetas ilimitadas, arrastrar y soltar, menú contextual (conectar todas, nueva sesión aquí, renombrar, duplicar), indicador de sesiones abiertas. |
 | Botones y scripts | Barra de comandos rápidos (texto con `{{variables}}` o script). Scripts Python con API mínima `import netterminal as nt` (`run`, `send`, `wait_for`, `read`), similar a `crt.Screen` de SecureCRT. Incluye ejemplo de respaldo de configuración. |
 | Agentes IA (MCP) | Servidor MCP local para Claude Code, Claude Desktop, Gemini CLI y Codex: listar sesiones, leer salida, ejecutar comandos con aprobación del usuario y modo solo lectura. Apagado por defecto. |
+| Herramientas (⌘E) | Monitoreo ICMP/TCP con gráfico y alarma sonora; ping, traceroute y puertos; calculadora de subredes; speedtest (Cloudflare) e iperf3; Syslog. Cada módulo se activa en Ajustes › Módulos. |
+| Gestor de archivos | Dos paneles PC ↔ equipo sobre la sesión abierta: lista el flash, envía o trae archivos por TFTP/HTTP y respalda la configuración (Cisco, NX-OS, Huawei, Junos). La app escribe el `copy`, responde las confirmaciones y muestra el progreso. |
+| Plugins | Carpeta con `plugin.json` + script Python. Instalación con revisión de permisos y código; se bloquean si sus archivos cambian. |
+| Actualizaciones | Aviso de versión nueva desde GitHub Releases (sin descarga automática). |
 | Compartir | Exportar/importar sesiones y reglas de resaltado como JSON vía portapapeles. |
 | Apariencia | Interfaz en modo sistema, claro u oscuro. 10 temas de terminal (Dracula, Nord, Solarized, Gruvbox, One Dark, Clásico, Fósforo verde, etc.), fuente, tamaño, interlineado y cursor configurables. |
 | Resaltado | Coloreo de salida por regex para Cisco/Arista, Juniper, Huawei/H3C, Fortinet y reglas comunes (IPv4/IPv6, MAC, up/down, permit/deny, contadores de error > 0, syslog por severidad). Perfil por sesión, reglas propias con vista previa e importación/exportación JSON. |
@@ -106,6 +110,24 @@ Auditoría del binario con REA (Ghidra y utilidades nativas de macOS) y revisió
 
 Pendiente para distribución corporativa: firmar con Developer ID + notarización (macOS) y certificado de firma de código (Windows). Sin firma, AppLocker o Intune pueden bloquear la app. Los scripts Python ejecutan código local por diseño: en una carpeta portable compartida, revisa los scripts antes de ejecutarlos.
 
+## Crear un plugin
+
+```
+mi-plugin/
+  plugin.json   {"id","name","version","description","permissions":["session"],"actions":[{"id","label"}]}
+  main.py       import netterminal as nt; os.environ["NT_ACTION"] indica la acción
+```
+
+Permisos: `session` (leer y enviar comandos a la sesión), `network`, `files`. Son declarativos y se muestran al instalar. Ejemplo completo en [plugins/ejemplo-inventario](plugins/ejemplo-inventario).
+
+## Publicar una versión
+
+1. Sube la versión en `package.json`, `src-tauri/Cargo.toml` y `src-tauri/tauri.conf.json`.
+2. `git tag v0.3.1 && git push origin v0.3.1`
+3. El workflow compila los 3 sistemas, crea el Release con instaladores y zip portable, y las apps avisan la versión nueva.
+
+Si el repositorio es privado, cada usuario necesita un token de GitHub de solo lectura (fine-grained, Contents: read) en Ajustes › Logs y datos para recibir el aviso.
+
 ## Desarrollo
 
 Requisitos: Rust estable, Node 20+ y los [prerrequisitos de Tauri](https://tauri.app/start/prerequisites/) de cada sistema operativo (en Linux además `libudev-dev` para serial).
@@ -135,4 +157,7 @@ src-tauri/src/
   telnet.rs               Protocolo Telnet (con tests)
   session_store.rs        Persistencia de sesiones y modo portable
   notes.rs                Notas en texto plano (con tests)
+  monitor.rs, nettools.rs Sondas, traceroute, iperf3, puertos, speedtest
+  servers.rs, filexfer.rs TFTP/HTTP/Syslog y comandos de archivos en equipos
+  plugins.rs, updates.rs  Plugins con verificación SHA-256 y aviso de versiones
 ```

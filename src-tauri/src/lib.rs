@@ -1,6 +1,12 @@
 mod connection;
 mod expect;
+mod filexfer;
+mod updates;
 mod mcp;
+mod monitor;
+mod nettools;
+mod plugins;
+mod servers;
 mod scripts;
 mod models;
 mod notes;
@@ -20,6 +26,9 @@ struct AppState {
     conns: ConnectionManager,
     scripts: scripts::ScriptRunner,
     mcp: mcp::McpServer,
+    monitor: monitor::Monitor,
+    jobs: nettools::Jobs,
+    servers: servers::Servers,
     data_dir: PathBuf,
 }
 
@@ -117,6 +126,9 @@ fn open_dir(which: String, app: tauri::AppHandle, state: State<'_, AppState>) ->
         "logs" => state.logs_dir(),
         "notes" => state.notes_dir(),
         "scripts" => scripts::scripts_dir(&state.data_dir),
+        "tftp" => state.data_dir.join("tftp"),
+        "plugins" => state.data_dir.join("plugins"),
+        "syslog" => state.data_dir.join("syslog"),
         _ => state.data_dir.clone(),
     };
     std::fs::create_dir_all(&dir).map_err(|e| e.to_string())?;
@@ -184,6 +196,199 @@ fn mcp_configure(
 #[tauri::command]
 fn mcp_decide(id: String, approved: bool, state: State<'_, AppState>) {
     state.mcp.decide(&id, approved)
+}
+
+// ---------- Herramientas de red ----------
+
+#[tauri::command]
+fn monitor_start(cfg: monitor::ProbeConfig, app: tauri::AppHandle, state: State<'_, AppState>) -> Result<(), String> {
+    state.monitor.start(app.clone(), cfg)
+}
+
+#[tauri::command]
+fn monitor_stop(id: String, state: State<'_, AppState>) {
+    state.monitor.stop(&id)
+}
+
+#[tauri::command]
+fn monitor_running(state: State<'_, AppState>) -> Vec<String> {
+    state.monitor.running()
+}
+
+#[tauri::command]
+fn tool_traceroute(host: String, app: tauri::AppHandle, state: State<'_, AppState>) -> Result<String, String> {
+    state.jobs.traceroute(app.clone(), &host)
+}
+
+#[tauri::command]
+fn tool_iperf(params: nettools::IperfParams, app: tauri::AppHandle, state: State<'_, AppState>) -> Result<String, String> {
+    state.jobs.iperf(app.clone(), params)
+}
+
+#[tauri::command]
+fn tool_iperf_version() -> Option<String> {
+    nettools::iperf_version()
+}
+
+#[tauri::command]
+fn tool_speedtest(app: tauri::AppHandle, state: State<'_, AppState>) -> Result<String, String> {
+    state.jobs.speedtest(app.clone())
+}
+
+#[tauri::command]
+fn tool_stop(job: String, state: State<'_, AppState>) {
+    state.jobs.stop(&job)
+}
+
+#[tauri::command]
+async fn tool_ports(host: String, ports: Vec<u16>, timeout_ms: u64) -> Result<serde_json::Value, String> {
+    tauri::async_runtime::spawn_blocking(move || {
+        nettools::check_ports(&host, ports, timeout_ms).map(|r| serde_json::to_value(r).unwrap_or_default())
+    })
+    .await
+    .map_err(|e| e.to_string())?
+}
+
+#[tauri::command]
+fn local_ips() -> serde_json::Value {
+    serde_json::to_value(nettools::local_ips()).unwrap_or_default()
+}
+
+#[tauri::command]
+fn server_start(
+    kind: String,
+    port: u16,
+    allow_write: Option<bool>,
+    save: Option<bool>,
+    app: tauri::AppHandle,
+    state: State<'_, AppState>,
+) -> Result<String, String> {
+    let root = state.data_dir.join("tftp");
+    match kind.as_str() {
+        "tftp" => state.servers.start_tftp(app.clone(), root, port, allow_write.unwrap_or(false)),
+        "http" => state.servers.start_http(app.clone(), root, port),
+        "syslog" => state.servers.start_syslog(
+            app.clone(),
+            port,
+            save.unwrap_or(false).then(|| state.data_dir.join("syslog")),
+        ),
+        _ => Err("Servidor desconocido".into()),
+    }
+}
+
+#[tauri::command]
+fn server_stop(kind: String, state: State<'_, AppState>) {
+    state.servers.stop(&kind)
+}
+
+#[tauri::command]
+fn server_running(state: State<'_, AppState>) -> Vec<String> {
+    state.servers.running()
+}
+
+#[tauri::command]
+fn tftp_files(state: State<'_, AppState>) -> Vec<(String, u64)> {
+    let dir = state.data_dir.join("tftp");
+    let _ = std::fs::create_dir_all(&dir);
+    let mut v: Vec<(String, u64)> = std::fs::read_dir(dir)
+        .into_iter()
+        .flatten()
+        .flatten()
+        .filter(|e| e.path().is_file())
+        .map(|e| (e.file_name().to_string_lossy().into_owned(), e.metadata().map(|m| m.len()).unwrap_or(0)))
+        .collect();
+    v.sort();
+    v
+}
+
+/// Copia un archivo elegido por el usuario a la carpeta servida por TFTP/HTTP.
+#[tauri::command]
+fn tftp_add(path: String, state: State<'_, AppState>) -> Result<String, String> {
+    let src = std::path::PathBuf::from(&path);
+    let name = src.file_name().ok_or("Ruta inválida")?.to_owned();
+    let dir = state.data_dir.join("tftp");
+    std::fs::create_dir_all(&dir).map_err(|e| e.to_string())?;
+    std::fs::copy(&src, dir.join(&name)).map_err(|e| e.to_string())?;
+    Ok(name.to_string_lossy().into_owned())
+}
+
+#[tauri::command]
+fn tftp_delete(name: String, state: State<'_, AppState>) -> Result<(), String> {
+    let root = state.data_dir.join("tftp");
+    let path = servers::safe_path(&root, &name).ok_or("Nombre inválido")?;
+    std::fs::remove_file(path).map_err(|e| e.to_string())
+}
+
+#[tauri::command]
+fn device_run(conn: String, command: String, timeout_secs: u64, app: tauri::AppHandle) -> Result<String, String> {
+    filexfer::run(app, conn, command, timeout_secs)
+}
+
+#[tauri::command]
+fn source_ip(host: String) -> Result<String, String> {
+    filexfer::source_ip_for(&host)
+}
+
+#[tauri::command]
+async fn check_update(repo: String, token: Option<String>) -> Result<serde_json::Value, String> {
+    tauri::async_runtime::spawn_blocking(move || {
+        updates::check(&repo, token.as_deref()).map(|u| serde_json::to_value(u).unwrap_or_default())
+    })
+    .await
+    .map_err(|e| e.to_string())?
+}
+
+#[tauri::command]
+fn app_version() -> &'static str {
+    env!("CARGO_PKG_VERSION")
+}
+
+// ---------- Plugins ----------
+
+#[tauri::command]
+fn plugins_list(state: State<'_, AppState>) -> serde_json::Value {
+    serde_json::to_value(plugins::list(&state.data_dir)).unwrap_or_default()
+}
+
+#[tauri::command]
+fn plugin_stage(path: String, state: State<'_, AppState>) -> Result<serde_json::Value, String> {
+    plugins::stage(&state.data_dir, std::path::Path::new(&path)).map(|p| serde_json::to_value(p).unwrap_or_default())
+}
+
+#[tauri::command]
+fn plugin_confirm(staging: String, state: State<'_, AppState>) -> Result<String, String> {
+    plugins::confirm(&state.data_dir, &staging)
+}
+
+#[tauri::command]
+fn plugin_cancel(staging: String, state: State<'_, AppState>) {
+    plugins::cancel(&state.data_dir, &staging)
+}
+
+#[tauri::command]
+fn plugin_set_enabled(id: String, enabled: bool, state: State<'_, AppState>) -> Result<(), String> {
+    plugins::set_enabled(&state.data_dir, &id, enabled)
+}
+
+#[tauri::command]
+fn plugin_uninstall(id: String, state: State<'_, AppState>) -> Result<(), String> {
+    plugins::uninstall(&state.data_dir, &id)
+}
+
+#[tauri::command]
+fn plugin_code(id: String, state: State<'_, AppState>) -> Result<String, String> {
+    plugins::read_code(&state.data_dir, &id)
+}
+
+#[tauri::command]
+fn plugin_run(
+    id: String,
+    action: String,
+    conn: Option<String>,
+    app: tauri::AppHandle,
+    state: State<'_, AppState>,
+) -> Result<String, String> {
+    plugins::run(&state.scripts, app.clone(), &state.data_dir, &id, &action, conn)
 }
 
 #[tauri::command]
@@ -256,6 +461,7 @@ pub fn run() {
     tauri::Builder::default()
         .plugin(tauri_plugin_opener::init())
         .plugin(tauri_plugin_clipboard_manager::init())
+        .plugin(tauri_plugin_dialog::init())
         .on_menu_event(|app, event| {
             if event.id() == "settings" {
                 let _ = app.emit("open-settings", ());
@@ -275,6 +481,9 @@ pub fn run() {
                 conns: ConnectionManager::default(),
                 scripts: scripts::ScriptRunner::default(),
                 mcp: mcp::McpServer::default(),
+                monitor: monitor::Monitor::default(),
+                jobs: nettools::Jobs::default(),
+                servers: servers::Servers::default(),
                 data_dir,
             });
             Ok(())
@@ -304,7 +513,35 @@ pub fn run() {
             run_script,
             stop_script,
             mcp_configure,
-            mcp_decide
+            mcp_decide,
+            monitor_start,
+            monitor_stop,
+            monitor_running,
+            tool_traceroute,
+            tool_iperf,
+            tool_iperf_version,
+            tool_speedtest,
+            tool_stop,
+            tool_ports,
+            local_ips,
+            server_start,
+            server_stop,
+            server_running,
+            tftp_files,
+            tftp_add,
+            tftp_delete,
+            device_run,
+            source_ip,
+            check_update,
+            app_version,
+            plugins_list,
+            plugin_stage,
+            plugin_confirm,
+            plugin_cancel,
+            plugin_set_enabled,
+            plugin_uninstall,
+            plugin_code,
+            plugin_run
         ])
         .run(tauri::generate_context!())
         .expect("error al iniciar NetTerminal");

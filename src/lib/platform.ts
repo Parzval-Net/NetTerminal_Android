@@ -15,6 +15,7 @@ export type AppAction =
   | "settings"
   | "notes"
   | "duplicateTab"
+  | "tools"
   | "palette"
   | "newTab"
   | "closeTab"
@@ -61,6 +62,8 @@ export function shortcutFor(e: KeyboardEvent): AppAction | null {
       return "notes";
     case "d":
       return "duplicateTab";
+    case "e":
+      return "tools";
     case "f":
       return "find";
     default:

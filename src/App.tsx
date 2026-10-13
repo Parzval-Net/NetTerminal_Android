@@ -12,11 +12,15 @@ import { NotesPanel } from "./components/NotesPanel";
 import { TemplateDialog, templateVars } from "./components/TemplateDialog";
 import { compile, effectiveRules } from "./lib/highlight";
 import { allFolders } from "./lib/folders";
+import { ToolsView } from "./components/tools/ToolsView";
+import { useMonitors } from "./lib/monitors";
 import { ButtonBar } from "./components/ButtonBar";
 import { MacroModal } from "./components/MacroModal";
 import { ApprovalDialog, ApprovalRequest } from "./components/ApprovalDialog";
 import type { Section } from "./components/SettingsModal";
-import type { Macro } from "./lib/settings";
+import type { Macro, UpdateInfo } from "./lib/settings";
+import { openUrl } from "@tauri-apps/plugin-opener";
+import { Sparkles, X as XIcon } from "lucide-react";
 import { listen } from "@tauri-apps/api/event";
 import { ConnStatus, Session, Tab, TabState } from "./types";
 import { modLabel, shortcutFor } from "./lib/platform";
@@ -168,11 +172,48 @@ function Workspace({
   }, [openTab, toast]);
 
 
+  const [toolsOpen, setToolsOpen] = useState(false);
+
+  // Aviso de versión nueva: revisa una vez al día, sin descargar nada.
+  const [update_, setUpdate] = useState<UpdateInfo | null>(null);
+  const [showNotes, setShowNotes] = useState(false);
+  useEffect(() => {
+    if (Date.now() - settings.updateLastCheck < 24 * 3600 * 1000 || !settings.updateRepo) return;
+    invoke<UpdateInfo>("check_update", { repo: settings.updateRepo, token: settings.updateToken || null })
+      .then((u) => {
+        update({ updateLastCheck: Date.now() });
+        if (u.newer && u.latest !== settings.updateDismissed) setUpdate(u);
+      })
+      .catch(() => update({ updateLastCheck: Date.now() }));
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+  const lastTermRef = useRef<string | null>(null);
+  useEffect(() => {
+    if (activeId && activeId !== "tools") lastTermRef.current = activeId;
+  }, [activeId]);
+
+  const monitors = useMonitors(settings.monitors, toast);
+
+  const openTools = useCallback(() => {
+    setToolsOpen(true);
+    setActiveId("tools");
+  }, []);
+
   const closeTab = useCallback((id: string) => {
+    if (id === "tools") {
+      setToolsOpen(false);
+      setActiveId((cur) => (cur === "tools" ? lastTermRef.current : cur));
+      return;
+    }
     setTabs((prev) => {
       const idx = prev.findIndex((t) => t.id === id);
       const next = prev.filter((t) => t.id !== id);
-      setActiveId((cur) => (cur === id ? (next[Math.min(idx, next.length - 1)]?.id ?? null) : cur));
+      setActiveId((cur) => {
+        if (cur !== id) return cur;
+        const fallback = next[Math.min(idx, next.length - 1)]?.id ?? null;
+        if (lastTermRef.current === id) lastTermRef.current = fallback;
+        return fallback;
+      });
       return next;
     });
     setStates(({ [id]: _, ...rest }) => rest);
@@ -304,6 +345,8 @@ function Workspace({
           return setSettingsOpen(true);
         case "notes":
           return setNotesOpen((o) => !o);
+        case "tools":
+          return activeId === "tools" ? closeTab("tools") : openTools();
         case "duplicateTab":
           return activeTab && openTab(activeTab.session);
         case "newSession":
@@ -432,6 +475,37 @@ function Workspace({
       )}
 
       <main className="flex-1 min-w-0 flex flex-col">
+        {update_ && (
+          <div className="shrink-0 border-b border-line bg-selected">
+            <div className="flex items-center gap-3 px-3 h-9 text-[12.5px]">
+              <Sparkles size={14} className="text-accent shrink-0" />
+              <span className="flex-1 truncate">
+                Nueva versión <b>{update_.latest}</b> disponible (tienes {update_.current}).
+              </span>
+              {update_.notes && (
+                <button className="text-accent hover:underline" onClick={() => setShowNotes(!showNotes)}>
+                  {showNotes ? "Ocultar novedades" : "Ver novedades"}
+                </button>
+              )}
+              <button className="text-accent font-medium hover:underline" onClick={() => openUrl(update_.url)}>
+                Descargar
+              </button>
+              <button
+                className="text-muted hover:text-fg"
+                title="Omitir esta versión"
+                onClick={() => {
+                  update({ updateDismissed: update_.latest });
+                  setUpdate(null);
+                }}
+              >
+                <XIcon size={14} />
+              </button>
+            </div>
+            {showNotes && (
+              <pre className="px-10 pb-3 max-h-48 overflow-y-auto text-[12px] whitespace-pre-wrap font-sans select-text">{update_.notes}</pre>
+            )}
+          </div>
+        )}
         <TabBar
           tabs={tabs}
           states={states}
@@ -440,6 +514,9 @@ function Workspace({
           onClose={requestClose}
           onNew={newLocal}
           onToggleSidebar={() => setSidebarOpen((o) => !o)}
+          toolsOpen={toolsOpen}
+          onOpenTools={openTools}
+          alerts={monitors.downCount}
         />
 
         <div className="flex-1 min-h-0 flex">
@@ -457,7 +534,31 @@ function Workspace({
               register={register}
             />
           ))}
-          {tabs.length === 0 && <EmptyState onLocal={newLocal} onPalette={() => setPaletteOpen(true)} onNew={() => setModal({})} />}
+          {toolsOpen && (
+            <ToolsView
+              active={activeId === "tools"}
+              settings={settings}
+              update={update}
+              monitors={monitors}
+              connId={() => {
+                const c = lastTermRef.current ? controllers.current.get(lastTermRef.current) : undefined;
+                return c?.isConnected() ? c.connId() : null;
+              }}
+              onConfirm={setConfirm}
+              terminals={tabs
+                .filter((t) => t.session.type !== "local" && states[t.id]?.status === "connected")
+                .map((t) => ({
+                  connId: controllers.current.get(t.id)?.connId() ?? "",
+                  name: t.session.name,
+                  host: t.session.host,
+                  highlight: t.session.highlight,
+                }))
+                .filter((t) => t.connId)}
+            />
+          )}
+          {tabs.length === 0 && activeId !== "tools" && (
+            <EmptyState onLocal={newLocal} onPalette={() => setPaletteOpen(true)} onNew={() => setModal({})} onTools={openTools} />
+          )}
         </div>
         {notesOpen && (
           <NotesPanel
@@ -609,11 +710,22 @@ function Workspace({
   );
 }
 
-function EmptyState({ onLocal, onPalette, onNew }: { onLocal: () => void; onPalette: () => void; onNew: () => void }) {
+function EmptyState({
+  onLocal,
+  onPalette,
+  onNew,
+  onTools,
+}: {
+  onLocal: () => void;
+  onPalette: () => void;
+  onNew: () => void;
+  onTools: () => void;
+}) {
   const items: [string, string, () => void][] = [
     ["Conexión rápida o buscar sesión", `${modLabel}K`, onPalette],
     ["Nueva sesión guardada", `${modLabel}N`, onNew],
     ["Terminal local", `${modLabel}T`, onLocal],
+    ["Herramientas de red", `${modLabel}E`, onTools],
   ];
   return (
     <div className="absolute inset-0 grid place-items-center">

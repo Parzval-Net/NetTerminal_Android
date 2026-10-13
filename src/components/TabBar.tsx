@@ -1,4 +1,4 @@
-import { PanelLeft, Plus, X } from "lucide-react";
+import { PanelLeft, Plus, Wrench, X } from "lucide-react";
 import { ConnStatus, Tab, TabState } from "../types";
 import { SessionIcon } from "./SessionIcon";
 import { modLabel } from "../lib/platform";
@@ -11,6 +11,10 @@ interface Props {
   onClose: (id: string) => void;
   onNew: () => void;
   onToggleSidebar: () => void;
+  toolsOpen: boolean;
+  onOpenTools: () => void;
+  /** Sondas caídas: se muestran en la pestaña de herramientas. */
+  alerts: number;
 }
 
 export const statusColor: Record<ConnStatus, string> = {
@@ -19,7 +23,18 @@ export const statusColor: Record<ConnStatus, string> = {
   closed: "var(--muted)",
 };
 
-export function TabBar({ tabs, states, activeId, onSelect, onClose, onNew, onToggleSidebar }: Props) {
+export function TabBar({
+  tabs,
+  states,
+  activeId,
+  onSelect,
+  onClose,
+  onNew,
+  onToggleSidebar,
+  toolsOpen,
+  onOpenTools,
+  alerts,
+}: Props) {
   return (
     <div className="h-10 shrink-0 flex items-end gap-1 px-1.5 bg-chrome border-b border-line">
       <button
@@ -30,6 +45,34 @@ export function TabBar({ tabs, states, activeId, onSelect, onClose, onNew, onTog
         <PanelLeft size={16} />
       </button>
       <div className="flex-1 min-w-0 flex items-end gap-0.5 overflow-x-auto [scrollbar-width:none]">
+        {toolsOpen && (
+          <div
+            onMouseDown={(e) => {
+              if (e.button === 1) onClose("tools");
+              else onSelect("tools");
+            }}
+            className={`group flex items-center gap-2 h-8 pl-3 pr-1.5 rounded-t-lg text-[12.5px] shrink-0 ${
+              activeId === "tools"
+                ? "bg-bg text-fg border border-line border-b-transparent -mb-px"
+                : "text-muted hover:text-fg hover:bg-hover"
+            }`}
+          >
+            <Wrench size={13} />
+            Herramientas
+            {alerts > 0 && (
+              <span className="px-1.5 rounded-full bg-danger text-white text-[10.5px] font-semibold" title={`${alerts} sondas caídas`}>
+                ✕ {alerts}
+              </span>
+            )}
+            <button
+              onMouseDown={(e) => e.stopPropagation()}
+              onClick={() => onClose("tools")}
+              className="hidden group-hover:grid w-5 h-5 place-items-center rounded text-muted hover:text-fg hover:bg-hover"
+            >
+              <X size={12} />
+            </button>
+          </div>
+        )}
         {tabs.map((t) => {
           const active = t.id === activeId;
           const status = states[t.id]?.status ?? "connecting";
@@ -74,6 +117,18 @@ export function TabBar({ tabs, states, activeId, onSelect, onClose, onNew, onTog
           <Plus size={16} />
         </button>
       </div>
+      {(!toolsOpen || alerts > 0) && (
+        <button
+          onClick={onOpenTools}
+          title={`Herramientas: monitoreo, diagnóstico, TFTP, syslog, plugins (${modLabel}E)`}
+          className={`mb-1.5 h-7 px-2 shrink-0 flex items-center gap-1 rounded-md hover:bg-hover ${
+            alerts > 0 ? "text-danger" : "text-muted hover:text-fg"
+          }`}
+        >
+          <Wrench size={15} />
+          {alerts > 0 && <span className="text-[11px] font-semibold">✕ {alerts}</span>}
+        </button>
+      )}
     </div>
   );
 }

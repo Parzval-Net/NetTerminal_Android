@@ -1,6 +1,18 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import { invoke } from "@tauri-apps/api/core";
 import type { HlRule } from "./highlight";
+import type { MonitorTarget } from "./monitors";
+
+export type ModuleId = "monitor" | "diag" | "subnet" | "perf" | "transfer" | "syslog" | "plugins";
+
+export interface SpeedResult {
+  ts: string;
+  download_mbps: number;
+  upload_mbps: number;
+  latency_ms: number;
+  jitter_ms: number;
+  server?: { colo?: string | null; city?: string | null };
+}
 
 /** Botón de comando rápido: envía texto (con {{variables}}) o ejecuta un script Python. */
 export interface Macro {
@@ -41,6 +53,28 @@ export interface Settings {
   mcpToken: string;
   mcpApproval: boolean;
   mcpReadOnly: boolean;
+  modules: Record<ModuleId, boolean>;
+  monitors: MonitorTarget[];
+  tftpPort: number;
+  httpPort: number;
+  syslogPort: number;
+  tftpAllowWrite: boolean;
+  syslogSave: boolean;
+  speedHistory: SpeedResult[];
+  updateRepo: string;
+  /** Token de GitHub de solo lectura (necesario si el repositorio es privado). */
+  updateToken: string;
+  updateLastCheck: number;
+  updateDismissed: string;
+}
+
+export interface UpdateInfo {
+  current: string;
+  latest: string;
+  newer: boolean;
+  url: string;
+  notes: string;
+  published: string;
 }
 
 export const defaultSettings: Settings = {
@@ -73,6 +107,18 @@ export const defaultSettings: Settings = {
   mcpToken: "",
   mcpApproval: true,
   mcpReadOnly: false,
+  modules: { monitor: true, diag: true, subnet: true, perf: true, transfer: true, syslog: true, plugins: true },
+  monitors: [],
+  tftpPort: 69,
+  httpPort: 8080,
+  syslogPort: 514,
+  tftpAllowWrite: false,
+  syslogSave: false,
+  speedHistory: [],
+  updateRepo: "Parzval-Net/Net_Terminal",
+  updateToken: "",
+  updateLastCheck: 0,
+  updateDismissed: "",
 };
 
 export function newToken(): string {
