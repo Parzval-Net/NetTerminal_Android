@@ -1,4 +1,4 @@
-export type SessionType = "local" | "ssh" | "serial" | "telnet";
+export type SessionType = "local" | "ssh" | "serial" | "telnet" | "raw";
 
 export interface Session {
   id: string;
@@ -20,6 +20,18 @@ export interface Session {
   flow_control?: "none" | "software" | "hardware";
   /** Perfil de resaltado: "default" (según ajustes), "off" o id de fabricante. */
   highlight?: string;
+  /** Comandos que se envían al conectar (uno por línea). */
+  on_connect?: string;
+  /** Qué envía Enter: "cr" (por defecto), "lf" o "crlf". */
+  newline?: "cr" | "lf" | "crlf";
+  local_echo?: boolean;
+  /** Codificación de la salida del equipo. */
+  encoding?: string;
+  auto_reconnect?: boolean;
+  /** Plataforma detectada para el catálogo (ej. "vrp5", "iosxe"). */
+  platform?: string;
+  /** Pestaña temporal de transferencia SCP. */
+  scp?: { upload: boolean; files: string[]; remote_dir: string };
   created_at: string;
 }
 
@@ -54,6 +66,8 @@ export function sessionTarget(s: Session): string {
     }
     case "telnet":
       return `${s.host ?? ""}${s.port && s.port !== 23 ? `:${s.port}` : ""}`;
+    case "raw":
+      return `${s.host ?? ""}:${s.port ?? ""}`;
     case "serial": {
       const parity = (s.parity ?? "none")[0].toUpperCase();
       return `${s.serial_port ?? ""} · ${s.baud_rate ?? 9600} ${s.data_bits ?? 8}${parity}${s.stop_bits ?? 1}`;

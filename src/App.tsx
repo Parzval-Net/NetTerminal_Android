@@ -9,6 +9,13 @@ import { CommandPalette } from "./components/CommandPalette";
 import { SettingsModal } from "./components/SettingsModal";
 import { ConfirmDialog } from "./components/ConfirmDialog";
 import { NotesPanel } from "./components/NotesPanel";
+import { CommandsPanel } from "./components/CommandsPanel";
+import { vendorFor } from "./lib/commands";
+import { Pack, PackCommand, buildCatalog, detectPlatform, riskLabel, validatePack } from "./lib/packs";
+import { builtinPacks } from "./lib/builtinPacks";
+import { runOnDevice } from "./lib/deviceRun";
+import { PacksModal } from "./components/PacksModal";
+import { CommandEditor } from "./components/CommandEditor";
 import { TemplateDialog, templateVars } from "./components/TemplateDialog";
 import { compile, effectiveRules } from "./lib/highlight";
 import { allFolders } from "./lib/folders";
@@ -87,7 +94,7 @@ function Workspace({
     danger?: boolean;
     action: () => void;
   } | null>(null);
-  const [template, setTemplate] = useState<string | null>(null);
+  const [template, setTemplate] = useState<{ text: string; then: (filled: string) => void } | null>(null);
   const [sessions, setSessions] = useState<Session[]>([]);
   const [tabs, setTabs] = useState<Tab[]>([]);
   const [states, setStates] = useState<Record<string, TabState>>({});
@@ -98,7 +105,22 @@ function Workspace({
   const controllers = useRef(new Map<string, TermController>());
 
   useEffect(() => persist("sidebar", sidebarOpen), [sidebarOpen]);
-  const [notesOpen, setNotesOpen] = useState(() => stored("notesOpen", false));
+  const [notesOpen, setNotesOpenRaw] = useState(() => stored("notesOpen", false));
+  const [commandsOpen, setCommandsOpenRaw] = useState(() => stored("commandsOpen", false));
+  useEffect(() => persist("commandsOpen", commandsOpen), [commandsOpen]);
+  // Notas y Comandos comparten el lado derecho: abrir uno cierra el otro.
+  const setNotesOpen = (v: boolean | ((o: boolean) => boolean)) =>
+    setNotesOpenRaw((o) => {
+      const next = typeof v === "function" ? v(o) : v;
+      if (next) setCommandsOpenRaw(false);
+      return next;
+    });
+  const setCommandsOpen = (v: boolean | ((o: boolean) => boolean)) =>
+    setCommandsOpenRaw((o) => {
+      const next = typeof v === "function" ? v(o) : v;
+      if (next) setNotesOpenRaw(false);
+      return next;
+    });
   const [notesWidth, setNotesWidth] = useState(() => stored("notesWidth", 380));
   useEffect(() => persist("notesOpen", notesOpen), [notesOpen]);
   useEffect(() => persist("notesWidth", notesWidth), [notesWidth]);
@@ -173,6 +195,15 @@ function Workspace({
 
 
   const [toolsOpen, setToolsOpen] = useState(false);
+
+  // Pestañas en segundo plano con salida nueva (se limpia al verlas).
+  const [activity, setActivity] = useState<Set<string>>(new Set());
+  const markActivity = useCallback((id: string) => {
+    setActivity((a) => (a.has(id) ? a : new Set(a).add(id)));
+  }, []);
+  useEffect(() => {
+    if (activeId) setActivity((a) => (a.has(activeId) ? new Set([...a].filter((x) => x !== activeId)) : a));
+  }, [activeId]);
 
   // Aviso de versión nueva: revisa una vez al día, sin descargar nada.
   const [update_, setUpdate] = useState<UpdateInfo | null>(null);
@@ -291,8 +322,106 @@ function Workspace({
     }
   };
 
+  // ---------- Catálogo: packs incluidos + packs del usuario ----------
+  const [userPacks, setUserPacks] = useState<Pack[]>([]);
+  const [packsOpen, setPacksOpen] = useState(false);
+  const [cmdEdit, setCmdEdit] = useState<{ vendor: string; initial?: PackCommand } | null>(null);
+  const [detecting, setDetecting] = useState(false);
+
+  const loadPacks = useCallback(() => {
+    invoke<unknown[]>("cmdpacks_list")
+      .then((raw) =>
+        setUserPacks(
+          raw
+            .map((r) => validatePack(r).pack)
+            .filter((p): p is Pack => !!p && !builtinPacks.some((b) => b.id === p.id)),
+        ),
+      )
+      .catch(() => {});
+  }, []);
+  useEffect(loadPacks, [loadPacks]);
+
+  const allPacks = useMemo(() => [...builtinPacks, ...userPacks], [userPacks]);
+  const catalog = useMemo(() => buildCatalog(allPacks, settings.disabledPacks), [allPacks, settings.disabledPacks]);
+
+  /** Guarda la plataforma en la pestaña y, si es una sesión guardada, también en ella. */
+  const setTabPlatform = (tabId: string, platform: string | null) => {
+    const tab = tabs.find((t) => t.id === tabId);
+    if (!tab) return;
+    const session = { ...tab.session, platform: platform ?? undefined };
+    setTabs((ts) => ts.map((t) => (t.id === tabId ? { ...t, session } : t)));
+    if (sessions.some((x) => x.id === session.id)) updateSessions([{ ...sessions.find((x) => x.id === session.id)!, platform: session.platform }]);
+  };
+
+  const detectPlatformNow = async () => {
+    const ctrl = activeCtrl();
+    const vendor = catalog.find((v) => v.id === settings.catalogVendor);
+    if (!ctrl || !activeTab || !vendor?.detectCommand) return toast("Este fabricante no tiene comando de detección", "error");
+    setDetecting(true);
+    try {
+      const output = await runOnDevice(ctrl.connId(), vendor.detectCommand, 30);
+      const found = detectPlatform(vendor, output);
+      if (found) {
+        setTabPlatform(activeTab.id, found.id);
+        toast(`Plataforma detectada: ${found.label}`);
+      } else {
+        // Puede ser otro fabricante: se prueba con los demás.
+        for (const other of catalog.filter((v) => v.id !== vendor.id && v.detectCommand === vendor.detectCommand)) {
+          const p = detectPlatform(other, output);
+          if (p) {
+            update({ catalogVendor: other.id });
+            setTabPlatform(activeTab.id, p.id);
+            toast(`Plataforma detectada: ${other.name} ${p.label}`);
+            return;
+          }
+        }
+        toast("No se reconoció la plataforma; elígela a mano", "error");
+      }
+    } catch (e) {
+      toast(`No se pudo detectar: ${e}`, "error");
+    } finally {
+      setDetecting(false);
+    }
+  };
+
+  /** Agrega, edita o borra un comando en "Mis comandos" del fabricante. */
+  const saveUserCommand = async (vendorId: string, cmd: PackCommand | null, replace?: string) => {
+    const vendor = catalog.find((v) => v.id === vendorId);
+    const id = `user-${vendorId}`;
+    const current = userPacks.find((p) => p.id === id);
+    let commands = (current?.commands ?? []).filter((c) => c.cmd !== (replace ?? cmd?.cmd));
+    if (cmd) commands = [...commands, cmd];
+    const pack: Pack = {
+      format: "netterminal-commands",
+      formatVersion: 1,
+      id,
+      name: `Mis comandos (${vendor?.name ?? vendorId})`,
+      vendor: vendorId,
+      vendorName: vendor?.name ?? vendorId,
+      author: "Usuario",
+      detectCommand: vendor?.detectCommand,
+      platforms: vendor?.platforms ?? [],
+      commands,
+    };
+    try {
+      if (commands.length) await invoke("cmdpack_save", { pack });
+      else await invoke("cmdpack_delete", { id });
+      loadPacks();
+      setCmdEdit(null);
+    } catch (e) {
+      toast(String(e), "error");
+    }
+  };
+
+  /** Abre el catálogo con el fabricante de la sesión activa, si tiene uno definido. */
+  const toggleCommands = () => {
+    if (!commandsOpen && activeTab?.session.highlight && activeTab.session.highlight !== "default")
+      update({ catalogVendor: vendorFor(activeTab.session.highlight) });
+    setCommandsOpen((o) => !o);
+  };
+
   const sendToSession = (text: string) => {
-    if (templateVars(text).length) return setTemplate(text);
+    if (templateVars(text).length) return setTemplate({ text, then: sendResolved });
     sendResolved(text);
   };
 
@@ -345,6 +474,8 @@ function Workspace({
           return setSettingsOpen(true);
         case "notes":
           return setNotesOpen((o) => !o);
+        case "commands":
+          return toggleCommands();
         case "tools":
           return activeId === "tools" ? closeTab("tools") : openTools();
         case "duplicateTab":
@@ -523,6 +654,16 @@ function Workspace({
             if (t) openTab(t.session);
           }}
           onReconnect={(id) => controllers.current.get(id)?.reconnect()}
+          onDisconnect={(id) => controllers.current.get(id)?.disconnect()}
+          onClearScrollback={(id) => controllers.current.get(id)?.clearScrollback()}
+          onResetTerminal={(id) => controllers.current.get(id)?.reset()}
+          onCopyAll={(id) =>
+            controllers.current
+              .get(id)
+              ?.copyAll()
+              .then((n) => toast(`${n} líneas copiadas al portapapeles`))
+          }
+          activity={activity}
         />
 
         <div className="flex-1 min-h-0 flex">
@@ -537,6 +678,7 @@ function Workspace({
               theme={preset.theme}
               onStatus={onStatus}
               onLog={onLog}
+              onActivity={markActivity}
               register={register}
             />
           ))}
@@ -551,6 +693,23 @@ function Workspace({
                 return c?.isConnected() ? c.connId() : null;
               }}
               onConfirm={setConfirm}
+              onOpenSession={openTab}
+              onScp={(req) => {
+                const s = req.session;
+                openTab({
+                  ...s,
+                  id: `scp-${Date.now()}`,
+                  type: "local",
+                  name: `SCP ${req.upload ? "→" : "←"} ${s.name}`,
+                  // Telnet/TCP usan su propio puerto: SCP siempre va por SSH.
+                  port: s.type === "ssh" ? s.port : 22,
+                  highlight: "off",
+                  on_connect: undefined,
+                  auto_reconnect: false,
+                  scp: { upload: req.upload, files: req.files, remote_dir: req.remoteDir },
+                });
+                toast("Pestaña SCP abierta: escribe la contraseña del equipo ahí");
+              }}
               terminals={tabs
                 .filter((t) => t.session.type !== "local" && states[t.id]?.status === "connected")
                 .map((t) => ({
@@ -558,6 +717,7 @@ function Workspace({
                   name: tabTitle(t),
                   host: t.session.host,
                   highlight: t.session.highlight,
+                  session: t.session,
                 }))
                 .filter((t) => t.connId)}
             />
@@ -566,6 +726,43 @@ function Workspace({
             <EmptyState onLocal={newLocal} onPalette={() => setPaletteOpen(true)} onNew={() => setModal({})} onTools={openTools} />
           )}
         </div>
+        {commandsOpen && (
+          <CommandsPanel
+            width={notesWidth}
+            catalog={catalog}
+            vendor={settings.catalogVendor}
+            onVendor={(catalogVendor) => update({ catalogVendor })}
+            platform={activeTab?.session.platform ?? null}
+            onPlatform={(platform) => activeTab && setTabPlatform(activeTab.id, platform)}
+            onDetect={activeConnected ? detectPlatformNow : null}
+            detecting={detecting}
+            favorites={settings.favCommands}
+            onFavorites={(favCommands) => update({ favCommands })}
+            target={activeConnected ? tabTitle(activeTab!) : null}
+            onClose={() => {
+              setCommandsOpen(false);
+              activeCtrl()?.focus();
+            }}
+            onRun={(c, cmd) => {
+              if (c.risk === "read") return sendToSession(cmd);
+              setConfirm({
+                title: c.risk === "disruptive" ? "Este comando puede cortar servicio" : "Este comando cambia configuración o estado",
+                message: `${riskLabel[c.risk]} en ${activeTab ? tabTitle(activeTab) : "la sesión"}:\n\n${cmd}`,
+                label: "Ejecutar",
+                danger: c.risk === "disruptive",
+                action: () => sendToSession(cmd),
+              });
+            }}
+            onType={(cmd) => {
+              const type = (text: string) => activeCtrl()?.type(text);
+              if (templateVars(cmd).length) setTemplate({ text: cmd, then: type });
+              else type(cmd);
+            }}
+            onAdd={(vendor) => setCmdEdit({ vendor })}
+            onEdit={(c) => setCmdEdit({ vendor: settings.catalogVendor, initial: c })}
+            onPacks={() => setPacksOpen(true)}
+          />
+        )}
         {notesOpen && (
           <NotesPanel
             width={notesWidth}
@@ -609,6 +806,7 @@ function Workspace({
             ctrl.focus();
           }}
           onReconnect={() => activeCtrl()?.reconnect()}
+          onDisconnect={() => activeCtrl()?.disconnect()}
           onFind={() => activeCtrl()?.openFind()}
           onSettings={() => setSettingsOpen(true)}
           aiEnabled={settings.mcpEnabled}
@@ -618,6 +816,8 @@ function Workspace({
           }}
           notesOpen={notesOpen}
           onNotes={() => setNotesOpen((o) => !o)}
+          commandsOpen={commandsOpen}
+          onCommands={toggleCommands}
         />
       </main>
 
@@ -699,13 +899,35 @@ function Workspace({
           ))}
         </div>
       )}
+      {packsOpen && (
+        <PacksModal
+          packs={allPacks}
+          disabled={settings.disabledPacks}
+          onToggle={(id, enabled) =>
+            update((s) => ({ disabledPacks: enabled ? s.disabledPacks.filter((x) => x !== id) : [...s.disabledPacks, id] }))
+          }
+          onChanged={loadPacks}
+          onClose={() => setPacksOpen(false)}
+        />
+      )}
+      {cmdEdit && (
+        <CommandEditor
+          vendorName={catalog.find((v) => v.id === cmdEdit.vendor)?.name ?? cmdEdit.vendor}
+          platforms={catalog.find((v) => v.id === cmdEdit.vendor)?.platforms ?? []}
+          initial={cmdEdit.initial}
+          onClose={() => setCmdEdit(null)}
+          onSave={(c) => saveUserCommand(cmdEdit.vendor, c, cmdEdit.initial?.cmd)}
+          onDelete={cmdEdit.initial ? () => saveUserCommand(cmdEdit.vendor, null, cmdEdit.initial!.cmd) : undefined}
+        />
+      )}
       {template !== null && (
         <TemplateDialog
-          text={template}
+          text={template.text}
           onCancel={() => setTemplate(null)}
           onSubmit={(filled) => {
+            const then = template.then;
             setTemplate(null);
-            sendResolved(filled);
+            then(filled);
           }}
         />
       )}

@@ -16,7 +16,12 @@ interface Props {
 }
 
 const BAUDS = [1200, 2400, 4800, 9600, 19200, 38400, 57600, 115200, 230400, 460800, 921600];
-const DEFAULT_PORT: Partial<Record<SessionType, number>> = { ssh: 22, telnet: 23 };
+const DEFAULT_PORT: Partial<Record<SessionType, number>> = { ssh: 22, telnet: 23, raw: 2001 };
+const ENCODINGS: [string, string][] = [
+  ["utf-8", "UTF-8 (por defecto)"],
+  ["iso-8859-1", "ISO-8859-1 (Latin-1, equipos antiguos)"],
+  ["windows-1252", "Windows-1252"],
+];
 
 export function SessionModal({ initial, defaultFolder, folders, onClose, onSave }: Props) {
   const [s, setS] = useState<Session>(
@@ -71,7 +76,7 @@ export function SessionModal({ initial, defaultFolder, folders, onClose, onSave 
     onSave({ ...s, name, folder: normPath(s.folder) || undefined }, connect);
   };
 
-  const remote = s.type === "ssh" || s.type === "telnet";
+  const remote = s.type === "ssh" || s.type === "telnet" || s.type === "raw";
   const win = useDragResize<HTMLFormElement>("sessionWindow");
 
   return (
@@ -97,8 +102,8 @@ export function SessionModal({ initial, defaultFolder, folders, onClose, onSave 
         </header>
 
         <div className="flex-1 min-h-0 overflow-y-auto p-5 space-y-4">
-          <div className="grid grid-cols-4 gap-1 p-1 rounded-lg bg-hover">
-            {(["ssh", "telnet", "serial", "local"] as SessionType[]).map((t) => (
+          <div className="grid grid-cols-5 gap-1 p-1 rounded-lg bg-hover">
+            {(["ssh", "telnet", "serial", "raw", "local"] as SessionType[]).map((t) => (
               <button
                 key={t}
                 type="button"
@@ -316,6 +321,76 @@ export function SessionModal({ initial, defaultFolder, folders, onClose, onSave 
                 </p>
               )}
             </>
+          )}
+
+          {s.type === "raw" && (
+            <p className="text-[11.5px] text-muted">
+              TCP crudo: conexión directa sin negociación Telnet. Útil para servidores de consola (puertos 2001+, 7001+) y
+              equipos que no hablan Telnet.
+            </p>
+          )}
+
+          {s.type !== "local" && (
+            <details className="rounded-lg border border-line" open={!!(s.on_connect || s.local_echo || s.auto_reconnect)}>
+              <summary className="px-3 h-9 flex items-center text-[12.5px] cursor-default">Opciones de terminal</summary>
+              <div className="px-3 pb-3 space-y-3">
+                <Field label="Comandos al conectar (uno por línea)">
+                  <textarea
+                    className="field !h-20 py-2 font-mono !text-[12px] resize-y"
+                    spellCheck={false}
+                    value={s.on_connect ?? ""}
+                    placeholder={"terminal length 0\nshow clock"}
+                    onChange={(e) => set("on_connect", e.target.value || undefined)}
+                  />
+                </Field>
+                <Row>
+                  <Field label="Enter envía">
+                    <select
+                      className="field"
+                      value={s.newline ?? "cr"}
+                      onChange={(e) => set("newline", e.target.value === "cr" ? undefined : (e.target.value as Session["newline"]))}
+                    >
+                      <option value="cr">CR (estándar)</option>
+                      <option value="lf">LF</option>
+                      <option value="crlf">CR+LF</option>
+                    </select>
+                  </Field>
+                  <Field label="Codificación">
+                    <select
+                      className="field"
+                      value={s.encoding ?? "utf-8"}
+                      onChange={(e) => set("encoding", e.target.value === "utf-8" ? undefined : e.target.value)}
+                    >
+                      {ENCODINGS.map(([v, l]) => (
+                        <option key={v} value={v}>
+                          {l}
+                        </option>
+                      ))}
+                    </select>
+                  </Field>
+                </Row>
+                <label className="flex items-center gap-2.5 text-[12.5px]">
+                  <input
+                    type="checkbox"
+                    className="accent-[var(--accent)]"
+                    checked={!!s.auto_reconnect}
+                    onChange={(e) => set("auto_reconnect", e.target.checked || undefined)}
+                  />
+                  Reconectar automáticamente si se corta (reinicios, cable USB)
+                </label>
+                {(s.type === "serial" || s.type === "raw") && (
+                  <label className="flex items-center gap-2.5 text-[12.5px]">
+                    <input
+                      type="checkbox"
+                      className="accent-[var(--accent)]"
+                      checked={!!s.local_echo}
+                      onChange={(e) => set("local_echo", e.target.checked || undefined)}
+                    />
+                    Eco local (mostrar lo que escribes si el equipo no lo devuelve)
+                  </label>
+                )}
+              </div>
+            </details>
           )}
         </div>
 

@@ -1,5 +1,5 @@
 import { useCallback, useState } from "react";
-import { Copy, Pencil, PanelLeft, Plus, RotateCcw, Undo2, Wrench, X } from "lucide-react";
+import { ClipboardCopy, Copy, Eraser, Pencil, PanelLeft, Plus, RefreshCcw, RotateCcw, Undo2, Unplug, Wrench, X } from "lucide-react";
 import { ConnStatus, Tab, TabState, tabTitle } from "../types";
 import { ContextMenu } from "./Sidebar";
 import { SessionIcon } from "./SessionIcon";
@@ -20,6 +20,12 @@ interface Props {
   onRename: (id: string, title: string | undefined) => void;
   onDuplicate: (id: string) => void;
   onReconnect: (id: string) => void;
+  onDisconnect: (id: string) => void;
+  onClearScrollback: (id: string) => void;
+  onResetTerminal: (id: string) => void;
+  onCopyAll: (id: string) => void;
+  /** Pestañas con salida nueva sin ver. */
+  activity: Set<string>;
 }
 
 export const statusColor: Record<ConnStatus, string> = {
@@ -42,6 +48,11 @@ export function TabBar({
   onRename,
   onDuplicate,
   onReconnect,
+  onDisconnect,
+  onClearScrollback,
+  onResetTerminal,
+  onCopyAll,
+  activity,
 }: Props) {
   const [editing, setEditing] = useState<string | null>(null);
   const [menu, setMenu] = useState<{ x: number; y: number; items: [string, React.ReactNode, () => void, boolean?][] } | null>(null);
@@ -117,6 +128,10 @@ export function TabBar({
                     ["Restaurar nombre original", <Undo2 size={13} />, () => onRename(t.id, undefined), !t.title],
                     ["Duplicar", <Copy size={13} />, () => onDuplicate(t.id)],
                     ["Reconectar", <RotateCcw size={13} />, () => onReconnect(t.id)],
+                    ["Desconectar", <Unplug size={13} />, () => onDisconnect(t.id), states[t.id]?.status === "closed"],
+                    ["Copiar toda la salida", <ClipboardCopy size={13} />, () => onCopyAll(t.id)],
+                    ["Limpiar historial", <Eraser size={13} />, () => onClearScrollback(t.id)],
+                    ["Reiniciar terminal", <RefreshCcw size={13} />, () => onResetTerminal(t.id)],
                     ["Cerrar", <X size={13} />, () => onClose(t.id)],
                   ],
                 });
@@ -145,6 +160,11 @@ export function TabBar({
                 />
               ) : (
                 <span className={`truncate flex-1 ${t.title ? "italic" : ""}`}>{tabTitle(t)}</span>
+              )}
+              {activity.has(t.id) && !active && (
+                <span className="text-[10px] font-semibold text-accent shrink-0" title="Salida nueva">
+                  ●
+                </span>
               )}
               <span
                 className="w-1.5 h-1.5 rounded-full shrink-0 group-hover:hidden"

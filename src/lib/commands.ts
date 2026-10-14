@@ -1,0 +1,258 @@
+/**
+ * Catálogo de comandos de uso diario por fabricante. La sintaxis puede variar según
+ * plataforma y versión de software; las variables {{así}} se completan al enviar.
+ *
+ * Riesgo:
+ *  - read: solo consulta.
+ *  - change: cambia configuración o estado (contadores, sesión, debug).
+ *  - disruptive: puede cortar servicio (shutdown, reload, reboot).
+ */
+
+export type Risk = "read" | "change" | "disruptive";
+
+export interface CatalogCommand {
+  cmd: string;
+  desc: string;
+  cat: string;
+  risk: Risk;
+}
+
+export interface Vendor {
+  id: string;
+  name: string;
+  note: string;
+  commands: CatalogCommand[];
+}
+
+const c = (cat: string, risk: Risk, cmd: string, desc: string): CatalogCommand => ({ cat, risk, cmd, desc });
+
+export const CATEGORIES = ["Sistema", "Interfaces", "Capa 2", "Enrutamiento", "Seguridad", "Diagnóstico", "Logs", "Configuración"];
+
+export const vendors: Vendor[] = [
+  {
+    id: "cisco",
+    name: "Cisco",
+    note: "IOS / IOS-XE (Catalyst, ISR, ASR). En NX-OS y Arista la mayoría aplica igual.",
+    commands: [
+      c("Sistema", "read", "show version", "Versión de software, modelo, uptime, imagen de arranque y registro de configuración."),
+      c("Sistema", "read", "show inventory", "PID y número de serie del chasis, módulos y transceivers."),
+      c("Sistema", "read", "show running-config", "Configuración activa en memoria."),
+      c("Sistema", "read", "show running-config | section {{seccion}}", "Solo un bloque de la configuración (ej: interface, router bgp, line vty)."),
+      c("Sistema", "read", "show startup-config", "Configuración guardada que se carga al reiniciar."),
+      c("Sistema", "read", "show processes cpu sorted", "Procesos ordenados por uso de CPU (5 s, 1 min, 5 min)."),
+      c("Sistema", "read", "show processes memory sorted", "Procesos ordenados por uso de memoria."),
+      c("Sistema", "read", "show environment all", "Temperatura, fuentes de poder y ventiladores (Catalyst / IOS-XE)."),
+      c("Sistema", "read", "show clock", "Fecha y hora del equipo; clave para correlacionar logs."),
+      c("Sistema", "read", "show users", "Sesiones de administración activas en el equipo."),
+      c("Sistema", "read", "terminal length 0", "Desactiva la paginación (--More--) solo en la sesión actual."),
+      c("Interfaces", "read", "show ip interface brief", "Resumen de interfaces: IP, estado administrativo y de protocolo."),
+      c("Interfaces", "read", "show interfaces status", "Puertos de switch: estado, VLAN, dúplex, velocidad y tipo."),
+      c("Interfaces", "read", "show interfaces {{interfaz}}", "Detalle de una interfaz: tasas de tráfico, errores, CRC, drops y resets."),
+      c("Interfaces", "read", "show interfaces description", "Descripción y estado de todas las interfaces."),
+      c("Interfaces", "read", "show interfaces counters errors", "Errores por puerto (FCS, alineación, colisiones)."),
+      c("Interfaces", "read", "show interfaces transceiver detail", "Niveles ópticos DOM: temperatura, potencia Tx/Rx y umbrales."),
+      c("Interfaces", "read", "show etherchannel summary", "Estado de port-channels y sus miembros."),
+      c("Interfaces", "change", "clear counters {{interfaz}}", "Reinicia los contadores de la interfaz para medir errores desde cero."),
+      c("Interfaces", "disruptive", "configure terminal\ninterface {{interfaz}}\nshutdown\nend", "Apaga la interfaz. Corta el tráfico que pasa por ella."),
+      c("Interfaces", "change", "configure terminal\ninterface {{interfaz}}\nno shutdown\nend", "Levanta una interfaz apagada administrativamente."),
+      c("Capa 2", "read", "show vlan brief", "VLANs configuradas y puertos de acceso asociados."),
+      c("Capa 2", "read", "show interfaces trunk", "Troncales, VLANs permitidas y activas en cada una."),
+      c("Capa 2", "read", "show mac address-table", "Tabla MAC: dirección, VLAN y puerto."),
+      c("Capa 2", "read", "show mac address-table address {{mac}}", "Ubica una MAC (formato xxxx.xxxx.xxxx) en el switch."),
+      c("Capa 2", "read", "show spanning-tree summary", "Modo STP, root bridges y puertos bloqueados por VLAN."),
+      c("Capa 2", "read", "show spanning-tree vlan {{vlan}}", "Detalle STP de una VLAN: root, costo y rol de cada puerto."),
+      c("Capa 2", "read", "show cdp neighbors detail", "Vecinos Cisco: modelo, IP de gestión, versión y puerto remoto."),
+      c("Capa 2", "read", "show lldp neighbors", "Vecinos LLDP (multivendor) por puerto."),
+      c("Enrutamiento", "read", "show ip route", "Tabla de enrutamiento completa."),
+      c("Enrutamiento", "read", "show ip route {{ip}}", "Ruta usada para llegar a una IP y su origen."),
+      c("Enrutamiento", "read", "show ip route vrf {{vrf}}", "Tabla de enrutamiento de una VRF."),
+      c("Enrutamiento", "read", "show ip protocols", "Protocolos de enrutamiento activos, redes anunciadas y vecinos."),
+      c("Enrutamiento", "read", "show ip ospf neighbor", "Vecinos OSPF y estado de adyacencia (FULL esperado)."),
+      c("Enrutamiento", "read", "show ip bgp summary", "Vecinos BGP, estado y prefijos recibidos."),
+      c("Enrutamiento", "read", "show ip bgp neighbors {{ip}} advertised-routes", "Prefijos que se anuncian a un vecino BGP."),
+      c("Enrutamiento", "read", "show ip arp", "Tabla ARP: IP, MAC e interfaz."),
+      c("Enrutamiento", "read", "show standby brief", "Estado HSRP: activo, standby y prioridad."),
+      c("Enrutamiento", "read", "show vrrp brief", "Estado VRRP por grupo."),
+      c("Seguridad", "read", "show access-lists", "ACLs con contadores de coincidencias por regla."),
+      c("Seguridad", "read", "show ip ssh", "Versión SSH habilitada, timeouts y algoritmos."),
+      c("Seguridad", "read", "show port-security", "Port-security por puerto y violaciones registradas."),
+      c("Seguridad", "read", "show ip dhcp snooping binding", "Asignaciones DHCP aprendidas por snooping."),
+      c("Seguridad", "read", "show crypto isakmp sa", "SAs de fase 1 IPsec (IKEv1)."),
+      c("Seguridad", "read", "show crypto ipsec sa", "SAs de fase 2: túneles, paquetes cifrados y errores."),
+      c("Diagnóstico", "read", "ping {{ip}} source {{interfaz}}", "Ping indicando la interfaz de origen (valida rutas de retorno)."),
+      c("Diagnóstico", "read", "traceroute {{ip}}", "Saltos hasta el destino."),
+      c("Diagnóstico", "read", "show ntp status", "Sincronización NTP y estrato."),
+      c("Diagnóstico", "change", "undebug all", "Detiene todos los debug activos. Úsalo siempre al terminar un debug."),
+      c("Logs", "read", "show logging", "Buffer de logs local y configuración de logging."),
+      c("Logs", "read", "show logging | include {{texto}}", "Logs filtrados por texto (ej: UPDOWN, %SYS)."),
+      c("Logs", "read", "show archive log config all", "Historial de cambios de configuración (requiere archive log config)."),
+      c("Logs", "change", "clear logging", "Vacía el buffer de logs local."),
+      c("Configuración", "change", "configure terminal", "Entra al modo de configuración global."),
+      c("Configuración", "change", "copy running-config startup-config", "Guarda la configuración activa para que persista tras reiniciar."),
+      c("Configuración", "read", "copy running-config tftp://{{ip}}/{{archivo}}", "Respaldo de la configuración a un servidor TFTP."),
+      c("Configuración", "disruptive", "reload in {{minutos}}", "Reinicio programado: red de seguridad antes de un cambio remoto riesgoso."),
+      c("Configuración", "change", "reload cancel", "Cancela un reinicio programado tras confirmar que el cambio funcionó."),
+    ],
+  },
+  {
+    id: "huawei",
+    name: "Huawei",
+    note: "VRP (switches S, routers AR/NE). Muchos comandos aplican igual en H3C Comware.",
+    commands: [
+      c("Sistema", "read", "display version", "Versión de VRP, modelo, uptime y parches."),
+      c("Sistema", "read", "display device", "Tarjetas, módulos y su estado de hardware."),
+      c("Sistema", "read", "display esn", "Número de serie del equipo (ESN)."),
+      c("Sistema", "read", "display elabel", "Etiqueta electrónica: seriales y códigos de cada componente."),
+      c("Sistema", "read", "display current-configuration", "Configuración activa."),
+      c("Sistema", "read", "display current-configuration | include {{texto}}", "Líneas de configuración que contienen un texto."),
+      c("Sistema", "read", "display saved-configuration", "Configuración guardada que se carga al reiniciar."),
+      c("Sistema", "read", "display cpu-usage", "Uso de CPU y procesos principales."),
+      c("Sistema", "read", "display memory-usage", "Uso de memoria."),
+      c("Sistema", "read", "display clock", "Fecha y hora del equipo."),
+      c("Sistema", "read", "display users", "Usuarios conectados al equipo."),
+      c("Sistema", "read", "screen-length 0 temporary", "Desactiva la paginación solo en la sesión actual."),
+      c("Interfaces", "read", "display interface brief", "Resumen de interfaces: estado físico, protocolo y uso de ancho de banda."),
+      c("Interfaces", "read", "display ip interface brief", "Interfaces con IP y su estado."),
+      c("Interfaces", "read", "display interface {{interfaz}}", "Detalle de una interfaz: tráfico, errores CRC y descartes."),
+      c("Interfaces", "read", "display interface description", "Descripción y estado de las interfaces."),
+      c("Interfaces", "read", "display transceiver interface {{interfaz}} verbose", "Niveles ópticos del transceiver: potencia Tx/Rx, temperatura."),
+      c("Interfaces", "read", "display eth-trunk {{id}}", "Estado de un Eth-Trunk y sus miembros."),
+      c("Interfaces", "change", "reset counters interface {{interfaz}}", "Reinicia los contadores de la interfaz."),
+      c("Interfaces", "disruptive", "system-view\ninterface {{interfaz}}\nshutdown\nreturn", "Apaga la interfaz."),
+      c("Interfaces", "change", "system-view\ninterface {{interfaz}}\nundo shutdown\nreturn", "Levanta una interfaz apagada."),
+      c("Capa 2", "read", "display vlan", "VLANs y puertos asociados."),
+      c("Capa 2", "read", "display port vlan", "Modo de cada puerto (access, trunk, hybrid) y VLANs."),
+      c("Capa 2", "read", "display mac-address", "Tabla MAC."),
+      c("Capa 2", "read", "display mac-address {{mac}}", "Ubica una MAC (formato xxxx-xxxx-xxxx)."),
+      c("Capa 2", "read", "display stp brief", "Estado y rol STP de cada puerto."),
+      c("Capa 2", "read", "display lldp neighbor brief", "Vecinos LLDP por puerto."),
+      c("Enrutamiento", "read", "display ip routing-table", "Tabla de enrutamiento."),
+      c("Enrutamiento", "read", "display ip routing-table {{ip}}", "Ruta hacia una IP."),
+      c("Enrutamiento", "read", "display ip routing-table vpn-instance {{vrf}}", "Tabla de una VPN-instance (VRF)."),
+      c("Enrutamiento", "read", "display ospf peer brief", "Vecinos OSPF y estado."),
+      c("Enrutamiento", "read", "display bgp peer", "Vecinos BGP, estado y prefijos recibidos."),
+      c("Enrutamiento", "read", "display arp", "Tabla ARP."),
+      c("Enrutamiento", "read", "display vrrp brief", "Estado VRRP."),
+      c("Seguridad", "read", "display acl all", "ACLs y coincidencias por regla."),
+      c("Seguridad", "read", "display ssh server status", "Estado y parámetros del servidor SSH."),
+      c("Seguridad", "read", "display local-user", "Usuarios locales configurados (sin contraseñas)."),
+      c("Seguridad", "read", "display ike sa", "SAs IKE (fase 1)."),
+      c("Seguridad", "read", "display ipsec sa", "SAs IPsec (fase 2)."),
+      c("Diagnóstico", "read", "ping -a {{ip_origen}} {{ip}}", "Ping con IP de origen definida."),
+      c("Diagnóstico", "read", "tracert {{ip}}", "Saltos hasta el destino."),
+      c("Diagnóstico", "read", "display ntp-service status", "Sincronización NTP."),
+      c("Diagnóstico", "read", "display diagnostic-information", "Información completa para soporte (salida muy extensa)."),
+      c("Logs", "read", "display logbuffer", "Buffer de logs."),
+      c("Logs", "read", "display trapbuffer", "Buffer de traps/alarmas."),
+      c("Configuración", "change", "system-view", "Entra al modo de configuración."),
+      c("Configuración", "change", "save", "Guarda la configuración activa."),
+      c("Configuración", "change", "commit", "Confirma cambios en equipos con configuración en dos fases (VRP8)."),
+      c("Configuración", "read", "tftp {{ip}} put vrpcfg.zip", "Respaldo del archivo de configuración a un servidor TFTP."),
+      c("Configuración", "disruptive", "schedule reboot delay {{tiempo}}", "Reinicio programado (tiempo en formato hh:mm) como red de seguridad antes de un cambio remoto."),
+      c("Configuración", "change", "undo schedule reboot", "Cancela el reinicio programado."),
+    ],
+  },
+  {
+    id: "fortinet",
+    name: "Fortinet",
+    note: "FortiOS (FortiGate). En equipos con VDOM, ejecuta 'config vdom' / 'edit {{vdom}}' o 'config global' según el comando.",
+    commands: [
+      c("Sistema", "read", "get system status", "Versión, número de serie, modo de operación, VDOM y HA."),
+      c("Sistema", "read", "get system performance status", "CPU, memoria, sesiones y tasa de sesiones."),
+      c("Sistema", "read", "get hardware status", "Modelo, CPU, memoria y almacenamiento."),
+      c("Sistema", "read", "get system ha status", "Estado del clúster HA y sincronización."),
+      c("Sistema", "read", "diagnose sys top", "Procesos en tiempo real (q para salir)."),
+      c("Sistema", "read", "show", "Configuración que difiere de los valores por defecto (desde el contexto actual)."),
+      c("Sistema", "read", "show full-configuration", "Configuración completa, incluidos valores por defecto (muy extensa)."),
+      c("Sistema", "change", "config system console\nset output standard\nend", "Desactiva la paginación de la consola (cambio persistente de configuración)."),
+      c("Interfaces", "read", "get system interface physical", "Estado físico, velocidad y dúplex de cada puerto."),
+      c("Interfaces", "read", "show system interface {{puerto}}", "Configuración de una interfaz."),
+      c("Interfaces", "read", "diagnose hardware deviceinfo nic {{puerto}}", "Contadores y errores del puerto físico."),
+      c("Enrutamiento", "read", "get router info routing-table all", "Tabla de enrutamiento activa."),
+      c("Enrutamiento", "read", "get router info routing-table details {{ip}}", "Ruta hacia una IP."),
+      c("Enrutamiento", "read", "get router info bgp summary", "Vecinos BGP y prefijos."),
+      c("Enrutamiento", "read", "get router info ospf neighbor", "Vecinos OSPF."),
+      c("Enrutamiento", "read", "get system arp", "Tabla ARP."),
+      c("Seguridad", "read", "show firewall policy", "Políticas de firewall."),
+      c("Seguridad", "read", "show firewall policy {{id}}", "Detalle de una política."),
+      c("Seguridad", "read", "diagnose sys session stat", "Estadísticas de la tabla de sesiones."),
+      c("Seguridad", "read", "get vpn ipsec tunnel summary", "Túneles IPsec y su estado."),
+      c("Seguridad", "read", "diagnose vpn tunnel list", "Detalle de túneles IPsec: SAs, contadores y errores."),
+      c("Seguridad", "read", "diagnose vpn ike gateway list", "Gateways IKE y estado de fase 1."),
+      c("Diagnóstico", "read", "execute ping {{ip}}", "Ping desde el FortiGate."),
+      c("Diagnóstico", "read", "execute ping-options source {{ip_origen}}", "Define la IP de origen para los próximos execute ping."),
+      c("Diagnóstico", "read", "execute traceroute {{ip}}", "Saltos hasta el destino."),
+      c("Diagnóstico", "read", "diagnose sniffer packet any 'host {{ip}}' 4 {{cantidad}}", "Captura de paquetes en consola con nombre de interfaz (Ctrl+C para detener)."),
+      c(
+        "Diagnóstico",
+        "change",
+        "diagnose debug reset\ndiagnose debug flow filter addr {{ip}}\ndiagnose debug flow show function-name enable\ndiagnose debug enable\ndiagnose debug flow trace start {{cantidad}}",
+        "Traza cómo el firewall procesa el tráfico de una IP (política, NAT, ruta). Detén con: diagnose debug disable.",
+      ),
+      c("Diagnóstico", "change", "diagnose debug disable\ndiagnose debug reset", "Detiene y limpia los debug activos."),
+      c("Configuración", "read", "execute backup config tftp {{archivo}} {{ip}}", "Respaldo de la configuración a un servidor TFTP."),
+      c("Configuración", "change", "config system global\nset hostname {{nombre}}\nend", "Ejemplo de cambio: nombre del equipo (config, set, end)."),
+      c("Configuración", "disruptive", "execute reboot", "Reinicia el equipo."),
+    ],
+  },
+  {
+    id: "juniper",
+    name: "Juniper",
+    note: "Junos (EX, MX, SRX, QFX). Los cambios se aplican con commit; usa commit confirmed en cambios remotos.",
+    commands: [
+      c("Sistema", "read", "show version", "Versión de Junos y modelo."),
+      c("Sistema", "read", "show chassis hardware", "Inventario: módulos, seriales y transceivers."),
+      c("Sistema", "read", "show configuration | display set", "Configuración activa en formato de comandos set."),
+      c("Sistema", "read", "show system uptime", "Uptime y hora del último commit."),
+      c("Sistema", "read", "show system alarms", "Alarmas de sistema activas."),
+      c("Sistema", "read", "show chassis alarms", "Alarmas de chasis activas."),
+      c("Sistema", "read", "show chassis environment", "Temperatura, fuentes y ventiladores."),
+      c("Sistema", "read", "set cli screen-length 0", "Desactiva la paginación solo en la sesión actual."),
+      c("Interfaces", "read", "show interfaces terse", "Resumen de interfaces y estado."),
+      c("Interfaces", "read", "show interfaces {{interfaz}} extensive", "Detalle de una interfaz: errores, drops y estadísticas."),
+      c("Interfaces", "read", "show interfaces descriptions", "Descripción de las interfaces."),
+      c("Interfaces", "read", "show interfaces diagnostics optics {{interfaz}}", "Niveles ópticos del transceiver."),
+      c("Interfaces", "read", "show lacp interfaces", "Estado LACP de los agregados (ae)."),
+      c("Interfaces", "change", "clear interfaces statistics {{interfaz}}", "Reinicia contadores de la interfaz."),
+      c("Capa 2", "read", "show vlans", "VLANs y puertos."),
+      c("Capa 2", "read", "show ethernet-switching table", "Tabla MAC (EX / QFX)."),
+      c("Capa 2", "read", "show lldp neighbors", "Vecinos LLDP."),
+      c("Capa 2", "read", "show spanning-tree bridge", "Estado STP del bridge."),
+      c("Enrutamiento", "read", "show route", "Tabla de enrutamiento."),
+      c("Enrutamiento", "read", "show route {{ip}}", "Ruta hacia una IP."),
+      c("Enrutamiento", "read", "show ospf neighbor", "Vecinos OSPF."),
+      c("Enrutamiento", "read", "show bgp summary", "Vecinos BGP y prefijos."),
+      c("Enrutamiento", "read", "show route advertising-protocol bgp {{ip}}", "Prefijos anunciados a un vecino BGP."),
+      c("Enrutamiento", "read", "show arp no-resolve", "Tabla ARP sin resolver nombres."),
+      c("Seguridad", "read", "show security policies", "Políticas de seguridad (SRX)."),
+      c("Seguridad", "read", "show security flow session", "Sesiones activas (SRX)."),
+      c("Seguridad", "read", "show firewall", "Contadores de filtros de firewall."),
+      c("Seguridad", "read", "show security ike security-associations", "SAs IKE (SRX)."),
+      c("Seguridad", "read", "show security ipsec security-associations", "SAs IPsec (SRX)."),
+      c("Diagnóstico", "read", "ping {{ip}} rapid count 100", "Ping rápido de 100 paquetes."),
+      c("Diagnóstico", "read", "traceroute {{ip}}", "Saltos hasta el destino."),
+      c("Diagnóstico", "read", "monitor traffic interface {{interfaz}}", "Captura de tráfico hacia el plano de control (Ctrl+C para detener)."),
+      c("Logs", "read", "show log messages | last 50", "Últimas 50 líneas del log principal."),
+      c("Logs", "read", "show log messages | match {{texto}}", "Log filtrado por texto."),
+      c("Configuración", "change", "configure", "Entra al modo de configuración."),
+      c("Configuración", "read", "show | compare", "Diferencia entre la configuración candidata y la activa (en modo configuración)."),
+      c("Configuración", "read", "commit check", "Valida la configuración candidata sin aplicarla."),
+      c("Configuración", "change", "commit confirmed {{minutos}}", "Aplica con rollback automático si no confirmas con commit dentro del plazo."),
+      c("Configuración", "change", "commit", "Aplica la configuración candidata."),
+      c("Configuración", "change", "rollback {{n}}", "Carga una configuración anterior como candidata (luego commit)."),
+      c("Configuración", "disruptive", "request system reboot", "Reinicia el equipo."),
+    ],
+  },
+];
+
+export const riskLabel: Record<Risk, string> = {
+  read: "Consulta",
+  change: "Cambia config/estado",
+  disruptive: "Puede cortar servicio",
+};
+
+/** Fabricante sugerido según el resaltado de la sesión. */
+export function vendorFor(highlight?: string): string {
+  if (highlight === "huawei" || highlight === "fortinet" || highlight === "juniper") return highlight;
+  return "cisco";
+}

@@ -25,7 +25,19 @@ export interface TermController {
   isConnected: () => boolean;
   /** Envía texto como si se tecleara; con retardo > 0 lo hace línea a línea. */
   send: (text: string, lineDelayMs: number) => Promise<void>;
+  /** Escribe texto en la sesión sin Enter (para completar antes de ejecutar). */
+  type: (text: string) => void;
+  /** Cierra la conexión dejando la pestaña abierta. */
+  disconnect: () => void;
+  clearScrollback: () => void;
+  reset: () => void;
+  /** Copia todo el historial al portapapeles; devuelve las líneas copiadas. */
+  copyAll: () => Promise<number>;
 }
+
+const NEWLINE = { cr: "\r", lf: "\n", crlf: "\r\n" } as const;
+const RECONNECT_SECS = 5;
+const MAX_RECONNECTS = 30;
 
 interface Props {
   id: string;
@@ -35,12 +47,16 @@ interface Props {
   theme: ITheme;
   onStatus: (id: string, status: ConnStatus) => void;
   onLog: (id: string, path: string | null) => void;
+  /** Llegó salida mientras la pestaña no estaba visible. */
+  onActivity: (id: string) => void;
   register: (id: string, ctrl: TermController | null) => void;
 }
 
 const dim = (s: string) => `\x1b[2m${s}\x1b[0m`;
 
-export function TerminalView({ id, session, active, settings, theme, onStatus, onLog, register }: Props) {
+export function TerminalView({ id, session, active, settings, theme, onStatus, onLog, onActivity, register }: Props) {
+  const activeRef = useRef(active);
+  activeRef.current = active;
   const hostRef = useRef<HTMLDivElement>(null);
   const termRef = useRef<Terminal | null>(null);
   const fitRef = useRef<FitAddon | null>(null);
@@ -115,24 +131,78 @@ export function TerminalView({ id, session, active, settings, theme, onStatus, o
 
     let disposed = false;
     let attempt = 0;
+    // Reconexión automática: se cancela con Esc o al desconectar a mano.
+    let manualClose = false;
+    let retries = 0;
+    let retryTimer: number | undefined;
+    let lastDataAt = 0;
+    let gotData = false;
+
+    const newline = () => NEWLINE[sessionRef.current.newline ?? "cr"];
+
+    const cancelRetry = () => {
+      window.clearTimeout(retryTimer);
+      retryTimer = undefined;
+    };
+
+    /** Envía los "comandos al conectar" cuando el equipo deja de escribir (prompt listo). */
+    const runOnConnect = async (connId: string) => {
+      const lines = (sessionRef.current.on_connect ?? "").split("\n").map((l) => l.trim()).filter(Boolean);
+      if (!lines.length) return;
+      const start = Date.now();
+      while (Date.now() - start < 8000) {
+        await new Promise((r) => setTimeout(r, 200));
+        if (connIdRef.current !== connId || statusRef.current !== "connected") return;
+        if (gotData && Date.now() - lastDataAt > 700) break;
+      }
+      for (const line of lines) {
+        if (disposed || connIdRef.current !== connId || statusRef.current !== "connected") return;
+        await invoke("write", { id: connId, data: line + newline() }).catch(() => {});
+        await new Promise((r) => setTimeout(r, 400));
+      }
+    };
 
     const connect = async () => {
+      cancelRetry();
+      manualClose = false;
+      gotData = false;
       const connId = `${id}#${++attempt}`;
       connIdRef.current = connId;
       setStatus("connecting");
       const s = sessionRef.current;
       if (s.type !== "local") term.write(dim(`Conectando a ${s.name}…\r\n`));
-      const decoder = new TextDecoder();
+      let decoder: TextDecoder;
+      try {
+        decoder = new TextDecoder(s.encoding || "utf-8");
+      } catch {
+        decoder = new TextDecoder();
+      }
       const onData = new Channel<ArrayBuffer>();
       onData.onmessage = (buf) => {
-        if (connIdRef.current === connId) hl.push(decoder.decode(new Uint8Array(buf), { stream: true }));
+        if (connIdRef.current !== connId) return;
+        lastDataAt = Date.now();
+        gotData = true;
+        hl.push(decoder.decode(new Uint8Array(buf), { stream: true }));
+        if (!activeRef.current) onActivity(id);
       };
       const onExit = new Channel<string>();
       onExit.onmessage = (reason) => {
         if (connIdRef.current !== connId) return;
         hl.flush();
         setStatus("closed");
-        term.write(`\r\n${dim(`── ${reason}. Presiona Enter para reconectar ──`)}\r\n`);
+        if (sessionRef.current.scp) {
+          // Transferencia SCP: no se repite con Enter para no sobrescribir por accidente.
+          term.write(`\r\n${dim(`── ${reason}. Transferencia terminada: puedes cerrar esta pestaña ──`)}\r\n`);
+        } else if (!manualClose && sessionRef.current.auto_reconnect && retries < MAX_RECONNECTS) {
+          retries++;
+          term.write(
+            `\r\n${dim(`── ${reason}. Reconectando en ${RECONNECT_SECS} s (intento ${retries}/${MAX_RECONNECTS}) · Enter: ahora · Esc: cancelar ──`)}\r\n`,
+          );
+          retryTimer = window.setTimeout(connect, RECONNECT_SECS * 1000);
+        } else {
+          term.write(`\r\n${dim(`── ${reason}. Presiona Enter para reconectar ──`)}\r\n`);
+        }
+        if (!activeRef.current) onActivity(id);
       };
       try {
         await invoke("connect", {
@@ -149,6 +219,8 @@ export function TerminalView({ id, session, active, settings, theme, onStatus, o
         }
         if (statusRef.current === "connecting") {
           setStatus("connected");
+          retries = 0;
+          runOnConnect(connId);
           if (settingsRef.current.autoLog) {
             invoke<string | null>("set_logging", {
               id: connId,
@@ -162,19 +234,47 @@ export function TerminalView({ id, session, active, settings, theme, onStatus, o
       } catch (err) {
         if (disposed || connIdRef.current !== connId) return;
         setStatus("closed");
-        term.write(`\r\n\x1b[31m${err}\x1b[0m\r\n${dim("── Presiona Enter para reintentar ──")}\r\n`);
+        if (sessionRef.current.auto_reconnect && !manualClose && retries < MAX_RECONNECTS) {
+          retries++;
+          term.write(
+            `\r\n\x1b[31m${err}\x1b[0m\r\n${dim(`── Reintentando en ${RECONNECT_SECS} s (intento ${retries}/${MAX_RECONNECTS}) · Esc: cancelar ──`)}\r\n`,
+          );
+          retryTimer = window.setTimeout(connect, RECONNECT_SECS * 1000);
+        } else {
+          term.write(`\r\n\x1b[31m${err}\x1b[0m\r\n${dim("── Presiona Enter para reintentar ──")}\r\n`);
+        }
       }
+    };
+
+    const disconnect = () => {
+      manualClose = true;
+      cancelRetry();
+      if (statusRef.current === "closed") return;
+      invoke("disconnect", { id: connIdRef.current }).catch(() => {});
+      hl.flush();
+      setStatus("closed");
+      term.write(`\r\n${dim("── Desconectado. Presiona Enter para reconectar ──")}\r\n`);
     };
 
     term.onData((data) => {
       if (statusRef.current === "closed") {
+        if (sessionRef.current.scp) return;
         if (data === "\r") {
           term.write("\r\n");
+          retries = 0;
           connect();
+        } else if (data === "\x1b" && retryTimer !== undefined) {
+          cancelRetry();
+          manualClose = true;
+          term.write(`${dim("── Reconexión cancelada. Enter para reconectar ──")}\r\n`);
         }
         return;
       }
-      if (statusRef.current === "connected") invoke("write", { id: connIdRef.current, data }).catch(() => {});
+      if (statusRef.current !== "connected") return;
+      const s = sessionRef.current;
+      if (s.local_echo) term.write(data.replace(/\r/g, "\r\n").replace(/\x7f/g, "\b \b"));
+      const out = s.newline && s.newline !== "cr" ? data.replace(/\r/g, newline()) : data;
+      invoke("write", { id: connIdRef.current, data: out }).catch(() => {});
     });
 
     term.onResize(({ cols, rows }) => {
@@ -241,17 +341,32 @@ export function TerminalView({ id, session, active, settings, theme, onStatus, o
       getSelection: () => term.getSelection(),
       isConnected: () => statusRef.current === "connected",
       send: async (text, lineDelayMs) => {
-        const data = text.replace(/\r?\n/g, "\r");
+        const data = text.replace(/\r?\n/g, newline());
         if (lineDelayMs <= 0) {
           await invoke("write", { id: connIdRef.current, data });
           return;
         }
-        const lines = data.split(/(?<=\r)/);
+        const lines = data.split(/(?<=\r\n|\r(?!\n)|(?<!\r)\n)/);
         for (const line of lines) {
           if (disposed || statusRef.current !== "connected") break;
           await invoke("write", { id: connIdRef.current, data: line });
           await new Promise((r) => setTimeout(r, lineDelayMs));
         }
+      },
+      type: (text) => {
+        if (statusRef.current === "connected") invoke("write", { id: connIdRef.current, data: text }).catch(() => {});
+        term.focus();
+      },
+      disconnect,
+      clearScrollback: () => term.clear(),
+      reset: () => term.reset(),
+      copyAll: async () => {
+        const buf = term.buffer.active;
+        const lines: string[] = [];
+        for (let i = 0; i < buf.length; i++) lines.push(buf.getLine(i)?.translateToString(true) ?? "");
+        while (lines.length && !lines[lines.length - 1].trim()) lines.pop();
+        await writeText(lines.join("\n"));
+        return lines.length;
       },
     });
 
@@ -260,6 +375,7 @@ export function TerminalView({ id, session, active, settings, theme, onStatus, o
 
     return () => {
       disposed = true;
+      cancelRetry();
       hl.dispose();
       register(id, null);
       observer.disconnect();

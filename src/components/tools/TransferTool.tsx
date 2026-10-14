@@ -5,7 +5,7 @@ import { open } from "@tauri-apps/plugin-dialog";
 import { FilePlus, FolderOpen, RefreshCw } from "lucide-react";
 import { Settings } from "../../lib/settings";
 import { Btn, CopyText, Label, Section, StatusPill, Toggle, fmtBytes } from "./ui";
-import { FileManager, TerminalRef } from "./FileManager";
+import { FileManager, ScpRequest, TerminalRef } from "./FileManager";
 
 interface Transfer {
   id: string;
@@ -27,6 +27,7 @@ export function TransferTool({
   refreshRunning,
   terminals,
   onConfirm,
+  onScp,
 }: {
   settings: Settings;
   running: string[];
@@ -34,6 +35,7 @@ export function TransferTool({
   refreshRunning: () => void;
   terminals: TerminalRef[];
   onConfirm: (req: { title: string; message: string; label: string; danger?: boolean; action: () => void }) => void;
+  onScp: (req: ScpRequest) => void;
 }) {
   const [ips, setIps] = useState<{ name: string; ip: string }[]>([]);
   const [files, setFiles] = useState<[string, number][]>([]);
@@ -104,6 +106,7 @@ export function TransferTool({
           onChange={onChange}
           refreshRunning={refreshRunning}
           onConfirm={onConfirm}
+          onScp={onScp}
         />
       </Section>
 

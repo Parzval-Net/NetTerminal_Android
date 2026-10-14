@@ -3,7 +3,7 @@ import { invoke } from "@tauri-apps/api/core";
 import type { HlRule } from "./highlight";
 import type { MonitorTarget } from "./monitors";
 
-export type ModuleId = "monitor" | "diag" | "subnet" | "perf" | "transfer" | "syslog" | "plugins";
+export type ModuleId = "monitor" | "diag" | "topology" | "subnet" | "perf" | "transfer" | "syslog" | "plugins";
 
 export interface SpeedResult {
   ts: string;
@@ -66,6 +66,11 @@ export interface Settings {
   updateToken: string;
   updateLastCheck: number;
   updateDismissed: string;
+  /** Comandos favoritos del catálogo ("fabricante:comando"). */
+  favCommands: string[];
+  catalogVendor: string;
+  /** Packs de comandos desactivados (incluidos o importados). */
+  disabledPacks: string[];
 }
 
 export interface UpdateInfo {
@@ -107,7 +112,7 @@ export const defaultSettings: Settings = {
   mcpToken: "",
   mcpApproval: true,
   mcpReadOnly: false,
-  modules: { monitor: true, diag: true, subnet: true, perf: true, transfer: true, syslog: true, plugins: true },
+  modules: { monitor: true, diag: true, topology: true, subnet: true, perf: true, transfer: true, syslog: true, plugins: true },
   monitors: [],
   tftpPort: 69,
   httpPort: 8080,
@@ -119,6 +124,9 @@ export const defaultSettings: Settings = {
   updateToken: "",
   updateLastCheck: 0,
   updateDismissed: "",
+  favCommands: [],
+  catalogVendor: "cisco",
+  disabledPacks: [],
 };
 
 export function newToken(): string {

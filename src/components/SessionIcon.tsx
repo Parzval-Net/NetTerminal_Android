@@ -1,4 +1,4 @@
-import { Cable, Globe, Server, SquareTerminal } from "lucide-react";
+import { Cable, Globe, Network, Server, SquareTerminal } from "lucide-react";
 import { SessionType } from "../types";
 
 const icons = {
@@ -6,6 +6,7 @@ const icons = {
   ssh: { Icon: Server, color: "#2fa36b" },
   telnet: { Icon: Globe, color: "#9b6ae0" },
   serial: { Icon: Cable, color: "#d9932b" },
+  raw: { Icon: Network, color: "#4a9fb5" },
 } as const;
 
 export function SessionIcon({ type, size = 14 }: { type: SessionType; size?: number }) {
@@ -18,4 +19,5 @@ export const typeLabel: Record<SessionType, string> = {
   ssh: "SSH",
   telnet: "Telnet",
   serial: "Serial",
+  raw: "TCP",
 };

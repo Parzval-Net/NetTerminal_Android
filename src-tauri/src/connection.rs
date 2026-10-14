@@ -171,6 +171,8 @@ enum Transport {
     Telnet {
         stream: TcpStream,
         shared: Arc<Mutex<TelnetShared>>,
+        /// TCP crudo: sin IAC ni conversión de fin de línea.
+        raw: bool,
     },
     Serial {
         port: Box<dyn serialport::SerialPort>,
@@ -212,9 +214,11 @@ impl ConnectionManager {
         };
 
         let transport = match session.session_type {
+            SessionType::Local if session.scp.is_some() => spawn_pty(scp_command(session)?, cols, rows, &sink)?,
             SessionType::Local => spawn_pty(local_shell(), cols, rows, &sink)?,
             SessionType::Ssh => spawn_pty(ssh_command(session)?, cols, rows, &sink)?,
-            SessionType::Telnet => open_telnet(session, cols, rows, &sink)?,
+            SessionType::Telnet => open_telnet(session, cols, rows, &sink, false)?,
+            SessionType::Raw => open_telnet(session, cols, rows, &sink, true)?,
             SessionType::Serial => open_serial(session, &sink)?,
         };
 
@@ -235,6 +239,7 @@ impl ConnectionManager {
         let conn = map.get_mut(id).ok_or("Sesión no conectada")?;
         let res = match &mut conn.transport {
             Transport::Pty { writer, .. } => writer.write_all(data).and_then(|_| writer.flush()),
+            Transport::Telnet { stream, raw: true, .. } => stream.write_all(data),
             Transport::Telnet { stream, .. } => stream.write_all(&telnet::encode_input(data)),
             Transport::Serial { port, .. } => port.write_all(data).and_then(|_| port.flush()),
         };
@@ -255,7 +260,7 @@ impl ConnectionManager {
                     pixel_height: 0,
                 })
                 .map_err(|e| e.to_string()),
-            Transport::Telnet { stream, shared } => {
+            Transport::Telnet { stream, shared, .. } => {
                 let mut s = shared.lock().unwrap();
                 s.cols = cols;
                 s.rows = rows;
@@ -277,6 +282,7 @@ impl ConnectionManager {
                 thread::sleep(Duration::from_millis(300));
                 port.clear_break().map_err(|e| e.to_string())
             }
+            Transport::Telnet { raw: true, .. } => Err("Break no aplica a conexiones TCP crudas".into()),
             Transport::Telnet { stream, .. } => {
                 (&*stream)
                     .write_all(&[telnet::IAC, telnet::BRK])
@@ -388,6 +394,35 @@ impl ConnectionManager {
 #[cfg(test)]
 mod tests {
     use super::LogWriter;
+
+    #[test]
+    fn builds_safe_scp_commands() {
+        use crate::models::{ScpSpec, Session, SessionType};
+        let mut s: Session = serde_json::from_value(serde_json::json!({
+            "name": "sw", "type": "local", "host": "10.0.0.1", "username": "noc", "port": 22
+        }))
+        .unwrap();
+        s.session_type = SessionType::Local;
+        s.scp = Some(ScpSpec {
+            upload: false,
+            files: vec!["ios.bin".into()],
+            remote_dir: "flash:".into(),
+            local_paths: vec![],
+            local_dir: "/tmp/tftp".into(),
+        });
+        assert!(super::scp_command(&s).is_ok());
+        // Nombres que intentan inyectar opciones o rutas
+        for bad in ["-oProxyCommand=x", "../etc/passwd", "a b"] {
+            s.scp.as_mut().unwrap().files = vec![bad.into()];
+            assert!(super::scp_command(&s).is_err(), "{bad}");
+        }
+        s.scp.as_mut().unwrap().files = vec!["ok.bin".into()];
+        s.scp.as_mut().unwrap().remote_dir = "-F/tmp/x".into();
+        assert!(super::scp_command(&s).is_err());
+        s.scp.as_mut().unwrap().remote_dir = "flash:".into();
+        s.host = Some("-oProxyCommand=sh".into());
+        assert!(super::scp_command(&s).is_err());
+    }
 
     #[test]
     fn rejects_argument_injection() {
@@ -536,6 +571,90 @@ fn ssh_command(s: &Session) -> Result<CommandBuilder, String> {
 
 const SSH_BIN: &str = if cfg!(windows) { "ssh.exe" } else { "ssh" };
 
+/// Versión (mayor, menor) del OpenSSH instalado.
+fn openssh_version() -> Option<(u32, u32)> {
+    static V: std::sync::OnceLock<Option<(u32, u32)>> = std::sync::OnceLock::new();
+    *V.get_or_init(|| {
+        let mut c = std::process::Command::new(SSH_BIN);
+        c.arg("-V");
+        #[cfg(windows)]
+        {
+            use std::os::windows::process::CommandExt;
+            c.creation_flags(0x0800_0000);
+        }
+        let out = c.output().ok()?;
+        let text = String::from_utf8_lossy(&out.stderr).to_string() + &String::from_utf8_lossy(&out.stdout);
+        let v = text.split("OpenSSH_").nth(1)?;
+        let mut it = v.split(|c: char| !c.is_ascii_digit());
+        Some((it.next()?.parse().ok()?, it.next()?.parse().ok()?))
+    })
+}
+
+/// Comando scp para la pestaña de transferencia. Usa las credenciales y opciones SSH de
+/// la sesión (usuario, puerto, jump host, algoritmos legacy); la contraseña se escribe
+/// en la propia pestaña.
+fn scp_command(s: &Session) -> Result<CommandBuilder, String> {
+    let spec = s.scp.as_ref().ok_or("Falta la especificación SCP")?;
+    let host = safe_target(s.host.as_deref().unwrap_or(""), "el host")?;
+    if spec.files.is_empty() {
+        return Err("No hay archivos para copiar".into());
+    }
+    let remote_dir = spec.remote_dir.trim();
+    if remote_dir.starts_with('-') || remote_dir.chars().any(|c| c.is_whitespace() || c.is_control()) {
+        return Err("Carpeta remota inválida".into());
+    }
+    let user = s.username.as_deref().map(str::trim).filter(|u| !u.is_empty());
+    if user.is_some_and(|u| u.starts_with('-') || u.contains(['@', ' ', ':'])) {
+        return Err("Usuario inválido".into());
+    }
+    let remote = |file: &str| -> Result<String, String> {
+        if file.starts_with('-') || file.contains(['/', '\\', ' ']) {
+            return Err(format!("Nombre de archivo inválido: {file}"));
+        }
+        let sep = if remote_dir.is_empty() || remote_dir.ends_with(['/', ':']) { "" } else { "/" };
+        Ok(format!("{}{host}:{remote_dir}{sep}{file}", user.map(|u| format!("{u}@")).unwrap_or_default()))
+    };
+
+    let mut cmd = CommandBuilder::new(if cfg!(windows) { "scp.exe" } else { "scp" });
+    // OpenSSH >= 9 usa SFTP por defecto; el servidor SCP de Cisco IOS solo habla SCP clásico.
+    if openssh_version().is_some_and(|v| v >= (9, 0)) {
+        cmd.arg("-O");
+    }
+    cmd.args(["-o", "ConnectTimeout=15"]);
+    if let Some(port) = s.port.filter(|p| *p != 22 && *p != 23) {
+        cmd.args(["-P", &port.to_string()]);
+    }
+    if let Some(key) = s.identity_file.as_deref().filter(|k| !k.is_empty()) {
+        cmd.args(["-i", key]);
+    }
+    if let Some(jump) = s.jump_host.as_deref().filter(|j| !j.trim().is_empty()) {
+        cmd.args(["-J".to_string(), safe_target(jump, "el jump host")?]);
+    }
+    if s.legacy_ssh.unwrap_or(false) {
+        for opt in legacy_options() {
+            cmd.args(["-o", opt]);
+        }
+    }
+    cmd.arg("--");
+    if spec.upload {
+        if spec.local_paths.len() != spec.files.len() {
+            return Err("Rutas locales no resueltas".into());
+        }
+        cmd.args(&spec.local_paths);
+        let sep = if remote_dir.is_empty() || remote_dir.ends_with(['/', ':']) { "" } else { "/" };
+        cmd.arg(format!("{}{host}:{remote_dir}{sep}", user.map(|u| format!("{u}@")).unwrap_or_default()));
+    } else {
+        if spec.local_dir.is_empty() {
+            return Err("Carpeta local no resuelta".into());
+        }
+        for f in &spec.files {
+            cmd.arg(remote(f)?);
+        }
+        cmd.arg(&spec.local_dir);
+    }
+    Ok(cmd)
+}
+
 /// Algoritmos que OpenSSH deshabilita por defecto pero que equipos antiguos aún exigen.
 /// Solo se piden los que el OpenSSH instalado soporta: si se nombra uno inexistente
 /// (p. ej. ssh-dss en OpenSSH 10), ssh rechaza la conexión completa.
@@ -662,7 +781,7 @@ fn spawn_pty(mut cmd: CommandBuilder, cols: u16, rows: u16, sink: &Sink) -> Resu
 
 // ---------- Telnet ----------
 
-fn open_telnet(s: &Session, cols: u16, rows: u16, sink: &Sink) -> Result<Transport, String> {
+fn open_telnet(s: &Session, cols: u16, rows: u16, sink: &Sink, raw: bool) -> Result<Transport, String> {
     let host = s
         .host
         .as_deref()
@@ -703,6 +822,7 @@ fn open_telnet(s: &Session, cols: u16, rows: u16, sink: &Sink) -> Result<Transpo
                     s.close("Conexión cerrada por el host remoto");
                     break;
                 }
+                Ok(n) if raw => s.push(&buf[..n]),
                 Ok(n) => {
                     let (data, reply) = parser.feed(&buf[..n], &sh);
                     if !reply.is_empty() {
@@ -718,7 +838,7 @@ fn open_telnet(s: &Session, cols: u16, rows: u16, sink: &Sink) -> Result<Transpo
         }
     });
 
-    Ok(Transport::Telnet { stream, shared })
+    Ok(Transport::Telnet { stream, shared, raw })
 }
 
 // ---------- Serial ----------

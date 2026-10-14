@@ -10,6 +10,7 @@ Construido con [Tauri 2](https://tauri.app) (backend en Rust) y xterm.js. Usa el
 | --- | --- |
 | SSH | Usa el OpenSSH del sistema: respeta `~/.ssh/config`, agente, llaves y `known_hosts`. Jump host (ProxyJump) y opción de algoritmos legacy para equipos antiguos. La contraseña nunca se guarda. |
 | Telnet | Cliente nativo en Rust (negociación ECHO, SGA, tipo de terminal y tamaño de ventana). No requiere `telnet` instalado. |
+| TCP crudo | Conexión TCP directa sin negociación Telnet, para servidores de consola (puertos 2001+). |
 | Serial | Puertos detectados automáticamente, 1200 a 921600 baudios, 8N1/7E1, control de flujo, envío de Break. |
 | Terminal | Pestañas que mantienen la sesión al cambiar, reconexión con Enter, búsqueda en la salida, copiar al seleccionar y pegar con clic derecho, zoom de fuente. |
 | Notas | Panel lateral con notas en `.txt` (autoguardado, resaltado por fabricante). Envía la línea, la selección o todo a la sesión activa (con confirmación y pausa por línea opcional) y captura texto de la terminal. |
@@ -18,8 +19,12 @@ Construido con [Tauri 2](https://tauri.app) (backend en Rust) y xterm.js. Usa el
 | Sesiones | Carpetas y subcarpetas ilimitadas, arrastrar y soltar, menú contextual (conectar todas, nueva sesión aquí, renombrar, duplicar), indicador de sesiones abiertas. |
 | Botones y scripts | Barra de comandos rápidos (texto con `{{variables}}` o script). Scripts Python con API mínima `import netterminal as nt` (`run`, `send`, `wait_for`, `read`), similar a `crt.Screen` de SecureCRT. Incluye ejemplo de respaldo de configuración. |
 | Agentes IA (MCP) | Servidor MCP local para Claude Code, Claude Desktop, Gemini CLI y Codex: listar sesiones, leer salida, ejecutar comandos con aprobación del usuario y modo solo lectura. Apagado por defecto. |
+| Topología | Diagrama de vecinos CDP/LLDP, seguimiento de rutas salto a salto y exportación a SVG, CSV o Mermaid. |
+| Comandos (⌘L) | Catálogo de 1.194 comandos verificados con fuente oficial: Cisco (IOS, IOS-XE, NX-OS, IOS-XR, ASA), Juniper (Junos, Evolved, EX sin ELS), Fortinet (FortiOS 6.4 a 7.6), Huawei (VRP5, VRP8, YunShan OS en AR5700/AR6700/AR8000), Check Point (R80.40 a R82, clish y expert) y WatchGuard (Fireware 12.x y 2025+). Sintaxis por plataforma detectada, nivel de riesgo, favoritos, comandos propios y packs importables. |
+| Opciones por sesión | Comandos al conectar, reconexión automática, Enter como CR/LF/CRLF, eco local y codificación (UTF-8, Latin-1, Windows-1252). |
+| Pestañas | Renombrar, desconectar sin cerrar, copiar toda la salida, limpiar historial, reiniciar terminal e indicador de actividad en segundo plano. |
 | Herramientas (⌘E) | Monitoreo ICMP/TCP con gráfico y alarma sonora; ping, traceroute y puertos; calculadora de subredes; speedtest (Cloudflare) e iperf3; Syslog. Cada módulo se activa en Ajustes › Módulos. |
-| Gestor de archivos | Dos paneles PC ↔ equipo sobre la sesión abierta: lista el flash, envía o trae archivos por TFTP/HTTP y respalda la configuración (Cisco, NX-OS, Huawei, Junos). La app escribe el `copy`, responde las confirmaciones y muestra el progreso. |
+| Gestor de archivos | Dos paneles PC ↔ equipo sobre la sesión abierta: lista el flash, envía o trae archivos por TFTP/HTTP y respalda la configuración (Cisco, NX-OS, Huawei, Junos). La app escribe el `copy`, responde las confirmaciones y muestra el progreso. También por SCP cifrado (pestaña donde escribes la contraseña), con verificación MD5 automática del firmware enviado y aviso de espacio insuficiente. |
 | Plugins | Carpeta con `plugin.json` + script Python. Instalación con revisión de permisos y código; se bloquean si sus archivos cambian. |
 | Actualizaciones | Aviso de versión nueva desde GitHub Releases (sin descarga automática). |
 | Compartir | Exportar/importar sesiones y reglas de resaltado como JSON vía portapapeles. |
@@ -32,6 +37,7 @@ Construido con [Tauri 2](https://tauri.app) (backend en Rust) y xterm.js. Usa el
 | --- | --- | --- |
 | Ajustes | ⌘, | Ctrl+, |
 | Notas | ⌘J | Ctrl+Shift+J |
+| Catálogo de comandos | ⌘L | Ctrl+Shift+L |
 | Duplicar pestaña | ⌘D | Ctrl+Shift+D |
 | Enviar línea o selección / todo (en Notas) | ⌘↵ / ⌘⇧↵ | Ctrl+Enter / Ctrl+Shift+Enter |
 | Buscar sesión / conexión rápida | ⌘K | Ctrl+Shift+K |
@@ -109,6 +115,47 @@ Auditoría del binario con REA (Ghidra y utilidades nativas de macOS) y revisió
 | Notas y scripts: nombres saneados, sin rutas fuera de su carpeta | Con tests |
 
 Pendiente para distribución corporativa: firmar con Developer ID + notarización (macOS) y certificado de firma de código (Windows). Sin firma, AppLocker o Intune pueden bloquear la app. Los scripts Python ejecutan código local por diseño: en una carpeta portable compartida, revisa los scripts antes de ejecutarlos.
+
+## Packs de comandos
+
+El catálogo (⌘L) combina los packs incluidos (investigados con fuentes oficiales, con variantes por plataforma y versión) con packs que cada usuario puede crear, importar y compartir.
+
+- **Plataforma:** el botón "Detectar" ejecuta `show version` / `display version` / `get system status` en la sesión y ajusta la sintaxis (por ejemplo IOS-XE frente a NX-OS, FortiOS 6.4 frente a 7.x).
+- **Mis comandos:** "+ Propio" agrega comandos a un pack personal por fabricante.
+- **Seguridad:** un pack es solo JSON y nunca se ejecuta al importarlo. La app recalcula el riesgo de cada comando y usa el mayor entre el declarado y el calculado.
+
+Formato mínimo:
+
+```json
+{
+  "format": "netterminal-commands",
+  "formatVersion": 1,
+  "id": "mi-equipo-campus",
+  "name": "Campus: comandos frecuentes",
+  "vendor": "cisco",
+  "vendorName": "Cisco",
+  "version": "1.0.0",
+  "author": "Equipo de redes",
+  "platforms": [{ "id": "iosxe", "label": "IOS-XE", "detect": "IOS[ -]XE" }],
+  "commands": [
+    {
+      "cmd": "show interfaces {{interfaz}} | include rate",
+      "desc": "Tasas de entrada y salida de la interfaz.",
+      "cat": "Interfaces",
+      "risk": "read",
+      "platforms": ["iosxe"],
+      "variants": [{ "platforms": ["nxos"], "cmd": "show interface {{interfaz}} | include rate" }],
+      "source": "https://www.cisco.com/..."
+    }
+  ]
+}
+```
+
+Categorías: Sistema, Hardware, Interfaces, Capa 2, Enrutamiento, MPLS / VPN, Seguridad, Alta disponibilidad, QoS, Diagnóstico, Logs, Configuración. Riesgo: `read`, `change` o `disruptive`.
+
+## Topología CDP / LLDP
+
+Herramientas › Topología lee los vecinos del equipo conectado y dibuja el diagrama. Para seguir una ruta, selecciona un vecino y usa "Conectar y seguir la ruta": se abre una sesión SSH con tus mismos datos (la contraseña la escribes tú) y al volver pulsas "Descubrir vecinos". Exporta a SVG, CSV o Mermaid para documentar.
 
 ## Crear un plugin
 

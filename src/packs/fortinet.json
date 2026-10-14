@@ -1,0 +1,1717 @@
+{
+  "vendor": "fortinet",
+  "name": "Fortinet",
+  "platforms": [
+    {
+      "id": "fos64",
+      "label": "FortiOS 6.4",
+      "detect": "Version:\\s*\\S+\\s+v6\\.4\\.",
+      "note": "SD-WAN en diagnose usa virtual-wan-link. IKE debug con log-filter dst-addr4."
+    },
+    {
+      "id": "fos70",
+      "label": "FortiOS 7.0",
+      "detect": "Version:\\s*\\S+\\s+v7\\.0\\.",
+      "note": "Diagnose SD-WAN pasa a diagnose sys sdwan. ZTNA disponible."
+    },
+    {
+      "id": "fos72",
+      "label": "FortiOS 7.2",
+      "detect": "Version:\\s*\\S+\\s+v7\\.2\\.",
+      "note": "Sin cambios mayores de sintaxis respecto de 7.0 en este pack."
+    },
+    {
+      "id": "fos74",
+      "label": "FortiOS 7.4",
+      "detect": "Version:\\s*\\S+\\s+v7\\.4\\.",
+      "note": "IKE debug pasa a log filter rem-addr4; desde 7.4.4 sdwan service4/service6."
+    },
+    {
+      "id": "fos76",
+      "label": "FortiOS 7.6",
+      "detect": "Version:\\s*\\S+\\s+v7\\.6\\.",
+      "note": "LLDP RX pasa a diagnose lldp rx; SSL-VPN túnel retirado en 7.6.3+."
+    }
+  ],
+  "detectCommand": "get system status",
+  "commands": [
+    {
+      "cmd": "get system status",
+      "desc": "Muestra versión de FortiOS, build, número de serie, modo de operación, estado de VDOM y HA. Es el punto de partida de cualquier troubleshooting.",
+      "cat": "Sistema",
+      "risk": "read",
+      "source": "https://docs.fortinet.com/document/fortigate/7.4.9/cli-reference"
+    },
+    {
+      "cmd": "get system performance status",
+      "desc": "Resume uso de CPU por núcleo, memoria, sesiones activas, tasa de sesiones nuevas y uptime.",
+      "cat": "Sistema",
+      "risk": "read",
+      "source": "https://docs.fortinet.com/document/fortigate/7.2.5/administration-guide/816062"
+    },
+    {
+      "cmd": "diagnose sys top 2 20",
+      "desc": "Lista los 20 procesos con mayor consumo de CPU, refrescando cada 2 segundos. Se detiene con la tecla q.",
+      "cat": "Sistema",
+      "risk": "read",
+      "note": "Detener con q. Shift+M ordena por memoria y Shift+P por CPU.",
+      "source": "https://docs.fortinet.com/document/fortigate/7.2.5/administration-guide/816062"
+    },
+    {
+      "cmd": "diagnose sys top-mem",
+      "desc": "Lista los procesos que más memoria consumen. Clave para identificar el daemon responsable cuando el equipo entra en conserve mode.",
+      "cat": "Sistema",
+      "risk": "read",
+      "source": "https://community.fortinet.com/t5/FortiGate/Technical-Tip-CLI-command-diagnose-sys-top-mem/ta-p/213712"
+    },
+    {
+      "cmd": "diagnose sys top-summary",
+      "desc": "Vista resumida de procesos agrupados por daemon con CPU y memoria acumulada.",
+      "cat": "Sistema",
+      "risk": "read",
+      "note": "Sintaxis no confirmada en documentación oficial para todas las versiones; verificar en tu versión.",
+      "source": "https://docs.fortinet.com/document/fortigate/7.2.5/administration-guide/816062"
+    },
+    {
+      "cmd": "diagnose sys mpstat 2",
+      "desc": "Muestra la carga por núcleo de CPU, separando usuario, sistema, softirq e idle. Útil para detectar un core saturado.",
+      "cat": "Sistema",
+      "risk": "read",
+      "note": "Detener con Ctrl+C. Sintaxis no confirmada en documentación oficial para todas las versiones; verificar en tu versión.",
+      "source": "https://docs.fortinet.com/document/fortigate/7.2.5/administration-guide/816062"
+    },
+    {
+      "cmd": "diagnose sys session stat",
+      "desc": "Estadísticas de la tabla de sesiones: total, efímeras, clash, memory tension drops y contador flush.",
+      "cat": "Sistema",
+      "risk": "read",
+      "source": "https://community.fortinet.com/fortigate-3/troubleshooting-tip-fortigate-session-table-information-98621"
+    },
+    {
+      "cmd": "diagnose sys session full-stat",
+      "desc": "Estadísticas extendidas de la tabla de sesiones, incluyendo distribución por estado.",
+      "cat": "Sistema",
+      "risk": "read",
+      "note": "Sintaxis no confirmada en documentación oficial para todas las versiones; verificar en tu versión.",
+      "source": "https://community.fortinet.com/fortigate-3/troubleshooting-tip-fortigate-session-table-information-98621"
+    },
+    {
+      "cmd": "diagnose autoupdate versions",
+      "desc": "Muestra versiones de motores y bases de firmas FortiGuard (AV, IPS, App Control, etc.) y fecha de última actualización.",
+      "cat": "Sistema",
+      "risk": "read",
+      "source": "https://docs.fortinet.com/document/fortigate/7.4.9/cli-reference"
+    },
+    {
+      "cmd": "execute update-now",
+      "desc": "Fuerza una actualización inmediata de firmas FortiGuard.",
+      "cat": "Sistema",
+      "risk": "change",
+      "source": "https://docs.fortinet.com/document/fortigate/7.4.9/cli-reference"
+    },
+    {
+      "cmd": "diagnose sys ntp status",
+      "desc": "Estado de sincronización NTP y servidores consultados.",
+      "cat": "Sistema",
+      "risk": "read",
+      "source": "https://docs.fortinet.com/document/fortigate/7.4.9/cli-reference"
+    },
+    {
+      "cmd": "execute date",
+      "desc": "Muestra la fecha del sistema.",
+      "cat": "Sistema",
+      "risk": "read",
+      "note": "Con un argumento (aaaa-mm-dd) cambia la fecha del equipo.",
+      "source": "https://docs.fortinet.com/document/fortigate/7.4.9/cli-reference"
+    },
+    {
+      "cmd": "execute time",
+      "desc": "Muestra la hora del sistema.",
+      "cat": "Sistema",
+      "risk": "read",
+      "note": "Con un argumento (hh:mm:ss) cambia la hora del equipo.",
+      "source": "https://docs.fortinet.com/document/fortigate/7.4.9/cli-reference"
+    },
+    {
+      "cmd": "get system admin list",
+      "desc": "Lista los administradores conectados, su perfil, origen y tipo de sesión (SSH, GUI, consola).",
+      "cat": "Sistema",
+      "risk": "read",
+      "source": "https://docs.fortinet.com/document/fortigate/7.4.9/cli-reference"
+    },
+    {
+      "cmd": "diagnose debug crashlog read",
+      "desc": "Lee el crashlog del equipo para identificar caídas de procesos (signal 11, etc.).",
+      "cat": "Sistema",
+      "risk": "read",
+      "source": "https://docs.fortinet.com/document/fortigate/7.2.5/administration-guide/816062"
+    },
+    {
+      "cmd": "execute tac report",
+      "desc": "Genera el reporte completo de diagnóstico que solicita el TAC de Fortinet.",
+      "cat": "Sistema",
+      "risk": "read",
+      "note": "Salida muy extensa y costosa en CPU. Fortinet recomienda evitarlo con el equipo en conserve mode.",
+      "source": "https://community.fortinet.com/fortigate-3/troubleshooting-tip-how-to-do-initial-troubleshooting-of-high-memory-utilization-issues-conserve-mode-96838"
+    },
+    {
+      "cmd": "diagnose sys vd list",
+      "desc": "Lista los VDOM con su índice, modo de operación y estado. Requiere contexto global.",
+      "cat": "Sistema",
+      "risk": "read",
+      "note": "En equipos con VDOM ejecutar dentro de config global.",
+      "source": "https://docs.fortinet.com/document/fortigate/7.4.9/cli-reference"
+    },
+    {
+      "cmd": "config global",
+      "desc": "Entra al contexto global en equipos con VDOM habilitado, necesario para comandos de sistema, HA y hardware.",
+      "cat": "Sistema",
+      "risk": "read",
+      "note": "Salir con end. No cambia configuración por sí solo.",
+      "source": "https://community.fortinet.com/fortigate-3/troubleshooting-tip-fortios-routing-rip-ospf-bgp-static-routes-ecmp-99981"
+    },
+    {
+      "cmd": "config vdom\nedit {{vdom}}",
+      "desc": "Entra al contexto de un VDOM específico para ejecutar comandos de routing, políticas o sesiones de ese VDOM.",
+      "cat": "Sistema",
+      "risk": "read",
+      "note": "Salir con end. Si el VDOM no existe, edit lo crea: revisar el nombre antes de ejecutar.",
+      "source": "https://community.fortinet.com/fortigate-3/troubleshooting-tip-fortios-routing-rip-ospf-bgp-static-routes-ecmp-99981"
+    },
+    {
+      "cmd": "get system global",
+      "desc": "Muestra parámetros globales: hostname, timezone, timeouts de admin, puertos de gestión y opciones de seguridad.",
+      "cat": "Sistema",
+      "risk": "read",
+      "source": "https://docs.fortinet.com/document/fortigate/7.4.9/cli-reference"
+    },
+    {
+      "cmd": "get hardware status",
+      "desc": "Modelo, ASIC, CPU, RAM, tamaño de flash/disco y dirección MAC base.",
+      "cat": "Hardware",
+      "risk": "read",
+      "source": "https://docs.fortinet.com/document/fortigate/7.4.9/cli-reference"
+    },
+    {
+      "cmd": "get hardware memory",
+      "desc": "Detalle de memoria del kernel (MemTotal, MemFree, Cached).",
+      "cat": "Hardware",
+      "risk": "read",
+      "source": "https://docs.fortinet.com/document/fortigate/7.4.9/cli-reference"
+    },
+    {
+      "cmd": "get hardware cpu",
+      "desc": "Información del procesador: modelo, núcleos y flags.",
+      "cat": "Hardware",
+      "risk": "read",
+      "source": "https://docs.fortinet.com/document/fortigate/7.4.9/cli-reference"
+    },
+    {
+      "cmd": "diagnose hardware sysinfo memory",
+      "desc": "Uso de memoria desde la perspectiva del kernel, incluyendo memoria freeable.",
+      "cat": "Hardware",
+      "risk": "read",
+      "note": "Sintaxis no confirmada en documentación oficial para todas las versiones; verificar en tu versión.",
+      "source": "https://docs.fortinet.com/document/fortigate/6.2.0/cookbook/194558"
+    },
+    {
+      "cmd": "diagnose hardware sysinfo conserve",
+      "desc": "Estado de memory conserve mode y umbrales green, red y extreme.",
+      "cat": "Hardware",
+      "risk": "read",
+      "note": "Fortinet lo marca como legacy pero sigue operativo en 7.x.",
+      "source": "https://docs.fortinet.com/document/fortigate/6.2.0/cookbook/194558"
+    },
+    {
+      "cmd": "diagnose hardware sysinfo shm",
+      "desc": "Estado de memoria compartida y si el sistema está en conserve mode.",
+      "cat": "Hardware",
+      "risk": "read",
+      "note": "Sintaxis no confirmada en documentación oficial para todas las versiones; verificar en tu versión.",
+      "source": "https://community.fortinet.com/fortigate-3/troubleshooting-tip-how-to-do-initial-troubleshooting-of-high-memory-utilization-issues-conserve-mode-96838"
+    },
+    {
+      "cmd": "execute sensor list",
+      "desc": "Lee los sensores de hardware: temperaturas, ventiladores y fuentes de poder (solo modelos físicos).",
+      "cat": "Hardware",
+      "risk": "read",
+      "source": "https://docs.fortinet.com/document/fortigate/7.4.9/cli-reference"
+    },
+    {
+      "cmd": "execute disk list",
+      "desc": "Lista los discos y particiones internas del equipo.",
+      "cat": "Hardware",
+      "risk": "read",
+      "source": "https://docs.fortinet.com/document/fortigate/7.4.9/cli-reference"
+    },
+    {
+      "cmd": "diagnose hardware deviceinfo disk",
+      "desc": "Información de disco: capacidad, uso y particiones.",
+      "cat": "Hardware",
+      "risk": "read",
+      "source": "https://docs.fortinet.com/document/fortigate/7.4.9/cli-reference"
+    },
+    {
+      "cmd": "diagnose hardware deviceinfo nic {{puerto}}",
+      "desc": "Detalle del NIC: driver, velocidad/duplex, MAC, contadores de errores, drops y CRC.",
+      "cat": "Hardware",
+      "risk": "read",
+      "source": "https://docs.fortinet.com/document/fortigate/7.2.5/administration-guide/816062"
+    },
+    {
+      "cmd": "get hardware nic {{puerto}}",
+      "desc": "Equivalente a deviceinfo nic: estado físico, link, velocidad y errores del puerto.",
+      "cat": "Hardware",
+      "risk": "read",
+      "source": "https://docs.fortinet.com/document/fortigate/7.4.9/cli-reference"
+    },
+    {
+      "cmd": "diagnose npu np6 port-list",
+      "desc": "Muestra el mapeo de puertos a procesadores NP6 para entender el offload por hardware.",
+      "cat": "Hardware",
+      "risk": "read",
+      "note": "Solo modelos con NP6. En equipos NP6XLite/NP7 el subcomando cambia (np6xlite, np7).",
+      "source": "https://docs.fortinet.com/document/fortigate/7.4.9/cli-reference"
+    },
+    {
+      "cmd": "execute set-next-reboot primary",
+      "desc": "Define qué partición de firmware (primary o secondary) arrancará en el próximo reboot.",
+      "cat": "Hardware",
+      "risk": "change",
+      "note": "Cambiar primary por secondary para arrancar con la imagen alternativa. No reinicia por sí solo.",
+      "source": "https://docs.fortinet.com/document/fortigate/7.4.9/cli-reference"
+    },
+    {
+      "cmd": "get system interface physical",
+      "desc": "Estado físico de todas las interfaces: link, velocidad, duplex e IP.",
+      "cat": "Interfaces",
+      "risk": "read",
+      "source": "https://docs.fortinet.com/document/fortigate/7.4.9/cli-reference"
+    },
+    {
+      "cmd": "show system interface {{puerto}}",
+      "desc": "Configuración de una interfaz: IP, VLAN, allowaccess, rol y alias.",
+      "cat": "Interfaces",
+      "risk": "read",
+      "source": "https://docs.fortinet.com/document/fortigate/7.4.9/cli-reference"
+    },
+    {
+      "cmd": "diagnose netlink interface list {{puerto}}",
+      "desc": "Estado de la interfaz a nivel kernel: índice, MTU, flags y contadores RX/TX.",
+      "cat": "Interfaces",
+      "risk": "read",
+      "source": "https://docs.fortinet.com/document/fortigate/7.6.7/administration-guide/311052"
+    },
+    {
+      "cmd": "diagnose netlink device list",
+      "desc": "Contadores de paquetes, bytes, errores y drops de todas las interfaces.",
+      "cat": "Interfaces",
+      "risk": "read",
+      "source": "https://docs.fortinet.com/document/fortigate/7.4.9/cli-reference"
+    },
+    {
+      "cmd": "diagnose ip address list",
+      "desc": "Lista todas las IP configuradas en el kernel con su interfaz y VDOM.",
+      "cat": "Interfaces",
+      "risk": "read",
+      "source": "https://docs.fortinet.com/document/fortigate/7.4.9/cli-reference"
+    },
+    {
+      "cmd": "get system interface transceiver",
+      "desc": "Información de transceptores SFP/SFP+: vendor, part number y niveles ópticos (DDM).",
+      "cat": "Interfaces",
+      "risk": "read",
+      "note": "Sintaxis no confirmada en documentación oficial para todas las versiones; verificar en tu versión.",
+      "source": "https://docs.fortinet.com/document/fortigate/7.4.9/cli-reference"
+    },
+    {
+      "cmd": "execute interface dhcpclient-renew {{puerto}}",
+      "desc": "Renueva el lease DHCP de una interfaz configurada como cliente DHCP.",
+      "cat": "Interfaces",
+      "risk": "change",
+      "note": "Puede cambiar la IP de la interfaz y cortar brevemente el tráfico.",
+      "source": "https://docs.fortinet.com/document/fortigate/7.4.9/cli-reference"
+    },
+    {
+      "cmd": "execute dhcp lease-list",
+      "desc": "Lista los leases entregados por los servidores DHCP del FortiGate.",
+      "cat": "Interfaces",
+      "risk": "read",
+      "source": "https://docs.fortinet.com/document/fortigate/7.4.9/cli-reference"
+    },
+    {
+      "cmd": "config system interface\nedit {{puerto}}\nset status down\nend",
+      "desc": "Deshabilita administrativamente una interfaz.",
+      "cat": "Interfaces",
+      "risk": "disruptive",
+      "note": "Corta todo el tráfico de la interfaz. Validar que no sea la interfaz de gestión ni de heartbeat HA.",
+      "source": "https://docs.fortinet.com/document/fortigate/7.4.9/cli-reference"
+    },
+    {
+      "cmd": "config system interface\nedit {{puerto}}\nset status up\nend",
+      "desc": "Habilita administrativamente una interfaz.",
+      "cat": "Interfaces",
+      "risk": "change",
+      "source": "https://docs.fortinet.com/document/fortigate/7.4.9/cli-reference"
+    },
+    {
+      "cmd": "get system arp",
+      "desc": "Tabla ARP del VDOM actual: IP, MAC e interfaz.",
+      "cat": "Capa 2",
+      "risk": "read",
+      "source": "https://community.fortinet.com/fortigate-3/technical-tip-fortigate-routing-debug-commands-177121"
+    },
+    {
+      "cmd": "diagnose ip arp list",
+      "desc": "Tabla ARP a nivel kernel con estado de cada entrada.",
+      "cat": "Capa 2",
+      "risk": "read",
+      "source": "https://community.fortinet.com/fortigate-3/technical-tip-fortigate-routing-debug-commands-177121"
+    },
+    {
+      "cmd": "execute clear system arp table",
+      "desc": "Limpia la tabla ARP completa.",
+      "cat": "Capa 2",
+      "risk": "disruptive",
+      "note": "Provoca pérdida momentánea de tráfico mientras se reaprende ARP.",
+      "source": "https://docs.fortinet.com/document/fortigate/7.4.9/cli-reference"
+    },
+    {
+      "cmd": "diagnose ipv6 neighbor-cache list",
+      "desc": "Tabla de vecinos IPv6 (equivalente ARP para IPv6).",
+      "cat": "Capa 2",
+      "risk": "read",
+      "source": "https://docs.fortinet.com/document/fortigate/7.4.9/cli-reference"
+    },
+    {
+      "cmd": "diagnose netlink brctl list",
+      "desc": "Lista los bridges del kernel (modo transparente, software switch, FortiLink).",
+      "cat": "Capa 2",
+      "risk": "read",
+      "source": "https://docs.fortinet.com/document/fortigate/7.4.9/cli-reference"
+    },
+    {
+      "cmd": "diagnose netlink brctl name host {{texto}}",
+      "desc": "Tabla MAC aprendida en un bridge específico (por ejemplo root.b en modo transparente).",
+      "cat": "Capa 2",
+      "risk": "read",
+      "note": "El nombre del bridge se obtiene con diagnose netlink brctl list.",
+      "source": "https://docs.fortinet.com/document/fortigate/7.4.9/cli-reference"
+    },
+    {
+      "cmd": "diagnose netlink aggregate name {{texto}}",
+      "desc": "Estado de un agregado LACP: miembros, estado de cada link, actor y partner.",
+      "cat": "Capa 2",
+      "risk": "read",
+      "source": "https://docs.fortinet.com/document/fortigate/7.4.9/cli-reference"
+    },
+    {
+      "cmd": "diagnose lldprx neighbor summary",
+      "desc": "Vecinos LLDP recibidos por el FortiGate: chassis, puerto remoto y sistema.",
+      "cat": "Capa 2",
+      "risk": "read",
+      "variants": [
+        {
+          "platforms": [
+            "fos76"
+          ],
+          "cmd": "diagnose lldp rx neighbor summary"
+        }
+      ],
+      "note": "En 7.6 la sintaxis cambió a diagnose lldp rx. Por defecto LLDP RX solo está habilitado en interfaces con rol WAN.",
+      "source": "https://docs.fortinet.com/document/fortigate/7.4.0/administration-guide/311052"
+    },
+    {
+      "cmd": "diagnose lldprx neighbor details",
+      "desc": "Detalle completo de cada vecino LLDP recibido.",
+      "cat": "Capa 2",
+      "risk": "read",
+      "variants": [
+        {
+          "platforms": [
+            "fos76"
+          ],
+          "cmd": "diagnose lldp rx neighbor details"
+        }
+      ],
+      "note": "En 7.6 la sintaxis cambió a diagnose lldp rx.",
+      "source": "https://docs.fortinet.com/document/fortigate/7.4.0/administration-guide/311052"
+    },
+    {
+      "cmd": "execute switch-controller get-conn-status",
+      "desc": "Estado de conexión FortiLink de los FortiSwitch administrados: serial, versión y estado.",
+      "cat": "Capa 2",
+      "risk": "read",
+      "source": "https://docs.fortinet.com/document/fortigate/6.0.0/handbook/629420"
+    },
+    {
+      "cmd": "execute switch-controller diagnose-connection {{serial}}",
+      "desc": "Diagnóstico de la conexión FortiLink/CAPWAP con un FortiSwitch específico.",
+      "cat": "Capa 2",
+      "risk": "read",
+      "source": "https://docs.fortinet.com/document/fortigate/6.0.0/handbook/629420"
+    },
+    {
+      "cmd": "get wireless-controller wtp-status",
+      "desc": "Estado de los FortiAP administrados: conexión, IP, versión y clientes.",
+      "cat": "Capa 2",
+      "risk": "read",
+      "note": "Sintaxis no confirmada en documentación oficial para todas las versiones; verificar en tu versión.",
+      "source": "https://community.fortinet.com/fortigate-3/technical-tip-list-the-serial-numbers-of-fortigate-ha-fortiswitches-and-fortiaps-in-cli-177040"
+    },
+    {
+      "cmd": "diagnose wireless-controller wlac -c wtp",
+      "desc": "Detalle de los FortiAP (WTP) conocidos por el controlador: estado CAPWAP, radios y SSID.",
+      "cat": "Capa 2",
+      "risk": "read",
+      "note": "Sintaxis no confirmada en documentación oficial para todas las versiones; verificar en tu versión.",
+      "source": "https://docs.fortinet.com/document/fortigate/7.4.9/cli-reference"
+    },
+    {
+      "cmd": "diagnose wireless-controller wlac -d sta",
+      "desc": "Lista los clientes inalámbricos asociados a los FortiAP.",
+      "cat": "Capa 2",
+      "risk": "read",
+      "note": "Sintaxis no confirmada en documentación oficial para todas las versiones; verificar en tu versión.",
+      "source": "https://docs.fortinet.com/document/fortigate/7.4.9/cli-reference"
+    },
+    {
+      "cmd": "get router info routing-table all",
+      "desc": "Tabla de enrutamiento activa (RIB) del VDOM.",
+      "cat": "Enrutamiento",
+      "risk": "read",
+      "source": "https://community.fortinet.com/fortigate-3/technical-tip-fortigate-routing-debug-commands-177121"
+    },
+    {
+      "cmd": "get router info routing-table details {{ip}}",
+      "desc": "Muestra qué ruta usa el FortiGate para un destino específico.",
+      "cat": "Enrutamiento",
+      "risk": "read",
+      "source": "https://community.fortinet.com/fortigate-3/technical-tip-fortigate-routing-debug-commands-177121"
+    },
+    {
+      "cmd": "get router info routing-table database",
+      "desc": "Base completa de rutas, incluidas las inactivas o con mayor distancia administrativa.",
+      "cat": "Enrutamiento",
+      "risk": "read",
+      "source": "https://community.fortinet.com/fortigate-3/technical-tip-fortigate-routing-debug-commands-177121"
+    },
+    {
+      "cmd": "get router info routing-table static",
+      "desc": "Solo rutas estáticas activas.",
+      "cat": "Enrutamiento",
+      "risk": "read",
+      "source": "https://community.fortinet.com/fortigate-3/technical-tip-fortigate-routing-debug-commands-177121"
+    },
+    {
+      "cmd": "get router info routing-table connected",
+      "desc": "Solo rutas conectadas.",
+      "cat": "Enrutamiento",
+      "risk": "read",
+      "source": "https://community.fortinet.com/fortigate-3/technical-tip-fortigate-routing-debug-commands-177121"
+    },
+    {
+      "cmd": "get router info protocols",
+      "desc": "Resumen de protocolos de enrutamiento dinámico activos y sus parámetros.",
+      "cat": "Enrutamiento",
+      "risk": "read",
+      "source": "https://community.fortinet.com/fortigate-3/technical-tip-fortigate-routing-debug-commands-177121"
+    },
+    {
+      "cmd": "diagnose ip route list",
+      "desc": "Tabla de rutas a nivel kernel (FIB), incluye rutas de VPN y SD-WAN.",
+      "cat": "Enrutamiento",
+      "risk": "read",
+      "source": "https://community.fortinet.com/fortigate-3/technical-tip-fortigate-routing-debug-commands-177121"
+    },
+    {
+      "cmd": "diagnose firewall proute list",
+      "desc": "Lista las policy routes y reglas SD-WAN instaladas en el kernel.",
+      "cat": "Enrutamiento",
+      "risk": "read",
+      "source": "https://community.fortinet.com/fortigate-3/technical-tip-configure-and-diagnostic-commands-to-check-the-status-of-the-sd-wan-link-96317"
+    },
+    {
+      "cmd": "show router static",
+      "desc": "Configuración de rutas estáticas.",
+      "cat": "Enrutamiento",
+      "risk": "read",
+      "source": "https://community.fortinet.com/fortigate-3/technical-tip-fortigate-routing-debug-commands-177121"
+    },
+    {
+      "cmd": "get router info6 routing-table",
+      "desc": "Tabla de enrutamiento IPv6.",
+      "cat": "Enrutamiento",
+      "risk": "read",
+      "source": "https://docs.fortinet.com/document/fortigate/7.4.9/cli-reference"
+    },
+    {
+      "cmd": "diagnose ipv6 route list",
+      "desc": "Tabla de rutas IPv6 a nivel kernel.",
+      "cat": "Enrutamiento",
+      "risk": "read",
+      "source": "https://docs.fortinet.com/document/fortigate/7.4.9/cli-reference"
+    },
+    {
+      "cmd": "get router info bgp summary",
+      "desc": "Resumen de peers BGP: AS, estado, uptime y prefijos recibidos.",
+      "cat": "Enrutamiento",
+      "risk": "read",
+      "source": "https://community.fortinet.com/fortigate-3/technical-tip-fortigate-routing-debug-commands-177121"
+    },
+    {
+      "cmd": "get router info bgp neighbors",
+      "desc": "Detalle de todos los vecinos BGP: timers, capacidades y contadores.",
+      "cat": "Enrutamiento",
+      "risk": "read",
+      "source": "https://community.fortinet.com/fortigate-3/troubleshooting-tip-fortios-routing-rip-ospf-bgp-static-routes-ecmp-99981"
+    },
+    {
+      "cmd": "get router info bgp neighbors {{ip}} advertised-routes",
+      "desc": "Prefijos que el FortiGate anuncia a un vecino BGP.",
+      "cat": "Enrutamiento",
+      "risk": "read",
+      "source": "https://community.fortinet.com/fortigate-3/technical-tip-fortigate-routing-debug-commands-177121"
+    },
+    {
+      "cmd": "get router info bgp neighbors {{ip}} received-routes",
+      "desc": "Prefijos recibidos de un vecino antes de aplicar filtros.",
+      "cat": "Enrutamiento",
+      "risk": "read",
+      "note": "Requiere soft-reconfiguration enable en el neighbor.",
+      "source": "https://community.fortinet.com/fortigate-3/technical-tip-fortigate-routing-debug-commands-177121"
+    },
+    {
+      "cmd": "get router info bgp neighbors {{ip}} routes",
+      "desc": "Prefijos aceptados desde un vecino después de filtros.",
+      "cat": "Enrutamiento",
+      "risk": "read",
+      "source": "https://community.fortinet.com/fortigate-3/technical-tip-fortigate-routing-debug-commands-177121"
+    },
+    {
+      "cmd": "get router info bgp network",
+      "desc": "Tabla BGP completa con atributos de cada prefijo.",
+      "cat": "Enrutamiento",
+      "risk": "read",
+      "source": "https://community.fortinet.com/fortigate-3/technical-tip-fortigate-routing-debug-commands-177121"
+    },
+    {
+      "cmd": "get router info6 bgp summary",
+      "desc": "Resumen de peers BGP para IPv6.",
+      "cat": "Enrutamiento",
+      "risk": "read",
+      "source": "https://docs.fortinet.com/document/fortigate/7.4.9/cli-reference"
+    },
+    {
+      "cmd": "execute router clear bgp ip {{ip}} soft in",
+      "desc": "Soft reset de entrada con un vecino BGP para aplicar cambios de route-map o prefix-list sin cerrar la sesión.",
+      "cat": "Enrutamiento",
+      "risk": "change",
+      "note": "Usar out para reenviar anuncios. Sin soft el reset es hard y corta la sesión.",
+      "source": "https://community.fortinet.com/t5/FortiGate/Technical-Tip-How-to-clear-BGP-Sessions/ta-p/199680"
+    },
+    {
+      "cmd": "execute router clear bgp ip {{ip}}",
+      "desc": "Hard reset de la sesión BGP con un vecino.",
+      "cat": "Enrutamiento",
+      "risk": "disruptive",
+      "note": "Cierra la sesión y retira las rutas aprendidas hasta que reconverja.",
+      "source": "https://community.fortinet.com/fortigate-3/technical-tip-fortigate-routing-debug-commands-177121"
+    },
+    {
+      "cmd": "get router info ospf neighbor",
+      "desc": "Vecinos OSPF con estado (Full, 2-Way), prioridad e interfaz.",
+      "cat": "Enrutamiento",
+      "risk": "read",
+      "source": "https://community.fortinet.com/fortigate-3/troubleshooting-tip-fortios-routing-rip-ospf-bgp-static-routes-ecmp-99981"
+    },
+    {
+      "cmd": "get router info ospf interface",
+      "desc": "Interfaces OSPF: área, costo, tipo de red, DR/BDR y timers.",
+      "cat": "Enrutamiento",
+      "risk": "read",
+      "source": "https://community.fortinet.com/fortigate-3/troubleshooting-tip-fortios-routing-rip-ospf-bgp-static-routes-ecmp-99981"
+    },
+    {
+      "cmd": "get router info ospf database brief",
+      "desc": "Resumen de la LSDB OSPF por área y tipo de LSA.",
+      "cat": "Enrutamiento",
+      "risk": "read",
+      "source": "https://community.fortinet.com/fortigate-3/technical-tip-fortigate-routing-debug-commands-177121"
+    },
+    {
+      "cmd": "get router info ospf status",
+      "desc": "Estado general del proceso OSPF: router-id, áreas y SPF.",
+      "cat": "Enrutamiento",
+      "risk": "read",
+      "source": "https://community.fortinet.com/fortigate-3/technical-tip-fortigate-routing-debug-commands-177121"
+    },
+    {
+      "cmd": "execute router clear ospf process",
+      "desc": "Reinicia el proceso OSPF y fuerza el restablecimiento de adyacencias.",
+      "cat": "Enrutamiento",
+      "risk": "disruptive",
+      "note": "Corta todas las adyacencias OSPF del VDOM.",
+      "source": "https://docs.fortinet.com/document/fortigate/7.4.9/cli-reference"
+    },
+    {
+      "cmd": "get router info bfd neighbor",
+      "desc": "Sesiones BFD activas y su estado.",
+      "cat": "Enrutamiento",
+      "risk": "read",
+      "source": "https://docs.fortinet.com/document/fortigate/7.4.9/cli-reference"
+    },
+    {
+      "cmd": "diagnose ip router bgp all enable\ndiagnose ip router bgp level info\ndiagnose debug console timestamp enable\ndiagnose debug enable",
+      "desc": "Habilita debug en tiempo real de BGP con timestamp.",
+      "cat": "Enrutamiento",
+      "risk": "change",
+      "note": "Detener con diagnose debug disable y diagnose debug reset.",
+      "source": "https://community.fortinet.com/fortigate-3/technical-tip-fortigate-routing-debug-commands-177121"
+    },
+    {
+      "cmd": "diagnose ip router ospf all enable\ndiagnose ip router ospf level info\ndiagnose debug console timestamp enable\ndiagnose debug enable",
+      "desc": "Habilita debug en tiempo real de OSPF con timestamp.",
+      "cat": "Enrutamiento",
+      "risk": "change",
+      "note": "Detener con diagnose debug disable y diagnose debug reset.",
+      "source": "https://community.fortinet.com/fortigate-3/technical-tip-fortigate-routing-debug-commands-177121"
+    },
+    {
+      "cmd": "diagnose sys sdwan health-check",
+      "desc": "Estado de los SLA/health-check SD-WAN: latencia, jitter, pérdida y estado por miembro.",
+      "cat": "Enrutamiento",
+      "risk": "read",
+      "variants": [
+        {
+          "platforms": [
+            "fos64"
+          ],
+          "cmd": "diagnose sys virtual-wan-link health-check"
+        }
+      ],
+      "note": "En 6.4 y anteriores el prefijo es diagnose sys virtual-wan-link.",
+      "source": "https://community.fortinet.com/fortigate-3/technical-tip-configure-and-diagnostic-commands-to-check-the-status-of-the-sd-wan-link-96317"
+    },
+    {
+      "cmd": "diagnose sys sdwan member",
+      "desc": "Miembros SD-WAN con interfaz, gateway, peso y prioridad.",
+      "cat": "Enrutamiento",
+      "risk": "read",
+      "variants": [
+        {
+          "platforms": [
+            "fos64"
+          ],
+          "cmd": "diagnose sys virtual-wan-link member"
+        }
+      ],
+      "note": "En 6.4 y anteriores el prefijo es diagnose sys virtual-wan-link.",
+      "source": "https://community.fortinet.com/fortigate-3/technical-tip-configure-and-diagnostic-commands-to-check-the-status-of-the-sd-wan-link-96317"
+    },
+    {
+      "cmd": "diagnose sys sdwan service",
+      "desc": "Reglas SD-WAN (services) con miembros seleccionados y su orden de preferencia.",
+      "cat": "Enrutamiento",
+      "risk": "read",
+      "variants": [
+        {
+          "platforms": [
+            "fos64"
+          ],
+          "cmd": "diagnose sys virtual-wan-link service"
+        }
+      ],
+      "note": "Desde 7.4.4 se divide en diagnose sys sdwan service4 y service6.",
+      "source": "https://community.fortinet.com/fortigate-3/technical-tip-configure-and-diagnostic-commands-to-check-the-status-of-the-sd-wan-link-96317"
+    },
+    {
+      "cmd": "diagnose sys sdwan service4",
+      "desc": "Reglas SD-WAN IPv4 con miembros seleccionados y estado.",
+      "cat": "Enrutamiento",
+      "risk": "read",
+      "platforms": [
+        "fos74",
+        "fos76"
+      ],
+      "note": "Disponible desde 7.4.4. En 7.4.0 a 7.4.3 usar diagnose sys sdwan service.",
+      "source": "https://community.fortinet.com/fortigate-3/technical-tip-configure-and-diagnostic-commands-to-check-the-status-of-the-sd-wan-link-96317"
+    },
+    {
+      "cmd": "diagnose sys sdwan intf-sla-log {{puerto}}",
+      "desc": "Historial de mediciones SLA de una interfaz SD-WAN.",
+      "cat": "Enrutamiento",
+      "risk": "read",
+      "variants": [
+        {
+          "platforms": [
+            "fos64"
+          ],
+          "cmd": "diagnose sys virtual-wan-link intf-sla-log {{puerto}}"
+        }
+      ],
+      "source": "https://community.fortinet.com/fortigate-3/technical-tip-configure-and-diagnostic-commands-to-check-the-status-of-the-sd-wan-link-96317"
+    },
+    {
+      "cmd": "diagnose sys sdwan zone",
+      "desc": "Zonas SD-WAN y sus miembros.",
+      "cat": "Enrutamiento",
+      "risk": "read",
+      "platforms": [
+        "fos70",
+        "fos72",
+        "fos74",
+        "fos76"
+      ],
+      "source": "https://community.fortinet.com/fortigate-3/technical-tip-configure-and-diagnostic-commands-to-check-the-status-of-the-sd-wan-link-96317"
+    },
+    {
+      "cmd": "show system sdwan",
+      "desc": "Configuración SD-WAN completa: zonas, miembros, health-checks y servicios.",
+      "cat": "Enrutamiento",
+      "risk": "read",
+      "note": "En 6.4.0 la tabla de configuración era system virtual-wan-link; desde 6.4.1 es system sdwan. Verificar en tu build.",
+      "source": "https://docs.fortinet.com/document/fortigate/7.0.1/administration-guide/818746"
+    },
+    {
+      "cmd": "get vpn ipsec tunnel summary",
+      "desc": "Resumen de túneles IPsec: peer, estado de selectores up/down y contadores.",
+      "cat": "MPLS / VPN",
+      "risk": "read",
+      "source": "https://community.fortinet.com/t5/FortiGate/Technical-Tip-IPSec-VPN-Diagnostics-Possible-reasons/ta-p/192006"
+    },
+    {
+      "cmd": "get vpn ipsec tunnel details",
+      "desc": "Detalle de cada túnel IPsec: SAs, selectores, contadores y DPD.",
+      "cat": "MPLS / VPN",
+      "risk": "read",
+      "source": "https://community.fortinet.com/t5/FortiGate/Technical-Tip-IPSec-VPN-Diagnostics-Possible-reasons/ta-p/192006"
+    },
+    {
+      "cmd": "diagnose vpn tunnel list",
+      "desc": "Lista completa de SAs de fase 2 con SPI, encriptación, contadores y NAT-T.",
+      "cat": "MPLS / VPN",
+      "risk": "read",
+      "source": "https://community.fortinet.com/t5/FortiGate/Technical-Tip-IPSec-VPN-Diagnostics-Possible-reasons/ta-p/192006"
+    },
+    {
+      "cmd": "diagnose vpn tunnel list name {{texto}}",
+      "desc": "Detalle de SAs de un túnel específico.",
+      "cat": "MPLS / VPN",
+      "risk": "read",
+      "source": "https://community.fortinet.com/t5/FortiGate/Technical-Tip-IPSec-VPN-Diagnostics-Possible-reasons/ta-p/192006"
+    },
+    {
+      "cmd": "diagnose vpn ike gateway list",
+      "desc": "Estado de las SAs IKE (fase 1): peer, versión IKE, estado y tiempo de vida.",
+      "cat": "MPLS / VPN",
+      "risk": "read",
+      "source": "https://community.fortinet.com/t5/FortiGate/Technical-Tip-IPSec-VPN-Diagnostics-Possible-reasons/ta-p/192006"
+    },
+    {
+      "cmd": "diagnose vpn ike gateway list name {{texto}}",
+      "desc": "Estado IKE de una fase 1 específica.",
+      "cat": "MPLS / VPN",
+      "risk": "read",
+      "source": "https://community.fortinet.com/t5/FortiGate/Technical-Tip-IPSec-VPN-Diagnostics-Possible-reasons/ta-p/192006"
+    },
+    {
+      "cmd": "diagnose vpn tunnel up {{texto}}",
+      "desc": "Fuerza la negociación de una fase 2.",
+      "cat": "MPLS / VPN",
+      "risk": "change",
+      "source": "https://community.fortinet.com/t5/FortiGate/Technical-Tip-IPSec-VPN-Diagnostics-Possible-reasons/ta-p/192006"
+    },
+    {
+      "cmd": "diagnose vpn tunnel down {{texto}}",
+      "desc": "Baja una fase 2.",
+      "cat": "MPLS / VPN",
+      "risk": "disruptive",
+      "note": "Corta el tráfico del túnel hasta que se renegocie.",
+      "source": "https://community.fortinet.com/t5/FortiGate/Technical-Tip-IPSec-VPN-Diagnostics-Possible-reasons/ta-p/192006"
+    },
+    {
+      "cmd": "diagnose vpn ike gateway clear name {{texto}}",
+      "desc": "Elimina la SA IKE de una fase 1 y fuerza renegociación completa.",
+      "cat": "MPLS / VPN",
+      "risk": "disruptive",
+      "note": "Corta el túnel. Sin name limpia todas las fase 1 del VDOM.",
+      "source": "https://community.fortinet.com/t5/FortiGate/Troubleshooting-Tip-IPsec-Tunnel-debugging-IKE/ta-p/190052"
+    },
+    {
+      "cmd": "diagnose vpn ike restart",
+      "desc": "Reinicia el daemon IKE.",
+      "cat": "MPLS / VPN",
+      "risk": "disruptive",
+      "note": "Baja todos los túneles IPsec del equipo.",
+      "source": "https://docs.fortinet.com/document/fortigate/7.4.9/cli-reference"
+    },
+    {
+      "cmd": "diagnose vpn ike log filter rem-addr4 {{ip}}",
+      "desc": "Filtra el debug IKE por la IP del peer remoto.",
+      "cat": "MPLS / VPN",
+      "risk": "change",
+      "platforms": [
+        "fos74",
+        "fos76"
+      ],
+      "variants": [
+        {
+          "platforms": [
+            "fos64",
+            "fos70",
+            "fos72"
+          ],
+          "cmd": "diagnose vpn ike log-filter dst-addr4 {{ip}}"
+        }
+      ],
+      "note": "Desde 7.4 (algunas fuentes indican 7.4.1) log-filter pasa a log filter y dst-addr4 a rem-addr4. Confirmar con diagnose vpn ike log filter ?.",
+      "source": "https://community.fortinet.com/t5/FortiGate/Troubleshooting-Tip-IPsec-Tunnel-debugging-IKE/ta-p/190052"
+    },
+    {
+      "cmd": "diagnose vpn ike log filter clear",
+      "desc": "Limpia los filtros del debug IKE.",
+      "cat": "MPLS / VPN",
+      "risk": "change",
+      "platforms": [
+        "fos74",
+        "fos76"
+      ],
+      "variants": [
+        {
+          "platforms": [
+            "fos64",
+            "fos70",
+            "fos72"
+          ],
+          "cmd": "diagnose vpn ike log-filter clear"
+        }
+      ],
+      "source": "https://community.fortinet.com/t5/FortiGate/Troubleshooting-Tip-IPsec-Tunnel-debugging-IKE/ta-p/190052"
+    },
+    {
+      "cmd": "diagnose debug application ike -1\ndiagnose debug console timestamp enable\ndiagnose debug enable",
+      "desc": "Activa debug IKE completo con timestamp para analizar negociaciones de fase 1 y 2.",
+      "cat": "MPLS / VPN",
+      "risk": "change",
+      "note": "Aplicar antes el filtro por peer. Detener con diagnose debug disable y diagnose debug reset.",
+      "source": "https://community.fortinet.com/t5/FortiGate/Troubleshooting-Tip-IPsec-Tunnel-debugging-IKE/ta-p/190052"
+    },
+    {
+      "cmd": "get vpn ssl monitor",
+      "desc": "Usuarios SSL-VPN conectados (web y túnel) con IP asignada y duración.",
+      "cat": "MPLS / VPN",
+      "risk": "read",
+      "note": "En 7.6.3+ el modo túnel SSL-VPN fue retirado en favor de IPsec; verificar disponibilidad en tu versión y modelo.",
+      "source": "https://docs.fortinet.com/document/fortigate/7.4.9/cli-reference"
+    },
+    {
+      "cmd": "diagnose debug application sslvpn -1\ndiagnose debug enable",
+      "desc": "Debug del daemon SSL-VPN para fallas de login, portal o túnel.",
+      "cat": "MPLS / VPN",
+      "risk": "change",
+      "note": "Detener con diagnose debug disable y diagnose debug reset.",
+      "source": "https://docs.fortinet.com/document/fortigate/7.4.9/cli-reference"
+    },
+    {
+      "cmd": "show vpn ipsec phase1-interface {{texto}}",
+      "desc": "Configuración de una fase 1 IPsec basada en interfaz.",
+      "cat": "MPLS / VPN",
+      "risk": "read",
+      "source": "https://docs.fortinet.com/document/fortigate/7.4.9/cli-reference"
+    },
+    {
+      "cmd": "show vpn ipsec phase2-interface {{texto}}",
+      "desc": "Configuración de una fase 2 IPsec.",
+      "cat": "MPLS / VPN",
+      "risk": "read",
+      "source": "https://docs.fortinet.com/document/fortigate/7.4.9/cli-reference"
+    },
+    {
+      "cmd": "show firewall policy {{id}}",
+      "desc": "Configuración de una política de firewall específica.",
+      "cat": "Seguridad",
+      "risk": "read",
+      "source": "https://docs.fortinet.com/document/fortigate/7.4.9/cli-reference"
+    },
+    {
+      "cmd": "show firewall policy",
+      "desc": "Todas las políticas del VDOM en orden de evaluación.",
+      "cat": "Seguridad",
+      "risk": "read",
+      "note": "Salida extensa; conviene desactivar paginación antes.",
+      "source": "https://docs.fortinet.com/document/fortigate/7.4.9/cli-reference"
+    },
+    {
+      "cmd": "diagnose firewall iprope lookup {{ip_origen}} {{puerto_origen}} {{ip}} {{puerto}} {{protocolo}} {{interfaz}}",
+      "desc": "Policy lookup por CLI: indica qué política haría match para un flujo dado.",
+      "cat": "Seguridad",
+      "risk": "read",
+      "note": "Para ICMP el puerto destino va como tipo/código (por ejemplo 8/0). En 7.4 la herramienta GUI se llama Policy match.",
+      "source": "https://community.fortinet.com/t5/FortiGate/Technical-Tip-Firewall-policy-lookups/ta-p/192912"
+    },
+    {
+      "cmd": "diagnose firewall iprope show 100004 {{id}}",
+      "desc": "Contadores de hits, paquetes y bytes de una política.",
+      "cat": "Seguridad",
+      "risk": "read",
+      "note": "Sintaxis no confirmada en documentación oficial para todas las versiones; verificar en tu versión.",
+      "source": "https://community.fortinet.com/t5/FortiGate/Technical-Tip-Firewall-policy-lookups/ta-p/192912"
+    },
+    {
+      "cmd": "diagnose firewall iprope clear 100004 {{id}}",
+      "desc": "Resetea los contadores de una política.",
+      "cat": "Seguridad",
+      "risk": "change",
+      "note": "Sintaxis no confirmada en documentación oficial para todas las versiones; verificar en tu versión.",
+      "source": "https://community.fortinet.com/t5/FortiGate/Technical-Tip-Firewall-policy-lookups/ta-p/192912"
+    },
+    {
+      "cmd": "show firewall address {{texto}}",
+      "desc": "Configuración de un objeto de dirección.",
+      "cat": "Seguridad",
+      "risk": "read",
+      "source": "https://docs.fortinet.com/document/fortigate/7.4.9/cli-reference"
+    },
+    {
+      "cmd": "show firewall vip",
+      "desc": "VIPs configuradas (DNAT / port forwarding).",
+      "cat": "Seguridad",
+      "risk": "read",
+      "source": "https://docs.fortinet.com/document/fortigate/7.4.9/cli-reference"
+    },
+    {
+      "cmd": "diagnose firewall vip realserver list",
+      "desc": "Estado de los real servers de VIP con balanceo de carga y su health-check.",
+      "cat": "Seguridad",
+      "risk": "read",
+      "note": "Sintaxis no confirmada en documentación oficial para todas las versiones; verificar en tu versión.",
+      "source": "https://docs.fortinet.com/document/fortigate/7.4.9/cli-reference"
+    },
+    {
+      "cmd": "show firewall ippool",
+      "desc": "IP pools configurados para SNAT.",
+      "cat": "Seguridad",
+      "risk": "read",
+      "source": "https://docs.fortinet.com/document/fortigate/7.4.9/cli-reference"
+    },
+    {
+      "cmd": "diagnose firewall ippool list",
+      "desc": "Estado y uso de los IP pools en el kernel.",
+      "cat": "Seguridad",
+      "risk": "read",
+      "note": "Sintaxis no confirmada en documentación oficial para todas las versiones; verificar en tu versión.",
+      "source": "https://docs.fortinet.com/document/fortigate/7.4.9/cli-reference"
+    },
+    {
+      "cmd": "diagnose firewall auth list",
+      "desc": "Usuarios autenticados por firewall (local, LDAP, RADIUS, FSSO) con IP y grupos.",
+      "cat": "Seguridad",
+      "risk": "read",
+      "source": "https://docs.fortinet.com/document/fortigate/7.4.9/cli-reference"
+    },
+    {
+      "cmd": "diagnose firewall auth clear",
+      "desc": "Elimina todas las sesiones de usuarios autenticados.",
+      "cat": "Seguridad",
+      "risk": "disruptive",
+      "note": "Obliga a todos los usuarios a reautenticarse.",
+      "source": "https://docs.fortinet.com/document/fortigate/7.4.9/cli-reference"
+    },
+    {
+      "cmd": "diagnose test authserver ldap {{texto}} {{usuario}} {{clave}}",
+      "desc": "Prueba autenticación contra un servidor LDAP configurado.",
+      "cat": "Seguridad",
+      "risk": "read",
+      "note": "La clave queda en el historial de la terminal. Usar cuentas de prueba.",
+      "source": "https://docs.fortinet.com/document/fortigate/7.4.9/cli-reference"
+    },
+    {
+      "cmd": "diagnose debug application fnbamd -1\ndiagnose debug enable",
+      "desc": "Debug del daemon de autenticación (LDAP, RADIUS, TACACS+).",
+      "cat": "Seguridad",
+      "risk": "change",
+      "note": "Detener con diagnose debug disable y diagnose debug reset.",
+      "source": "https://docs.fortinet.com/document/fortigate/7.4.9/cli-reference"
+    },
+    {
+      "cmd": "diagnose debug rating",
+      "desc": "Estado de los servidores FortiGuard de rating (web filter, antispam).",
+      "cat": "Seguridad",
+      "risk": "read",
+      "source": "https://docs.fortinet.com/document/fortigate/7.4.9/cli-reference"
+    },
+    {
+      "cmd": "diagnose firewall dynamic list",
+      "desc": "Direcciones dinámicas (ZTNA tags, FSSO, conectores) resueltas en el kernel.",
+      "cat": "Seguridad",
+      "risk": "read",
+      "platforms": [
+        "fos70",
+        "fos72",
+        "fos74",
+        "fos76"
+      ],
+      "source": "https://docs.fortinet.com/document/fortigate/7.4.6/administration-guide/286458"
+    },
+    {
+      "cmd": "diagnose endpoint fctems test-connectivity {{texto}}",
+      "desc": "Prueba conectividad entre FortiGate y un servidor FortiClient EMS.",
+      "cat": "Seguridad",
+      "risk": "read",
+      "platforms": [
+        "fos70",
+        "fos72",
+        "fos74",
+        "fos76"
+      ],
+      "source": "https://docs.fortinet.com/document/fortigate/7.4.6/administration-guide/286458"
+    },
+    {
+      "cmd": "diagnose test application fcnacd 2",
+      "desc": "Estado de la conexión del daemon fcnacd con EMS.",
+      "cat": "Seguridad",
+      "risk": "read",
+      "platforms": [
+        "fos70",
+        "fos72",
+        "fos74",
+        "fos76"
+      ],
+      "source": "https://docs.fortinet.com/document/fortigate/7.4.6/administration-guide/286458"
+    },
+    {
+      "cmd": "diagnose test application fcnacd 7",
+      "desc": "Caché de tags ZTNA de todos los endpoints.",
+      "cat": "Seguridad",
+      "risk": "read",
+      "platforms": [
+        "fos70",
+        "fos72",
+        "fos74",
+        "fos76"
+      ],
+      "source": "https://docs.fortinet.com/document/fortigate/7.4.6/administration-guide/286458"
+    },
+    {
+      "cmd": "diagnose endpoint ec-shm list {{ip}}",
+      "desc": "Registro de un endpoint FortiClient (tags, usuario, estado) según su IP.",
+      "cat": "Seguridad",
+      "risk": "read",
+      "platforms": [
+        "fos74",
+        "fos76"
+      ],
+      "variants": [
+        {
+          "platforms": [
+            "fos70",
+            "fos72"
+          ],
+          "cmd": "diagnose endpoint record list {{ip}}"
+        }
+      ],
+      "note": "En 7.0 se documenta diagnose endpoint record list; en 7.4 ec-shm list. Verificar en 7.2.",
+      "source": "https://docs.fortinet.com/document/fortigate/7.4.6/administration-guide/286458"
+    },
+    {
+      "cmd": "diagnose wad dev query-by ipv4 {{ip}}",
+      "desc": "Consulta en WAD la información de dispositivo ZTNA asociada a una IP.",
+      "cat": "Seguridad",
+      "risk": "read",
+      "platforms": [
+        "fos70",
+        "fos72",
+        "fos74",
+        "fos76"
+      ],
+      "source": "https://docs.fortinet.com/document/fortigate/7.4.6/administration-guide/286458"
+    },
+    {
+      "cmd": "diagnose wad user list",
+      "desc": "Usuarios autenticados vía proxy explícito o ZTNA access proxy.",
+      "cat": "Seguridad",
+      "risk": "read",
+      "platforms": [
+        "fos70",
+        "fos72",
+        "fos74",
+        "fos76"
+      ],
+      "source": "https://docs.fortinet.com/document/fortigate/7.4.6/administration-guide/286458"
+    },
+    {
+      "cmd": "get system ha status",
+      "desc": "Estado del cluster HA: modo, miembros, rol, prioridad, uptime y estado de sincronización.",
+      "cat": "Alta disponibilidad",
+      "risk": "read",
+      "source": "https://docs.fortinet.com/document/fortigate/7.4.9/cli-reference/105234857"
+    },
+    {
+      "cmd": "diagnose sys ha status",
+      "desc": "Vista de bajo nivel del cluster HA desde el daemon hatalk.",
+      "cat": "Alta disponibilidad",
+      "risk": "read",
+      "source": "https://docs.fortinet.com/document/fortigate/7.4.9/cli-reference/105234857"
+    },
+    {
+      "cmd": "diagnose sys ha checksum cluster",
+      "desc": "Compara los checksums de configuración de todos los miembros para detectar out of sync.",
+      "cat": "Alta disponibilidad",
+      "risk": "read",
+      "note": "Ejecutar en contexto global si hay VDOM.",
+      "source": "https://community.fortinet.com/t5/FortiGate/Technical-Tip-Procedure-for-HA-manual-synchronization/ta-p/196067"
+    },
+    {
+      "cmd": "diagnose sys ha checksum recalculate",
+      "desc": "Recalcula el checksum de configuración del nodo local.",
+      "cat": "Alta disponibilidad",
+      "risk": "change",
+      "note": "No corrige diferencias reales de configuración; ejecutar en ambos nodos.",
+      "source": "https://community.fortinet.com/t5/FortiGate/Technical-Tip-Procedure-for-HA-manual-synchronization/ta-p/196067"
+    },
+    {
+      "cmd": "diagnose sys ha history read",
+      "desc": "Historial de eventos HA: failovers, cambios de rol y de heartbeat.",
+      "cat": "Alta disponibilidad",
+      "risk": "read",
+      "source": "https://community.fortinet.com/fortigate-3/technical-tip-how-to-use-failover-flag-to-change-active-unit-98371"
+    },
+    {
+      "cmd": "execute ha manage {{id}} {{usuario}}",
+      "desc": "Abre una sesión CLI en otro miembro del cluster por su índice.",
+      "cat": "Alta disponibilidad",
+      "risk": "read",
+      "note": "Listar índices con execute ha manage ?. Volver con exit.",
+      "source": "https://docs.fortinet.com/document/fortigate/7.4.9/cli-reference/105234857"
+    },
+    {
+      "cmd": "execute ha synchronize start",
+      "desc": "Fuerza la sincronización de configuración desde el primario.",
+      "cat": "Alta disponibilidad",
+      "risk": "change",
+      "source": "https://community.fortinet.com/t5/FortiGate/Technical-Tip-Procedure-for-HA-manual-synchronization/ta-p/196067"
+    },
+    {
+      "cmd": "execute ha failover set 1",
+      "desc": "Fuerza un failover marcando el virtual cluster 1 como secundario.",
+      "cat": "Alta disponibilidad",
+      "risk": "disruptive",
+      "platforms": [
+        "fos70",
+        "fos72",
+        "fos74",
+        "fos76"
+      ],
+      "note": "Fortinet lo indica solo para pruebas. Revertir con execute ha failover unset 1. Sintaxis no confirmada en documentación oficial para todas las versiones; verificar en tu versión.",
+      "source": "https://community.fortinet.com/t5/FortiGate/Technical-Tip-How-to-force-HA-failover/ta-p/196696"
+    },
+    {
+      "cmd": "execute ha failover unset 1",
+      "desc": "Quita el flag de failover forzado.",
+      "cat": "Alta disponibilidad",
+      "risk": "disruptive",
+      "platforms": [
+        "fos70",
+        "fos72",
+        "fos74",
+        "fos76"
+      ],
+      "note": "Puede provocar un nuevo cambio de rol según la configuración de override y prioridad.",
+      "source": "https://community.fortinet.com/t5/FortiGate/Technical-Tip-How-to-force-HA-failover/ta-p/196696"
+    },
+    {
+      "cmd": "diagnose sys ha reset-uptime",
+      "desc": "Resetea el uptime HA del nodo, lo que puede forzar un cambio de primario.",
+      "cat": "Alta disponibilidad",
+      "risk": "disruptive",
+      "note": "Con override deshabilitado el uptime define el primario: puede gatillar failover.",
+      "source": "https://community.fortinet.com/t5/FortiGate/Technical-Tip-How-to-force-HA-failover/ta-p/196696"
+    },
+    {
+      "cmd": "show system ha",
+      "desc": "Configuración HA: grupo, modo, heartbeat, monitor de interfaces y prioridad.",
+      "cat": "Alta disponibilidad",
+      "risk": "read",
+      "source": "https://docs.fortinet.com/document/fortigate/7.4.9/cli-reference/105234857"
+    },
+    {
+      "cmd": "diagnose debug application hatalk -1\ndiagnose debug enable",
+      "desc": "Debug del daemon de heartbeat HA.",
+      "cat": "Alta disponibilidad",
+      "risk": "change",
+      "note": "Detener con diagnose debug disable y diagnose debug reset. Sintaxis no confirmada en documentación oficial para todas las versiones; verificar en tu versión.",
+      "source": "https://docs.fortinet.com/document/fortigate/7.4.9/cli-reference/105234857"
+    },
+    {
+      "cmd": "show firewall shaping-policy",
+      "desc": "Políticas de traffic shaping configuradas.",
+      "cat": "QoS",
+      "risk": "read",
+      "source": "https://docs.fortinet.com/document/fortigate/7.4.9/cli-reference"
+    },
+    {
+      "cmd": "show firewall shaper traffic-shaper",
+      "desc": "Shapers compartidos configurados (garantizado, máximo, prioridad).",
+      "cat": "QoS",
+      "risk": "read",
+      "source": "https://docs.fortinet.com/document/fortigate/7.4.9/cli-reference"
+    },
+    {
+      "cmd": "show firewall shaper per-ip-shaper",
+      "desc": "Shapers por IP configurados.",
+      "cat": "QoS",
+      "risk": "read",
+      "source": "https://docs.fortinet.com/document/fortigate/7.4.9/cli-reference"
+    },
+    {
+      "cmd": "show firewall shaping-profile",
+      "desc": "Perfiles de shaping por interfaz (clases y porcentajes).",
+      "cat": "QoS",
+      "risk": "read",
+      "source": "https://docs.fortinet.com/document/fortigate/7.4.9/cli-reference"
+    },
+    {
+      "cmd": "diagnose firewall shaper traffic-shaper list",
+      "desc": "Estado en kernel de los shapers compartidos con su ancho de banda actual.",
+      "cat": "QoS",
+      "risk": "read",
+      "source": "https://docs.fortinet.com/document/fortigate/7.4.9/cli-reference"
+    },
+    {
+      "cmd": "diagnose firewall shaper traffic-shaper stats",
+      "desc": "Estadísticas de los shapers compartidos, incluidos paquetes descartados.",
+      "cat": "QoS",
+      "risk": "read",
+      "note": "Sintaxis no confirmada en documentación oficial para todas las versiones; verificar en tu versión.",
+      "source": "https://docs.fortinet.com/document/fortigate/7.4.9/cli-reference"
+    },
+    {
+      "cmd": "diagnose firewall shaper per-ip-shaper list",
+      "desc": "Estado de los per-IP shapers en el kernel.",
+      "cat": "QoS",
+      "risk": "read",
+      "source": "https://docs.fortinet.com/document/fortigate/7.4.9/cli-reference"
+    },
+    {
+      "cmd": "execute ping {{ip}}",
+      "desc": "Ping desde el FortiGate.",
+      "cat": "Diagnóstico",
+      "risk": "read",
+      "source": "https://community.fortinet.com/fortigate-3/troubleshooting-tip-fortios-routing-rip-ospf-bgp-static-routes-ecmp-99981"
+    },
+    {
+      "cmd": "execute ping-options source {{ip_origen}}",
+      "desc": "Define la IP de origen para los próximos execute ping.",
+      "cat": "Diagnóstico",
+      "risk": "change",
+      "note": "Persiste en la sesión CLI. Revertir con execute ping-options reset.",
+      "source": "https://docs.fortinet.com/document/fortigate/7.4.9/cli-reference"
+    },
+    {
+      "cmd": "execute ping-options repeat-count {{cantidad}}",
+      "desc": "Define la cantidad de paquetes para execute ping.",
+      "cat": "Diagnóstico",
+      "risk": "change",
+      "source": "https://docs.fortinet.com/document/fortigate/7.4.9/cli-reference"
+    },
+    {
+      "cmd": "execute ping-options reset",
+      "desc": "Restablece las opciones de ping a sus valores por defecto.",
+      "cat": "Diagnóstico",
+      "risk": "change",
+      "source": "https://docs.fortinet.com/document/fortigate/7.4.9/cli-reference"
+    },
+    {
+      "cmd": "execute ping6 {{ip}}",
+      "desc": "Ping IPv6 desde el FortiGate.",
+      "cat": "Diagnóstico",
+      "risk": "read",
+      "source": "https://docs.fortinet.com/document/fortigate/7.4.9/cli-reference"
+    },
+    {
+      "cmd": "execute traceroute {{ip}}",
+      "desc": "Traceroute desde el FortiGate.",
+      "cat": "Diagnóstico",
+      "risk": "read",
+      "source": "https://docs.fortinet.com/document/fortigate/7.4.9/cli-reference"
+    },
+    {
+      "cmd": "execute traceroute-options source {{ip_origen}}",
+      "desc": "Define la IP de origen para execute traceroute.",
+      "cat": "Diagnóstico",
+      "risk": "change",
+      "source": "https://docs.fortinet.com/document/fortigate/7.4.9/cli-reference"
+    },
+    {
+      "cmd": "diagnose sniffer packet any 'host {{ip}}' 4 {{cantidad}} l",
+      "desc": "Captura paquetes en todas las interfaces filtrando por host, con nombre de interfaz y hora local.",
+      "cat": "Diagnóstico",
+      "risk": "read",
+      "note": "Detener con Ctrl+C. Verbose 4 muestra interfaz; 6 incluye payload. El tráfico con offload NPU puede no verse.",
+      "source": "https://docs.fortinet.com/document/fortigate/6.4.0/administration-guide/680228"
+    },
+    {
+      "cmd": "diagnose sniffer packet {{puerto}} 'host {{ip}} and port {{puerto_destino}}' 4 {{cantidad}} l",
+      "desc": "Captura en una interfaz filtrando por host y puerto.",
+      "cat": "Diagnóstico",
+      "risk": "read",
+      "note": "Filtro en sintaxis tcpdump entre comillas simples. Detener con Ctrl+C.",
+      "source": "https://docs.fortinet.com/document/fortigate/6.4.0/administration-guide/680228"
+    },
+    {
+      "cmd": "diagnose sniffer packet any 'icmp' 4 {{cantidad}} l",
+      "desc": "Captura solo tráfico ICMP en todas las interfaces.",
+      "cat": "Diagnóstico",
+      "risk": "read",
+      "note": "Detener con Ctrl+C.",
+      "source": "https://docs.fortinet.com/document/fortigate/6.4.0/administration-guide/680228"
+    },
+    {
+      "cmd": "diagnose debug reset",
+      "desc": "Limpia todos los filtros y niveles de debug activos.",
+      "cat": "Diagnóstico",
+      "risk": "change",
+      "source": "https://docs.fortinet.com/document/fortigate/6.2.3/cookbook/54688"
+    },
+    {
+      "cmd": "diagnose debug disable",
+      "desc": "Detiene la salida de debug a la consola.",
+      "cat": "Diagnóstico",
+      "risk": "change",
+      "source": "https://docs.fortinet.com/document/fortigate/6.2.3/cookbook/54688"
+    },
+    {
+      "cmd": "diagnose debug info",
+      "desc": "Muestra qué debugs y filtros están activos.",
+      "cat": "Diagnóstico",
+      "risk": "read",
+      "source": "https://docs.fortinet.com/document/fortigate/7.4.9/cli-reference"
+    },
+    {
+      "cmd": "diagnose debug console timestamp enable",
+      "desc": "Agrega timestamp a cada línea de debug.",
+      "cat": "Diagnóstico",
+      "risk": "change",
+      "source": "https://community.fortinet.com/fortigate-3/technical-tip-fortigate-routing-debug-commands-177121"
+    },
+    {
+      "cmd": "diagnose debug flow filter clear",
+      "desc": "Limpia los filtros de debug flow.",
+      "cat": "Diagnóstico",
+      "risk": "change",
+      "source": "https://docs.fortinet.com/document/fortigate/6.2.3/cookbook/54688"
+    },
+    {
+      "cmd": "diagnose debug flow filter addr {{ip}}",
+      "desc": "Filtra debug flow por IP (origen o destino).",
+      "cat": "Diagnóstico",
+      "risk": "change",
+      "note": "saddr y daddr filtran solo origen o destino.",
+      "source": "https://docs.fortinet.com/document/fortigate/6.2.3/cookbook/54688"
+    },
+    {
+      "cmd": "diagnose debug flow filter port {{puerto}}",
+      "desc": "Filtra debug flow por puerto (origen o destino).",
+      "cat": "Diagnóstico",
+      "risk": "change",
+      "source": "https://docs.fortinet.com/document/fortigate/6.2.3/cookbook/54688"
+    },
+    {
+      "cmd": "diagnose debug flow filter proto {{protocolo}}",
+      "desc": "Filtra debug flow por número de protocolo (1 ICMP, 6 TCP, 17 UDP).",
+      "cat": "Diagnóstico",
+      "risk": "change",
+      "source": "https://docs.fortinet.com/document/fortigate/6.2.3/cookbook/54688"
+    },
+    {
+      "cmd": "diagnose debug flow show function-name enable",
+      "desc": "Incluye el nombre de la función del kernel en cada línea de debug flow.",
+      "cat": "Diagnóstico",
+      "risk": "change",
+      "source": "https://docs.fortinet.com/document/fortigate/6.2.3/cookbook/54688"
+    },
+    {
+      "cmd": "diagnose debug flow show iprope enable",
+      "desc": "Muestra la evaluación de políticas (iprope) en el debug flow.",
+      "cat": "Diagnóstico",
+      "risk": "change",
+      "source": "https://docs.fortinet.com/document/fortigate/6.2.3/cookbook/54688"
+    },
+    {
+      "cmd": "diagnose debug flow trace start {{cantidad}}",
+      "desc": "Inicia el trazado de N paquetes que coinciden con el filtro.",
+      "cat": "Diagnóstico",
+      "risk": "change",
+      "note": "Requiere diagnose debug enable para ver la salida.",
+      "source": "https://docs.fortinet.com/document/fortigate/6.2.3/cookbook/54688"
+    },
+    {
+      "cmd": "diagnose debug flow trace stop",
+      "desc": "Detiene el trazado de debug flow.",
+      "cat": "Diagnóstico",
+      "risk": "change",
+      "source": "https://docs.fortinet.com/document/fortigate/6.2.3/cookbook/54688"
+    },
+    {
+      "cmd": "diagnose debug enable",
+      "desc": "Habilita la salida de debug en la consola actual.",
+      "cat": "Diagnóstico",
+      "risk": "change",
+      "source": "https://docs.fortinet.com/document/fortigate/6.2.3/cookbook/54688"
+    },
+    {
+      "cmd": "diagnose debug reset\ndiagnose debug flow filter clear\ndiagnose debug flow filter addr {{ip}}\ndiagnose debug flow show function-name enable\ndiagnose debug flow show iprope enable\ndiagnose debug console timestamp enable\ndiagnose debug flow trace start {{cantidad}}\ndiagnose debug enable",
+      "desc": "Plantilla completa de debug flow para un host: muestra ruta, política, NAT y motivo de drop.",
+      "cat": "Diagnóstico",
+      "risk": "change",
+      "note": "Detener con diagnose debug disable, diagnose debug flow trace stop y diagnose debug reset. Con offload NPU solo se ve el primer paquete de la sesión.",
+      "source": "https://docs.fortinet.com/document/fortigate/6.2.3/cookbook/54688"
+    },
+    {
+      "cmd": "diagnose debug disable\ndiagnose debug flow trace stop\ndiagnose debug reset",
+      "desc": "Detiene y limpia cualquier debug activo.",
+      "cat": "Diagnóstico",
+      "risk": "change",
+      "source": "https://docs.fortinet.com/document/fortigate/6.2.3/cookbook/54688"
+    },
+    {
+      "cmd": "diagnose sys session filter clear",
+      "desc": "Limpia el filtro de la tabla de sesiones.",
+      "cat": "Diagnóstico",
+      "risk": "change",
+      "note": "Hacerlo siempre antes de definir un filtro nuevo.",
+      "source": "https://community.fortinet.com/fortigate-3/troubleshooting-tip-fortigate-session-table-information-98621"
+    },
+    {
+      "cmd": "diagnose sys session filter",
+      "desc": "Muestra el filtro de sesiones actualmente definido.",
+      "cat": "Diagnóstico",
+      "risk": "read",
+      "source": "https://community.fortinet.com/fortigate-3/technical-tip-how-it-is-possible-to-use-filter-with-diagnose-sys-session-list-command-to-get-the-intended-result-133680"
+    },
+    {
+      "cmd": "diagnose sys session filter src {{ip_origen}}",
+      "desc": "Filtra la tabla de sesiones por IP de origen.",
+      "cat": "Diagnóstico",
+      "risk": "change",
+      "source": "https://community.fortinet.com/fortigate-3/technical-tip-how-it-is-possible-to-use-filter-with-diagnose-sys-session-list-command-to-get-the-intended-result-133680"
+    },
+    {
+      "cmd": "diagnose sys session filter dst {{ip}}",
+      "desc": "Filtra la tabla de sesiones por IP de destino.",
+      "cat": "Diagnóstico",
+      "risk": "change",
+      "source": "https://community.fortinet.com/fortigate-3/technical-tip-how-it-is-possible-to-use-filter-with-diagnose-sys-session-list-command-to-get-the-intended-result-133680"
+    },
+    {
+      "cmd": "diagnose sys session filter dport {{puerto}}",
+      "desc": "Filtra la tabla de sesiones por puerto de destino.",
+      "cat": "Diagnóstico",
+      "risk": "change",
+      "source": "https://community.fortinet.com/fortigate-3/technical-tip-how-it-is-possible-to-use-filter-with-diagnose-sys-session-list-command-to-get-the-intended-result-133680"
+    },
+    {
+      "cmd": "diagnose sys session filter policy {{id}}",
+      "desc": "Filtra la tabla de sesiones por ID de política.",
+      "cat": "Diagnóstico",
+      "risk": "change",
+      "source": "https://community.fortinet.com/fortigate-3/technical-tip-how-it-is-possible-to-use-filter-with-diagnose-sys-session-list-command-to-get-the-intended-result-133680"
+    },
+    {
+      "cmd": "diagnose sys session list",
+      "desc": "Lista las sesiones que cumplen el filtro: estado, NAT, política, interfaz y offload.",
+      "cat": "Diagnóstico",
+      "risk": "read",
+      "note": "Sin filtro puede ser masivo y cargar CPU. Definir filtro antes.",
+      "source": "https://community.fortinet.com/fortigate-3/technical-tip-how-it-is-possible-to-use-filter-with-diagnose-sys-session-list-command-to-get-the-intended-result-133680"
+    },
+    {
+      "cmd": "diagnose sys session clear",
+      "desc": "Elimina las sesiones que cumplen el filtro activo.",
+      "cat": "Diagnóstico",
+      "risk": "disruptive",
+      "note": "Sin filtro borra TODAS las sesiones del VDOM y corta todo el tráfico. Verificar con diagnose sys session filter antes.",
+      "source": "https://community.fortinet.com/fortigate-3/technical-tip-using-filters-to-clear-sessions-on-a-fortigate-in-the-cli-93876"
+    },
+    {
+      "cmd": "execute log filter reset",
+      "desc": "Restablece los filtros de visualización de logs por CLI.",
+      "cat": "Logs",
+      "risk": "change",
+      "source": "https://docs.fortinet.com/document/fortigate/7.4.11/cli-reference/209945028/execute-log"
+    },
+    {
+      "cmd": "execute log filter device {{texto}}",
+      "desc": "Selecciona el origen de logs a leer (memory, disk, fortianalyzer, forticloud).",
+      "cat": "Logs",
+      "risk": "change",
+      "note": "Ejecutar sin argumento para ver las opciones de tu equipo.",
+      "source": "https://community.fortinet.com/fortigate-3/troubleshooting-tip-viewing-fortigate-log-entries-from-the-cli-98403"
+    },
+    {
+      "cmd": "execute log filter category {{texto}}",
+      "desc": "Selecciona la categoría de logs (traffic, event, utm-*, etc.).",
+      "cat": "Logs",
+      "risk": "change",
+      "note": "Los IDs numéricos varían por versión; ejecutar sin argumento para ver la lista.",
+      "source": "https://docs.fortinet.com/document/fortigate/7.4.11/cli-reference/209945028/execute-log"
+    },
+    {
+      "cmd": "execute log filter field srcip {{ip}}",
+      "desc": "Filtra los logs por un campo, en este caso IP de origen.",
+      "cat": "Logs",
+      "risk": "change",
+      "source": "https://docs.fortinet.com/document/fortigate/7.4.11/cli-reference/209945028/execute-log"
+    },
+    {
+      "cmd": "execute log filter view-lines {{cantidad}}",
+      "desc": "Define cuántas líneas muestra execute log display.",
+      "cat": "Logs",
+      "risk": "change",
+      "source": "https://docs.fortinet.com/document/fortigate/7.4.11/cli-reference/209945028/execute-log"
+    },
+    {
+      "cmd": "execute log filter dump",
+      "desc": "Muestra los filtros de log configurados actualmente.",
+      "cat": "Logs",
+      "risk": "read",
+      "note": "Sintaxis no confirmada en documentación oficial para todas las versiones; verificar en tu versión.",
+      "source": "https://docs.fortinet.com/document/fortigate/7.4.11/cli-reference/209945028/execute-log"
+    },
+    {
+      "cmd": "execute log display",
+      "desc": "Muestra los logs que cumplen los filtros definidos.",
+      "cat": "Logs",
+      "risk": "read",
+      "source": "https://docs.fortinet.com/document/fortigate/7.4.11/cli-reference/209945028/execute-log"
+    },
+    {
+      "cmd": "show log setting",
+      "desc": "Configuración general de logging del VDOM.",
+      "cat": "Logs",
+      "risk": "read",
+      "source": "https://docs.fortinet.com/document/fortigate/7.4.9/cli-reference"
+    },
+    {
+      "cmd": "show log fortianalyzer setting",
+      "desc": "Configuración de envío de logs a FortiAnalyzer.",
+      "cat": "Logs",
+      "risk": "read",
+      "source": "https://docs.fortinet.com/document/fortigate/7.4.9/cli-reference"
+    },
+    {
+      "cmd": "execute log fortianalyzer test-connectivity",
+      "desc": "Prueba la conexión y autorización con FortiAnalyzer.",
+      "cat": "Logs",
+      "risk": "read",
+      "source": "https://docs.fortinet.com/document/fortigate/7.4.9/cli-reference"
+    },
+    {
+      "cmd": "diagnose log test",
+      "desc": "Genera logs de prueba de todas las categorías para validar el envío.",
+      "cat": "Logs",
+      "risk": "change",
+      "source": "https://docs.fortinet.com/document/fortigate/7.4.9/cli-reference"
+    },
+    {
+      "cmd": "show log syslogd setting",
+      "desc": "Configuración del servidor syslog remoto.",
+      "cat": "Logs",
+      "risk": "read",
+      "source": "https://docs.fortinet.com/document/fortigate/7.4.9/cli-reference"
+    },
+    {
+      "cmd": "config system console\nset output standard\nend",
+      "desc": "Desactiva la paginación (--More--) en get, show y ?. Necesario para respaldos por SSH y scripts.",
+      "cat": "Configuración",
+      "risk": "change",
+      "note": "Ajuste global que afecta a todos los administradores. Revertir con set output more.",
+      "source": "https://community.fortinet.com/t5/FortiGate/Technical-Tip-CLI-command-console-output-mode/ta-p/190475"
+    },
+    {
+      "cmd": "show",
+      "desc": "Muestra la configuración del contexto actual (solo valores distintos al default).",
+      "cat": "Configuración",
+      "risk": "read",
+      "source": "https://community.fortinet.com/fortigate-3/technical-tip-fortigate-routing-debug-commands-177121"
+    },
+    {
+      "cmd": "show full-configuration",
+      "desc": "Muestra la configuración completa incluyendo valores por defecto.",
+      "cat": "Configuración",
+      "risk": "read",
+      "note": "Salida muy extensa.",
+      "source": "https://docs.fortinet.com/document/fortigate/7.4.9/cli-reference"
+    },
+    {
+      "cmd": "show | grep -f {{texto}}",
+      "desc": "Muestra la configuración filtrando por texto, conservando el bloque que lo contiene.",
+      "cat": "Configuración",
+      "risk": "read",
+      "source": "https://docs.fortinet.com/document/fortigate/7.4.9/cli-reference"
+    },
+    {
+      "cmd": "execute backup config tftp {{archivo}} {{ip}}",
+      "desc": "Respalda la configuración en un servidor TFTP.",
+      "cat": "Configuración",
+      "risk": "read",
+      "note": "TFTP viaja en claro; preferir SFTP o un canal seguro para equipos productivos.",
+      "source": "https://docs.fortinet.com/document/fortigate/7.4.9/cli-reference"
+    },
+    {
+      "cmd": "execute backup config usb {{archivo}}",
+      "desc": "Respalda la configuración en un pendrive USB conectado al equipo.",
+      "cat": "Configuración",
+      "risk": "read",
+      "source": "https://docs.fortinet.com/document/fortigate/7.4.9/cli-reference"
+    },
+    {
+      "cmd": "execute restore config tftp {{archivo}} {{ip}}",
+      "desc": "Restaura una configuración desde TFTP.",
+      "cat": "Configuración",
+      "risk": "disruptive",
+      "note": "El equipo se reinicia y reemplaza toda la configuración.",
+      "source": "https://docs.fortinet.com/document/fortigate/7.4.9/cli-reference"
+    },
+    {
+      "cmd": "execute restore image tftp {{archivo}} {{ip}}",
+      "desc": "Carga una imagen de firmware desde TFTP (upgrade/downgrade).",
+      "cat": "Configuración",
+      "risk": "disruptive",
+      "note": "Reinicia el equipo. Revisar el upgrade path oficial antes.",
+      "source": "https://docs.fortinet.com/document/fortigate/7.4.9/cli-reference"
+    },
+    {
+      "cmd": "execute reboot",
+      "desc": "Reinicia el FortiGate.",
+      "cat": "Configuración",
+      "risk": "disruptive",
+      "note": "Corta todo el servicio. En HA puede gatillar failover.",
+      "source": "https://docs.fortinet.com/document/fortigate/7.4.9/cli-reference"
+    },
+    {
+      "cmd": "execute shutdown",
+      "desc": "Apaga el FortiGate.",
+      "cat": "Configuración",
+      "risk": "disruptive",
+      "note": "Requiere acceso físico para volver a encender.",
+      "source": "https://docs.fortinet.com/document/fortigate/7.4.9/cli-reference"
+    },
+    {
+      "cmd": "execute factoryreset",
+      "desc": "Restaura la configuración de fábrica.",
+      "cat": "Configuración",
+      "risk": "disruptive",
+      "note": "Borra toda la configuración y se pierde el acceso de gestión.",
+      "source": "https://docs.fortinet.com/document/fortigate/7.4.9/cli-reference"
+    },
+    {
+      "cmd": "show system settings",
+      "desc": "Parámetros del VDOM: modo NAT/transparente, opciones de ECMP, asimetría y features visibles.",
+      "cat": "Configuración",
+      "risk": "read",
+      "source": "https://docs.fortinet.com/document/fortigate/7.4.9/cli-reference"
+    }
+  ]
+}

@@ -1,4 +1,4 @@
-import { Bot, Circle, CircleDot, NotebookPen, RotateCcw, Search, Settings, Zap } from "lucide-react";
+import { BookOpen, Bot, Circle, CircleDot, NotebookPen, RotateCcw, Search, Settings, Unplug, Zap } from "lucide-react";
 import { Tab, TabState, sessionTarget } from "../types";
 import { typeLabel } from "./SessionIcon";
 import { statusColor } from "./TabBar";
@@ -12,10 +12,13 @@ interface Props {
   onToggleLog: () => void;
   onBreak: () => void;
   onReconnect: () => void;
+  onDisconnect: () => void;
   onFind: () => void;
   onSettings: () => void;
   notesOpen: boolean;
   onNotes: () => void;
+  commandsOpen: boolean;
+  onCommands: () => void;
   aiEnabled: boolean;
   onAi: () => void;
 }
@@ -26,10 +29,13 @@ export function StatusBar({
   onToggleLog,
   onBreak,
   onReconnect,
+  onDisconnect,
   onFind,
   onSettings,
   notesOpen,
   onNotes,
+  commandsOpen,
+  onCommands,
   aiEnabled,
   onAi,
 }: Props) {
@@ -41,6 +47,10 @@ export function StatusBar({
           IA
         </BarBtn>
       )}
+      <BarBtn onClick={onCommands} title={`Catálogo de comandos (${modLabel}L)`} className={commandsOpen ? "!text-accent" : ""}>
+        <BookOpen size={12} />
+        Comandos
+      </BarBtn>
       <BarBtn onClick={onNotes} title={`Notas (${modLabel}J)`} className={notesOpen ? "!text-accent" : ""}>
         <NotebookPen size={12} />
         Notas
@@ -89,9 +99,17 @@ export function StatusBar({
         <BarBtn onClick={onFind} title={`Buscar (${modLabel}F)`}>
           <Search size={12} />
         </BarBtn>
-        <BarBtn onClick={onReconnect} title="Reconectar">
-          <RotateCcw size={12} />
-        </BarBtn>
+        {connected || state.status === "connecting" ? (
+          <BarBtn onClick={onDisconnect} title="Desconectar (la pestaña queda abierta)">
+            <Unplug size={12} />
+            Desconectar
+          </BarBtn>
+        ) : (
+          <BarBtn onClick={onReconnect} title="Reconectar (o Enter en la terminal)" className="!text-accent">
+            <RotateCcw size={12} />
+            Reconectar
+          </BarBtn>
+        )}
         <span className="w-px h-3.5 mx-1 bg-line" />
         {gear}
       </div>

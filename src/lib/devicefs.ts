@@ -25,7 +25,15 @@ export interface Profile {
   /** El equipo sube a este PC (requiere TFTP con escritura). */
   download: ((v: Vars) => string) | null;
   backup: ((v: Vars) => string) | null;
+  /** Comando que muestra el MD5 de un archivo en el equipo (verificación de firmware). */
+  md5: ((v: Vars) => string) | null;
   note?: string;
+}
+
+/** Extrae el último hash MD5 (32 hex) de la salida del equipo. */
+export function parseMd5(output: string): string | null {
+  const all = output.toLowerCase().match(/\b[0-9a-f]{32}\b/g);
+  return all ? all[all.length - 1] : null;
 }
 
 const join = (fs: string, file: string) => (fs.endsWith("/") || fs.endsWith(":") ? `${fs}${file}` : `${fs}/${file}`);
@@ -43,6 +51,7 @@ export const profiles: Profile[] = [
         : `copy tftp://${v.ip}/${v.file} ${join(v.fs, v.file)}${sfx(v.extra)}`,
     download: (v) => `copy ${join(v.fs, v.file)} tftp://${v.ip}/${v.file}${sfx(v.extra)}`,
     backup: (v) => `copy running-config tftp://${v.ip}/${v.file}${sfx(v.extra)}`,
+    md5: (v) => `verify /md5 ${join(v.fs, v.file)}`,
   },
   {
     id: "nxos",
@@ -53,6 +62,7 @@ export const profiles: Profile[] = [
       `copy ${proto}://${v.ip}${proto === "http" ? `:${v.port}` : ""}/${v.file} ${join(v.fs, v.file)} vrf ${v.extra.trim() || "management"}`,
     download: (v) => `copy ${join(v.fs, v.file)} tftp://${v.ip}/${v.file} vrf ${v.extra.trim() || "management"}`,
     backup: (v) => `copy running-config tftp://${v.ip}/${v.file} vrf ${v.extra.trim() || "management"}`,
+    md5: (v) => `show file ${join(v.fs, v.file)} md5sum`,
     note: "En NX-OS el campo extra es la VRF (por defecto management).",
   },
   {
@@ -63,6 +73,7 @@ export const profiles: Profile[] = [
     upload: (v) => `tftp ${v.ip} get ${v.file}`,
     download: (v) => `tftp ${v.ip} put ${v.file}`,
     backup: null,
+    md5: null,
     note: "VRP guarda en el directorio actual; usa 'cd flash:/' antes si cambiaste de carpeta.",
   },
   {
@@ -74,7 +85,8 @@ export const profiles: Profile[] = [
       `file copy ${proto}://${v.ip}${proto === "http" ? `:${v.port}` : ""}/${v.file} ${v.fs}`,
     download: null,
     backup: null,
-    note: "Junos no sube archivos por TFTP; para extraer usa SCP o FTP desde el equipo.",
+    md5: (v) => `file checksum md5 ${v.fs}${v.file}`,
+    note: "Junos no sube archivos por TFTP; para extraer usa SCP (cifrado).",
   },
 ];
 

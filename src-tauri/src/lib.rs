@@ -1,3 +1,4 @@
+mod cmdpacks;
 mod connection;
 mod expect;
 mod filexfer;
@@ -71,13 +72,32 @@ fn list_serial_ports() -> Vec<SerialPortInfo> {
 #[tauri::command]
 async fn connect(
     id: String,
-    session: Session,
+    mut session: Session,
     cols: u16,
     rows: u16,
     on_data: Channel<InvokeResponseBody>,
     on_exit: Channel<String>,
     app: tauri::AppHandle,
 ) -> Result<(), String> {
+    // SCP: las rutas locales se resuelven aquí, solo dentro de la carpeta compartida.
+    if let Some(spec) = session.scp.as_mut() {
+        let root = app.state::<AppState>().data_dir.join("tftp");
+        std::fs::create_dir_all(&root).map_err(|e| e.to_string())?;
+        if spec.upload {
+            spec.local_paths = spec
+                .files
+                .iter()
+                .map(|f| {
+                    servers::safe_path(&root, f)
+                        .filter(|p| p.is_file())
+                        .map(|p| p.to_string_lossy().into_owned())
+                        .ok_or_else(|| format!("No existe {f} en la carpeta compartida"))
+                })
+                .collect::<Result<_, _>>()?;
+        } else {
+            spec.local_dir = root.to_string_lossy().into_owned();
+        }
+    }
     tauri::async_runtime::spawn_blocking(move || {
         app.state::<AppState>()
             .conns
@@ -312,6 +332,30 @@ fn tftp_add(path: String, state: State<'_, AppState>) -> Result<String, String> 
     Ok(name.to_string_lossy().into_owned())
 }
 
+/// MD5 de un archivo de la carpeta compartida (para verificar firmware en el equipo).
+#[tauri::command]
+async fn tftp_md5(name: String, app: tauri::AppHandle) -> Result<String, String> {
+    let root = app.state::<AppState>().data_dir.join("tftp");
+    let path = servers::safe_path(&root, &name).ok_or("Nombre inválido")?;
+    tauri::async_runtime::spawn_blocking(move || {
+        use md5::{Digest, Md5};
+        use std::io::Read;
+        let mut f = std::fs::File::open(path).map_err(|e| e.to_string())?;
+        let mut h = Md5::new();
+        let mut buf = vec![0u8; 1 << 20];
+        loop {
+            let n = f.read(&mut buf).map_err(|e| e.to_string())?;
+            if n == 0 {
+                break;
+            }
+            h.update(&buf[..n]);
+        }
+        Ok(h.finalize().iter().map(|b| format!("{b:02x}")).collect())
+    })
+    .await
+    .map_err(|e| e.to_string())?
+}
+
 #[tauri::command]
 fn tftp_delete(name: String, state: State<'_, AppState>) -> Result<(), String> {
     let root = state.data_dir.join("tftp");
@@ -341,6 +385,51 @@ async fn check_update(repo: String, token: Option<String>) -> Result<serde_json:
 #[tauri::command]
 fn app_version() -> &'static str {
     env!("CARGO_PKG_VERSION")
+}
+
+/// Guarda un texto (exportaciones de diagramas, tablas) en la ruta elegida por el usuario.
+#[tauri::command]
+fn save_text(dest: String, content: String) -> Result<(), String> {
+    let ok_ext = ["svg", "csv", "md", "mmd", "txt", "json"];
+    let ext = std::path::Path::new(&dest)
+        .extension()
+        .and_then(|e| e.to_str())
+        .map(|e| e.to_ascii_lowercase())
+        .unwrap_or_default();
+    if !ok_ext.contains(&ext.as_str()) {
+        return Err(format!("Extensión no permitida: .{ext}"));
+    }
+    if content.len() > 10 * 1024 * 1024 {
+        return Err("El archivo supera 10 MB".into());
+    }
+    std::fs::write(&dest, content).map_err(|e| e.to_string())
+}
+
+// ---------- Packs de comandos ----------
+
+#[tauri::command]
+fn cmdpacks_list(state: State<'_, AppState>) -> Vec<serde_json::Value> {
+    cmdpacks::list(&state.data_dir)
+}
+
+#[tauri::command]
+fn cmdpack_read(path: String) -> Result<serde_json::Value, String> {
+    cmdpacks::read_external(&path)
+}
+
+#[tauri::command]
+fn cmdpack_save(pack: serde_json::Value, state: State<'_, AppState>) -> Result<String, String> {
+    cmdpacks::save(&state.data_dir, &pack)
+}
+
+#[tauri::command]
+fn cmdpack_delete(id: String, state: State<'_, AppState>) -> Result<(), String> {
+    cmdpacks::delete(&state.data_dir, &id)
+}
+
+#[tauri::command]
+fn cmdpack_export(id: String, dest: String, state: State<'_, AppState>) -> Result<(), String> {
+    cmdpacks::export(&state.data_dir, &id, &dest)
 }
 
 // ---------- Plugins ----------
@@ -530,6 +619,13 @@ pub fn run() {
             tftp_files,
             tftp_add,
             tftp_delete,
+            tftp_md5,
+            save_text,
+            cmdpacks_list,
+            cmdpack_read,
+            cmdpack_save,
+            cmdpack_delete,
+            cmdpack_export,
             device_run,
             source_ip,
             check_update,

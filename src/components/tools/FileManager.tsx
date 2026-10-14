@@ -17,7 +17,8 @@ import {
   Trash2,
 } from "lucide-react";
 import { Settings } from "../../lib/settings";
-import { RemoteFile, guessProfile, parseListing, profiles } from "../../lib/devicefs";
+import { RemoteFile, guessProfile, parseListing, parseMd5, profiles } from "../../lib/devicefs";
+import type { Session } from "../../types";
 import { Btn, Console, Label, fmtBytes } from "./ui";
 
 export interface TerminalRef {
@@ -25,11 +26,21 @@ export interface TerminalRef {
   name: string;
   host?: string;
   highlight?: string;
+  session: Session;
+}
+
+export interface ScpRequest {
+  upload: boolean;
+  files: string[];
+  remoteDir: string;
+  session: Session;
 }
 
 interface Op {
   id: string;
-  kind: "send" | "pull" | "backup";
+  kind: "send" | "pull" | "backup" | "verify";
+  /** MD5 esperado (operación de verificación). */
+  expect?: string;
   file: string;
   conn: string;
   command: string;
@@ -47,20 +58,23 @@ interface Props {
   onChange: (p: Partial<Settings>) => void;
   refreshRunning: () => void;
   onConfirm: (req: { title: string; message: string; label: string; danger?: boolean; action: () => void }) => void;
+  /** Abre una pestaña con scp (la contraseña se escribe ahí). */
+  onScp: (req: ScpRequest) => void;
 }
 
 const DND_LOCAL = "application/x-nt-local";
 const DND_REMOTE = "application/x-nt-remote";
 const TIMEOUT = 3600; // firmware grandes por TFTP pueden tardar decenas de minutos
 
-export function FileManager({ terminals, settings: s, running, onChange, refreshRunning, onConfirm }: Props) {
+export function FileManager({ terminals, settings: s, running, onChange, refreshRunning, onConfirm, onScp }: Props) {
   const [connId, setConnId] = useState<string>("");
   const term = terminals.find((t) => t.connId === connId);
   const [profileId, setProfileId] = useState("cisco");
   const profile = profiles.find((p) => p.id === profileId)!;
   const [fs, setFs] = useState(profile.fs);
   const [extra, setExtra] = useState("");
-  const [proto, setProto] = useState<"tftp" | "http">("tftp");
+  const [proto, setProto] = useState<"tftp" | "http" | "scp">("tftp");
+  const [verify, setVerify] = useState(true);
   const [ips, setIps] = useState<{ name: string; ip: string }[]>([]);
   const [ip, setIp] = useState("");
   const [local, setLocal] = useState<[string, number][]>([]);
@@ -116,13 +130,26 @@ export function FileManager({ terminals, settings: s, running, onChange, refresh
         }
         const opId = jobToOp.current.get(e.job);
         if (!opId) return;
+        // Firmware enviado sin errores: verifica su MD5 contra la copia del PC.
+        if (e.kind === "result" && e.data?.ok) {
+          const op = opsRef.current.find((o) => o.id === opId);
+          if (op?.kind === "send" && op.status === "running") afterSendRef.current(op);
+        }
         setOps((list) =>
           list.map((o) => {
             if (o.id !== opId) return o;
             if (e.kind === "line") return { ...o, lines: [...o.lines.slice(-300), e.text] };
             if (e.kind === "error") return { ...o, status: "error", error: e.text };
-            if (e.kind === "result" && e.data)
-              return o.status === "error" ? o : { ...o, status: e.data.ok ? "ok" : "error", error: e.data.ok ? undefined : "El equipo informó un error (ver salida)" };
+            if (e.kind === "result" && e.data && o.kind === "verify") {
+              const got = parseMd5(e.data.output);
+              const match = !!got && got === o.expect;
+              return { ...o, status: match ? "ok" : "error", error: match ? undefined : got ? `MD5 no coincide (${got})` : "El equipo no devolvió un MD5" };
+            }
+            if (e.kind === "result" && e.data) {
+              if (o.status === "error") return o;
+              if (!e.data.ok) return { ...o, status: "error", error: "El equipo informó un error (ver salida)" };
+              return { ...o, status: "ok", error: undefined };
+            }
             return o;
           }),
         );
@@ -169,7 +196,8 @@ export function FileManager({ terminals, settings: s, running, onChange, refresh
     setOps((l) => l.map((o) => (o.id === next.id ? { ...o, status: "running" } : o)));
     (async () => {
       try {
-        await ensureServer(next.kind === "send" ? proto : "tftp", next.kind !== "send");
+        // La verificación MD5 no transfiere nada: no necesita servidor.
+        if (next.kind !== "verify") await ensureServer(next.kind === "send" && proto === "http" ? "http" : "tftp", next.kind !== "send");
         const job = await invoke<string>("device_run", { conn: next.conn, command: next.command, timeoutSecs: TIMEOUT });
         jobToOp.current.set(job, next.id);
       } catch (e) {
@@ -190,8 +218,48 @@ export function FileManager({ terminals, settings: s, running, onChange, refresh
     prevPending.current = pending;
   }, [pending, loadLocal, refreshRemote]);
 
+  /** Encola verificaciones MD5: calcula el hash local y compara con el del equipo. */
+  const queueVerify = async (files: string[], conn: string) => {
+    if (!profile.md5) return;
+    for (const file of files) {
+      const expect = await invoke<string>("tftp_md5", { name: file }).catch(() => null);
+      if (!expect) continue;
+      setOps((o) => [
+        ...o,
+        {
+          id: `${Date.now()}-v-${file}`,
+          kind: "verify",
+          file,
+          conn,
+          expect,
+          command: profile.md5!({ ip, port: s.httpPort, file, fs, extra }),
+          status: "pending",
+          lines: [],
+        },
+      ]);
+    }
+  };
+
+  const opsRef = useRef(ops);
+  opsRef.current = ops;
+  const afterSendRef = useRef((_op: Op) => {});
+  afterSendRef.current = (op: Op) => {
+    if (verify && profile.md5) queueVerify([op.file], op.conn);
+  };
+
   const enqueue = (kind: Op["kind"], files: string[]) => {
     if (!term) return setError("Conecta una sesión con el equipo primero");
+    if (proto === "scp" && (kind === "send" || kind === "pull")) {
+      if (!term.host) return setError("SCP requiere una sesión de red con host (no serial)");
+      const go = () => onScp({ upload: kind === "send", files, remoteDir: fs, session: term.session });
+      const overwrite = kind === "send" ? files.filter((f) => remote?.files.some((r) => r.name === f)) : [];
+      if (overwrite.length)
+        onConfirm({ title: "¿Sobrescribir en el equipo?", message: overwrite.join(", "), label: "Sobrescribir", danger: true, action: go });
+      else go();
+      setSelLocal(new Set());
+      setSelRemote(new Set());
+      return;
+    }
     if (!ip) return setError("Selecciona la IP de este PC que el equipo puede alcanzar");
     const vars = (file: string) => ({ ip, port: s.httpPort, file, fs, extra });
     const items: Op[] = files.map((file) => ({
@@ -199,12 +267,22 @@ export function FileManager({ terminals, settings: s, running, onChange, refresh
       kind,
       file,
       conn: term.connId,
-      command: kind === "send" ? profile.upload(vars(file), proto) : kind === "pull" ? profile.download!(vars(file)) : profile.backup!(vars(file)),
+      command: kind === "send" ? profile.upload(vars(file), proto === "http" ? "http" : "tftp") : kind === "pull" ? profile.download!(vars(file)) : profile.backup!(vars(file)),
       status: "pending",
       lines: [],
     }));
     const overwrite = kind === "send" ? files.filter((f) => remote?.files.some((r) => r.name === f)) : files.filter((f) => local.some(([n]) => n === f));
     const go = () => setOps((o) => [...items, ...o.filter((x) => x.status !== "ok")].slice(0, 30));
+    // Espacio libre en el equipo (si el listado lo informó).
+    const needed = kind === "send" ? files.reduce((n, f) => n + (local.find(([l]) => l === f)?.[1] ?? 0), 0) : 0;
+    if (kind === "send" && remote?.free != null && needed > remote.free)
+      return onConfirm({
+        title: "No hay espacio suficiente en el equipo",
+        message: `Necesitas ${fmtBytes(needed)} y quedan ${fmtBytes(remote.free)} libres en ${fs}. Libera espacio antes de enviar.`,
+        label: "Enviar igual",
+        danger: true,
+        action: go,
+      });
     if (overwrite.length)
       onConfirm({
         title: "¿Sobrescribir archivos?",
@@ -276,14 +354,28 @@ export function FileManager({ terminals, settings: s, running, onChange, refresh
             ))}
           </select>
         </Label>
-        <Label text="Protocolo envío">
-          <select className="field" value={proto} onChange={(e) => setProto(e.target.value as "tftp" | "http")}>
+        <Label text="Protocolo">
+          <select className="field" value={proto} onChange={(e) => setProto(e.target.value as "tftp" | "http" | "scp")}>
             <option value="tftp">TFTP</option>
             <option value="http" disabled={profileId === "huawei"}>
-              HTTP (rápido)
+              HTTP (solo envío, rápido)
             </option>
+            <option value="scp">SCP (cifrado)</option>
           </select>
         </Label>
+      </div>
+      <div className="flex flex-wrap items-center gap-4 text-[11.5px] text-muted">
+        {profile.md5 && (
+          <label className="flex items-center gap-1.5">
+            <input type="checkbox" className="accent-[var(--accent)]" checked={verify} onChange={(e) => setVerify(e.target.checked)} />
+            Verificar MD5 después de enviar
+          </label>
+        )}
+        {proto === "scp" && (
+          <span>
+            SCP abre una pestaña donde escribes la contraseña. Requiere servidor SCP en el equipo (Cisco: <code>ip scp server enable</code>).
+          </span>
+        )}
       </div>
       {(profile.note || profileId === "nxos") && (
         <div className="flex items-center gap-3 text-[11.5px] text-muted">
@@ -324,7 +416,7 @@ export function FileManager({ terminals, settings: s, running, onChange, refresh
             onDrop: (e) => {
               setDrop(null);
               const names = e.dataTransfer.getData(DND_REMOTE).split("\n").filter(Boolean);
-              if (names.length && profile.download) enqueue("pull", names);
+              if (names.length && (profile.download || proto === "scp")) enqueue("pull", names);
             },
           }}
           footer={`${local.length} archivos`}
@@ -360,11 +452,19 @@ export function FileManager({ terminals, settings: s, running, onChange, refresh
             Enviar <ArrowRight size={14} />
           </Btn>
           <Btn
-            disabled={!selRemote.size || !term || !profile.download}
+            disabled={!selRemote.size || !term || (!profile.download && proto !== "scp")}
             onClick={() => enqueue("pull", [...selRemote])}
-            title={profile.download ? "El equipo sube los archivos seleccionados a este PC" : "No soportado por TFTP en este equipo"}
+            title={profile.download || proto === "scp" ? "Trae los archivos seleccionados a este PC" : "No soportado por TFTP en este equipo: usa SCP"}
           >
             <ArrowLeft size={14} /> Traer
+          </Btn>
+          <Btn
+            kind="ghost"
+            disabled={!term || !profile.md5 || ![...selRemote].some((f) => local.some(([n]) => n === f))}
+            onClick={() => queueVerify([...selRemote].filter((f) => local.some(([n]) => n === f)), term!.connId)}
+            title="Compara el MD5 del archivo en el equipo con la copia de este PC"
+          >
+            MD5
           </Btn>
           <Btn
             kind="ghost"
@@ -442,7 +542,9 @@ export function FileManager({ terminals, settings: s, running, onChange, refresh
               <div key={o.id}>
                 <div className="flex items-center justify-between gap-3 text-[12px]">
                   <span className="truncate">
-                    <span className="text-muted">{o.kind === "send" ? "→ Enviar" : o.kind === "pull" ? "← Traer" : "← Respaldo"}</span>{" "}
+                    <span className="text-muted">
+                      {o.kind === "send" ? "→ Enviar" : o.kind === "pull" ? "← Traer" : o.kind === "verify" ? "✓ MD5" : "← Respaldo"}
+                    </span>{" "}
                     <span className="font-mono">{o.file}</span>
                   </span>
                   <span className="flex items-center gap-2 shrink-0">

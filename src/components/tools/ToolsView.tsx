@@ -1,6 +1,8 @@
 import { useCallback, useEffect, useState } from "react";
 import { invoke } from "@tauri-apps/api/core";
-import { Activity, ArrowDownUp, Calculator, Gauge, Puzzle, Radar, ScrollText } from "lucide-react";
+import { Activity, ArrowDownUp, Calculator, Gauge, Network, Puzzle, Radar, ScrollText } from "lucide-react";
+import { TopologyTool } from "./TopologyTool";
+import type { Session } from "../../types";
 import { ModuleId, Settings, SpeedResult } from "../../lib/settings";
 import { MonitorStatus, MonitorTarget, Sample } from "../../lib/monitors";
 import { MonitorTool } from "./MonitorTool";
@@ -10,11 +12,12 @@ import { PerfTool } from "./PerfTool";
 import { TransferTool } from "./TransferTool";
 import { SyslogTool } from "./SyslogTool";
 import { PluginsTool } from "./PluginsTool";
-import type { TerminalRef } from "./FileManager";
+import type { ScpRequest, TerminalRef } from "./FileManager";
 
 const NAV: { id: ModuleId; label: string; Icon: typeof Activity }[] = [
   { id: "monitor", label: "Monitoreo", Icon: Activity },
   { id: "diag", label: "Diagnóstico", Icon: Radar },
+  { id: "topology", label: "Topología", Icon: Network },
   { id: "subnet", label: "Subredes", Icon: Calculator },
   { id: "perf", label: "Velocidad", Icon: Gauge },
   { id: "transfer", label: "TFTP / HTTP", Icon: ArrowDownUp },
@@ -34,6 +37,8 @@ interface Props {
   };
   connId: () => string | null;
   terminals: TerminalRef[];
+  onScp: (req: ScpRequest) => void;
+  onOpenSession: (s: Session) => void;
   onConfirm: (req: { title: string; message: string; label: string; danger?: boolean; action: () => void }) => void;
 }
 
@@ -41,7 +46,7 @@ interface Props {
  * Pestaña de herramientas. Cada módulo se monta al visitarlo y luego se mantiene
  * vivo oculto, para no perder servidores, logs ni mediciones al cambiar de sección.
  */
-export function ToolsView({ active, settings, update, monitors, connId, terminals, onConfirm }: Props) {
+export function ToolsView({ active, settings, update, monitors, connId, terminals, onConfirm, onScp, onOpenSession }: Props) {
   const enabled = NAV.filter((n) => settings.modules[n.id] !== false);
   const [current, setCurrent] = useState<ModuleId>(enabled[0]?.id ?? "monitor");
   const [visited, setVisited] = useState<Set<ModuleId>>(new Set([current]));
@@ -77,6 +82,8 @@ export function ToolsView({ active, settings, update, monitors, connId, terminal
         );
       case "diag":
         return <DiagTool samples={monitors.samples} />;
+      case "topology":
+        return <TopologyTool terminals={terminals} onOpenSession={onOpenSession} />;
       case "subnet":
         return <SubnetTool />;
       case "perf":
@@ -95,6 +102,7 @@ export function ToolsView({ active, settings, update, monitors, connId, terminal
             refreshRunning={refreshRunning}
             terminals={terminals}
             onConfirm={onConfirm}
+            onScp={onScp}
           />
         );
       case "syslog":

@@ -105,6 +105,13 @@ impl SessionStore {
             parity: None,
             flow_control: None,
             highlight: None,
+            on_connect: None,
+            newline: None,
+            local_echo: None,
+            encoding: None,
+            auto_reconnect: None,
+            platform: None,
+            scp: None,
             created_at: Utc::now().to_rfc3339(),
         }]
     }
