@@ -203,7 +203,7 @@ const handlers = {
   list_sessions: () => sessions,
   get_settings: () => settings,
   save_settings: () => null,
-  app_version: () => "0.5.1",
+  app_version: () => "0.5.2",
   check_update: () => Promise.reject("demo"),
   cmdpacks_list: () => [],
   list_notes: () => Object.keys(notes).map((name) => ({ name, modified: now })),
@@ -286,6 +286,7 @@ const scenes = {
   subnet: async () => { await click("Herramientas: monitoreo, diagnóstico, TFTP, syslog, plugins"); await click("Subredes"); },
   speed: async () => { await click("Herramientas: monitoreo, diagnóstico, TFTP, syslog, plugins"); await click("Velocidad"); },
   oscmds: async () => { await open("Shell local"); await click("Catálogo de comandos"); },
+  about: async () => { await click("Ajustes"); await click("Acerca de"); },
   settings: async () => { await open("core-sw01"); await click("Ajustes"); },
   packs: async () => { await open("core-sw01"); await click("Catálogo de comandos"); await click("Packs de comandos"); },
 };

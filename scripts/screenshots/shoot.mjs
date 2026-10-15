@@ -20,6 +20,7 @@ const SHOTS = [
   ["velocidad", "speed", "light"],
   ["ajustes", "settings", "dark"],
   ["packs", "packs", "light"],
+  ["acerca", "about", "dark"],
 ];
 const only = process.argv.slice(2);
 

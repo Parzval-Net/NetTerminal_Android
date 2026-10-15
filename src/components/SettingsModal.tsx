@@ -1,6 +1,8 @@
 import { useEffect, useState } from "react";
 import { invoke } from "@tauri-apps/api/core";
-import { Blocks, Bot, Check, FolderOpen, Highlighter, Palette, ScrollText, SquareTerminal, X } from "lucide-react";
+import { Blocks, Bot, Check, FolderOpen, Highlighter, Info, Palette, ScrollText, SquareTerminal, X } from "lucide-react";
+import { openUrl } from "@tauri-apps/plugin-opener";
+import logo from "../assets/logo.svg";
 import type { ModuleId } from "../lib/settings";
 import { AiSettings } from "./AiSettings";
 import { useDragResize } from "../lib/useDragResize";
@@ -24,7 +26,7 @@ interface Props {
   onClose: () => void;
 }
 
-export type Section = "appearance" | "highlight" | "terminal" | "modules" | "ai" | "data";
+export type Section = "appearance" | "highlight" | "terminal" | "modules" | "ai" | "data" | "about";
 
 const MODULES: [ModuleId, string, string][] = [
   ["monitor", "Monitoreo", "Sondas ICMP/TCP con gráfico y alarma sonora"],
@@ -44,6 +46,7 @@ const sections: { id: Section; label: string; Icon: typeof Palette }[] = [
   { id: "modules", label: "Módulos", Icon: Blocks },
   { id: "ai", label: "Agentes IA", Icon: Bot },
   { id: "data", label: "Logs y datos", Icon: ScrollText },
+  { id: "about", label: "Acerca de", Icon: Info },
 ];
 
 const FONTS = [
@@ -321,6 +324,8 @@ export function SettingsModal({
               </>
             )}
 
+            {section === "about" && <About repo={s.updateRepo} />}
+
             {section === "data" && (
               <>
                 <Item label="Grabar logs automáticamente" hint="Cada sesión remota se registra en texto plano">
@@ -422,6 +427,32 @@ function UpdateSettings({ settings: s, onChange }: { settings: Settings; onChang
         vencimiento. Se guarda solo en este equipo.
       </p>
       {status && <p className="text-[12px] text-accent">{status}</p>}
+    </div>
+  );
+}
+
+function About({ repo }: { repo: string }) {
+  const [version, setVersion] = useState("");
+  useEffect(() => {
+    invoke<string>("app_version").then(setVersion).catch(() => {});
+  }, []);
+  return (
+    <div className="flex flex-col items-center text-center gap-2 py-6">
+      <img src={logo} alt="" className="w-16 h-16" />
+      <div className="text-[18px] font-semibold">NetTerminal</div>
+      <div className="text-[12px] text-muted">Versión {version}</div>
+      <p className="text-[13px] mt-2">
+        Creado por <span className="font-semibold">Nicolás Rivera</span>
+      </p>
+      <p className="text-[12px] text-muted">Vibecodeado con Claude Code</p>
+      <p className="text-[12px] text-muted max-w-sm mt-2">
+        Cliente SSH, Telnet, Serial y terminal local para el trabajo diario con equipos de red. Tauri 2, Rust y xterm.js.
+      </p>
+      {repo && (
+        <button onClick={() => openUrl(`https://github.com/${repo}`)} className="mt-2 px-3 h-7 rounded-md border border-line hover:bg-hover text-[12px]">
+          github.com/{repo}
+        </button>
+      )}
     </div>
   );
 }

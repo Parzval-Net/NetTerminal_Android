@@ -522,7 +522,16 @@ fn macos_menu(app: &tauri::AppHandle) -> tauri::Result<tauri::menu::Menu<tauri::
                 "NetTerminal",
                 true,
                 &[
-                    &P::about(app, None, None)?,
+                    &P::about(
+                        app,
+                        None,
+                        Some(tauri::menu::AboutMetadata {
+                            name: Some("NetTerminal".into()),
+                            version: Some(env!("CARGO_PKG_VERSION").into()),
+                            credits: Some("Creado por Nicolás Rivera\nVibecodeado con Claude Code".into()),
+                            ..Default::default()
+                        }),
+                    )?,
                     &P::separator(app)?,
                     &MenuItem::with_id(app, "settings", "Ajustes…", true, Some("CmdOrCtrl+,"))?,
                     &P::separator(app)?,

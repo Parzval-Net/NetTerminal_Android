@@ -1,6 +1,6 @@
 [package]
 name = "net-terminal"
-version = "0.5.1"
+version = "0.5.2"
 description = "Cliente SSH, Telnet y Serial liviano y multiplataforma"
 authors = ["NetTerminal"]
 edition = "2021"
