@@ -115,6 +115,8 @@ impl McpServer {
         );
         let ok = rx.recv_timeout(APPROVAL_TIMEOUT).unwrap_or(false);
         self.approvals.lock().unwrap().remove(&id);
+        // Cierra el diálogo también cuando venció: si no, aprobarlo después no tendría efecto.
+        let _ = app.emit("mcp-approval-closed", id);
         ok
     }
 }

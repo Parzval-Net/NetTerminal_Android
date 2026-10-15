@@ -198,12 +198,7 @@ pub fn stage(data: &Path, source: &Path) -> Result<Preview, String> {
         let root = plugin_root(&staging)?;
         let manifest = read_manifest(&root)?;
         let files = walk(&root)?;
-        let code: String = fs::read_to_string(root.join(&manifest.entry))
-            .unwrap_or_default()
-            .lines()
-            .take(400)
-            .collect::<Vec<_>>()
-            .join("\n");
+        let code = code_listing(&root, &manifest.entry, &files);
         let replaces = dir(data).join(&manifest.id).is_dir().then(|| manifest.id.clone());
         Ok(Preview { staging: staging_id.clone(), manifest, files, code, replaces })
     })();
@@ -329,7 +324,29 @@ pub fn read_code(data: &Path, id: &str) -> Result<String, String> {
     }
     let root = dir(data).join(id);
     let m = read_manifest(&root)?;
-    fs::read_to_string(root.join(m.entry)).map_err(|e| e.to_string())
+    Ok(code_listing(&root, &m.entry, &walk(&root)?))
+}
+
+/// Todo el código Python del plugin para revisarlo: primero el punto de entrada y luego el
+/// resto de los .py, con un tope de líneas que se avisa explícitamente.
+fn code_listing(root: &Path, entry: &str, files: &[(String, u64)]) -> String {
+    const MAX_LINES: usize = 4000;
+    let mut order: Vec<&str> = vec![entry];
+    order.extend(files.iter().map(|f| f.0.as_str()).filter(|f| f.ends_with(".py") && *f != entry));
+    let mut out = Vec::new();
+    for rel in order {
+        let text = fs::read_to_string(root.join(rel)).unwrap_or_else(|e| format!("(no se pudo leer: {e})"));
+        if out.len() > MAX_LINES {
+            break;
+        }
+        out.push(format!("# ===== {rel} ====="));
+        out.extend(text.lines().map(str::to_string));
+    }
+    if out.len() > MAX_LINES {
+        out.truncate(MAX_LINES);
+        out.push(format!("# … código truncado a {MAX_LINES} líneas: revisa la carpeta completa del plugin antes de aprobarlo"));
+    }
+    out.join("\n")
 }
 
 pub fn run(
@@ -350,6 +367,8 @@ pub fn run(
     if &hash(&root)? != approved {
         return Err("El plugin cambió desde que lo aprobaste. Revísalo y vuelve a habilitarlo.".into());
     }
+    // Bytecode no verificado por el hash: se borra y Python corre con -B para no regenerarlo.
+    remove_pycache(&root);
     if !m.actions.iter().any(|a| a.id == action) {
         return Err("Acción no declarada en plugin.json".into());
     }
@@ -426,5 +445,21 @@ mod tests {
         assert!(err.contains("peligrosa"), "{err}");
         assert!(!base.join("data/plugins/evil.py").exists() && !base.join("data/evil.py").exists());
         let _ = fs::remove_dir_all(base);
+    }
+}
+
+fn remove_pycache(root: &Path) {
+    let mut stack = vec![root.to_path_buf()];
+    while let Some(d) = stack.pop() {
+        for e in fs::read_dir(&d).into_iter().flatten().flatten() {
+            let Ok(ft) = e.file_type() else { continue };
+            if ft.is_dir() && !ft.is_symlink() {
+                if e.file_name() == "__pycache__" {
+                    let _ = fs::remove_dir_all(e.path());
+                } else {
+                    stack.push(e.path());
+                }
+            }
+        }
     }
 }

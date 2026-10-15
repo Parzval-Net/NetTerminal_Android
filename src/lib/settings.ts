@@ -2,6 +2,7 @@ import { useCallback, useEffect, useRef, useState } from "react";
 import { invoke } from "@tauri-apps/api/core";
 import type { HlRule } from "./highlight";
 import type { MonitorTarget } from "./monitors";
+import type { TopoSnapshot, Topology } from "./topology";
 
 export type ModuleId = "monitor" | "diag" | "topology" | "subnet" | "perf" | "transfer" | "syslog" | "plugins";
 
@@ -71,6 +72,9 @@ export interface Settings {
   catalogVendor: string;
   /** Packs de comandos desactivados (incluidos o importados). */
   disabledPacks: string[];
+  /** Diagrama de topología en curso (se guarda con los datos, también en modo portable). */
+  topology: Topology;
+  topoSnapshots: TopoSnapshot[];
 }
 
 export interface UpdateInfo {
@@ -127,6 +131,8 @@ export const defaultSettings: Settings = {
   favCommands: [],
   catalogVendor: "cisco",
   disabledPacks: [],
+  topology: { nodes: [], links: [] },
+  topoSnapshots: [],
 };
 
 export function newToken(): string {

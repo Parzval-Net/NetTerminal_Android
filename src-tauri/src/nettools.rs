@@ -22,8 +22,8 @@ struct JobEvent {
 
 #[derive(Default)]
 pub struct Jobs {
-    children: Mutex<HashMap<String, Arc<Mutex<Child>>>>,
-    cancels: Mutex<HashMap<String, Arc<AtomicBool>>>,
+    children: Arc<Mutex<HashMap<String, Arc<Mutex<Child>>>>>,
+    cancels: Arc<Mutex<HashMap<String, Arc<AtomicBool>>>>,
 }
 
 #[derive(Deserialize)]
@@ -69,6 +69,7 @@ impl Jobs {
             }
         });
         let id = job.clone();
+        let children = self.children.clone();
         std::thread::spawn(move || {
             let mut json_buf = String::new();
             if collect_json {
@@ -78,7 +79,17 @@ impl Jobs {
                     emit(&app, &id, "line", line, None);
                 }
             }
-            let status = child.lock().unwrap().wait();
+            // Espera sin retener el lock: así "Detener" (que necesita el lock para matar el
+            // proceso) no queda bloqueado hasta que el proceso termine solo.
+            let status = loop {
+                match child.lock().unwrap().try_wait() {
+                    Ok(Some(st)) => break Ok(st),
+                    Ok(None) => {}
+                    Err(e) => break Err(e),
+                }
+                std::thread::sleep(Duration::from_millis(100));
+            };
+            children.lock().unwrap().remove(&id);
             if collect_json {
                 match serde_json::from_str::<Value>(&json_buf) {
                     Ok(v) if v.get("error").is_some() => {
@@ -150,8 +161,10 @@ impl Jobs {
         let cancel = Arc::new(AtomicBool::new(false));
         self.cancels.lock().unwrap().insert(job.clone(), cancel.clone());
         let id = job.clone();
+        let cancels = self.cancels.clone();
         std::thread::spawn(move || {
             let res = run_speedtest(&app, &id, &cancel);
+            cancels.lock().unwrap().remove(&id);
             match res {
                 Ok(v) => emit(&app, &id, "result", String::new(), Some(v)),
                 Err(e) => emit(&app, &id, "error", e, None),
@@ -212,17 +225,25 @@ pub fn check_ports(host: &str, ports: Vec<u16>, timeout_ms: u64) -> Result<Vec<P
         return Err("Máximo 1024 puertos por consulta".into());
     }
     let timeout = Duration::from_millis(timeout_ms.clamp(100, 10_000));
-    let handles: Vec<_> = ports
-        .into_iter()
-        .map(|port| {
-            let h = host.to_string();
-            std::thread::spawn(move || {
+    // Pool acotado: un hilo y un socket por puerto agotaba los descriptores (macOS limita
+    // a 256 por app) y hacía fallar sesiones nuevas mientras corría el escaneo.
+    const WORKERS: usize = 64;
+    let queue = Arc::new(Mutex::new(ports.into_iter()));
+    let results = Arc::new(Mutex::new(Vec::new()));
+    let handles: Vec<_> = (0..WORKERS)
+        .map(|_| {
+            let (queue, results, h) = (queue.clone(), results.clone(), host.to_string());
+            std::thread::spawn(move || loop {
+                let Some(port) = queue.lock().unwrap().next() else { break };
                 let (open, rtt, error) = tcp_probe(&h, port, timeout);
-                PortResult { port, open, rtt, error }
+                results.lock().unwrap().push(PortResult { port, open, rtt, error });
             })
         })
         .collect();
-    let mut out: Vec<_> = handles.into_iter().filter_map(|h| h.join().ok()).collect();
+    for h in handles {
+        let _ = h.join();
+    }
+    let mut out = std::mem::take(&mut *results.lock().unwrap());
     out.sort_by_key(|r| r.port);
     Ok(out)
 }

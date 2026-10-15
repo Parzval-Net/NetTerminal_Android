@@ -37,11 +37,13 @@ export function shortcutFor(e: KeyboardEvent): AppAction | null {
 
   if (e.ctrlKey && key === "tab") return e.shiftKey ? "prevTab" : "nextTab";
 
-  // Zoom: Cmd/Ctrl + = - 0 (sin Shift obligatorio en Windows/Linux)
-  const zoomMod = isMac ? e.metaKey : e.ctrlKey && !e.altKey;
-  if (zoomMod && (key === "=" || key === "+")) return "zoomIn";
-  if (zoomMod && key === "-") return "zoomOut";
-  if (zoomMod && key === "0") return "zoomReset";
+  // Zoom: Cmd + = - 0 en macOS; Ctrl+Shift en Windows/Linux para no capturar Ctrl+- (^_,
+  // deshacer en readline/emacs) ni Ctrl+0, que la terminal sí usa. Se mira e.code porque con
+  // Shift la tecla cambia de carácter según la distribución.
+  const zoomMod = isMac ? e.metaKey : e.ctrlKey && e.shiftKey && !e.altKey;
+  if (zoomMod && (e.code === "Equal" || e.code === "NumpadAdd" || key === "+")) return "zoomIn";
+  if (zoomMod && (e.code === "Minus" || e.code === "NumpadSubtract")) return "zoomOut";
+  if (zoomMod && (e.code === "Digit0" || e.code === "Numpad0")) return "zoomReset";
 
   if (isMac && e.metaKey && /^[1-9]$/.test(key)) return { tab: Number(key) - 1 };
   if ((isMac ? e.metaKey : e.ctrlKey) && key === ",") return "settings";

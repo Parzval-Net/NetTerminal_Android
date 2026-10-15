@@ -63,7 +63,7 @@ fn delete_session(id: String, state: State<'_, AppState>) -> Result<(), String> 
     state.store.delete(&id)
 }
 
-#[tauri::command]
+#[tauri::command(async)]
 fn list_serial_ports() -> Vec<SerialPortInfo> {
     connection::list_serial_ports()
 }
@@ -245,7 +245,7 @@ fn tool_iperf(params: nettools::IperfParams, app: tauri::AppHandle, state: State
     state.jobs.iperf(app.clone(), params)
 }
 
-#[tauri::command]
+#[tauri::command(async)]
 fn tool_iperf_version() -> Option<String> {
     nettools::iperf_version()
 }
@@ -269,12 +269,12 @@ async fn tool_ports(host: String, ports: Vec<u16>, timeout_ms: u64) -> Result<se
     .map_err(|e| e.to_string())?
 }
 
-#[tauri::command]
+#[tauri::command(async)]
 fn local_ips() -> serde_json::Value {
     serde_json::to_value(nettools::local_ips()).unwrap_or_default()
 }
 
-#[tauri::command]
+#[tauri::command(async)]
 fn server_start(
     kind: String,
     port: u16,
@@ -306,7 +306,7 @@ fn server_running(state: State<'_, AppState>) -> Vec<String> {
     state.servers.running()
 }
 
-#[tauri::command]
+#[tauri::command(async)]
 fn tftp_files(state: State<'_, AppState>) -> Vec<(String, u64)> {
     let dir = state.data_dir.join("tftp");
     let _ = std::fs::create_dir_all(&dir);
@@ -322,7 +322,7 @@ fn tftp_files(state: State<'_, AppState>) -> Vec<(String, u64)> {
 }
 
 /// Copia un archivo elegido por el usuario a la carpeta servida por TFTP/HTTP.
-#[tauri::command]
+#[tauri::command(async)]
 fn tftp_add(path: String, state: State<'_, AppState>) -> Result<String, String> {
     let src = std::path::PathBuf::from(&path);
     let name = src.file_name().ok_or("Ruta inválida")?.to_owned();
@@ -368,7 +368,7 @@ fn device_run(conn: String, command: String, timeout_secs: u64, app: tauri::AppH
     filexfer::run(app, conn, command, timeout_secs)
 }
 
-#[tauri::command]
+#[tauri::command(async)]
 fn source_ip(host: String) -> Result<String, String> {
     filexfer::source_ip_for(&host)
 }
@@ -388,9 +388,9 @@ fn app_version() -> &'static str {
 }
 
 /// Guarda un texto (exportaciones de diagramas, tablas) en la ruta elegida por el usuario.
-#[tauri::command]
+#[tauri::command(async)]
 fn save_text(dest: String, content: String) -> Result<(), String> {
-    let ok_ext = ["svg", "csv", "md", "mmd", "txt", "json"];
+    let ok_ext = ["svg", "csv", "md", "mmd", "txt", "json", "drawio"];
     let ext = std::path::Path::new(&dest)
         .extension()
         .and_then(|e| e.to_str())
@@ -412,7 +412,7 @@ fn cmdpacks_list(state: State<'_, AppState>) -> Vec<serde_json::Value> {
     cmdpacks::list(&state.data_dir)
 }
 
-#[tauri::command]
+#[tauri::command(async)]
 fn cmdpack_read(path: String) -> Result<serde_json::Value, String> {
     cmdpacks::read_external(&path)
 }
@@ -434,17 +434,17 @@ fn cmdpack_export(id: String, dest: String, state: State<'_, AppState>) -> Resul
 
 // ---------- Plugins ----------
 
-#[tauri::command]
+#[tauri::command(async)]
 fn plugins_list(state: State<'_, AppState>) -> serde_json::Value {
     serde_json::to_value(plugins::list(&state.data_dir)).unwrap_or_default()
 }
 
-#[tauri::command]
+#[tauri::command(async)]
 fn plugin_stage(path: String, state: State<'_, AppState>) -> Result<serde_json::Value, String> {
     plugins::stage(&state.data_dir, std::path::Path::new(&path)).map(|p| serde_json::to_value(p).unwrap_or_default())
 }
 
-#[tauri::command]
+#[tauri::command(async)]
 fn plugin_confirm(staging: String, state: State<'_, AppState>) -> Result<String, String> {
     plugins::confirm(&state.data_dir, &staging)
 }
@@ -464,7 +464,7 @@ fn plugin_uninstall(id: String, state: State<'_, AppState>) -> Result<(), String
     plugins::uninstall(&state.data_dir, &id)
 }
 
-#[tauri::command]
+#[tauri::command(async)]
 fn plugin_code(id: String, state: State<'_, AppState>) -> Result<String, String> {
     plugins::read_code(&state.data_dir, &id)
 }
@@ -488,10 +488,16 @@ fn data_dir(state: State<'_, AppState>) -> String {
 /// Los ajustes son de la UI: el backend solo los persiste como JSON opaco.
 #[tauri::command]
 fn get_settings(state: State<'_, AppState>) -> serde_json::Value {
-    std::fs::read_to_string(state.data_dir.join("settings.json"))
-        .ok()
-        .and_then(|c| serde_json::from_str(&c).ok())
-        .unwrap_or(serde_json::Value::Null)
+    let path = state.data_dir.join("settings.json");
+    let Ok(content) = std::fs::read_to_string(&path) else {
+        return serde_json::Value::Null;
+    };
+    serde_json::from_str(&content).unwrap_or_else(|_| {
+        // Ajustes ilegibles: se respaldan antes de que la app los reemplace por los valores
+        // por defecto, para no perder macros, monitores ni el token MCP.
+        session_store::backup_corrupt(&path);
+        serde_json::Value::Null
+    })
 }
 
 #[tauri::command]

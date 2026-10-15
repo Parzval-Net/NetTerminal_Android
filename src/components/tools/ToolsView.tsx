@@ -37,6 +37,7 @@ interface Props {
   };
   connId: () => string | null;
   terminals: TerminalRef[];
+  sessions: Session[];
   onScp: (req: ScpRequest) => void;
   onOpenSession: (s: Session) => void;
   onConfirm: (req: { title: string; message: string; label: string; danger?: boolean; action: () => void }) => void;
@@ -46,7 +47,7 @@ interface Props {
  * Pestaña de herramientas. Cada módulo se monta al visitarlo y luego se mantiene
  * vivo oculto, para no perder servidores, logs ni mediciones al cambiar de sección.
  */
-export function ToolsView({ active, settings, update, monitors, connId, terminals, onConfirm, onScp, onOpenSession }: Props) {
+export function ToolsView({ active, settings, update, monitors, connId, terminals, sessions, onConfirm, onScp, onOpenSession }: Props) {
   const enabled = NAV.filter((n) => settings.modules[n.id] !== false);
   const [current, setCurrent] = useState<ModuleId>(enabled[0]?.id ?? "monitor");
   const [visited, setVisited] = useState<Set<ModuleId>>(new Set([current]));
@@ -83,7 +84,17 @@ export function ToolsView({ active, settings, update, monitors, connId, terminal
       case "diag":
         return <DiagTool samples={monitors.samples} />;
       case "topology":
-        return <TopologyTool terminals={terminals} onOpenSession={onOpenSession} />;
+        return (
+          <TopologyTool
+            terminals={terminals}
+            sessions={sessions}
+            topo={settings.topology}
+            snapshots={settings.topoSnapshots}
+            onTopo={(t) => update((s) => ({ topology: typeof t === "function" ? t(s.topology) : t }))}
+            onSnapshots={(topoSnapshots) => update({ topoSnapshots })}
+            onOpenSession={onOpenSession}
+          />
+        );
       case "subnet":
         return <SubnetTool />;
       case "perf":

@@ -90,16 +90,21 @@ export function SettingsModal({
   };
 
   const importSessions = async () => {
+    let list: Session[];
     try {
       const data = JSON.parse(await readText());
-      const list = (Array.isArray(data) ? data : [data]).filter(
-        (x): x is Session => x && typeof x.name === "string" && ["ssh", "telnet", "serial", "local"].includes(x.type),
+      list = (Array.isArray(data) ? data : [data]).filter(
+        (x): x is Session => x && typeof x.name === "string" && ["ssh", "telnet", "raw", "serial", "local"].includes(x.type),
       );
-      if (!list.length) throw new Error();
+    } catch {
+      return flash("El portapapeles no contiene sesiones válidas (JSON)");
+    }
+    if (!list.length) return flash("El portapapeles no contiene sesiones válidas (JSON)");
+    try {
       const added = await onImportSessions(list);
       flash(`${added} sesiones importadas${added < list.length ? `, ${list.length - added} ya existían` : ""}`);
-    } catch {
-      flash("El portapapeles no contiene sesiones válidas (JSON)");
+    } catch (e) {
+      flash(`Importación incompleta: ${e}`);
     }
   };
 
@@ -294,7 +299,7 @@ export function SettingsModal({
                   <Switch checked={s.confirmClose} onChange={(v) => onChange({ confirmClose: v })} />
                 </Item>
                 <div className="pt-2 text-[12px] font-medium text-muted">Notas</div>
-                <Item label="Confirmar envío de varias líneas" hint="Muestra un resumen antes de enviar un bloque a un equipo remoto">
+                <Item label="Confirmar envío de varias líneas" hint="Muestra un resumen antes de enviar o pegar un bloque en un equipo remoto">
                   <Switch checked={s.confirmSend} onChange={(v) => onChange({ confirmSend: v })} />
                 </Item>
                 <Item label="Barra de botones" hint="Comandos rápidos y scripts sobre la barra de estado">

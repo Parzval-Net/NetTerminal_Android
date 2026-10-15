@@ -149,7 +149,7 @@ export function PluginsTool({
             )}
           </div>
           <div className="text-[11.5px] font-medium text-muted mb-1">
-            Código de {preview.manifest.entry} · {preview.files.length} archivos
+            Código Python del plugin · {preview.files.length} archivos
           </div>
           <pre className="max-h-64 overflow-auto rounded-lg bg-hover p-3 font-mono text-[11.5px] select-text">{preview.code}</pre>
           <p className="mt-2 text-[11.5px] text-muted flex gap-1.5">
@@ -191,6 +191,12 @@ export function PluginsTool({
                   checked={p.enabled}
                   label=""
                   onChange={async (v) => {
+                    // Un plugin alterado no se reaprueba con un clic: primero se muestra su código.
+                    if (v && p.tampered) {
+                      const text = await invoke<string>("plugin_code", { id: p.id }).catch((e) => String(e));
+                      setCode({ id: p.id, text });
+                      return;
+                    }
                     await invoke("plugin_set_enabled", { id: p.id, enabled: v }).catch((e) => setError(String(e)));
                     load();
                   }}
@@ -200,7 +206,11 @@ export function PluginsTool({
                   className="!px-1.5"
                   title="Ver código"
                   onClick={async () =>
-                    setCode(code?.id === p.id ? null : { id: p.id, text: await invoke<string>("plugin_code", { id: p.id }) })
+                    setCode(
+                      code?.id === p.id
+                        ? null
+                        : { id: p.id, text: await invoke<string>("plugin_code", { id: p.id }).catch((e) => String(e)) },
+                    )
                   }
                 >
                   <Code2 size={14} />
@@ -225,9 +235,29 @@ export function PluginsTool({
             }
           >
             {p.tampered && (
-              <p className="mb-2 text-[12px] text-danger">
-                ✕ Sus archivos cambiaron desde que lo aprobaste. Revisa el código y vuelve a habilitarlo si es correcto.
-              </p>
+              <div className="mb-2 text-[12px] text-danger space-y-1.5">
+                <p>✕ Sus archivos cambiaron desde que lo aprobaste. Revisa el código y apruébalo solo si reconoces el cambio.</p>
+                {code?.id === p.id ? (
+                  <Btn
+                    kind="danger"
+                    onClick={async () => {
+                      await invoke("plugin_set_enabled", { id: p.id, enabled: true }).catch((e) => setError(String(e)));
+                      setCode(null);
+                      load();
+                    }}
+                  >
+                    Aprobar estos cambios y habilitar
+                  </Btn>
+                ) : (
+                  <Btn
+                    onClick={async () =>
+                      setCode({ id: p.id, text: await invoke<string>("plugin_code", { id: p.id }).catch((e) => String(e)) })
+                    }
+                  >
+                    Revisar código
+                  </Btn>
+                )}
+              </div>
             )}
             <p className="text-[12.5px] mb-2">{p.description}</p>
             <div className="flex flex-wrap gap-1 mb-3">

@@ -14,6 +14,7 @@ const SHOTS = [
   ["notas", "notes", "dark"],
   ["monitoreo", "monitor", "light"],
   ["topologia", "topology", "light"],
+  ["topologia-cambios", "compare", "light"],
   ["subredes", "subnet", "dark"],
   ["velocidad", "speed", "light"],
   ["ajustes", "settings", "dark"],

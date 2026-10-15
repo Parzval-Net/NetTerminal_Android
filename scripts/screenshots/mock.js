@@ -135,10 +135,10 @@ const settings = {
   updateLastCheck: now,
 };
 
-// Cada carga parte limpia; luego se siembra la topología de ejemplo.
+// Cada carga parte limpia.
 localStorage.clear();
 settings.appTheme = new URLSearchParams(location.search).get("theme") ?? "dark";
-localStorage.setItem("topology", JSON.stringify({
+const topology = {
   nodes: [
     { id: "core-sw01", name: "core-sw01", ip: "192.0.2.1", platform: "C9500-24Y4C", explored: true, x: 420, y: 80 },
     { id: "core-sw02", name: "core-sw02", ip: "192.0.2.2", platform: "C9500-24Y4C", explored: true, x: 720, y: 80 },
@@ -156,7 +156,24 @@ localStorage.setItem("topology", JSON.stringify({
     { a: "dist-sw01", aPort: "Gi1/0/1", b: "sw-acceso-01", bPort: "Gi1/0/24", proto: "CDP" },
     { a: "dist-sw01", aPort: "Gi1/0/2", b: "sw-acceso-02", bPort: "Gi1/0/24", proto: "CDP" },
   ],
-}));
+};
+// Segundo enlace del Port-channel y estado de puertos de ejemplo.
+topology.links.push({ a: "core-sw01", aPort: "Gi1/0/2", b: "dist-sw01", bPort: "Gi1/0/47", proto: "CDP" });
+topology.nodes[0].ports = {
+  "gi1/0/1": { status: "connected", speed: "a-1000", desc: "UPLINK dist-sw01", group: "Po1" },
+  "gi1/0/2": { status: "connected", speed: "a-1000", desc: "UPLINK dist-sw01", group: "Po1" },
+  "te1/1/1": { status: "connected", speed: "10G", desc: "ISL core-sw02" },
+};
+settings.topology = topology;
+// Snapshot anterior: tenía un acceso más que hoy ya no aparece.
+settings.topoSnapshots = [{
+  id: "s1", name: "Antes de la ventana de cambio", ts: now - 7 * 86400000,
+  topo: {
+    nodes: [...topology.nodes.filter((n) => n.id !== "ar-wan01"), { id: "sw-acceso-03", name: "sw-acceso-03", ip: "192.0.2.23", explored: false, x: 520, y: 420 }],
+    links: [...topology.links.filter((l) => l.b !== "ar-wan01"), { a: "dist-sw01", aPort: "Gi1/0/3", b: "sw-acceso-03", bPort: "Gi1/0/24", proto: "CDP" }],
+  },
+}];
+
 
 const monitorTimers = new Map();
 function rtt(id, i) {
@@ -186,7 +203,7 @@ const handlers = {
   list_sessions: () => sessions,
   get_settings: () => settings,
   save_settings: () => null,
-  app_version: () => "0.4.1",
+  app_version: () => "0.5.0",
   check_update: () => Promise.reject("demo"),
   cmdpacks_list: () => [],
   list_notes: () => Object.keys(notes).map((name) => ({ name, modified: now })),
@@ -251,13 +268,21 @@ async function act(type, label) {
   console.warn("escena: no encontrado", label);
 }
 const click = (l) => act("click", l);
+async function svgNode(name) {
+  await wait(200);
+  const t = [...document.querySelectorAll("svg text")].find((e) => e.textContent === name);
+  t?.parentElement?.dispatchEvent(new PointerEvent("pointerdown", { bubbles: true, pointerId: 1 }));
+  document.querySelector("svg")?.dispatchEvent(new PointerEvent("pointerup", { bubbles: true, pointerId: 1 }));
+  await wait(250);
+}
 const open = (l) => act("dblclick", l);
 
 const scenes = {
   terminal: async () => { await open("ar-wan01"); await open("core-sw01"); await click("Catálogo de comandos"); },
   notes: async () => { await open("core-sw01"); await open("ar-wan01"); await click("Notas"); await click("plantilla-vlan.txt"); },
   monitor: async () => { await open("core-sw01"); await click("Herramientas: monitoreo, diagnóstico, TFTP, syslog, plugins"); },
-  topology: async () => { await click("Herramientas: monitoreo, diagnóstico, TFTP, syslog, plugins"); await click("Topología"); },
+  topology: async () => { await click("Herramientas: monitoreo, diagnóstico, TFTP, syslog, plugins"); await click("Topología"); await svgNode("core-sw01"); await click("Desde aquí"); await svgNode("sw-acceso-02"); await click("Hasta aquí"); },
+  compare: async () => { await click("Herramientas: monitoreo, diagnóstico, TFTP, syslog, plugins"); await click("Topología"); await wait(300); const s = [...document.querySelectorAll("select")].find((x) => [...x.options].some((o) => o.value === "s1")); const set = Object.getOwnPropertyDescriptor(HTMLSelectElement.prototype, "value").set; set.call(s, "s1"); s.dispatchEvent(new Event("change", { bubbles: true })); await wait(300); },
   subnet: async () => { await click("Herramientas: monitoreo, diagnóstico, TFTP, syslog, plugins"); await click("Subredes"); },
   speed: async () => { await click("Herramientas: monitoreo, diagnóstico, TFTP, syslog, plugins"); await click("Velocidad"); },
   settings: async () => { await open("core-sw01"); await click("Ajustes"); },

@@ -172,6 +172,7 @@ function Workspace({
   useEffect(() => {
     const subs = [
       listen<ApprovalRequest>("mcp-approval", (e) => setApprovals((a) => [...a, e.payload])),
+      listen<string>("mcp-approval-closed", (e) => setApprovals((a) => a.filter((x) => x.id !== e.payload))),
       listen<string>("mcp-open-session", (e) => {
         const s = sessionsRef.current.find((x) => x.id === e.payload);
         if (s) openTab(s);
@@ -511,7 +512,7 @@ function Workspace({
       setModal(null);
       if (connect) openTab(saved);
     } catch (err) {
-      alert(`No se pudo guardar la sesión: ${err}`);
+      toast(`No se pudo guardar la sesión: ${err}`, "error");
     }
   };
 
@@ -523,9 +524,10 @@ function Workspace({
     let added = 0;
     for (const s of list) {
       if (existing.has(key(s))) continue;
-      // Los argumentos extra de ssh no se importan: una sesión compartida no debe
-      // poder inyectar opciones al cliente SSH de quien la importa.
-      const { ssh_args: _dropped, ...safe } = s;
+      // No se importan los argumentos extra de ssh ni los comandos al conectar: una sesión
+      // compartida no debe poder inyectar opciones al cliente SSH ni enviar configuración
+      // al equipo sin que quien la importa lo revise.
+      const { ssh_args: _dropped, on_connect: _cmds, scp: _scp, ...safe } = s;
       await invoke("save_session", { session: { ...safe, id: "", created_at: "" } });
       existing.add(key(s));
       added++;
@@ -552,7 +554,7 @@ function Workspace({
       const id = activeId;
       setStates((s) => (s[id] ? { ...s, [id]: { ...s[id], logPath: path } } : s));
     } catch (err) {
-      alert(`No se pudo activar el log: ${err}`);
+      toast(`No se pudo activar el log: ${err}`, "error");
     }
     ctrl.focus();
   };
@@ -574,16 +576,20 @@ function Workspace({
     try {
       setSessions(await invoke<Session[]>("update_sessions", { sessions: changed }));
     } catch (err) {
-      alert(`No se pudo guardar: ${err}`);
+      toast(`No se pudo guardar: ${err}`, "error");
     }
   };
 
   const duplicateSession = async (s: Session) => {
-    const saved = await invoke<Session>("save_session", {
-      session: { ...s, id: "", name: `${s.name} (copia)`, created_at: "" },
-    });
-    setSessions((prev) => [...prev, saved]);
-    setModal({ session: saved });
+    try {
+      const saved = await invoke<Session>("save_session", {
+        session: { ...s, id: "", name: `${s.name} (copia)`, created_at: "" },
+      });
+      setSessions((prev) => [...prev, saved]);
+      setModal({ session: saved });
+    } catch (err) {
+      toast(`No se pudo duplicar: ${err}`, "error");
+    }
   };
 
   return (
@@ -694,6 +700,7 @@ function Workspace({
               }}
               onConfirm={setConfirm}
               onOpenSession={openTab}
+              sessions={sessions}
               onScp={(req) => {
                 const s = req.session;
                 openTab({
@@ -789,7 +796,7 @@ function Workspace({
             running={scriptRun}
             onRun={(m) => (m.kind === "script" ? m.script && runScript(m.script) : m.text && sendToSession(m.text))}
             onRunScript={runScript}
-            onStopScript={() => scriptRun && invoke("stop_script", { run: scriptRun.run })}
+            onStopScript={() => scriptRun && invoke("stop_script", { run: scriptRun.run }).catch(() => {})}
             onEdit={setMacroEdit}
             onDelete={(m) => update((s) => ({ macros: s.macros.filter((x) => x.id !== m.id) }))}
           />
@@ -802,7 +809,7 @@ function Workspace({
           onBreak={() => {
             const ctrl = activeCtrl();
             if (!ctrl) return;
-            invoke("send_break", { id: ctrl.connId() }).catch((e) => alert(e));
+            invoke("send_break", { id: ctrl.connId() }).catch((e) => toast(String(e), "error"));
             ctrl.focus();
           }}
           onReconnect={() => activeCtrl()?.reconnect()}
@@ -880,7 +887,7 @@ function Workspace({
           request={approvals[0]}
           pending={approvals.length}
           onDecide={(approved) => {
-            invoke("mcp_decide", { id: approvals[0].id, approved });
+            invoke("mcp_decide", { id: approvals[0].id, approved }).catch((e) => toast(String(e), "error"));
             setApprovals((a) => a.slice(1));
           }}
         />

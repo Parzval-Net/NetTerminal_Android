@@ -25,8 +25,12 @@ const HISTORY_MAX: usize = 256 * 1024;
 struct Mirror {
     stripper: AnsiStripper,
     history: String,
-    taps: Vec<Sender<String>>,
+    taps: Vec<std::sync::mpsc::SyncSender<String>>,
 }
+
+/// Fragmentos pendientes por suscriptor. Un script que solo envía y nunca lee no debe
+/// acumular toda la salida de la sesión en memoria: pasado el tope se descarta.
+const TAP_CAPACITY: usize = 8192;
 
 impl Mirror {
     fn push(&mut self, bytes: &[u8]) {
@@ -34,7 +38,7 @@ impl Mirror {
         if text.is_empty() {
             return;
         }
-        self.taps.retain(|t| t.send(text.clone()).is_ok());
+        self.taps.retain(|t| !matches!(t.try_send(text.clone()), Err(std::sync::mpsc::TrySendError::Disconnected(_))));
         self.history.push_str(&text);
         if self.history.len() > HISTORY_MAX {
             let mut cut = self.history.len() - HISTORY_MAX;
@@ -165,7 +169,8 @@ pub struct ConnInfo {
 enum Transport {
     Pty {
         master: Box<dyn MasterPty + Send>,
-        writer: Box<dyn Write + Send>,
+        /// Se entrega al hilo de escritura al conectar.
+        writer: Option<Box<dyn Write + Send>>,
         killer: Box<dyn ChildKiller + Send + Sync>,
     },
     Telnet {
@@ -180,7 +185,32 @@ enum Transport {
     },
 }
 
+/// Lo que se envía al equipo. `Raw` no pasa por la codificación Telnet (comandos IAC).
+enum Outgoing {
+    Data(Vec<u8>),
+    Raw(Vec<u8>),
+}
+
+/// Hilo que escribe en el equipo en orden. Así una consola lenta (Telnet/Serial con el
+/// búfer lleno) no bloquea la interfaz ni el resto de las sesiones.
+fn spawn_writer(mut out: Box<dyn Write + Send>, telnet_encode: bool) -> Sender<Outgoing> {
+    let (tx, rx) = std::sync::mpsc::channel::<Outgoing>();
+    thread::spawn(move || {
+        for msg in rx {
+            let buf = match msg {
+                Outgoing::Data(d) if telnet_encode => telnet::encode_input(&d),
+                Outgoing::Data(d) | Outgoing::Raw(d) => d,
+            };
+            if out.write_all(&buf).and_then(|_| out.flush()).is_err() {
+                break;
+            }
+        }
+    });
+    tx
+}
+
 struct Connection {
+    input: Sender<Outgoing>,
     transport: Transport,
     sink: Sink,
     name: String,
@@ -213,7 +243,7 @@ impl ConnectionManager {
             mirror: Arc::new(Mutex::new(Mirror::default())),
         };
 
-        let transport = match session.session_type {
+        let mut transport = match session.session_type {
             SessionType::Local if session.scp.is_some() => spawn_pty(scp_command(session)?, cols, rows, &sink)?,
             SessionType::Local => spawn_pty(local_shell(), cols, rows, &sink)?,
             SessionType::Ssh => spawn_pty(ssh_command(session)?, cols, rows, &sink)?,
@@ -222,9 +252,18 @@ impl ConnectionManager {
             SessionType::Serial => open_serial(session, &sink)?,
         };
 
+        let input = match &mut transport {
+            Transport::Pty { writer, .. } => spawn_writer(writer.take().ok_or("PTY sin escritura")?, false),
+            Transport::Telnet { stream, raw, .. } => {
+                spawn_writer(Box::new(stream.try_clone().map_err(|e| e.to_string())?), !*raw)
+            }
+            Transport::Serial { port, .. } => spawn_writer(Box::new(port.try_clone().map_err(|e| e.to_string())?), false),
+        };
+
         self.conns.lock().unwrap().insert(
             id,
             Connection {
+                input,
                 transport,
                 sink,
                 name: session.name.clone(),
@@ -235,15 +274,11 @@ impl ConnectionManager {
     }
 
     pub fn write(&self, id: &str, data: &[u8]) -> Result<(), String> {
-        let mut map = self.conns.lock().unwrap();
-        let conn = map.get_mut(id).ok_or("Sesión no conectada")?;
-        let res = match &mut conn.transport {
-            Transport::Pty { writer, .. } => writer.write_all(data).and_then(|_| writer.flush()),
-            Transport::Telnet { stream, raw: true, .. } => stream.write_all(data),
-            Transport::Telnet { stream, .. } => stream.write_all(&telnet::encode_input(data)),
-            Transport::Serial { port, .. } => port.write_all(data).and_then(|_| port.flush()),
-        };
-        res.map_err(|e| e.to_string())
+        let map = self.conns.lock().unwrap();
+        let conn = map.get(id).ok_or("Sesión no conectada")?;
+        conn.input
+            .send(Outgoing::Data(data.to_vec()))
+            .map_err(|_| "La conexión se cerró".to_string())
     }
 
     pub fn resize(&self, id: &str, cols: u16, rows: u16) -> Result<(), String> {
@@ -274,22 +309,25 @@ impl ConnectionManager {
     }
 
     pub fn send_break(&self, id: &str) -> Result<(), String> {
-        let map = self.conns.lock().unwrap();
-        let conn = map.get(id).ok_or("Sesión no conectada")?;
-        match &conn.transport {
-            Transport::Serial { port, .. } => {
-                port.set_break().map_err(|e| e.to_string())?;
-                thread::sleep(Duration::from_millis(300));
-                port.clear_break().map_err(|e| e.to_string())
+        // El lock se suelta antes de esperar: un Break serial tarda 300 ms.
+        let port = {
+            let map = self.conns.lock().unwrap();
+            let conn = map.get(id).ok_or("Sesión no conectada")?;
+            match &conn.transport {
+                Transport::Serial { port, .. } => port.try_clone().map_err(|e| e.to_string())?,
+                Transport::Telnet { raw: true, .. } => return Err("Break no aplica a conexiones TCP crudas".into()),
+                Transport::Telnet { .. } => {
+                    return conn
+                        .input
+                        .send(Outgoing::Raw(vec![telnet::IAC, telnet::BRK]))
+                        .map_err(|_| "La conexión se cerró".to_string())
+                }
+                Transport::Pty { .. } => return Err("Break solo aplica a Serial y Telnet".into()),
             }
-            Transport::Telnet { raw: true, .. } => Err("Break no aplica a conexiones TCP crudas".into()),
-            Transport::Telnet { stream, .. } => {
-                (&*stream)
-                    .write_all(&[telnet::IAC, telnet::BRK])
-                    .map_err(|e| e.to_string())
-            }
-            Transport::Pty { .. } => Err("Break solo aplica a Serial y Telnet".into()),
-        }
+        };
+        port.set_break().map_err(|e| e.to_string())?;
+        thread::sleep(Duration::from_millis(300));
+        port.clear_break().map_err(|e| e.to_string())
     }
 
     /// Activa o desactiva el log. Devuelve la ruta del archivo cuando se activa.
@@ -368,7 +406,7 @@ impl ConnectionManager {
     /// Suscripción a la salida en vivo; se cancela sola al soltar el receptor.
     pub fn tap(&self, id: &str) -> Option<std::sync::mpsc::Receiver<String>> {
         let map = self.conns.lock().unwrap();
-        let (tx, rx) = std::sync::mpsc::channel();
+        let (tx, rx) = std::sync::mpsc::sync_channel(TAP_CAPACITY);
         map.get(id)?.sink.mirror.lock().unwrap().taps.push(tx);
         Some(rx)
     }
@@ -425,6 +463,45 @@ mod tests {
     }
 
     #[test]
+    fn writer_thread_keeps_order_and_encodes_telnet() {
+        use std::sync::{Arc, Mutex};
+        #[derive(Clone, Default)]
+        struct Shared(Arc<Mutex<Vec<u8>>>);
+        impl std::io::Write for Shared {
+            fn write(&mut self, b: &[u8]) -> std::io::Result<usize> {
+                self.0.lock().unwrap().extend_from_slice(b);
+                Ok(b.len())
+            }
+            fn flush(&mut self) -> std::io::Result<()> {
+                Ok(())
+            }
+        }
+        let out = Shared::default();
+        let tx = super::spawn_writer(Box::new(out.clone()), false);
+        for i in 0..500 {
+            tx.send(super::Outgoing::Data(format!("{i},").into_bytes())).unwrap();
+        }
+        drop(tx);
+        let expected: String = (0..500).map(|i| format!("{i},")).collect();
+        for _ in 0..50 {
+            if out.0.lock().unwrap().len() == expected.len() {
+                break;
+            }
+            std::thread::sleep(std::time::Duration::from_millis(10));
+        }
+        assert_eq!(String::from_utf8(out.0.lock().unwrap().clone()).unwrap(), expected);
+
+        // Telnet: los datos se codifican (IAC duplicado) y los comandos Raw no.
+        let out = Shared::default();
+        let tx = super::spawn_writer(Box::new(out.clone()), true);
+        tx.send(super::Outgoing::Data(vec![255])).unwrap();
+        tx.send(super::Outgoing::Raw(vec![255, 243])).unwrap();
+        drop(tx);
+        std::thread::sleep(std::time::Duration::from_millis(100));
+        assert_eq!(*out.0.lock().unwrap(), vec![255, 255, 255, 243]);
+    }
+
+    #[test]
     fn rejects_argument_injection() {
         assert!(super::safe_target("-oProxyCommand=sh", "host").is_err());
         assert!(super::safe_target("10.0.0.1 -v", "host").is_err());
@@ -437,6 +514,17 @@ mod tests {
         assert!(bad("-o KnownHostsCommand=/bin/x"));
         assert!(!bad("-L 8443:10.0.0.1:443 -A -o StrictHostKeyChecking=accept-new"));
         assert!(!bad("-f -N -D 1080"));
+        // Flags agrupados y opciones que cargan código.
+        assert!(bad("-voProxyCommand=sh\\ -c\\ x"));
+        assert!(bad("-vF/tmp/cfg"));
+        assert!(bad("-oPKCS11Provider=/tmp/x.dylib"));
+        assert!(bad("-o SecurityKeyProvider=/tmp/x"));
+        assert!(bad("-I /tmp/lib.so"));
+        assert!(bad("-o Include=/tmp/x"));
+        assert!(bad("evil.example"));
+        assert!(bad("-- otro-host"));
+        assert!(bad("-L"));
+        assert!(!bad("-vvv -C -o ServerAliveCountMax=3 -J bastion"));
     }
 
     #[test]
@@ -511,28 +599,63 @@ fn safe_target(value: &str, field: &str) -> Result<String, String> {
 
 /// Opciones de ssh que ejecutan comandos locales. No se aceptan en "argumentos extra"
 /// (que pueden venir de sesiones importadas); quien las necesite usa ~/.ssh/config.
-const BLOCKED_SSH_OPTIONS: [&str; 6] =
-    ["proxycommand", "localcommand", "permitlocalcommand", "knownhostscommand", "match", "remotecommand"];
+/// Opciones `-o` que ejecutan comandos, cargan código o leen otra configuración.
+const BLOCKED_SSH_OPTIONS: [&str; 9] = [
+    "proxycommand",
+    "localcommand",
+    "permitlocalcommand",
+    "knownhostscommand",
+    "match",
+    "remotecommand",
+    "pkcs11provider",
+    "securitykeyprovider",
+    "include",
+];
+/// Flags de ssh que reciben un valor (según su getopt).
+const SSH_FLAGS_WITH_VALUE: &str = "bceilmopBDEFIJLOPQRSwW";
+/// Flags simples de ssh.
+const SSH_FLAGS_SIMPLE: &str = "1246afgknqstvxACGKMNTVXYy";
+/// -F (otro archivo de configuración), -I (biblioteca PKCS#11) y -E (escribe un archivo).
+const SSH_FLAGS_FORBIDDEN: &str = "FIE";
 
+/// Valida los argumentos extra con la misma semántica de getopt que usa ssh: flags
+/// agrupados ("-vo…", "-vF…"), valor pegado o en el argumento siguiente. Solo se aceptan
+/// opciones; un argumento suelto cambiaría el host o el comando remoto.
 fn check_extra_args(args: &[String]) -> Result<(), String> {
-    for (i, a) in args.iter().enumerate() {
-        let lower = a.to_ascii_lowercase();
-        // Formas: "-oProxyCommand=x", "-o ProxyCommand=x", "-o" "ProxyCommand x"
-        let opt = if lower == "-o" {
-            args.get(i + 1).map(|n| n.to_ascii_lowercase()).unwrap_or_default()
-        } else {
-            lower.strip_prefix("-o").unwrap_or("").to_string()
+    let mut i = 0;
+    while i < args.len() {
+        let a = &args[i];
+        let Some(flags) = a.strip_prefix('-').filter(|f| !f.is_empty() && !f.starts_with('-')) else {
+            return Err(format!("Argumento no permitido: \"{a}\". Solo se aceptan opciones de ssh (-L, -D, -A, -o …)."));
         };
-        let name = opt.split(['=', ' ']).next().unwrap_or("").trim();
-        if BLOCKED_SSH_OPTIONS.contains(&name) {
-            return Err(format!(
-                "Opción no permitida en argumentos extra: {name}. Configúrala en ~/.ssh/config si la necesitas."
-            ));
+        let chars: Vec<char> = flags.chars().collect();
+        for (j, &c) in chars.iter().enumerate() {
+            if SSH_FLAGS_FORBIDDEN.contains(c) {
+                return Err(format!("La opción -{c} no está permitida en argumentos extra"));
+            }
+            if SSH_FLAGS_WITH_VALUE.contains(c) {
+                let rest: String = chars[j + 1..].iter().collect();
+                let value = if rest.is_empty() {
+                    i += 1;
+                    args.get(i).cloned().ok_or(format!("Falta el valor de -{c}"))?
+                } else {
+                    rest
+                };
+                if c == 'o' {
+                    let name = value.trim().split(['=', ' ', '\t']).next().unwrap_or("").to_ascii_lowercase();
+                    if BLOCKED_SSH_OPTIONS.contains(&name.as_str()) {
+                        return Err(format!(
+                            "Opción no permitida en argumentos extra: {name}. Configúrala en ~/.ssh/config si la necesitas."
+                        ));
+                    }
+                }
+                break;
+            }
+            if !SSH_FLAGS_SIMPLE.contains(c) {
+                return Err(format!("Opción de ssh desconocida: -{c}"));
+            }
         }
-        // -F permitiría cargar un archivo de configuración arbitrario con esas opciones.
-        if a.starts_with("-F") {
-            return Err("La opción -F no está permitida en argumentos extra".into());
-        }
+        i += 1;
     }
     Ok(())
 }
@@ -774,7 +897,7 @@ fn spawn_pty(mut cmd: CommandBuilder, cols: u16, rows: u16, sink: &Sink) -> Resu
 
     Ok(Transport::Pty {
         master: pair.master,
-        writer,
+        writer: Some(writer),
         killer,
     })
 }

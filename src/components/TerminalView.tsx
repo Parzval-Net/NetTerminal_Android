@@ -84,6 +84,8 @@ export function TerminalView({ id, session, active, settings, theme, onStatus, o
   const compiledRef = useRef(compiled);
   compiledRef.current = compiled;
   const [findOpen, setFindOpen] = useState(false);
+  /** Bloque multilínea pegado que espera confirmación antes de llegar al equipo. */
+  const [pasteAsk, setPasteAsk] = useState<string | null>(null);
   const [query, setQuery] = useState("");
 
   useEffect(() => {
@@ -288,10 +290,24 @@ export function TerminalView({ id, session, active, settings, theme, onStatus, o
       if (sel) writeText(sel).catch(() => {});
     });
 
+    // Pegar varias líneas en un equipo remoto equivale a aplicar configuración: se confirma.
+    const needsConfirm = (text: string) =>
+      settingsRef.current.confirmSend && sessionRef.current.type !== "local" && /\r?\n\s*\S/.test(text.trimEnd());
     const paste = async () => {
       const text = await readText().catch(() => "");
-      if (text) term.paste(text);
+      if (!text) return;
+      if (needsConfirm(text)) setPasteAsk(text);
+      else term.paste(text);
     };
+    // Cmd+V en macOS llega por el menú nativo como evento "paste", sin pasar por paste().
+    const onNativePaste = (e: ClipboardEvent) => {
+      const text = e.clipboardData?.getData("text/plain") ?? "";
+      if (!needsConfirm(text)) return;
+      e.preventDefault();
+      e.stopPropagation();
+      setPasteAsk(text);
+    };
+    hostRef.current!.addEventListener("paste", onNativePaste, true);
 
     term.attachCustomKeyEventHandler((e) => {
       if (e.type !== "keydown") return true;
@@ -381,6 +397,7 @@ export function TerminalView({ id, session, active, settings, theme, onStatus, o
       observer.disconnect();
       cancelAnimationFrame(frame);
       host.removeEventListener("contextmenu", onContextMenu);
+      host.removeEventListener("paste", onNativePaste, true);
       invoke("disconnect", { id: connIdRef.current }).catch(() => {});
       term.dispose();
     };
@@ -445,6 +462,17 @@ export function TerminalView({ id, session, active, settings, theme, onStatus, o
       style={{ visibility: active ? "visible" : "hidden", background: theme.background }}
     >
       <div ref={hostRef} className="w-full h-full" />
+      {pasteAsk !== null && (
+        <PasteConfirm
+          text={pasteAsk}
+          target={session.name}
+          onDone={(ok) => {
+            if (ok) termRef.current?.paste(pasteAsk);
+            setPasteAsk(null);
+            termRef.current?.focus();
+          }}
+        />
+      )}
       {findOpen && (
         <div className="absolute top-2 right-4 flex items-center gap-1 bg-panel border border-line rounded-lg shadow-pop px-2 py-1.5 z-10">
           <input
@@ -476,8 +504,41 @@ export function TerminalView({ id, session, active, settings, theme, onStatus, o
 function IconBtn(props: React.ButtonHTMLAttributes<HTMLButtonElement>) {
   return (
     <button
+      aria-label={props.title}
       {...props}
       className="w-7 h-7 grid place-items-center rounded-md text-muted hover:text-fg hover:bg-hover"
     />
+  );
+}
+
+function PasteConfirm({ text, target, onDone }: { text: string; target: string; onDone: (ok: boolean) => void }) {
+  const lines = text.replace(/\r\n/g, "\n").trimEnd().split("\n");
+  return (
+    <div
+      role="alertdialog"
+      aria-modal="true"
+      aria-labelledby="paste-title"
+      className="absolute left-1/2 bottom-6 -translate-x-1/2 w-[min(560px,92%)] bg-panel border border-line rounded-xl shadow-pop p-4 z-20"
+      onKeyDown={(e) => {
+        if (e.key === "Escape") onDone(false);
+      }}
+    >
+      <h3 id="paste-title" className="text-[13px] font-semibold mb-1">
+        ¿Pegar {lines.length} líneas en {target}?
+      </h3>
+      <p className="text-[11.5px] text-muted mb-2">Cada línea se ejecuta en el equipo como si la escribieras.</p>
+      <pre className="max-h-40 overflow-auto rounded-md bg-hover p-2 font-mono text-[11.5px] whitespace-pre">
+        {lines.slice(0, 12).join("\n")}
+        {lines.length > 12 ? `\n… y ${lines.length - 12} líneas más` : ""}
+      </pre>
+      <div className="flex justify-end gap-2 mt-3">
+        <button onClick={() => onDone(false)} className="px-3.5 h-8 rounded-md border border-line hover:bg-hover">
+          Cancelar
+        </button>
+        <button autoFocus onClick={() => onDone(true)} className="px-3.5 h-8 rounded-md bg-accent text-accent-fg font-medium hover:opacity-90">
+          Pegar
+        </button>
+      </div>
+    </div>
   );
 }

@@ -55,7 +55,6 @@ interface Props {
   terminals: TerminalRef[];
   settings: Settings;
   running: string[];
-  onChange: (p: Partial<Settings>) => void;
   refreshRunning: () => void;
   onConfirm: (req: { title: string; message: string; label: string; danger?: boolean; action: () => void }) => void;
   /** Abre una pestaña con scp (la contraseña se escribe ahí). */
@@ -66,7 +65,7 @@ const DND_LOCAL = "application/x-nt-local";
 const DND_REMOTE = "application/x-nt-remote";
 const TIMEOUT = 3600; // firmware grandes por TFTP pueden tardar decenas de minutos
 
-export function FileManager({ terminals, settings: s, running, onChange, refreshRunning, onConfirm, onScp }: Props) {
+export function FileManager({ terminals, settings: s, running, refreshRunning, onConfirm, onScp }: Props) {
   const [connId, setConnId] = useState<string>("");
   const term = terminals.find((t) => t.connId === connId);
   const [profileId, setProfileId] = useState("cisco");
@@ -156,7 +155,7 @@ export function FileManager({ terminals, settings: s, running, onChange, refresh
       }),
       listen<{ file: string; bytes: number; total: number | null; done: boolean }>("transfer", ({ payload: t }) => {
         setOps((list) =>
-          list.map((o) => (o.status === "running" && t.file.endsWith(o.file) ? { ...o, bytes: t.bytes, total: t.total } : o)),
+          list.map((o) => (o.status === "running" && (t.file === o.file || t.file.split(/[\\/]/).pop() === o.file) ? { ...o, bytes: t.bytes, total: t.total } : o)),
         );
         if (t.done) loadLocal();
       }),
@@ -180,12 +179,23 @@ export function FileManager({ terminals, settings: s, running, onChange, refresh
   const ensureServer = async (kind: "tftp" | "http", write: boolean) => {
     if (kind === "http") {
       if (!running.includes("http")) await invoke("server_start", { kind: "http", port: s.httpPort });
-    } else if (!running.includes("tftp") || (write && !s.tftpAllowWrite)) {
-      if (write && !s.tftpAllowWrite) onChange({ tftpAllowWrite: true });
+    } else if (!running.includes("tftp") || (write && !s.tftpAllowWrite && !tempWrite.current)) {
+      // La escritura se habilita solo mientras dura la extracción: el servidor escucha en
+      // toda la red y sin autenticación, así que no queda abierto a subidas de terceros.
+      if (write && !s.tftpAllowWrite) tempWrite.current = true;
       await invoke("server_start", { kind: "tftp", port: s.tftpPort, allowWrite: write || s.tftpAllowWrite });
     }
     refreshRunning();
   };
+  const tempWrite = useRef(false);
+  useEffect(() => {
+    if (!tempWrite.current || ops.some((o) => o.status === "running" || o.status === "pending")) return;
+    tempWrite.current = false;
+    invoke("server_start", { kind: "tftp", port: s.tftpPort, allowWrite: s.tftpAllowWrite })
+      .then(refreshRunning)
+      .catch(() => {});
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [ops]);
 
   // Cola: una operación a la vez sobre el equipo.
   const runningOp = ops.find((o) => o.status === "running");

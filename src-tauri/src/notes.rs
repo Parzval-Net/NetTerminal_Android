@@ -54,7 +54,10 @@ pub fn list(dir: &Path) -> Vec<NoteInfo> {
 }
 
 pub fn read(dir: &Path, name: &str) -> Result<String, String> {
-    fs::read_to_string(file_for(dir, name)?).map_err(|e| e.to_string())
+    // Lectura tolerante: una nota guardada en Windows-1252 por otro editor no debe verse vacía
+    // (y sobrescribirse con la primera tecla).
+    let bytes = fs::read(file_for(dir, name)?).map_err(|e| e.to_string())?;
+    Ok(String::from_utf8(bytes).unwrap_or_else(|e| e.into_bytes().iter().map(|&b| b as char).collect()))
 }
 
 pub fn save(dir: &Path, name: &str, content: &str) -> Result<(), String> {

@@ -39,7 +39,7 @@ export function SyslogTool({
   const on = running.includes("syslog");
 
   useEffect(() => {
-    invoke<{ ip: string }[]>("local_ips").then(setIps);
+    invoke<{ ip: string }[]>("local_ips").then(setIps).catch(() => {});
     const un = listen<Msg[]>("syslog", ({ payload }) => {
       if (pausedRef.current) return;
       setMsgs((m) => [...payload.reverse(), ...m].slice(0, MAX));

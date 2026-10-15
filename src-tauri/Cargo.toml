@@ -1,8 +1,8 @@
 [package]
 name = "net-terminal"
-version = "0.4.1"
+version = "0.5.0"
 description = "Cliente SSH, Telnet y Serial liviano y multiplataforma"
-authors = ["parzval"]
+authors = ["NetTerminal"]
 edition = "2021"
 
 # See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html

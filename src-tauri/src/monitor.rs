@@ -151,7 +151,8 @@ fn icmp_probe(host: &str, timeout: Duration) -> (bool, Option<f64>, Option<Strin
         c.args(["-c", "1", "-W", &ms.div_ceil(1000).to_string()]);
         c
     };
-    cmd.arg(host);
+    // "[2001:db8::1]" es válido como host, pero ping no acepta los corchetes.
+    cmd.arg(host.trim_matches(|c| c == '[' || c == ']'));
     let t0 = Instant::now();
     let out = match cmd.output() {
         Ok(o) => o,

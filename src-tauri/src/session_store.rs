@@ -72,10 +72,28 @@ impl SessionStore {
             }
         }
 
-        let sessions = fs::read_to_string(&file_path)
-            .ok()
-            .and_then(|c| serde_json::from_str::<Vec<Session>>(&c).ok())
-            .unwrap_or_else(Self::default_sessions);
+        let sessions = match fs::read_to_string(&file_path) {
+            Err(_) => Self::default_sessions(),
+            Ok(content) => {
+                // Se descartan solo las entradas inválidas (puerto fuera de rango, tipo
+                // desconocido tras volver a una versión anterior, edición manual), nunca todo.
+                let parsed = serde_json::from_str::<Vec<serde_json::Value>>(&content);
+                let valid: Vec<Session> = parsed
+                    .as_ref()
+                    .map(|items| items.iter().filter_map(|v| serde_json::from_value(v.clone()).ok()).collect())
+                    .unwrap_or_default();
+                let lost = parsed.as_ref().map(|items| items.len() != valid.len()).unwrap_or(true);
+                if lost {
+                    // Respaldo del archivo original antes de reescribirlo.
+                    backup_corrupt(&file_path);
+                }
+                if parsed.is_err() {
+                    Self::default_sessions()
+                } else {
+                    valid
+                }
+            }
+        };
 
         let store = Self {
             file_path,
@@ -169,6 +187,38 @@ mod tests {
     use std::path::{Path, PathBuf};
 
     #[test]
+    fn keeps_valid_sessions_and_backs_up_corrupt_file() {
+        let dir = std::env::temp_dir().join(format!("nt-store-{}", uuid::Uuid::new_v4()));
+        std::fs::create_dir_all(&dir).unwrap();
+        let file = dir.join("sessions.json");
+        std::fs::write(
+            &file,
+            r#"[{"id":"a","name":"core","type":"ssh","host":"192.0.2.1","created_at":""},
+                {"id":"b","name":"malo","type":"ssh","port":99999,"created_at":""}]"#,
+        )
+        .unwrap();
+        let store = super::SessionStore::new(&dir);
+        let names: Vec<String> = store.list().into_iter().map(|s| s.name).collect();
+        assert_eq!(names, vec!["core"]);
+        let backups = std::fs::read_dir(&dir)
+            .unwrap()
+            .flatten()
+            .filter(|e| e.file_name().to_string_lossy().starts_with("sessions.corrupt-"))
+            .count();
+        assert_eq!(backups, 1);
+        // JSON ilegible: también queda respaldo y no se pierde el archivo original.
+        std::fs::write(&file, "{no es json").unwrap();
+        let _ = super::SessionStore::new(&dir);
+        let backups = std::fs::read_dir(&dir)
+            .unwrap()
+            .flatten()
+            .filter(|e| e.file_name().to_string_lossy().starts_with("sessions.corrupt-"))
+            .count();
+        assert!(backups >= 1);
+        std::fs::remove_dir_all(&dir).unwrap();
+    }
+
+    #[test]
     fn portable_root_per_platform() {
         let usb = PathBuf::from("/Volumes/USB/NetTerminal");
         assert_eq!(
@@ -180,5 +230,18 @@ mod tests {
             Some(usb.clone())
         );
         assert_eq!(portable_root(&usb.join("NetTerminal.exe"), None), Some(usb));
+    }
+}
+
+/// Copia un archivo de datos que no se pudo leer completo a `<nombre>.corrupt-<unix>.json`.
+pub fn backup_corrupt(path: &Path) {
+    let ts = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map(|d| d.as_secs())
+        .unwrap_or(0);
+    let stem = path.file_stem().and_then(|s| s.to_str()).unwrap_or("datos");
+    let dest = path.with_file_name(format!("{stem}.corrupt-{ts}.json"));
+    if fs::copy(path, &dest).is_ok() {
+        restrict(&dest);
     }
 }

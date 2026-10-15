@@ -155,9 +155,11 @@ impl ScriptRunner {
         let mut cmd = Command::new(bin);
         cmd.args(pre)
             .arg("-u")
+            .arg("-B")
             .arg(&path)
             .current_dir(&cwd)
             .env("PYTHONIOENCODING", "utf-8")
+            .env("PYTHONDONTWRITEBYTECODE", "1")
             .env("PYTHONPATH", &helper_dir)
             .env("NT_DATA_DIR", data_dir)
             .env(
@@ -229,7 +231,15 @@ impl ScriptRunner {
                     break;
                 }
             }
-            let status = child.lock().unwrap().wait();
+            // Sin retener el lock mientras espera, para que "Detener" pueda matar el proceso.
+            let status = loop {
+                match child.lock().unwrap().try_wait() {
+                    Ok(Some(st)) => break Ok(st),
+                    Ok(None) => {}
+                    Err(e) => break Err(e),
+                }
+                std::thread::sleep(Duration::from_millis(100));
+            };
             app.state::<crate::AppState>().scripts.running.lock().unwrap().remove(&id);
             match status {
                 Ok(s) if s.success() => emit("done", "Script finalizado".into()),

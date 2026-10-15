@@ -57,7 +57,14 @@ export function NotesPanel(p: Props) {
   const open = useCallback(
     async (name: string) => {
       await flushSave();
-      const text = await invoke<string>("read_note", { name }).catch(() => "");
+      let text: string;
+      try {
+        text = await invoke<string>("read_note", { name });
+      } catch (e) {
+        // Sin abrirla: mostrarla vacía haría que el autoguardado borre su contenido.
+        flash(`No se pudo abrir ${name}: ${e}`);
+        return;
+      }
       setCurrent(name);
       setContent(text);
       setSaved(true);

@@ -103,7 +103,6 @@ export function TransferTool({
           terminals={terminals}
           settings={s}
           running={running}
-          onChange={onChange}
           refreshRunning={refreshRunning}
           onConfirm={onConfirm}
           onScp={onScp}

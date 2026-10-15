@@ -100,11 +100,24 @@ impl Servers {
         let flag = self.flag("tftp");
         std::thread::spawn(move || {
             let mut buf = [0u8; 2048];
+            // Sesiones activas por equipo: descarta pedidos retransmitidos (el mismo RRQ dos
+            // veces abriría dos envíos en paralelo) y limita los hilos ante un flood UDP.
+            let active: Arc<Mutex<std::collections::HashSet<SocketAddr>>> = Arc::default();
             while flag.load(Ordering::SeqCst) {
                 let Ok((n, peer)) = sock.recv_from(&mut buf) else { continue };
+                {
+                    let mut set = active.lock().unwrap();
+                    if set.contains(&peer) || set.len() >= TFTP_MAX_SESSIONS {
+                        continue;
+                    }
+                    set.insert(peer);
+                }
                 let req = buf[..n].to_vec();
-                let (app, root, flag) = (app.clone(), root.clone(), flag.clone());
-                std::thread::spawn(move || tftp_session(app, root, allow_write, peer, req, flag));
+                let (app, root, flag, active) = (app.clone(), root.clone(), flag.clone(), active.clone());
+                std::thread::spawn(move || {
+                    tftp_session(app, root, allow_write, peer, req, flag);
+                    active.lock().unwrap().remove(&peer);
+                });
             }
         });
         Ok(format!("TFTP escuchando en UDP {port}"))
@@ -231,6 +244,11 @@ fn tftp_error(sock: &UdpSocket, peer: SocketAddr, code: u16, msg: &str) {
     let _ = sock.send_to(&p, peer);
 }
 
+/// Sesiones TFTP simultáneas como máximo.
+const TFTP_MAX_SESSIONS: usize = 16;
+/// Tamaño máximo de un archivo recibido por TFTP (imágenes de firmware grandes incluidas).
+const TFTP_MAX_UPLOAD: u64 = 8 * 1024 * 1024 * 1024;
+
 fn tftp_session(app: AppHandle, root: PathBuf, allow_write: bool, peer: SocketAddr, req: Vec<u8>, flag: Arc<AtomicBool>) {
     let Ok(sock) = UdpSocket::bind(("0.0.0.0", 0)) else { return };
     if req.len() < 4 {
@@ -329,11 +347,16 @@ fn tftp_session(app: AppHandle, root: PathBuf, allow_write: bool, peer: SocketAd
             if !inside_root(&root, &path) {
                 return tftp_error(&sock, peer, 2, "Ruta no permitida");
             }
-            let tmp = path.with_extension("part");
+            let total = opts.get("tsize").and_then(|v| v.parse::<u64>().ok());
+            if total.is_some_and(|t| t > TFTP_MAX_UPLOAD) {
+                return tftp_error(&sock, peer, 3, "Archivo demasiado grande");
+            }
+            // Temporal único: dos subidas a la vez (ios.bin e ios.txt) no deben pisarse.
+            let fname = path.file_name().and_then(|f| f.to_str()).unwrap_or("archivo");
+            let tmp = path.with_file_name(format!(".{fname}.{}.part", uuid::Uuid::new_v4().simple()));
             let Ok(mut file) = File::create(&tmp) else {
                 return tftp_error(&sock, peer, 2, "No se pudo crear el archivo");
             };
-            let total = opts.get("tsize").and_then(|v| v.parse::<u64>().ok());
             let mut oack = Vec::new();
             if let Some(b) = blksize {
                 oack.push(("blksize".to_string(), b.to_string()));
@@ -371,6 +394,12 @@ fn tftp_session(app: AppHandle, root: PathBuf, allow_write: bool, peer: SocketAd
                                 return tftp_error(&sock, peer, 3, "Disco lleno o error de escritura");
                             }
                             got += (n - 4) as u64;
+                            if got > TFTP_MAX_UPLOAD {
+                                drop(file);
+                                let _ = fs::remove_file(&tmp);
+                                report(got, total, true, Some("Archivo demasiado grande".into()), "put");
+                                return tftp_error(&sock, peer, 3, "Archivo demasiado grande");
+                            }
                             expected = expected.wrapping_add(1);
                             retries = 0;
                         }
