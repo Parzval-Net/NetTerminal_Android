@@ -9,7 +9,7 @@ export function isMod(e: KeyboardEvent): boolean {
 }
 
 export const modLabel = isMac ? "⌘" : "Ctrl+Shift+";
-export const zoomLabel = isMac ? "⌘" : "Ctrl+";
+export const zoomLabel = isMac ? "⌘" : "Ctrl+Shift+";
 
 export type AppAction =
   | "settings"
@@ -75,3 +75,7 @@ export function shortcutFor(e: KeyboardEvent): AppAction | null {
       return null;
   }
 }
+
+/** Catálogo de comandos del sistema donde corre la app (para la terminal local). */
+export const localOsVendor = (): string =>
+  isMac ? "macos" : /Windows/i.test(navigator.userAgent) ? "windows" : "linux";

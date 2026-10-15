@@ -15,6 +15,7 @@ const SHOTS = [
   ["monitoreo", "monitor", "light"],
   ["topologia", "topology", "light"],
   ["topologia-cambios", "compare", "light"],
+  ["comandos-so", "oscmds", "dark"],
   ["subredes", "subnet", "dark"],
   ["velocidad", "speed", "light"],
   ["ajustes", "settings", "dark"],

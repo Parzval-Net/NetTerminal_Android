@@ -1,6 +1,6 @@
 import { useEffect, useState } from "react";
 import { invoke } from "@tauri-apps/api/core";
-import { Gauge, Play, Square } from "lucide-react";
+import { Gauge, Play, Square, Trash2 } from "lucide-react";
 import { SpeedResult } from "../../lib/settings";
 import { LineChart, StatTile } from "./LineChart";
 import { Btn, Console, CopyText, Label, Section, Toggle } from "./ui";
@@ -22,16 +22,24 @@ interface IperfResult {
 const mbps = (v: number | null | undefined) =>
   v == null ? "—" : v >= 1000 ? `${(v / 1000).toFixed(2)} Gbps` : `${v.toFixed(v >= 100 ? 0 : 1)} Mbps`;
 
-export function PerfTool({ history, onResult }: { history: SpeedResult[]; onResult: (r: SpeedResult) => void }) {
+interface SpeedProps {
+  history: SpeedResult[];
+  onResult: (r: SpeedResult) => void;
+  onHistory: (h: SpeedResult[]) => void;
+}
+
+export function PerfTool(p: SpeedProps) {
   return (
     <div className="space-y-4">
-      <SpeedTest history={history} onResult={onResult} />
+      <SpeedTest {...p} />
       <Iperf />
     </div>
   );
 }
 
-function SpeedTest({ history, onResult }: { history: SpeedResult[]; onResult: (r: SpeedResult) => void }) {
+function SpeedTest({ history, onResult, onHistory }: SpeedProps) {
+  // Borrado en dos clics (sin diálogo): el primero arma, el segundo confirma.
+  const [armed, setArmed] = useState<string | null>(null);
   const job = useJob<SpeedResult, { phase: string; value: number; progress: number }>();
   const [live, setLive] = useState<{ download: number[]; upload: number[] }>({ download: [], upload: [] });
 
@@ -46,7 +54,8 @@ function SpeedTest({ history, onResult }: { history: SpeedResult[]; onResult: (r
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [job.result]);
 
-  const r = job.result ?? history[0];
+  // Si la última medición se borró del historial, deja de mostrarse en los indicadores.
+  const r = job.result && history.some((h) => h.ts === job.result!.ts) ? job.result : history[0];
   const phaseLabel = { latency: "Midiendo latencia", download: "Midiendo bajada", upload: "Midiendo subida" }[job.progress?.phase ?? ""] ?? "Preparando";
 
   return (
@@ -95,7 +104,7 @@ function SpeedTest({ history, onResult }: { history: SpeedResult[]; onResult: (r
           <LineChart title="Mediciones de bajada" unit="Mbps" height={110} points={live.download.map((y, i) => ({ x: i, y }))} />
         </div>
       )}
-      {history.length > 1 && (
+      {history.length > 0 && (
         <details className="mt-3">
           <summary className="text-[12px] text-muted cursor-default">Historial ({history.length})</summary>
           <table className="w-full mt-2 text-[12px]">
@@ -105,7 +114,9 @@ function SpeedTest({ history, onResult }: { history: SpeedResult[]; onResult: (r
                 <th className="font-medium">Bajada</th>
                 <th className="font-medium">Subida</th>
                 <th className="font-medium">Latencia</th>
+                <th className="font-medium">Jitter</th>
                 <th className="font-medium">Servidor</th>
+                <th className="w-8" />
               </tr>
             </thead>
             <tbody className="tabular-nums">
@@ -115,11 +126,42 @@ function SpeedTest({ history, onResult }: { history: SpeedResult[]; onResult: (r
                   <td>{mbps(h.download_mbps)}</td>
                   <td>{mbps(h.upload_mbps)}</td>
                   <td>{h.latency_ms.toFixed(1)} ms</td>
+                  <td>{h.jitter_ms != null ? `${h.jitter_ms.toFixed(1)} ms` : "—"}</td>
                   <td>{h.server?.colo ?? ""}</td>
+                  <td className="text-right">
+                    <button
+                      title={armed === h.ts ? "Clic para confirmar" : "Eliminar esta medición"}
+                      aria-label="Eliminar esta medición"
+                      onMouseLeave={() => setArmed(null)}
+                      onClick={() => {
+                        if (armed !== h.ts) return setArmed(h.ts);
+                        onHistory(history.filter((x) => x.ts !== h.ts));
+                        setArmed(null);
+                      }}
+                      className={`w-6 h-6 inline-grid place-items-center rounded-md hover:bg-hover ${
+                        armed === h.ts ? "text-danger" : "text-muted hover:text-danger"
+                      }`}
+                    >
+                      <Trash2 size={13} />
+                    </button>
+                  </td>
                 </tr>
               ))}
             </tbody>
           </table>
+          <div className="flex justify-end mt-1">
+            <button
+              onMouseLeave={() => setArmed(null)}
+              onClick={() => {
+                if (armed !== "all") return setArmed("all");
+                onHistory([]);
+                setArmed(null);
+              }}
+              className={`text-[11.5px] px-2 h-6 rounded-md hover:bg-hover ${armed === "all" ? "text-danger" : "text-muted hover:text-danger"}`}
+            >
+              {armed === "all" ? "Clic para borrar todo el historial" : "Borrar historial"}
+            </button>
+          </div>
         </details>
       )}
     </Section>

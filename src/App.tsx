@@ -30,7 +30,7 @@ import { openUrl } from "@tauri-apps/plugin-opener";
 import { Sparkles, X as XIcon } from "lucide-react";
 import { listen } from "@tauri-apps/api/event";
 import { ConnStatus, Session, Tab, TabState, tabTitle } from "./types";
-import { modLabel, shortcutFor } from "./lib/platform";
+import { localOsVendor, modLabel, shortcutFor } from "./lib/platform";
 import { resolvePreset, useSystemDark } from "./lib/theme";
 import { Settings, useSettings } from "./lib/settings";
 import logo from "./assets/logo.svg";
@@ -416,7 +416,9 @@ function Workspace({
 
   /** Abre el catálogo con el fabricante de la sesión activa, si tiene uno definido. */
   const toggleCommands = () => {
-    if (!commandsOpen && activeTab?.session.highlight && activeTab.session.highlight !== "default")
+    if (!commandsOpen && activeTab?.session.type === "local" && !activeTab.session.scp)
+      update({ catalogVendor: localOsVendor() });
+    else if (!commandsOpen && activeTab?.session.highlight && activeTab.session.highlight !== "default")
       update({ catalogVendor: vendorFor(activeTab.session.highlight) });
     setCommandsOpen((o) => !o);
   };

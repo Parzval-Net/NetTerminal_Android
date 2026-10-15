@@ -102,6 +102,7 @@ export function ToolsView({ active, settings, update, monitors, connId, terminal
           <PerfTool
             history={settings.speedHistory}
             onResult={(r: SpeedResult) => update((s) => ({ speedHistory: [r, ...s.speedHistory].slice(0, 20) }))}
+            onHistory={(speedHistory: SpeedResult[]) => update({ speedHistory })}
           />
         );
       case "transfer":

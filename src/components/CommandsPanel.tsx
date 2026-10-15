@@ -16,7 +16,7 @@ import {
   TextCursorInput,
   X,
 } from "lucide-react";
-import { CATEGORIES, CatalogEntry, CatalogVendor, Risk, appliesTo, commandFor, riskLabel } from "../lib/packs";
+import { CATEGORIES, CatalogEntry, CatalogVendor, OS_VENDORS, Risk, appliesTo, commandFor, riskLabel } from "../lib/packs";
 import { modLabel } from "../lib/platform";
 
 interface Props {
@@ -90,19 +90,28 @@ export function CommandsPanel(p: Props) {
   return (
     <aside className="relative shrink-0 flex flex-col border-l border-line bg-chrome" style={{ width: p.width }}>
       <header className="flex items-center gap-1 px-2 h-9 border-b border-line">
-        <div className="flex flex-1 min-w-0 p-0.5 rounded-lg bg-hover overflow-x-auto [scrollbar-width:none]">
-          {p.catalog.map((v) => (
-            <button
-              key={v.id}
-              onClick={() => p.onVendor(v.id)}
-              className={`flex-1 shrink-0 px-2 h-6 rounded-md text-[11.5px] whitespace-nowrap ${
-                vendor?.id === v.id ? "bg-panel shadow-sm text-fg" : "text-muted hover:text-fg"
-              }`}
-            >
-              {v.name}
-            </button>
-          ))}
-        </div>
+        {/* Lista agrupada: con equipos de red y sistemas operativos ya no caben como pestañas. */}
+        <select
+          aria-label="Catálogo"
+          className="field !h-7 flex-1 min-w-0 !text-[12px] font-medium"
+          value={vendor?.id ?? ""}
+          onChange={(e) => p.onVendor(e.target.value)}
+        >
+          {[
+            ["Equipos de red", p.catalog.filter((v) => !OS_VENDORS.includes(v.id))],
+            ["Sistemas operativos", p.catalog.filter((v) => OS_VENDORS.includes(v.id))],
+          ].map(([label, list]) =>
+            (list as CatalogVendor[]).length ? (
+              <optgroup key={label as string} label={label as string}>
+                {(list as CatalogVendor[]).map((v) => (
+                  <option key={v.id} value={v.id}>
+                    {v.name} · {v.commands.length}
+                  </option>
+                ))}
+              </optgroup>
+            ) : null,
+          )}
+        </select>
         <HeadBtn title="Packs de comandos" onClick={p.onPacks}>
           <Package size={14} />
         </HeadBtn>

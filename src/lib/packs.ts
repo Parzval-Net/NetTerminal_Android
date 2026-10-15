@@ -81,8 +81,13 @@ export const CATEGORIES = [
   "Diagnóstico",
   "Logs",
   "Configuración",
+  "DNS",
+  "Conexiones y tráfico",
   "Otros",
 ];
+
+/** Catálogos de sistemas operativos (el resto son equipos de red). */
+export const OS_VENDORS = ["windows", "macos", "linux"];
 
 export const riskLabel: Record<Risk, string> = {
   read: "Consulta",
@@ -119,7 +124,89 @@ const CHECKPOINT_READ =
 
 /** Herramientas Linux de solo lectura (modo expert de Gaia y equipos basados en Linux). */
 const LINUX_READ =
-  /^(top|uptime|free|df|du|cat|less|tail|head|grep|ls|uname|hostname|date|dmidecode|raid_diagnostic|lspci|arp -an|ip (neigh|route|addr|link)( show)?\b|netstat|ss\b|ifconfig( \S+)?$|ethtool( -[iSkgacm])? \S+$)/i;
+  /^(top|uptime|free|df|du|cat|less|tail|head|grep|ls|uname|hostname|date|dmidecode|raid_diagnostic|lspci|arp -an|ip (neigh|route|addr|link)( show)?\b(?!.*\b(add|del|delete|flush|set|change|replace|append|prepend)\b)|netstat|ss\b|ifconfig( \S+)?$)/i;
+
+/**
+ * ethtool distingue mayúsculas: -k/-g/-a/-l/-c muestran y -K/-G/-A/-L/-C cambian (y -E
+ * escribe la EEPROM), así que esta regla no puede ir con la bandera "i".
+ */
+const ETHTOOL_READ = /^ethtool( -[iSkgacmlTPne])? \S+$/;
+/** iptables también distingue mayúsculas (-L lista, -A/-I/-D/-F cambian reglas). */
+const IPTABLES_READ = /^ip6?tables(-legacy|-nft)?( -t \w+)?( (-[LSnvxV]+|--list\S*|--line-numbers|--version|[A-Za-z_][\w-]*))*$/;
+
+/**
+ * Sistemas operativos (Windows, macOS, Linux): consultas de red. Los subcomandos que
+ * cambian estado (add, del, set, flush, up/down…) quedan fuera a propósito.
+ */
+const OS_READ = new RegExp(
+  "^(" +
+    [
+      // Windows
+      "ipconfig(\\s+/(all|displaydns|allcompartments)\\b.*)?$",
+      "(Get|Test|Resolve|Find|Measure|Select|Format|Where|Sort|Show|Compare)-\\w+",
+      "netsh\\b(?!.*\\b(set|add|delete|reset|start|stop|dump|connect|disconnect|import|export)\\b).*\\bshow\\b",
+      "netsh (wlan|trace) show\\b",
+      "route print|arp -a|getmac|nbtstat -[acnsS]\\b|pathping|systeminfo|whoami|typeperf|w32tm /(query|stripchart|monitor|tz)\\b",
+      "pktmon (status|list|filter list|counters|etl2txt|etl2pcap|format|pcapng)\\b",
+      "(Get-Content|gc|type) .*hosts$",
+      "\\(Get-\\w+|\\$PSVersionTable\\b|tasklist\\b|rasdial$|net (use|view|share|config \\w+|statistics \\w+)$",
+      "nltest /(dsgetdc|sc_query|sc_verify|dclist|domain_trusts|dsgetsite|query|parentdomain|dnsgetdc)\\b",
+      // macOS
+      "ipconfig (getifaddr|getpacket|getsummary|getoption|getiflist|getv6packet|getra)\\b",
+      "networksetup -(list|get|print|show|version|help)\\w*",
+      "scutil (-r\\b|--(dns|nwi|proxy|get)\\b|--nc (list|status|show|statistics)\\b)",
+      "dscacheutil -(q|statistics|cachedump)\\b",
+      "dns-sd -[BGLQZ]\\b",
+      "nettop|ndp -[anpr]+\\b|(\\S*/)?airport -[Is]\\b|arp -n\\b|ifconfig( -\\w+)*( \\S+)?$|system_profiler|sw_vers|networkQuality|wdutil (info|diagnose|log)?\\b",
+      "/usr/libexec/ApplicationFirewall/socketfilterfw --(get|list)\\w*",
+      "pfctl -s\\w*",
+      "log (show|stream)\\b",
+      "route (-n )?(get|monitor)\\b",
+      // Linux
+      "resolvectl( (status|query|statistics|dns|domain|show-cache|show-server-state|monitor|llmnr|mdns|dnssec|dnsovertls)\\b(?!.*\\s(\\S+\\s+){1}\\S+\\.\\S+\\s*$)|$)",
+      "systemd-resolve --(status|statistics)\\b",
+      "nmcli( -\\S+)*( (general|g|device|dev|d|connection|con|c|radio|r|networking|n|monitor))?( (show|status|list|wifi( list)?|connectivity|permissions|hostname|logging))?(?!.*\\b(up|down|modify|delete|add|reload|off|on|connect|disconnect|rescan|set|import|export|clone|edit)\\b)(\\s|$)",
+      "netplan (get|status)\\b",
+      "networkctl (status|list|lldp|cat)\\b",
+      "wicked (show|ifstatus|show-config)\\b",
+      "ifquery\\b",
+      "iw (dev|phy|reg get|list|event)\\b(?!.*\\b(set|connect|disconnect|scan trigger|del|add)\\b)",
+      "nstat|sar -n|vnstat|iftop|nload|bmon|tshark|mtr\\b|getent\\b|dig\\b|host\\b|nc -[zvnuw]+|curl\\b|wget --spider",
+      "conntrack -[LSCE]\\b|nft list\\b|ip6?tables(-legacy|-nft)?-save$",
+      "firewall-cmd (--zone=\\S+ |--permanent )*--(state|list|get|query|info)\\S*|ufw status\\b|ufw show\\b",
+      "arping\\b.*-c \\d+|lldpctl\\b|lldpcli show\\b|route -n$|swanctl --(list|stats)\\S*|wg( show\\b|$)|ip -f \\w+ (route|addr|neigh)( show)?$|getenforce$|sestatus\\b|aa-status$|openssl s_client\\b|teamdctl \\S+ state\\b",
+      "tc (-\\w+ )*(qdisc|class|filter) show\\b|bridge (-\\w+ )*(link|fdb|vlan|mdb)( show)?\\b",
+      "sysctl (-a\\b.*|(net\\.\\S+\\s*)+)$|journalctl\\b|dmesg\\b|hostnamectl( status)?$|timedatectl( (status|show|timesync-status|show-timesync))?$|chronyc (tracking|sources|sourcestats)\\b",
+      "rc-service \\S+ status|rc-status\\b|systemctl (status|is-active|is-enabled|list-units)\\b",
+      "ip (-\\S+ )*(addr|address|a|link|l|route|r|neigh|n|neighbour|rule|ru|netns|maddr|mroute|tunnel|xfrm (state|policy)|monitor|ntable|token|vrf)\\b(?!.*\\b(add|del|delete|flush|set|change|replace|append|prepend|exec|identify)\\b)",
+      "traceroute6|ping6|tracepath6?",
+    ].join("|") +
+    ")",
+  "i",
+);
+
+/** Sistemas operativos: acciones que cortan la red del equipo o requieren reinicio. */
+const OS_DISRUPTIVE = new RegExp(
+  "^(" +
+    [
+      "ipconfig /release6?\\b",
+      "netsh wlan disconnect\\b|rasdial\\b.*/disconnect\\b",
+      "(Disable|Restart)-NetAdapter\\b|Remove-NetIPAddress\\b|(Restart|Stop)-Computer\\b",
+      "netsh (int|interface) (ip|ipv4|ipv6|tcp) reset\\b|netsh winsock reset\\b",
+      "ip (-\\S+ )*(addr|address|a) flush\\b|ip (-\\S+ )*route flush\\b",
+      "nmcli( -\\S+)* ((c|con|connection) down|(n|networking) off|(r|radio) \\S+ off|(d|dev|device) (disconnect|down))\\b",
+      "systemctl (restart|stop) (NetworkManager|networking|network|systemd-networkd|wicked)\\b",
+      "netplan apply\\b|dhclient -r\\b|ifdown\\b|rc-service networking (restart|stop)\\b",
+      "networksetup -(setnetworkserviceenabled \\S+ off|setairportpower \\S+ off)\\b",
+      "route (-n )?(delete|del) (default|0\\.0\\.0\\.0)\\b",
+    ].join("|") +
+    ")",
+  "i",
+);
+
+/** Una consulta deja de serlo si su salida se ejecuta, se escribe a disco o termina procesos. */
+const PIPE_CHANGES = /^(sh|bash|zsh|tee|xargs|sudo|iex|Invoke-Expression|(Stop|Remove|Disable|Restart|Set|Clear|Reset|Rename|New|Add|Enable|Start|Export|Out-File|Uninstall|Install)-\w+)\b/i;
+const REDIRECT_WRITE = /(^|[^2&])>{1,2}\s*(?!\s*(\/dev\/null|\$null|nul)\b)\S/i;
 
 /** Navegación de contexto en FortiOS con VDOM (no cambia configuración). */
 const FORTI_CONTEXT = /^(config global|config vdom|edit \S+|end|next)$/i;
@@ -143,10 +230,17 @@ export function computeRisk(cmd: string): Risk {
   const multi = lines.length > 1;
   // "config vdom / edit X" o "config global": solo cambia de contexto.
   if (lines.every((l) => FORTI_CONTEXT.test(l)) && /^config (global|vdom)$/i.test(lines[0]) && lines.length <= 2) return "read";
-  for (const line of lines) {
-    if (DISRUPTIVE.test(line) || ETHTOOL_SET.test(line) || (multi && DISRUPTIVE_IN_CONFIG.test(line))) return "disruptive";
-    const read = [READ_START, FORTI_DIAG_READ, FORTI_EXEC_READ, CHECKPOINT_READ, LINUX_READ].some((re) => re.test(line));
+  for (const raw of cmd.split("\n").map((l) => l.trim()).filter(Boolean)) {
+    // "sudo" no cambia la naturaleza del comando: se evalúa lo que ejecuta.
+    const segments = raw
+      .split("|")
+      .map((x) => x.trim().replace(/^sudo\s+(-\S+\s+)*/i, "").replace(/^ip netns exec \S+\s+/i, ""));
+    const line = segments[0];
+    if (DISRUPTIVE.test(line) || ETHTOOL_SET.test(line) || OS_DISRUPTIVE.test(line) || (multi && DISRUPTIVE_IN_CONFIG.test(line)))
+      return "disruptive";
+    const read = [READ_START, FORTI_DIAG_READ, FORTI_EXEC_READ, CHECKPOINT_READ, LINUX_READ, ETHTOOL_READ, IPTABLES_READ, OS_READ].some((re) => re.test(line));
     if (!read) risk = maxRisk(risk, "change");
+    if (segments.slice(1).some((x) => PIPE_CHANGES.test(x)) || REDIRECT_WRITE.test(raw)) risk = maxRisk(risk, "change");
   }
   return risk;
 }
