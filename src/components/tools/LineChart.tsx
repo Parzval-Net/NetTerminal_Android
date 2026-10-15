@@ -157,9 +157,9 @@ export function LineChart({ points, unit, height = 180, xLabel, title }: Props) 
 export function StatTile({ label, value, tone }: { label: string; value: string; tone?: "danger" | "ok" | "warn" }) {
   const color = tone === "danger" ? "text-danger" : tone === "ok" ? "text-ok" : tone === "warn" ? "text-warn" : "text-fg";
   return (
-    <div className="rounded-lg border border-line px-3 py-2 min-w-0">
+    <div className="rounded-lg border border-line px-2.5 py-2 min-w-0" title={`${label}: ${value}`}>
       <div className="text-[11px] text-muted truncate">{label}</div>
-      <div className={`text-[17px] font-semibold tabular-nums truncate ${color}`}>{value}</div>
+      <div className={`text-[16px] font-semibold tabular-nums truncate ${color}`}>{value}</div>
     </div>
   );
 }

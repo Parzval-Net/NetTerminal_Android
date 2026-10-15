@@ -7,8 +7,8 @@ export function Section({ title, hint, children, right }: { title: string; hint?
     <section className="rounded-xl border border-line bg-panel">
       <header className="flex items-center justify-between gap-3 px-4 pt-3 pb-2">
         <div className="min-w-0">
-          <h3 className="text-[13px] font-semibold">{title}</h3>
-          {hint && <p className="text-[11.5px] text-muted">{hint}</p>}
+          <h3 className="text-[13px] font-semibold truncate">{title}</h3>
+          {hint && <p className="text-[11.5px] text-muted truncate" title={hint}>{hint}</p>}
         </div>
         {right}
       </header>
@@ -73,7 +73,7 @@ export function StatusPill({ state, label }: { state: "up" | "down" | "unknown" 
   } as const;
   const [color, icon] = map[state];
   return (
-    <span className="inline-flex items-center gap-1 px-2 h-5 rounded-full border border-line text-[11px] font-medium" style={{ color }}>
+    <span className="inline-flex items-center gap-1 px-2 h-5 rounded-full border border-line text-[11px] font-medium whitespace-nowrap shrink-0" style={{ color }}>
       <span aria-hidden>{icon}</span>
       <span className="text-fg">{label}</span>
     </span>
@@ -115,4 +115,4 @@ export function Console({ lines, empty = "Sin salida", height = 220 }: { lines: 
 export const fmtBytes = (n: number) =>
   n >= 1e9 ? `${(n / 1e9).toFixed(2)} GB` : n >= 1e6 ? `${(n / 1e6).toFixed(1)} MB` : n >= 1e3 ? `${(n / 1e3).toFixed(0)} KB` : `${n} B`;
 
-export const fmtMs = (v: number | null | undefined) => (v == null ? "—" : `${v >= 100 ? v.toFixed(0) : v.toFixed(1)} ms`);
+export const fmtMs = (v: number | null | undefined) => (v == null ? "—" : `${v >= 10 ? v.toFixed(0) : v.toFixed(1)} ms`);

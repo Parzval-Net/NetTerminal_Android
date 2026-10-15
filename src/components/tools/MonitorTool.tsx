@@ -126,7 +126,7 @@ function MonitorCard(p: {
       title={t.name}
       hint={`${t.kind === "tcp" ? `TCP ${t.host}:${t.port}` : `ICMP ${t.host}`} · cada ${t.intervalMs / 1000} s`}
       right={
-        <div className="flex items-center gap-1">
+        <div className="flex items-center gap-1 shrink-0">
           <StatusPill state={state} label={since ? `${label} · ${since}` : label} />
           <Btn kind="ghost" className="!px-1.5" title={t.active ? "Pausar" : "Reanudar"} onClick={p.onToggle}>
             {t.active ? <Pause size={14} /> : <Play size={14} />}

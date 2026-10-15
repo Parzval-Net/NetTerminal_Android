@@ -134,16 +134,18 @@ export function TopologyTool({
     if (!topo.nodes.length) return { x: 0, y: 0, w: 800, h: 400 };
     const xs = topo.nodes.map((n) => n.x);
     const ys = topo.nodes.map((n) => n.y);
-    const x = Math.min(...xs) - W;
-    const y = Math.min(...ys) - H * 1.5;
-    return { x, y, w: Math.max(...xs) - x + W, h: Math.max(...ys) - y + H * 1.5 };
+    const pad = 30;
+    const x = Math.min(...xs) - W / 2 - pad;
+    const y = Math.min(...ys) - H / 2 - pad;
+    return { x, y, w: Math.max(...xs) - x + W / 2 + pad, h: Math.max(...ys) - y + H / 2 + pad };
   }, [topo.nodes]);
 
   const onPointerMove = (e: React.PointerEvent<SVGSVGElement>) => {
     const d = drag.current;
     if (!d) return;
     const svg = e.currentTarget.getBoundingClientRect();
-    const scale = box.w / svg.width;
+    // El SVG se ajusta al contenedor manteniendo proporción: manda el eje más ajustado.
+    const scale = Math.max(box.w / svg.width, box.h / svg.height);
     const x = d.x + (e.clientX - d.sx) * scale;
     const y = d.y + (e.clientY - d.sy) * scale;
     setTopo((t) => ({ ...t, nodes: t.nodes.map((n) => (n.id === d.id ? { ...n, x, y } : n)) }));
@@ -251,7 +253,7 @@ export function TopologyTool({
           ) : (
             <svg
               viewBox={`${box.x} ${box.y} ${box.w} ${box.h}`}
-              style={{ width: box.w * zoom, height: box.h * zoom, minWidth: "100%" }}
+              style={{ width: `${zoom * 100}%`, height: `${zoom * 100}%` }}
               onPointerMove={onPointerMove}
               onPointerUp={() => (drag.current = null)}
               onPointerLeave={() => (drag.current = null)}
@@ -297,6 +299,8 @@ export function TopologyTool({
                     setSelected(n.id);
                   }}
                 >
+                  {/* Fondo opaco: el relleno de los explorados es translúcido y dejaba ver los enlaces. */}
+                  <rect x={n.x - W / 2} y={n.y - H / 2} width={W} height={H} rx={10} fill="var(--panel)" />
                   <rect
                     x={n.x - W / 2}
                     y={n.y - H / 2}

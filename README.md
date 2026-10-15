@@ -4,6 +4,19 @@ Cliente de conexión liviano y multiplataforma (macOS, Windows, Linux) para el t
 
 Construido con [Tauri 2](https://tauri.app) (backend en Rust) y xterm.js. Usa el WebView del sistema, por lo que el binario pesa ~4 MB.
 
+![NetTerminal: sesiones en carpetas, terminal con resaltado por fabricante y catálogo de comandos](docs/screenshots/terminal.png)
+
+## Capturas
+
+> Todas las capturas usan datos ficticios (IPs de documentación RFC 5737 y nombres genéricos).
+
+| | |
+| --- | --- |
+| **Notas y plantillas** con variables `{{vlan}}` que se envían a la sesión<br>![Notas](docs/screenshots/notas.png) | **Monitoreo** con gráfico de latencia, pérdida y alarma sonora<br>![Monitoreo](docs/screenshots/monitoreo.png) |
+| **Topología CDP/LLDP** para documentar y seguir la ruta salto a salto<br>![Topología](docs/screenshots/topologia.png) | **Packs de comandos**: 1.194 comandos de 6 fabricantes, ampliables<br>![Packs](docs/screenshots/packs.png) |
+| **Temas** de interfaz y de terminal<br>![Ajustes](docs/screenshots/ajustes.png) | **Velocidad**: speedtest e iperf3 cliente/servidor<br>![Velocidad](docs/screenshots/velocidad.png) |
+| **Calculadora de subredes** IPv4/IPv6 con división en subredes<br>![Subredes](docs/screenshots/subredes.png) | |
+
 ## Funciones
 
 | Área | Detalle |
@@ -191,6 +204,10 @@ npm run tauri build
 ```
 
 Para generar los binarios de los tres sistemas operativos, ejecuta el workflow `build` en GitHub Actions (manual o al crear un tag `v*`).
+
+### Regenerar las capturas
+
+Con `npx vite --port 1430` en marcha, ejecuta `node scripts/screenshots/shoot.mjs` (requiere Google Chrome). Usa un backend simulado (`scripts/screenshots/mock.js`) con datos ficticios, nunca tus sesiones reales.
 
 ## Estructura
 
