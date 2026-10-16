@@ -395,7 +395,8 @@ function UpdateSettings({ settings: s, onChange }: { settings: Settings; onChang
     try {
       const u = await invoke<UpdateInfo>("check_update", { repo: s.updateRepo, token: s.updateToken || null });
       onChange({ updateLastCheck: Date.now(), updateDismissed: "" });
-      setStatus(u.newer ? `Hay una versión nueva: ${u.latest}. Reinicia la app para ver el aviso.` : `Estás al día (${u.latest || u.current}).`);
+      if (u.newer) window.dispatchEvent(new CustomEvent("nt-update-found", { detail: u }));
+      setStatus(u.newer ? `Hay una versión nueva: ${u.latest}. Instálala desde el aviso en la parte superior.` : `Estás al día (${u.latest || u.current}).`);
     } catch (e) {
       setStatus(String(e));
     }
@@ -406,7 +407,10 @@ function UpdateSettings({ settings: s, onChange }: { settings: Settings; onChang
       <div className="flex items-center justify-between">
         <div>
           <div>Actualizaciones</div>
-          <div className="text-[11.5px] text-muted">Versión instalada {version}. Solo avisa; la descarga es manual.</div>
+          <div className="text-[11.5px] text-muted">
+            Versión instalada {version}. Avisa al abrir la app y permite instalar con un clic; cada actualización se verifica con
+            la firma del proyecto antes de instalarse.
+          </div>
         </div>
         <button onClick={check} disabled={busy} className="px-3 h-7 rounded-md border border-line hover:bg-hover disabled:opacity-40">
           {busy ? "Buscando…" : "Buscar ahora"}
@@ -423,8 +427,8 @@ function UpdateSettings({ settings: s, onChange }: { settings: Settings; onChang
         />
       </div>
       <p className="text-[11px] text-muted">
-        Para un repositorio privado crea un token "fine-grained" con acceso de solo lectura a Contents de ese repositorio, con
-        vencimiento. Se guarda solo en este equipo.
+        El repositorio es público: el token solo hace falta si usas un repositorio privado (fine-grained, solo lectura de
+        Contents, con vencimiento). Se guarda solo en este equipo. La instalación con un clic siempre usa el repositorio oficial.
       </p>
       {status && <p className="text-[12px] text-accent">{status}</p>}
     </div>

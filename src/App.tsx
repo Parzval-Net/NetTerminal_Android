@@ -206,7 +206,7 @@ function Workspace({
     if (activeId) setActivity((a) => (a.has(activeId) ? new Set([...a].filter((x) => x !== activeId)) : a));
   }, [activeId]);
 
-  // Aviso de versión nueva: revisa una vez al día, sin descargar nada.
+  // Aviso de versión nueva: revisa una vez al día. Instalar requiere confirmación.
   const [update_, setUpdate] = useState<UpdateInfo | null>(null);
   const [showNotes, setShowNotes] = useState(false);
   useEffect(() => {
@@ -219,6 +219,40 @@ function Workspace({
       .catch(() => update({ updateLastCheck: Date.now() }));
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
+  // Actualización con un clic: firma verificada por la app y siempre con confirmación.
+  const [selfUpdate, setSelfUpdate] = useState<{ supported: boolean; reason: string | null } | null>(null);
+  const [installing, setInstalling] = useState<number | null>(null);
+  useEffect(() => {
+    invoke<{ supported: boolean; reason: string | null }>("update_supported").then(setSelfUpdate).catch(() => {});
+    // "Buscar ahora" en Ajustes muestra el aviso sin esperar al próximo inicio.
+    const onFound = (e: Event) => setUpdate((e as CustomEvent<UpdateInfo>).detail);
+    window.addEventListener("nt-update-found", onFound);
+    const un = listen<{ downloaded: number; total: number | null }>("update-progress", ({ payload }) =>
+      setInstalling(payload.total ? Math.round((payload.downloaded / payload.total) * 100) : 0),
+    );
+    return () => {
+      un.then((f) => f());
+      window.removeEventListener("nt-update-found", onFound);
+    };
+  }, []);
+  const installUpdate = () => {
+    const run = () => {
+      setInstalling(0);
+      invoke("update_install").catch((e) => {
+        setInstalling(null);
+        toast(String(e), "error");
+      });
+    };
+    const open = Object.values(states).filter((x) => x.status === "connected").length;
+    if (open)
+      setConfirm({
+        title: "¿Actualizar y reiniciar?",
+        message: `Se cerrarán ${open} ${open === 1 ? "sesión abierta" : "sesiones abiertas"}. Las sesiones guardadas, notas y ajustes se conservan.`,
+        label: "Actualizar y reiniciar",
+        action: run,
+      });
+    else run();
+  };
   const lastTermRef = useRef<string | null>(null);
   useEffect(() => {
     if (activeId && activeId !== "tools") lastTermRef.current = activeId;
@@ -626,9 +660,26 @@ function Workspace({
                   {showNotes ? "Ocultar novedades" : "Ver novedades"}
                 </button>
               )}
-              <button className="text-accent font-medium hover:underline" onClick={() => openUrl(update_.url)}>
-                Descargar
-              </button>
+              {installing !== null ? (
+                <span className="text-accent font-medium tabular-nums">Descargando… {installing}%</span>
+              ) : selfUpdate?.supported ? (
+                <>
+                  <button className="text-muted hover:text-fg hover:underline" onClick={() => openUrl(update_.url)}>
+                    Ver release
+                  </button>
+                  <button className="px-2.5 h-6 rounded-md bg-accent text-accent-fg font-medium hover:opacity-90" onClick={installUpdate}>
+                    Actualizar y reiniciar
+                  </button>
+                </>
+              ) : (
+                <button
+                  className="text-accent font-medium hover:underline"
+                  title={selfUpdate?.reason ?? undefined}
+                  onClick={() => openUrl(update_.url)}
+                >
+                  Descargar
+                </button>
+              )}
               <button
                 className="text-muted hover:text-fg"
                 title="Omitir esta versión"

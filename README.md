@@ -40,7 +40,7 @@ Construido con [Tauri 2](https://tauri.app) (backend en Rust) y xterm.js. Usa el
 | Herramientas (⌘E) | Monitoreo ICMP/TCP con gráfico y alarma sonora; ping, traceroute y puertos; calculadora de subredes; speedtest (Cloudflare) e iperf3; Syslog. Cada módulo se activa en Ajustes › Módulos. |
 | Gestor de archivos | Dos paneles PC ↔ equipo sobre la sesión abierta: lista el flash, envía o trae archivos por TFTP/HTTP y respalda la configuración (Cisco, NX-OS, Huawei, Junos). La app escribe el `copy`, responde las confirmaciones y muestra el progreso. También por SCP cifrado (pestaña donde escribes la contraseña), con verificación MD5 automática del firmware enviado y aviso de espacio insuficiente. |
 | Plugins | Carpeta con `plugin.json` + script Python. Instalación con revisión de permisos y código; se bloquean si sus archivos cambian. |
-| Actualizaciones | Aviso de versión nueva desde GitHub Releases (sin descarga automática). |
+| Actualizaciones | Aviso de versión nueva desde GitHub Releases y botón "Actualizar y reiniciar": descarga, verifica la firma del proyecto e instala. Nunca instala sin confirmación y avisa si hay sesiones abiertas. En modo portable y en `.deb` la actualización sigue siendo manual. |
 | Compartir | Exportar/importar sesiones y reglas de resaltado como JSON vía portapapeles. |
 | Apariencia | Interfaz en modo sistema, claro u oscuro. 10 temas de terminal (Dracula, Nord, Solarized, Gruvbox, One Dark, Clásico, Fósforo verde, etc.), fuente, tamaño, interlineado y cursor configurables. |
 | Resaltado | Coloreo de salida por regex para Cisco/Arista, Juniper, Huawei/H3C, Fortinet y reglas comunes (IPv4/IPv6, MAC, up/down, permit/deny, contadores de error > 0, syslog por severidad). Perfil por sesión, reglas propias con vista previa e importación/exportación JSON. |
@@ -124,6 +124,7 @@ Auditoría del binario con REA (Ghidra y utilidades nativas de macOS) y revisió
 | Pegado: un bloque de varias líneas en un equipo remoto pide confirmación con vista previa (también con Cmd+V del menú nativo) | Código |
 | TFTP: la escritura se habilita solo durante una extracción, máx. 16 sesiones simultáneas, retransmisiones descartadas, tope de 8 GB por archivo y temporales únicos | Código |
 | Plugins: la revisión muestra todo el código Python; un plugin alterado no se reaprueba sin revisar su código; Python corre con `-B` y se borra `__pycache__` antes de ejecutar | Código |
+| Actualizaciones: firma Ed25519 verificada antes de instalar, índice y paquetes solo desde los releases del repositorio oficial, instalación siempre con confirmación | Diseño |
 | Datos: si `sessions.json` o `settings.json` no se pueden leer completos, se respalda el original (`*.corrupt-<fecha>.json`) y se conservan las sesiones válidas | Con tests |
 | MCP: apagado por defecto, solo 127.0.0.1, token comparado en tiempo constante, validación de Origin y Host (DNS rebinding), cuerpo máx. 1 MB, aprobación por comando (siempre en terminal local), máx. 3 aprobaciones pendientes, modo solo lectura | Con tests |
 | Prompt injection: la salida de equipos se declara como dato no confiable para el agente y cada comando se muestra completo antes de aprobar | Diseño |
@@ -202,10 +203,15 @@ Permisos: `session` (leer y enviar comandos a la sesión), `network`, `files`. S
 ## Publicar una versión
 
 1. Sube la versión en `package.json`, `src-tauri/Cargo.toml` y `src-tauri/tauri.conf.json`.
-2. `git tag v0.3.1 && git push origin v0.3.1`
-3. El workflow compila los 3 sistemas, crea el Release con instaladores y zip portable, y las apps avisan la versión nueva.
+2. `git tag v0.5.3 && git push origin v0.5.3`
+3. El workflow compila los 3 sistemas, firma los paquetes de actualización y crea el Release con instaladores, zip portable y `latest.json`.
 
-Si el repositorio es privado, cada usuario necesita un token de GitHub de solo lectura (fine-grained, Contents: read) en Ajustes › Logs y datos para recibir el aviso.
+### Actualización con un clic
+
+- La app consulta `releases/latest/download/latest.json` y solo instala paquetes firmados con la clave del proyecto (la clave pública va dentro de la app, en `tauri.conf.json`).
+- La clave privada y su contraseña viven solo en los secretos de GitHub Actions (`TAURI_SIGNING_PRIVATE_KEY` y `TAURI_SIGNING_PRIVATE_KEY_PASSWORD`). Guarda un respaldo fuera del equipo: si se pierde, los usuarios tendrán que reinstalar a mano una vez para recibir una clave nueva.
+- Plataformas: instalador de Windows, `.app` de macOS (incluida en el `.dmg`) y AppImage de Linux. El zip portable y el `.deb` mantienen el aviso con descarga manual.
+- Las compilaciones locales no necesitan la clave; para generar paquetes firmados: `npx tauri build --config src-tauri/tauri.updater.conf.json` con las variables de entorno anteriores.
 
 ## Desarrollo
 
@@ -242,5 +248,5 @@ src-tauri/src/
   notes.rs                Notas en texto plano (con tests)
   monitor.rs, nettools.rs Sondas, traceroute, iperf3, puertos, speedtest
   servers.rs, filexfer.rs TFTP/HTTP/Syslog y comandos de archivos en equipos
-  plugins.rs, updates.rs  Plugins con verificación SHA-256 y aviso de versiones
+  plugins.rs, updates.rs  Plugins con verificación SHA-256, aviso de versiones y actualización firmada
 ```

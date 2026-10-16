@@ -382,6 +382,56 @@ async fn check_update(repo: String, token: Option<String>) -> Result<serde_json:
     .map_err(|e| e.to_string())?
 }
 
+/// Si esta instalación puede actualizarse sola, o por qué no.
+fn self_update_blocker() -> Option<&'static str> {
+    if session_store::is_portable() {
+        return Some("En modo portable la actualización es manual: reemplaza los archivos de la carpeta.");
+    }
+    if cfg!(target_os = "linux") && std::env::var_os("APPIMAGE").is_none() {
+        return Some("Instalada con .deb: actualiza con el paquete nuevo o con apt.");
+    }
+    if cfg!(target_os = "macos") && std::env::current_exe().is_ok_and(|p| p.starts_with("/Volumes/")) {
+        return Some("La app corre desde el .dmg: cópiala a Aplicaciones para poder actualizarla.");
+    }
+    None
+}
+
+#[tauri::command]
+fn update_supported() -> serde_json::Value {
+    let blocker = self_update_blocker();
+    serde_json::json!({ "supported": blocker.is_none(), "reason": blocker })
+}
+
+/// Descarga, verifica la firma (clave pública incluida en la app) e instala la versión
+/// nueva; luego reinicia. Solo se llama cuando el usuario lo confirma.
+#[tauri::command]
+async fn update_install(app: tauri::AppHandle) -> Result<(), String> {
+    use tauri_plugin_updater::UpdaterExt;
+    if let Some(reason) = self_update_blocker() {
+        return Err(reason.into());
+    }
+    let update = app
+        .updater()
+        .map_err(|e| e.to_string())?
+        .check()
+        .await
+        .map_err(|e| format!("No se pudo consultar la actualización: {e}"))?
+        .ok_or("Ya tienes la última versión")?;
+    let progress = app.clone();
+    let mut done: usize = 0;
+    update
+        .download_and_install(
+            move |chunk, total| {
+                done += chunk;
+                let _ = progress.emit("update-progress", serde_json::json!({ "downloaded": done, "total": total }));
+            },
+            || {},
+        )
+        .await
+        .map_err(|e| format!("No se pudo instalar la actualización: {e}"))?;
+    app.restart()
+}
+
 #[tauri::command]
 fn app_version() -> &'static str {
     env!("CARGO_PKG_VERSION")
@@ -566,6 +616,7 @@ pub fn run() {
         .plugin(tauri_plugin_opener::init())
         .plugin(tauri_plugin_clipboard_manager::init())
         .plugin(tauri_plugin_dialog::init())
+        .plugin(tauri_plugin_updater::Builder::new().build())
         .on_menu_event(|app, event| {
             if event.id() == "settings" {
                 let _ = app.emit("open-settings", ());
@@ -645,6 +696,8 @@ pub fn run() {
             source_ip,
             check_update,
             app_version,
+            update_supported,
+            update_install,
             plugins_list,
             plugin_stage,
             plugin_confirm,

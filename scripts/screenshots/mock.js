@@ -203,7 +203,7 @@ const handlers = {
   list_sessions: () => sessions,
   get_settings: () => settings,
   save_settings: () => null,
-  app_version: () => "0.5.2",
+  app_version: () => "0.5.3",
   check_update: () => Promise.reject("demo"),
   cmdpacks_list: () => [],
   list_notes: () => Object.keys(notes).map((name) => ({ name, modified: now })),

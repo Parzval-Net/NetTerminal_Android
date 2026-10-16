@@ -44,6 +44,14 @@ pub fn restrict(path: &Path) {
     let _ = path;
 }
 
+/// true si la app corre en modo portable (marcador `portable` o carpeta `data/` al lado).
+pub fn is_portable() -> bool {
+    std::env::current_exe()
+        .ok()
+        .and_then(|exe| portable_root(&exe, std::env::var_os("APPIMAGE").map(PathBuf::from)))
+        .is_some_and(|root| root.join("portable").exists() || root.join("data").is_dir())
+}
+
 pub fn resolve_data_dir(os_config_dir: PathBuf) -> PathBuf {
     let root = std::env::current_exe()
         .ok()
