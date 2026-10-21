@@ -10,14 +10,15 @@ Construido con [Tauri 2](https://tauri.app) (backend en Rust) y xterm.js. Usa el
 
 ## Capturas
 
-> Todas las capturas usan datos ficticios (IPs de documentación RFC 5737 y nombres genéricos).
+> Capturas en modo claro con datos ficticios (IPs de documentación RFC 5737 y nombres genéricos). La app también tiene modo oscuro y 10 temas de terminal.
 
 | | |
 | --- | --- |
 | **Notas y plantillas** con variables `{{vlan}}` que se envían a la sesión<br>![Notas](docs/screenshots/notas.png) | **Monitoreo** con gráfico de latencia, pérdida y alarma sonora<br>![Monitoreo](docs/screenshots/monitoreo.png) |
 | **Topología CDP/LLDP** con ruta resaltada y Port-channel<br>![Topología](docs/screenshots/topologia.png) | **Comparación con un snapshot**: enlaces y equipos nuevos o perdidos<br>![Cambios de topología](docs/screenshots/topologia-cambios.png) |
 | **Comandos de sistema operativo**: Windows, macOS y Linux por distribución<br>![Comandos de sistema](docs/screenshots/comandos-so.png) | **Packs de comandos**: 1.777 comandos, ampliables<br>![Packs](docs/screenshots/packs.png) |
-| **Temas** de interfaz y de terminal<br>![Ajustes](docs/screenshots/ajustes.png) | **Velocidad**: speedtest e iperf3 cliente/servidor<br>![Velocidad](docs/screenshots/velocidad.png) |
+| **Modo oscuro**: la interfaz sigue al sistema o se fija en claro u oscuro<br>![Modo oscuro](docs/screenshots/modo-oscuro.png) | **10 temas de terminal** con vista previa (Dracula, Nord, Solarized, Gruvbox…)<br>![Temas](docs/screenshots/ajustes.png) |
+| **Velocidad**: speedtest e iperf3 cliente/servidor<br>![Velocidad](docs/screenshots/velocidad.png) | **Vista dividida en modo oscuro**<br>![Vista dividida oscura](docs/screenshots/modo-oscuro-dividida.png) |
 | **Vista dividida** 2x2 para seguir varios equipos a la vez<br>![Vista dividida](docs/screenshots/vista-dividida.png) | **Respaldos y comparación** de configuraciones con secretos enmascarados<br>![Respaldos](docs/screenshots/respaldos.png) |
 | **Enviar a varias sesiones** con lista de equipos y control de riesgo<br>![Difusión](docs/screenshots/difusion.png) | **Alertas por palabra clave** en la salida<br>![Alertas](docs/screenshots/alertas.png) |
 | **Importar sesiones** desde ssh_config, PuTTY, SecureCRT, MobaXterm o CSV<br>![Importar](docs/screenshots/importar.png) | **Calculadora de subredes** IPv4/IPv6 con división en subredes<br>![Subredes](docs/screenshots/subredes.png) |

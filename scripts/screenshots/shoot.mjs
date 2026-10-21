@@ -10,22 +10,25 @@ const CHROME = process.env.CHROME ?? "/Applications/Google Chrome.app/Contents/M
 const BASE = "http://localhost:1430/scripts/screenshots/demo.html";
 const OUT = fileURLToPath(new URL("../../docs/screenshots/", import.meta.url));
 const SHOTS = [
-  ["terminal", "terminal", "dark"],
-  ["notas", "notes", "dark"],
+  // Todas en modo claro para que sean uniformes; el modo oscuro y los temas van aparte.
+  ["terminal", "terminal", "light"],
+  ["notas", "notes", "light"],
   ["monitoreo", "monitor", "light"],
   ["topologia", "topology", "light"],
   ["topologia-cambios", "compare", "light"],
-  ["comandos-so", "oscmds", "dark"],
-  ["subredes", "subnet", "dark"],
+  ["comandos-so", "oscmds", "light"],
+  ["subredes", "subnet", "light"],
   ["velocidad", "speed", "light"],
-  ["ajustes", "settings", "dark"],
+  ["ajustes", "settings", "light"],
   ["packs", "packs", "light"],
-  ["acerca", "about", "dark"],
-  ["vista-dividida", "split", "dark"],
+  ["acerca", "about", "light"],
+  ["vista-dividida", "split", "light"],
   ["respaldos", "backup", "light"],
-  ["difusion", "broadcast", "dark"],
-  ["alertas", "alerts", "dark"],
+  ["difusion", "broadcast", "light"],
+  ["alertas", "alerts", "light"],
   ["importar", "import", "light"],
+  ["modo-oscuro", "terminal", "dark"],
+  ["modo-oscuro-dividida", "split", "dark"],
 ];
 const only = process.argv.slice(2);
 
