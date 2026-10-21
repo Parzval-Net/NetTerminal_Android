@@ -61,15 +61,22 @@ interface Props {
   logPath: string | null;
   /** Llegó salida mientras la pestaña no estaba visible. */
   onActivity: (id: string) => void;
+  /** Activa "algoritmos legacy" en la sesión (y la guarda) tras un error de negociación SSH. */
+  onEnableLegacy?: (id: string) => void;
   register: (id: string, ctrl: TermController | null) => void;
 }
+
+/** OpenSSH rechaza un equipo que solo ofrece algoritmos antiguos (ssh-rsa, SHA1, CBC). */
+const LEGACY_NEEDED = /no matching (host key type|key exchange method|cipher|MAC|signature algorithm) found/i;
+/** OpenSSH 10 eliminó ssh-dss: ni el modo legacy lo recupera. */
+const DSS_ONLY = /Their offer: ssh-dss\s*$/im;
 
 /** Manejador vacío a nivel de módulo: uno creado dentro de la terminal retendría su contexto. */
 const NOOP = () => {};
 
 const dim = (s: string) => `\x1b[2m${s}\x1b[0m`;
 
-export const TerminalView = memo(function TerminalView({ id, session, active, visible = active, rect, onFocusPane, settings, theme, onStatus, onLog, logPath, onActivity, register }: Props) {
+export const TerminalView = memo(function TerminalView({ id, session, active, visible = active, rect, onFocusPane, settings, theme, onStatus, onLog, logPath, onActivity, onEnableLegacy, register }: Props) {
   // "Visible" decide WebGL y el aviso de actividad; "active" (foco) decide el teclado.
   const activeRef = useRef(visible);
   activeRef.current = visible;
@@ -154,6 +161,8 @@ export const TerminalView = memo(function TerminalView({ id, session, active, vi
       channels = [];
     };
     let lastDataAt = 0;
+    /** Tras un error de negociación SSH, "L" activa los algoritmos legacy y reconecta. */
+    let legacyOffer = false;
     /** Final de la salida reciente (sin ANSI), para reconocer el prompt. */
     let tail = "";
 
@@ -232,6 +241,25 @@ export const TerminalView = memo(function TerminalView({ id, session, active, vi
       const onExit = (reason: string) => {
         hl.flush();
         setStatus("closed");
+        // Equipo antiguo: se ofrece activar los algoritmos legacy con una tecla.
+        const t = cleanTail();
+        legacyOffer = false;
+        if (sessionRef.current.type === "ssh" && LEGACY_NEEDED.test(t)) {
+          if (DSS_ONLY.test(t)) {
+            term.write(
+              `\r\n${dim("── El equipo solo ofrece claves ssh-dss (DSA), que OpenSSH 10 ya no soporta ni en modo legacy. Genera una clave RSA/ECDSA en el equipo o usa Telnet/consola ──")}\r\n`,
+            );
+          } else if (!sessionRef.current.legacy_ssh) {
+            legacyOffer = true;
+            term.write(
+              `\r\n${dim("── El equipo usa algoritmos antiguos (ssh-rsa, SHA1 o CBC) que OpenSSH desactiva por defecto. Presiona L para activar la compatibilidad con equipos antiguos en esta sesión y reconectar · Enter: reintentar igual ──")}\r\n`,
+            );
+          } else {
+            term.write(`\r\n${dim("── El equipo pide algoritmos que el OpenSSH instalado ya no incluye, ni con la compatibilidad activada ──")}\r\n`);
+          }
+          if (!activeRef.current) onActivity(id);
+          return;
+        }
         if (sessionRef.current.scp) {
           // Transferencia SCP: no se repite con Enter para no sobrescribir por accidente.
           term.write(`\r\n${dim(`── ${reason}. Transferencia terminada: puedes cerrar esta pestaña ──`)}\r\n`);
@@ -305,6 +333,15 @@ export const TerminalView = memo(function TerminalView({ id, session, active, vi
     term.onData((data) => {
       if (statusRef.current === "closed") {
         if (sessionRef.current.scp) return;
+        if (legacyOffer && (data === "l" || data === "L")) {
+          legacyOffer = false;
+          sessionRef.current = { ...sessionRef.current, legacy_ssh: true };
+          onEnableLegacy?.(id);
+          term.write(`${dim("── Compatibilidad con equipos antiguos activada ──")}\r\n`);
+          retries = 0;
+          connect();
+          return;
+        }
         if (data === "\r") {
           term.write("\r\n");
           retries = 0;

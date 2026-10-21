@@ -913,6 +913,15 @@ function Workspace({
     cancelBroadcast: () => setBroadcast(null),
     startBroadcast,
     openImport: () => setImportOpen(true),
+    // Activa "algoritmos legacy" en la pestaña y, si es una sesión guardada, la deja guardada.
+    enableLegacy: (tabId: string) => {
+      const tab = tabs.find((t) => t.id === tabId);
+      if (!tab) return;
+      const session = { ...tab.session, legacy_ssh: true };
+      setTabs((ts) => ts.map((t) => (t.id === tabId ? { ...t, session } : t)));
+      if (sessions.some((x) => x.id === session.id)) updateSessions([session]);
+      toast(`Compatibilidad con equipos antiguos activada en ${session.name}`);
+    },
   });
 
   return (
@@ -1028,6 +1037,7 @@ function Workspace({
               onLog={onLog}
               logPath={states[t.id]?.logPath ?? null}
               onActivity={markActivity}
+              onEnableLegacy={h.enableLegacy}
               register={register}
             />
             );

@@ -23,6 +23,7 @@ const sessions = [
   ["sw-acceso-norte", "telnet", "Sucursales/Norte", "203.0.113.20", "", "cisco"],
   ["sw-acceso-sur", "ssh", "Sucursales/Sur", "203.0.113.40", "admin", "huawei"],
   ["Consola USB", "serial", "Laboratorio", "", "", ""],
+  ["router-antiguo", "ssh", "Laboratorio", "192.0.2.99", "admin", "cisco"],
   ["Shell local", "local", "", "", "", ""],
 ].map(([name, type, folder, host, username, highlight], i) => ({
   id: `s${i}`, name, type, folder, host, username, highlight: highlight || "default",
@@ -233,10 +234,17 @@ const handlers = {
   },
   "plugin:event|unlisten": () => null,
   list_sessions: () => sessions,
+  update_sessions: ({ sessions: changed }) => {
+    for (const c of changed) {
+      const i = sessions.findIndex((x) => x.id === c.id);
+      if (i >= 0) sessions[i] = c;
+    }
+    return sessions;
+  },
   get_settings: () => settings,
   save_settings: () => null,
-  app_version: () => "0.7.1",
-  update_check: () => ({ current: "0.7.1", latest: "0.7.1", newer: false, url: "", notes: "", published: "", supported: true, reason: null }),
+  app_version: () => "0.7.2",
+  update_check: () => ({ current: "0.7.2", latest: "0.7.2", newer: false, url: "", notes: "", published: "", supported: true, reason: null }),
   app_repo: () => "Parzval-Net/Net_Terminal",
   cmdpacks_list: () => [],
   list_notes: () => Object.keys(notes).map((name) => ({ name, modified: now })),
@@ -329,6 +337,14 @@ const handlers = {
     const ch = { data: onData.id, index: 0 };
     channels.set(id, ch);
     const send = (t) => cbs.get(ch.data)?.({ index: ch.index++, message: enc.encode(t).buffer });
+    // Equipo antiguo: sin "algoritmos legacy" OpenSSH rechaza la negociación.
+    if (session.name === "router-antiguo" && !session.legacy_ssh) {
+      setTimeout(() => {
+        send("Unable to negotiate with 192.0.2.99 port 22: no matching host key type found. Their offer: ssh-rsa\r\n");
+        cbs.get(ch.data)?.({ index: ch.index++, message: "El proceso terminó (código 255)" });
+      }, 300);
+      return null;
+    }
     setTimeout(() => send(text), 150);
     // ?big=N: salida pesada (N líneas) para medir memoria y fugas.
     const big = Number(new URLSearchParams(location.search).get("big") ?? 0);
@@ -416,6 +432,7 @@ const scenes = {
   packs: async () => { await open("core-sw01"); await click("Catálogo de comandos"); await click("Packs de comandos"); },
   split: async () => { await open("core-sw01"); await open("ar-wan01"); await open("dist-sw01"); await open("sw-acceso-sur"); await click("Vista dividida: ver 2 o 4 pestañas a la vez"); await click("4 en cuadrícula (2x2)"); },
   backup: async () => { await open("core-sw01"); await open("ar-wan01"); await click("Herramientas: monitoreo, diagnóstico, TFTP, syslog, plugins"); await click("Respaldos"); await click("Comparar A y B"); },
+  legacy: async () => { await open("router-antiguo"); },
   alerts: async () => { await open("core-sw01"); await click("Ajustes"); await click("Alertas"); },
   import: async () => { await click("Ajustes"); await click("Logs y datos"); await click("Desde archivo…"); await click("Leer ~/.ssh/config"); },
   broadcast: async () => { await open("core-sw01"); await open("core-sw02"); await open("Shell local"); await click("Notas"); await click("Elegir a qué sesiones se envía"); },
