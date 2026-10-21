@@ -29,3 +29,6 @@ portable
 *.tmp
 settings.json
 sessions.json
+
+# Herramientas locales del asistente (worktrees)
+.claude/
