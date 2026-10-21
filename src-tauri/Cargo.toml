@@ -27,7 +27,9 @@ uuid = { version = "1", features = ["v4", "serde"] }
 chrono = { version = "0.4", features = ["serde"] }
 regex = "1"
 tiny_http = "0.12"
-ureq = "2"
+# HTTP del speedtest: el mismo reqwest + rustls (ring) que ya trae tauri-plugin-updater.
+reqwest = { version = "0.13", default-features = false, features = ["rustls-no-provider", "system-proxy"] }
+rustls = { version = "0.23", default-features = false, features = ["ring"] }
 sha2 = "0.10"
 if-addrs = "0.13"
 tauri-plugin-dialog = "2"

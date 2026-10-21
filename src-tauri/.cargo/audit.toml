@@ -1,9 +1,6 @@
 # Avisos de cargo audit revisados y aceptados. Revisar en cada actualización de dependencias.
 [advisories]
 ignore = [
-    # webpki-roots 0.26.11 es solo un puente que re-exporta webpki-roots 1.x, ya actualizado
-    # a 1.0.10 con la corrección. Lo trae ureq 2; se va al migrar a ureq 3.
-    "RUSTSEC-2026-0381",
     # zip 4.x dentro de tauri-plugin-updater: solo descomprime en Windows un paquete .zip de
     # actualización, después de verificar su firma con nuestra clave. Publicamos el instalador
     # .exe directo (sin zip), así que ese camino no se ejecuta. Nuestro código usa zip 9.
