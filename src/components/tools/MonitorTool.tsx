@@ -1,4 +1,4 @@
-import { useMemo, useState } from "react";
+import { memo, useMemo, useRef, useState } from "react";
 import { BellOff, Pause, Pencil, Play, Plus, RotateCcw, Trash2, Volume2, VolumeX } from "lucide-react";
 import { MonitorStatus, MonitorTarget, Sample, fmtDuration, stats } from "../../lib/monitors";
 import { LineChart, StatTile } from "./LineChart";
@@ -18,6 +18,8 @@ const WINDOWS: [string, number][] = [
   ["15 min", 15 * 60_000],
   ["1 h", 60 * 60_000],
 ];
+
+const timeLabel = (x: number) => new Date(x).toLocaleTimeString("es-CL");
 
 const blank = (): MonitorTarget => ({
   id: `mon-${Date.now().toString(36)}`,
@@ -43,6 +45,21 @@ export function MonitorTool({ targets, samples, status, onChange, onClear, onSil
     setEditing(null);
   };
   const patch = (id: string, p: Partial<MonitorTarget>) => onChange(targets.map((t) => (t.id === id ? { ...t, ...p } : t)));
+
+  // Acciones estables: cada muestra solo redibuja la tarjeta de su sonda.
+  const latest = useRef({ targets, onChange, onClear, onSilence, patch });
+  latest.current = { targets, onChange, onClear, onSilence, patch };
+  const actions = useMemo<CardActions>(
+    () => ({
+      toggle: (t) => latest.current.patch(t.id, { active: !t.active }),
+      sound: (t) => latest.current.patch(t.id, { sound: !t.sound }),
+      edit: (t) => setEditing(t),
+      clear: (id) => latest.current.onClear(id),
+      silence: (id) => latest.current.onSilence(id),
+      remove: (id) => latest.current.onChange(latest.current.targets.filter((x) => x.id !== id)),
+    }),
+    [],
+  );
 
   return (
     <div className="space-y-4">
@@ -85,12 +102,7 @@ export function MonitorTool({ targets, samples, status, onChange, onClear, onSil
             samples={samples[t.id] ?? []}
             status={status[t.id]}
             windowMs={win}
-            onToggle={() => patch(t.id, { active: !t.active })}
-            onSound={() => patch(t.id, { sound: !t.sound })}
-            onEdit={() => setEditing(t)}
-            onClear={() => onClear(t.id)}
-            onSilence={() => onSilence(t.id)}
-            onDelete={() => onChange(targets.filter((x) => x.id !== t.id))}
+            actions={actions}
           />
         ))}
       </div>
@@ -98,24 +110,29 @@ export function MonitorTool({ targets, samples, status, onChange, onClear, onSil
   );
 }
 
-function MonitorCard(p: {
+interface CardActions {
+  toggle: (t: MonitorTarget) => void;
+  sound: (t: MonitorTarget) => void;
+  edit: (t: MonitorTarget) => void;
+  clear: (id: string) => void;
+  silence: (id: string) => void;
+  remove: (id: string) => void;
+}
+
+const MonitorCard = memo(function MonitorCard(p: {
   target: MonitorTarget;
   samples: Sample[];
   status?: MonitorStatus;
   windowMs: number;
-  onToggle: () => void;
-  onSound: () => void;
-  onEdit: () => void;
-  onClear: () => void;
-  onSilence: () => void;
-  onDelete: () => void;
+  actions: CardActions;
 }) {
-  const { target: t, status } = p;
+  const { target: t, status, actions: a } = p;
   const visible = useMemo(() => {
     const cut = Date.now() - p.windowMs;
     return p.samples.filter((s) => s.ts >= cut);
   }, [p.samples, p.windowMs]);
-  const st = stats(visible);
+  const st = useMemo(() => stats(visible), [visible]);
+  const points = useMemo(() => visible.map((s) => ({ x: s.ts, y: s.ok ? s.rtt : null, note: s.error ?? undefined })), [visible]);
   const state = !t.active ? "stopped" : (status?.state ?? "unknown");
   const label =
     state === "stopped" ? "Pausada" : state === "up" ? "Arriba" : state === "down" ? "Caído" : "Esperando datos";
@@ -128,24 +145,24 @@ function MonitorCard(p: {
       right={
         <div className="flex items-center gap-1 shrink-0">
           <StatusPill state={state} label={since ? `${label} · ${since}` : label} />
-          <Btn kind="ghost" className="!px-1.5" title={t.active ? "Pausar" : "Reanudar"} onClick={p.onToggle}>
+          <Btn kind="ghost" className="!px-1.5" title={t.active ? "Pausar" : "Reanudar"} onClick={() => a.toggle(t)}>
             {t.active ? <Pause size={14} /> : <Play size={14} />}
           </Btn>
-          <Btn kind="ghost" className="!px-1.5" title={t.sound ? "Silenciar sonda" : "Activar sonido"} onClick={p.onSound}>
+          <Btn kind="ghost" className="!px-1.5" title={t.sound ? "Silenciar sonda" : "Activar sonido"} onClick={() => a.sound(t)}>
             {t.sound ? <Volume2 size={14} /> : <VolumeX size={14} />}
           </Btn>
           {state === "down" && t.sound && (
-            <Btn kind="ghost" className="!px-1.5" title="Detener la alarma repetida" onClick={p.onSilence}>
+            <Btn kind="ghost" className="!px-1.5" title="Detener la alarma repetida" onClick={() => a.silence(t.id)}>
               <BellOff size={14} />
             </Btn>
           )}
-          <Btn kind="ghost" className="!px-1.5" title="Editar" onClick={p.onEdit}>
+          <Btn kind="ghost" className="!px-1.5" title="Editar" onClick={() => a.edit(t)}>
             <Pencil size={13} />
           </Btn>
-          <Btn kind="ghost" className="!px-1.5" title="Reiniciar estadísticas" onClick={p.onClear}>
+          <Btn kind="ghost" className="!px-1.5" title="Reiniciar estadísticas" onClick={() => a.clear(t.id)}>
             <RotateCcw size={13} />
           </Btn>
-          <Btn kind="ghost" className="!px-1.5 hover:!text-danger" title="Eliminar" onClick={p.onDelete}>
+          <Btn kind="ghost" className="!px-1.5 hover:!text-danger" title="Eliminar" onClick={() => a.remove(t.id)}>
             <Trash2 size={13} />
           </Btn>
         </div>
@@ -166,8 +183,8 @@ function MonitorCard(p: {
         title={`Latencia de ${t.name}`}
         unit="ms"
         height={140}
-        points={visible.map((s) => ({ x: s.ts, y: s.ok ? s.rtt : null, note: s.error ?? undefined }))}
-        xLabel={(x) => new Date(x).toLocaleTimeString("es-CL")}
+        points={points}
+        xLabel={timeLabel}
       />
       {status?.state === "down" && status.lastError && (
         <p className="mt-2 text-[11.5px] text-danger">✕ {status.lastError}</p>
@@ -177,7 +194,7 @@ function MonitorCard(p: {
       )}
     </Section>
   );
-}
+});
 
 function MonitorForm({ initial, onSave, onCancel }: { initial: MonitorTarget; onSave: (t: MonitorTarget) => void; onCancel: () => void }) {
   const [t, setT] = useState(initial);

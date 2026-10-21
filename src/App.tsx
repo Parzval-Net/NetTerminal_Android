@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { Suspense, lazy, useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { invoke } from "@tauri-apps/api/core";
 import { Sidebar } from "./components/Sidebar";
 import { TabBar } from "./components/TabBar";
@@ -6,20 +6,18 @@ import { StatusBar } from "./components/StatusBar";
 import { TerminalView, TermController } from "./components/TerminalView";
 import { SessionModal } from "./components/SessionModal";
 import { CommandPalette } from "./components/CommandPalette";
-import { SettingsModal } from "./components/SettingsModal";
 import { ConfirmDialog } from "./components/ConfirmDialog";
 import { NotesPanel } from "./components/NotesPanel";
 import { CommandsPanel } from "./components/CommandsPanel";
 import { vendorFor } from "./lib/commands";
-import { Pack, PackCommand, buildCatalog, detectPlatform, riskLabel, validatePack } from "./lib/packs";
-import { builtinPacks } from "./lib/builtinPacks";
+import { CatalogEntry, Pack, PackCommand, buildCatalog, detectPlatform, riskLabel, validatePack } from "./lib/packs";
+import type { ScpRequest } from "./components/tools/FileManager";
 import { runOnDevice } from "./lib/deviceRun";
 import { PacksModal } from "./components/PacksModal";
 import { CommandEditor } from "./components/CommandEditor";
 import { TemplateDialog, templateVars } from "./components/TemplateDialog";
 import { compile, effectiveRules } from "./lib/highlight";
 import { allFolders } from "./lib/folders";
-import { ToolsView } from "./components/tools/ToolsView";
 import { useMonitors } from "./lib/monitors";
 import { ButtonBar } from "./components/ButtonBar";
 import { MacroModal } from "./components/MacroModal";
@@ -36,7 +34,25 @@ import { Settings, useSettings } from "./lib/settings";
 import logo from "./assets/logo.svg";
 import "./App.css";
 
+// Vistas pesadas y de uso ocasional: se cargan aparte para aligerar el arranque.
+const ToolsView = lazy(() => import("./components/tools/ToolsView").then((m) => ({ default: m.ToolsView })));
+const SettingsModal = lazy(() => import("./components/SettingsModal").then((m) => ({ default: m.SettingsModal })));
+
 const LOCAL: Session = { id: "local", name: "Terminal local", type: "local", created_at: "" };
+
+/**
+ * Manejadores con identidad estable que siempre llaman a la versión más reciente: los
+ * paneles memorizados no se vuelven a dibujar cada vez que App lo hace.
+ */
+function useHandlers<T extends Record<string, (...args: never[]) => unknown>>(handlers: T): T {
+  const ref = useRef(handlers);
+  ref.current = handlers;
+  return useMemo(() => {
+    const out: Record<string, unknown> = {};
+    for (const k of Object.keys(ref.current)) out[k] = (...args: never[]) => ref.current[k](...args);
+    return out as T;
+  }, []);
+}
 
 function stored<T>(key: string, fallback: T): T {
   try {
@@ -206,33 +222,34 @@ function Workspace({
     if (activeId) setActivity((a) => (a.has(activeId) ? new Set([...a].filter((x) => x !== activeId)) : a));
   }, [activeId]);
 
-  // Aviso de versión nueva: revisa una vez al día. Instalar requiere confirmación.
+  // Actualizaciones: el latest.json firmado del repositorio de la app, al abrir y cada 6 h.
+  // Lo que se anuncia es lo que se instala, y siempre con confirmación.
   const [update_, setUpdate] = useState<UpdateInfo | null>(null);
   const [showNotes, setShowNotes] = useState(false);
-  useEffect(() => {
-    if (Date.now() - settings.updateLastCheck < 24 * 3600 * 1000 || !settings.updateRepo) return;
-    invoke<UpdateInfo>("check_update", { repo: settings.updateRepo, token: settings.updateToken || null })
-      .then((u) => {
-        update({ updateLastCheck: Date.now() });
-        if (u.newer && u.latest !== settings.updateDismissed) setUpdate(u);
-      })
-      .catch(() => update({ updateLastCheck: Date.now() }));
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, []);
-  // Actualización con un clic: firma verificada por la app y siempre con confirmación.
-  const [selfUpdate, setSelfUpdate] = useState<{ supported: boolean; reason: string | null } | null>(null);
   const [installing, setInstalling] = useState<number | null>(null);
+  const dismissedRef = useRef(settings.updateDismissed);
+  dismissedRef.current = settings.updateDismissed;
   useEffect(() => {
-    invoke<{ supported: boolean; reason: string | null }>("update_supported").then(setSelfUpdate).catch(() => {});
-    // "Buscar ahora" en Ajustes muestra el aviso sin esperar al próximo inicio.
+    const check = () =>
+      invoke<UpdateInfo>("update_check")
+        .then((u) => {
+          if (u.newer && u.latest !== dismissedRef.current) setUpdate(u);
+        })
+        .catch(() => {});
+    // Unos segundos después de abrir, para no competir con el arranque.
+    const first = window.setTimeout(check, 4000);
+    const every = window.setInterval(check, 6 * 3600 * 1000);
+    // "Buscar ahora" en Ajustes muestra el aviso al instante.
     const onFound = (e: Event) => setUpdate((e as CustomEvent<UpdateInfo>).detail);
     window.addEventListener("nt-update-found", onFound);
     const un = listen<{ downloaded: number; total: number | null }>("update-progress", ({ payload }) =>
       setInstalling(payload.total ? Math.round((payload.downloaded / payload.total) * 100) : 0),
     );
     return () => {
-      un.then((f) => f());
+      window.clearTimeout(first);
+      window.clearInterval(every);
       window.removeEventListener("nt-update-found", onFound);
+      un.then((f) => f());
     };
   }, []);
   const installUpdate = () => {
@@ -369,14 +386,23 @@ function Workspace({
         setUserPacks(
           raw
             .map((r) => validatePack(r).pack)
-            .filter((p): p is Pack => !!p && !builtinPacks.some((b) => b.id === p.id)),
+            .filter((p): p is Pack => !!p),
         ),
       )
       .catch(() => {});
   }, []);
   useEffect(loadPacks, [loadPacks]);
 
-  const allPacks = useMemo(() => [...builtinPacks, ...userPacks], [userPacks]);
+  // Los packs incluidos (~300 KB de JSON) van en un chunk aparte que se carga tras el primer render.
+  const [builtinPacks, setBuiltinPacks] = useState<Pack[]>([]);
+  useEffect(() => {
+    import("./lib/builtinPacks").then((m) => setBuiltinPacks(m.builtinPacks)).catch(console.error);
+  }, []);
+
+  const allPacks = useMemo(
+    () => [...builtinPacks, ...userPacks.filter((p) => !builtinPacks.some((b) => b.id === p.id))],
+    [builtinPacks, userPacks],
+  );
   const catalog = useMemo(() => buildCatalog(allPacks, settings.disabledPacks), [allPacks, settings.disabledPacks]);
 
   /** Guarda la plataforma en la pestaña y, si es una sesión guardada, también en ella. */
@@ -628,6 +654,122 @@ function Workspace({
     }
   };
 
+  // Sesiones conectadas para las herramientas; memorizado para no cambiar en cada render.
+  const terminals = useMemo(
+    () =>
+      tabs
+        .filter((t) => t.session.type !== "local" && states[t.id]?.status === "connected")
+        .map((t) => ({
+          connId: controllers.current.get(t.id)?.connId() ?? "",
+          name: tabTitle(t),
+          host: t.session.host,
+          highlight: t.session.highlight,
+          session: t.session,
+        }))
+        .filter((t) => t.connId),
+    [tabs, states],
+  );
+
+  const h = useHandlers({
+    openMany: (list: Session[]) => list.forEach(openTab),
+    newSession: (folder?: string) => setModal({ folder }),
+    editSession: (session: Session) => setModal({ session }),
+    duplicateSession,
+    deleteSession: (s: Session) => deleteSession(s.id),
+    updateSessions,
+    setExtraFolders: (extraFolders: string[]) => update({ extraFolders }),
+    requestClose,
+    toggleSidebar: () => setSidebarOpen((o) => !o),
+    renameTab: (id: string, title: string | undefined) => setTabs((ts) => ts.map((t) => (t.id === id ? { ...t, title } : t))),
+    duplicateTab: (id: string) => {
+      const t = tabs.find((x) => x.id === id);
+      if (t) openTab(t.session);
+    },
+    reconnectTab: (id: string) => controllers.current.get(id)?.reconnect(),
+    disconnectTab: (id: string) => controllers.current.get(id)?.disconnect(),
+    clearScrollback: (id: string) => controllers.current.get(id)?.clearScrollback(),
+    resetTerminal: (id: string) => controllers.current.get(id)?.reset(),
+    copyAll: (id: string) =>
+      controllers.current
+        .get(id)
+        ?.copyAll()
+        .then((n) => toast(`${n} líneas copiadas al portapapeles`)),
+    toolsConnId: () => {
+      const c = lastTermRef.current ? controllers.current.get(lastTermRef.current) : undefined;
+      return c?.isConnected() ? c.connId() : null;
+    },
+    scp: (req: ScpRequest) => {
+      const s = req.session;
+      openTab({
+        ...s,
+        id: `scp-${Date.now()}`,
+        type: "local",
+        name: `SCP ${req.upload ? "→" : "←"} ${s.name}`,
+        // Telnet/TCP usan su propio puerto: SCP siempre va por SSH.
+        port: s.type === "ssh" ? s.port : 22,
+        highlight: "off",
+        on_connect: undefined,
+        auto_reconnect: false,
+        scp: { upload: req.upload, files: req.files, remote_dir: req.remoteDir },
+      });
+      toast("Pestaña SCP abierta: escribe la contraseña del equipo ahí");
+    },
+    setVendor: (catalogVendor: string) => update({ catalogVendor }),
+    setPlatform: (platform: string | null) => activeTab && setTabPlatform(activeTab.id, platform),
+    detect: () => detectPlatformNow(),
+    setFavorites: (favCommands: string[]) => update({ favCommands }),
+    closeCommands: () => {
+      setCommandsOpen(false);
+      activeCtrl()?.focus();
+    },
+    runCommand: (c: CatalogEntry, cmd: string) => {
+      if (c.risk === "read") return sendToSession(cmd);
+      setConfirm({
+        title: c.risk === "disruptive" ? "Este comando puede cortar servicio" : "Este comando cambia configuración o estado",
+        message: `${riskLabel[c.risk]} en ${activeTab ? tabTitle(activeTab) : "la sesión"}:\n\n${cmd}`,
+        label: "Ejecutar",
+        danger: c.risk === "disruptive",
+        action: () => sendToSession(cmd),
+      });
+    },
+    typeCommand: (cmd: string) => {
+      const type = (text: string) => activeCtrl()?.type(text);
+      if (templateVars(cmd).length) setTemplate({ text: cmd, then: type });
+      else type(cmd);
+    },
+    addCommand: (vendor: string) => setCmdEdit({ vendor }),
+    editCommand: (c: CatalogEntry) => setCmdEdit({ vendor: settings.catalogVendor, initial: c }),
+    openPacks: () => setPacksOpen(true),
+    resizeNotes: (w: number) => setNotesWidth(Math.max(260, Math.min(w, window.innerWidth * 0.7))),
+    closeNotes: () => {
+      setNotesOpen(false);
+      activeCtrl()?.focus();
+    },
+    sendToSession,
+    capture: () => activeCtrl()?.getSelection() ?? "",
+    runMacro: (m: Macro) => (m.kind === "script" ? m.script && runScript(m.script) : m.text && sendToSession(m.text)),
+    runScript,
+    stopScript: () => scriptRun && invoke("stop_script", { run: scriptRun.run }).catch(() => {}),
+    deleteMacro: (m: Macro) => update((s) => ({ macros: s.macros.filter((x) => x.id !== m.id) })),
+    toggleLog,
+    sendBreak: () => {
+      const ctrl = activeCtrl();
+      if (!ctrl) return;
+      invoke("send_break", { id: ctrl.connId() }).catch((e) => toast(String(e), "error"));
+      ctrl.focus();
+    },
+    reconnect: () => activeCtrl()?.reconnect(),
+    disconnect: () => activeCtrl()?.disconnect(),
+    find: () => activeCtrl()?.openFind(),
+    openSettings: () => setSettingsOpen(true),
+    openAi: () => {
+      setSettingsSection("ai");
+      setSettingsOpen(true);
+    },
+    toggleNotes: () => setNotesOpen((o) => !o),
+    toggleCommands,
+  });
+
   return (
     <div className="h-full flex bg-bg text-fg">
       {sidebarOpen && (
@@ -636,13 +778,13 @@ function Workspace({
           extraFolders={settings.extraFolders}
           live={live}
           onOpen={openTab}
-          onOpenMany={(list) => list.forEach(openTab)}
-          onNew={(folder) => setModal({ folder })}
-          onEdit={(session) => setModal({ session })}
-          onDuplicate={duplicateSession}
-          onDelete={(s) => deleteSession(s.id)}
-          onUpdateSessions={updateSessions}
-          onSetExtraFolders={(extraFolders) => update({ extraFolders })}
+          onOpenMany={h.openMany}
+          onNew={h.newSession}
+          onEdit={h.editSession}
+          onDuplicate={h.duplicateSession}
+          onDelete={h.deleteSession}
+          onUpdateSessions={h.updateSessions}
+          onSetExtraFolders={h.setExtraFolders}
           onConfirm={setConfirm}
         />
       )}
@@ -662,7 +804,7 @@ function Workspace({
               )}
               {installing !== null ? (
                 <span className="text-accent font-medium tabular-nums">Descargando… {installing}%</span>
-              ) : selfUpdate?.supported ? (
+              ) : update_.supported ? (
                 <>
                   <button className="text-muted hover:text-fg hover:underline" onClick={() => openUrl(update_.url)}>
                     Ver release
@@ -674,7 +816,7 @@ function Workspace({
               ) : (
                 <button
                   className="text-accent font-medium hover:underline"
-                  title={selfUpdate?.reason ?? undefined}
+                  title={update_.reason ?? undefined}
                   onClick={() => openUrl(update_.url)}
                 >
                   Descargar
@@ -701,27 +843,19 @@ function Workspace({
           states={states}
           activeId={activeId}
           onSelect={setActiveId}
-          onClose={requestClose}
+          onClose={h.requestClose}
           onNew={newLocal}
-          onToggleSidebar={() => setSidebarOpen((o) => !o)}
+          onToggleSidebar={h.toggleSidebar}
           toolsOpen={toolsOpen}
           onOpenTools={openTools}
           alerts={monitors.downCount}
-          onRename={(id, title) => setTabs((ts) => ts.map((t) => (t.id === id ? { ...t, title } : t)))}
-          onDuplicate={(id) => {
-            const t = tabs.find((x) => x.id === id);
-            if (t) openTab(t.session);
-          }}
-          onReconnect={(id) => controllers.current.get(id)?.reconnect()}
-          onDisconnect={(id) => controllers.current.get(id)?.disconnect()}
-          onClearScrollback={(id) => controllers.current.get(id)?.clearScrollback()}
-          onResetTerminal={(id) => controllers.current.get(id)?.reset()}
-          onCopyAll={(id) =>
-            controllers.current
-              .get(id)
-              ?.copyAll()
-              .then((n) => toast(`${n} líneas copiadas al portapapeles`))
-          }
+          onRename={h.renameTab}
+          onDuplicate={h.duplicateTab}
+          onReconnect={h.reconnectTab}
+          onDisconnect={h.disconnectTab}
+          onClearScrollback={h.clearScrollback}
+          onResetTerminal={h.resetTerminal}
+          onCopyAll={h.copyAll}
           activity={activity}
         />
 
@@ -742,45 +876,20 @@ function Workspace({
             />
           ))}
           {toolsOpen && (
-            <ToolsView
-              active={activeId === "tools"}
-              settings={settings}
-              update={update}
-              monitors={monitors}
-              connId={() => {
-                const c = lastTermRef.current ? controllers.current.get(lastTermRef.current) : undefined;
-                return c?.isConnected() ? c.connId() : null;
-              }}
-              onConfirm={setConfirm}
-              onOpenSession={openTab}
-              sessions={sessions}
-              onScp={(req) => {
-                const s = req.session;
-                openTab({
-                  ...s,
-                  id: `scp-${Date.now()}`,
-                  type: "local",
-                  name: `SCP ${req.upload ? "→" : "←"} ${s.name}`,
-                  // Telnet/TCP usan su propio puerto: SCP siempre va por SSH.
-                  port: s.type === "ssh" ? s.port : 22,
-                  highlight: "off",
-                  on_connect: undefined,
-                  auto_reconnect: false,
-                  scp: { upload: req.upload, files: req.files, remote_dir: req.remoteDir },
-                });
-                toast("Pestaña SCP abierta: escribe la contraseña del equipo ahí");
-              }}
-              terminals={tabs
-                .filter((t) => t.session.type !== "local" && states[t.id]?.status === "connected")
-                .map((t) => ({
-                  connId: controllers.current.get(t.id)?.connId() ?? "",
-                  name: tabTitle(t),
-                  host: t.session.host,
-                  highlight: t.session.highlight,
-                  session: t.session,
-                }))
-                .filter((t) => t.connId)}
-            />
+            <Suspense fallback={null}>
+              <ToolsView
+                active={activeId === "tools"}
+                settings={settings}
+                update={update}
+                monitors={monitors}
+                connId={h.toolsConnId}
+                onConfirm={setConfirm}
+                onOpenSession={openTab}
+                sessions={sessions}
+                onScp={h.scp}
+                terminals={terminals}
+              />
+            </Suspense>
           )}
           {tabs.length === 0 && activeId !== "tools" && (
             <EmptyState onLocal={newLocal} onPalette={() => setPaletteOpen(true)} onNew={() => setModal({})} onTools={openTools} />
@@ -791,53 +900,34 @@ function Workspace({
             width={notesWidth}
             catalog={catalog}
             vendor={settings.catalogVendor}
-            onVendor={(catalogVendor) => update({ catalogVendor })}
+            onVendor={h.setVendor}
             platform={activeTab?.session.platform ?? null}
-            onPlatform={(platform) => activeTab && setTabPlatform(activeTab.id, platform)}
-            onDetect={activeConnected ? detectPlatformNow : null}
+            onPlatform={h.setPlatform}
+            onDetect={activeConnected ? h.detect : null}
             detecting={detecting}
             favorites={settings.favCommands}
-            onFavorites={(favCommands) => update({ favCommands })}
+            onFavorites={h.setFavorites}
             target={activeConnected ? tabTitle(activeTab!) : null}
-            onClose={() => {
-              setCommandsOpen(false);
-              activeCtrl()?.focus();
-            }}
-            onRun={(c, cmd) => {
-              if (c.risk === "read") return sendToSession(cmd);
-              setConfirm({
-                title: c.risk === "disruptive" ? "Este comando puede cortar servicio" : "Este comando cambia configuración o estado",
-                message: `${riskLabel[c.risk]} en ${activeTab ? tabTitle(activeTab) : "la sesión"}:\n\n${cmd}`,
-                label: "Ejecutar",
-                danger: c.risk === "disruptive",
-                action: () => sendToSession(cmd),
-              });
-            }}
-            onType={(cmd) => {
-              const type = (text: string) => activeCtrl()?.type(text);
-              if (templateVars(cmd).length) setTemplate({ text: cmd, then: type });
-              else type(cmd);
-            }}
-            onAdd={(vendor) => setCmdEdit({ vendor })}
-            onEdit={(c) => setCmdEdit({ vendor: settings.catalogVendor, initial: c })}
-            onPacks={() => setPacksOpen(true)}
+            onClose={h.closeCommands}
+            onRun={h.runCommand}
+            onType={h.typeCommand}
+            onAdd={h.addCommand}
+            onEdit={h.editCommand}
+            onPacks={h.openPacks}
           />
         )}
         {notesOpen && (
           <NotesPanel
             width={notesWidth}
-            onResize={(w) => setNotesWidth(Math.max(260, Math.min(w, window.innerWidth * 0.7)))}
-            onClose={() => {
-              setNotesOpen(false);
-              activeCtrl()?.focus();
-            }}
+            onResize={h.resizeNotes}
+            onClose={h.closeNotes}
             compiled={notesRules}
             theme={preset.theme}
             font={settings.fontFamily}
             fontSize={Math.max(11, settings.fontSize - 1)}
             target={activeConnected ? activeTab!.session.name : null}
-            onSend={sendToSession}
-            onCapture={() => activeCtrl()?.getSelection() ?? ""}
+            onSend={h.sendToSession}
+            onCapture={h.capture}
           />
         )}
         </div>
@@ -847,37 +937,29 @@ function Workspace({
             macros={settings.macros}
             connected={activeConnected}
             running={scriptRun}
-            onRun={(m) => (m.kind === "script" ? m.script && runScript(m.script) : m.text && sendToSession(m.text))}
-            onRunScript={runScript}
-            onStopScript={() => scriptRun && invoke("stop_script", { run: scriptRun.run }).catch(() => {})}
+            onRun={h.runMacro}
+            onRunScript={h.runScript}
+            onStopScript={h.stopScript}
             onEdit={setMacroEdit}
-            onDelete={(m) => update((s) => ({ macros: s.macros.filter((x) => x.id !== m.id) }))}
+            onDelete={h.deleteMacro}
           />
         )}
 
         <StatusBar
           tab={activeTab}
           state={activeId ? states[activeId] : undefined}
-          onToggleLog={toggleLog}
-          onBreak={() => {
-            const ctrl = activeCtrl();
-            if (!ctrl) return;
-            invoke("send_break", { id: ctrl.connId() }).catch((e) => toast(String(e), "error"));
-            ctrl.focus();
-          }}
-          onReconnect={() => activeCtrl()?.reconnect()}
-          onDisconnect={() => activeCtrl()?.disconnect()}
-          onFind={() => activeCtrl()?.openFind()}
-          onSettings={() => setSettingsOpen(true)}
+          onToggleLog={h.toggleLog}
+          onBreak={h.sendBreak}
+          onReconnect={h.reconnect}
+          onDisconnect={h.disconnect}
+          onFind={h.find}
+          onSettings={h.openSettings}
           aiEnabled={settings.mcpEnabled}
-          onAi={() => {
-            setSettingsSection("ai");
-            setSettingsOpen(true);
-          }}
+          onAi={h.openAi}
           notesOpen={notesOpen}
-          onNotes={() => setNotesOpen((o) => !o)}
+          onNotes={h.toggleNotes}
           commandsOpen={commandsOpen}
-          onCommands={toggleCommands}
+          onCommands={h.toggleCommands}
         />
       </main>
 
@@ -891,21 +973,23 @@ function Workspace({
         />
       )}
       {settingsOpen && (
-        <SettingsModal
-          settings={settings}
-          appDark={dark}
-          termTheme={preset.theme}
-          sessions={sessions}
-          onImportSessions={importSessions}
-          initialSection={settingsSection}
-          mcpStatus={mcpStatus}
-          onChange={update}
-          onClose={() => {
-            setSettingsOpen(false);
-            setSettingsSection(undefined);
-            activeCtrl()?.focus();
-          }}
-        />
+        <Suspense fallback={null}>
+          <SettingsModal
+            settings={settings}
+            appDark={dark}
+            termTheme={preset.theme}
+            sessions={sessions}
+            onImportSessions={importSessions}
+            initialSection={settingsSection}
+            mcpStatus={mcpStatus}
+            onChange={update}
+            onClose={() => {
+              setSettingsOpen(false);
+              setSettingsSection(undefined);
+              activeCtrl()?.focus();
+            }}
+          />
+        </Suspense>
       )}
       {confirm && (
         <ConfirmDialog

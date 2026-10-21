@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useState } from "react";
+import { memo, useCallback, useEffect, useState } from "react";
 import { invoke } from "@tauri-apps/api/core";
 import { FileCode2, FolderOpen, Pencil, Plus, Square, Trash2 } from "lucide-react";
 import { Macro } from "../lib/settings";
@@ -18,7 +18,7 @@ interface Props {
 type MenuState = { x: number; y: number; items: [string, React.ReactNode, () => void, boolean?][] };
 
 /** Barra de comandos rápidos (equivalente a la button bar de SecureCRT). */
-export function ButtonBar(p: Props) {
+export const ButtonBar = memo(function ButtonBar(p: Props) {
   const [menu, setMenu] = useState<MenuState | null>(null);
   const closeMenu = useCallback(() => setMenu(null), []);
   const [scripts, setScripts] = useState<string[]>([]);
@@ -99,4 +99,4 @@ export function ButtonBar(p: Props) {
       {menu && <ContextMenu menu={menu} onClose={closeMenu} />}
     </div>
   );
-}
+});

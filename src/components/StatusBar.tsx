@@ -1,3 +1,4 @@
+import { memo } from "react";
 import { BookOpen, Bot, Circle, CircleDot, NotebookPen, RotateCcw, Search, Settings, Unplug, Zap } from "lucide-react";
 import { Tab, TabState, sessionTarget } from "../types";
 import { typeLabel } from "./SessionIcon";
@@ -23,7 +24,7 @@ interface Props {
   onAi: () => void;
 }
 
-export function StatusBar({
+export const StatusBar = memo(function StatusBar({
   tab,
   state,
   onToggleLog,
@@ -115,7 +116,7 @@ export function StatusBar({
       </div>
     </div>
   );
-}
+});
 
 function BarBtn(props: React.ButtonHTMLAttributes<HTMLButtonElement>) {
   return (

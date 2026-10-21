@@ -8,7 +8,7 @@ use std::fs::{self, File};
 use std::io::{Read, Write};
 use std::net::{SocketAddr, UdpSocket};
 use std::path::{Component, Path, PathBuf};
-use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
 use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
 use tauri::{AppHandle, Emitter};
@@ -133,9 +133,12 @@ impl Servers {
         );
         *self.http.lock().unwrap() = Some(server.clone());
         std::thread::spawn(move || {
+            let active = Arc::new(AtomicUsize::new(0));
             for req in server.incoming_requests() {
                 let (app, root) = (app.clone(), root.clone());
-                std::thread::spawn(move || http_serve(app, root, req));
+                if let Err(req) = spawn_limited(&active, HTTP_MAX_CLIENTS, req, move |req| http_serve(app, root, req)) {
+                    let _ = req.respond(tiny_http::Response::empty(503));
+                }
             }
         });
         Ok(format!("HTTP escuchando en TCP {port} (solo lectura)"))
@@ -182,6 +185,35 @@ impl Servers {
         });
         Ok(format!("Syslog escuchando en UDP {port}"))
     }
+}
+
+/// Descargas HTTP simultáneas como máximo (un hilo por cliente).
+const HTTP_MAX_CLIENTS: usize = 32;
+
+/// Atiende `item` en un hilo propio si hay cupo; si no, lo devuelve para rechazarlo. Evita
+/// que una ráfaga de peticiones cree hilos sin límite.
+pub fn spawn_limited<T: Send + 'static>(
+    active: &Arc<AtomicUsize>,
+    max: usize,
+    item: T,
+    f: impl FnOnce(T) + Send + 'static,
+) -> Result<(), T> {
+    if active.fetch_add(1, Ordering::SeqCst) >= max {
+        active.fetch_sub(1, Ordering::SeqCst);
+        return Err(item);
+    }
+    struct Slot(Arc<AtomicUsize>);
+    impl Drop for Slot {
+        fn drop(&mut self) {
+            self.0.fetch_sub(1, Ordering::SeqCst);
+        }
+    }
+    let slot = Slot(active.clone());
+    std::thread::spawn(move || {
+        let _slot = slot;
+        f(item);
+    });
+    Ok(())
 }
 
 /// Al reiniciar un servidor, el hilo anterior suelta el puerto en hasta ~400 ms.
@@ -588,6 +620,31 @@ mod tests {
         assert_eq!(safe_path(root, "a/../../x"), None);
         assert_eq!(safe_path(root, "..\\..\\windows\\win.ini"), None);
         assert_eq!(safe_path(root, ""), None);
+    }
+
+    #[test]
+    fn spawn_limited_caps_concurrency() {
+        let active = Arc::new(AtomicUsize::new(0));
+        let (tx, rx) = std::sync::mpsc::channel::<()>();
+        let rx = Arc::new(Mutex::new(rx));
+        for i in 0..3 {
+            let rx = rx.clone();
+            assert!(spawn_limited(&active, 3, i, move |_| {
+                let _ = rx.lock().unwrap().recv();
+            })
+            .is_ok());
+        }
+        assert_eq!(spawn_limited(&active, 3, 99, |_| {}), Err(99));
+        for _ in 0..3 {
+            tx.send(()).unwrap();
+        }
+        for _ in 0..100 {
+            if active.load(Ordering::SeqCst) == 0 {
+                break;
+            }
+            std::thread::sleep(Duration::from_millis(5));
+        }
+        assert!(spawn_limited(&active, 3, 1, |_| {}).is_ok());
     }
 
     #[test]

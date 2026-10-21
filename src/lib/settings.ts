@@ -62,10 +62,6 @@ export interface Settings {
   tftpAllowWrite: boolean;
   syslogSave: boolean;
   speedHistory: SpeedResult[];
-  updateRepo: string;
-  /** Token de GitHub de solo lectura (necesario si el repositorio es privado). */
-  updateToken: string;
-  updateLastCheck: number;
   updateDismissed: string;
   /** Comandos favoritos del catálogo ("fabricante:comando"). */
   favCommands: string[];
@@ -84,6 +80,9 @@ export interface UpdateInfo {
   url: string;
   notes: string;
   published: string;
+  /** Si esta instalación puede actualizarse sola (portable y .deb no). */
+  supported: boolean;
+  reason: string | null;
 }
 
 export const defaultSettings: Settings = {
@@ -124,9 +123,6 @@ export const defaultSettings: Settings = {
   tftpAllowWrite: false,
   syslogSave: false,
   speedHistory: [],
-  updateRepo: "Parzval-Net/Net_Terminal",
-  updateToken: "",
-  updateLastCheck: 0,
   updateDismissed: "",
   favCommands: [],
   catalogVendor: "cisco",

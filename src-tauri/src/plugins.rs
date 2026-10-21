@@ -162,6 +162,54 @@ fn hash(root: &Path) -> Result<String, String> {
     Ok(h.finalize().iter().map(|b| format!("{b:02x}")).collect())
 }
 
+/// Huella barata de los archivos (ruta, tamaño, fechas y, en Unix, inodo y ctime). El
+/// ctime no se puede fijar a mano: cualquier escritura lo cambia aunque se restaure mtime.
+fn fingerprint(root: &Path) -> Result<Vec<u8>, String> {
+    let mut h = Sha256::new();
+    for (rel, len) in walk(root)? {
+        let meta = fs::symlink_metadata(root.join(&rel)).map_err(|e| e.to_string())?;
+        h.update(rel.as_bytes());
+        h.update(len.to_le_bytes());
+        let mtime = meta.modified().ok().and_then(|t| t.duration_since(std::time::UNIX_EPOCH).ok());
+        h.update(mtime.map(|d| d.as_nanos()).unwrap_or(0).to_le_bytes());
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::MetadataExt;
+            h.update(meta.ino().to_le_bytes());
+            h.update(meta.ctime().to_le_bytes());
+            h.update(meta.ctime_nsec().to_le_bytes());
+        }
+        #[cfg(windows)]
+        {
+            use std::os::windows::fs::MetadataExt;
+            h.update(meta.creation_time().to_le_bytes());
+        }
+    }
+    Ok(h.finalize().to_vec())
+}
+
+/// Hash para mostrar el estado en la lista, reutilizado mientras la huella no cambie:
+/// listar ya no lee todos los archivos de cada plugin en cada llamada. Ejecutar un
+/// plugin (`run`) siempre recalcula el hash completo.
+fn hash_cached(root: &Path) -> Result<String, String> {
+    /// Ruta del plugin -> (huella, hash).
+    type Cache = std::sync::Mutex<std::collections::HashMap<PathBuf, (Vec<u8>, String)>>;
+    static CACHE: std::sync::OnceLock<Cache> = std::sync::OnceLock::new();
+    let cache = CACHE.get_or_init(Default::default);
+    let before = fingerprint(root)?;
+    if let Some((fp, h)) = cache.lock().unwrap_or_else(|e| e.into_inner()).get(root) {
+        if *fp == before {
+            return Ok(h.clone());
+        }
+    }
+    let h = hash(root)?;
+    // Solo se guarda si nada cambió mientras se calculaba.
+    if fingerprint(root)? == before {
+        cache.lock().unwrap_or_else(|e| e.into_inner()).insert(root.to_path_buf(), (before, h.clone()));
+    }
+    Ok(h)
+}
+
 pub fn list(data: &Path) -> Vec<PluginInfo> {
     let st = load_state(data);
     let mut out: Vec<PluginInfo> = fs::read_dir(dir(data))
@@ -172,7 +220,7 @@ pub fn list(data: &Path) -> Vec<PluginInfo> {
         .filter_map(|e| {
             let m = read_manifest(&e.path()).ok()?;
             let approved = st.approved.get(&m.id);
-            let tampered = approved.map(|h| hash(&e.path()).ok().as_ref() != Some(h)).unwrap_or(false);
+            let tampered = approved.map(|h| hash_cached(&e.path()).ok().as_ref() != Some(h)).unwrap_or(false);
             Some(PluginInfo { enabled: approved.is_some() && !tampered, tampered, manifest: m })
         })
         .collect();
@@ -241,7 +289,7 @@ fn extract_zip(zip_path: &Path, to: &Path) -> Result<(), String> {
         let mut entry = z.by_index(i).map_err(|e| e.to_string())?;
         // enclosed_name() descarta rutas absolutas y con ".." (zip slip).
         let Some(rel) = entry.enclosed_name() else {
-            return Err(format!("Ruta peligrosa en el zip: {}", entry.name()));
+            return Err(format!("Ruta peligrosa en el zip: {}", entry.name().unwrap_or_default()));
         };
         if entry.is_symlink() {
             return Err("El zip contiene enlaces simbólicos".into());
@@ -418,11 +466,47 @@ mod tests {
         fs::write(data.join("plugins/demo/main.py"), "import os\n").unwrap();
         let l = list(&data);
         assert!(!l[0].enabled && l[0].tampered);
+        // Mismo tamaño y misma fecha de modificación: la caché no debe ocultar el cambio.
+        set_enabled(&data, "demo", true).unwrap();
+        assert!(list(&data)[0].enabled);
+        let main = data.join("plugins/demo/main.py");
+        let mtime = fs::metadata(&main).unwrap().modified().unwrap();
+        fs::write(&main, "import sy\n").unwrap();
+        fs::File::options().write(true).open(&main).unwrap().set_modified(mtime).unwrap();
+        let l = list(&data);
+        assert!(!l[0].enabled && l[0].tampered);
         // Re-aprobar
         set_enabled(&data, "demo", true).unwrap();
         assert!(list(&data)[0].enabled);
         uninstall(&data, "demo").unwrap();
         assert!(list(&data).is_empty());
+        let _ = fs::remove_dir_all(base);
+    }
+
+    /// cargo test --release -- --ignored --nocapture bench_
+    #[test]
+    #[ignore]
+    fn bench_list_with_large_plugins() {
+        let base = std::env::temp_dir().join(format!("nt-plug-bench-{}", std::process::id()));
+        let data = base.join("data");
+        for i in 0..5 {
+            let src = base.join(format!("src{i}"));
+            sample(&src);
+            let manifest = fs::read_to_string(src.join("plugin.json")).unwrap().replace("\"demo\"", &format!("\"demo{i}\""));
+            fs::write(src.join("plugin.json"), manifest).unwrap();
+            for f in 0..40 {
+                fs::write(src.join(format!("lib{f}.py")), vec![b'#'; 100 * 1024]).unwrap();
+            }
+            confirm(&data, &stage(&data, &src).unwrap().staging).unwrap();
+        }
+        let t = std::time::Instant::now();
+        assert_eq!(list(&data).len(), 5);
+        let first = t.elapsed();
+        let t = std::time::Instant::now();
+        for _ in 0..20 {
+            assert!(list(&data).iter().all(|p| p.enabled));
+        }
+        println!("plugins_list (5 plugins x 4 MB): primera {first:?}, siguientes {:?} c/u", t.elapsed() / 20);
         let _ = fs::remove_dir_all(base);
     }
 

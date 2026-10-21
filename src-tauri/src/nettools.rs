@@ -1,7 +1,7 @@
 //! Herramientas de red: traceroute, iperf3 (cliente/servidor), verificación de puertos,
 //! interfaces locales y speedtest contra Cloudflare.
 
-use crate::monitor::{command, tcp_probe, validate_host};
+use crate::monitor::{command, resolve, tcp_probe_addrs, validate_host};
 use serde::{Deserialize, Serialize};
 use serde_json::{json, Value};
 use std::collections::HashMap;
@@ -225,17 +225,28 @@ pub fn check_ports(host: &str, ports: Vec<u16>, timeout_ms: u64) -> Result<Vec<P
         return Err("Máximo 1024 puertos por consulta".into());
     }
     let timeout = Duration::from_millis(timeout_ms.clamp(100, 10_000));
+    // El host se resuelve una vez (antes era una consulta DNS por puerto) y en cada
+    // puerto solo cambia el número.
+    let addrs = resolve(host, 0);
     // Pool acotado: un hilo y un socket por puerto agotaba los descriptores (macOS limita
     // a 256 por app) y hacía fallar sesiones nuevas mientras corría el escaneo.
     const WORKERS: usize = 64;
+    let workers = WORKERS.min(ports.len());
     let queue = Arc::new(Mutex::new(ports.into_iter()));
     let results = Arc::new(Mutex::new(Vec::new()));
-    let handles: Vec<_> = (0..WORKERS)
+    let addrs = Arc::new(addrs);
+    let handles: Vec<_> = (0..workers)
         .map(|_| {
-            let (queue, results, h) = (queue.clone(), results.clone(), host.to_string());
+            let (queue, results, addrs) = (queue.clone(), results.clone(), addrs.clone());
             std::thread::spawn(move || loop {
                 let Some(port) = queue.lock().unwrap().next() else { break };
-                let (open, rtt, error) = tcp_probe(&h, port, timeout);
+                let (open, rtt, error) = match addrs.as_ref() {
+                    Ok(list) => {
+                        let list: Vec<_> = list.iter().map(|a| std::net::SocketAddr::new(a.ip(), port)).collect();
+                        tcp_probe_addrs(&list, timeout)
+                    }
+                    Err(e) => (false, None, Some(e.clone())),
+                };
                 results.lock().unwrap().push(PortResult { port, open, rtt, error });
             })
         })
@@ -424,6 +435,44 @@ mod tests {
         assert!(r[0].open);
         assert!(check_ports("-x", vec![22], 500).is_err());
         assert!(check_ports("127.0.0.1", (1..=2000).collect(), 100).is_err());
+    }
+
+    #[test]
+    fn port_check_resolves_once_and_reports_dns_errors() {
+        let l = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
+        let open = l.local_addr().unwrap().port();
+        let r = check_ports("localhost", vec![open, 1], 500).unwrap();
+        assert!(r.iter().any(|p| p.port == open && p.open));
+        let r = check_ports("no-existe.invalid", vec![22, 23], 200).unwrap();
+        assert!(r.iter().all(|p| !p.open && p.error.as_deref().unwrap().starts_with("DNS:")));
+    }
+
+    /// cargo test --release -- --ignored --nocapture bench_
+    #[test]
+    #[ignore]
+    fn bench_dns_per_port() {
+        let t = Instant::now();
+        for _ in 0..200 {
+            let _ = crate::monitor::resolve("localhost", 22);
+        }
+        println!("200 resoluciones de localhost: {:?}", t.elapsed());
+        let t = Instant::now();
+        let _ = check_ports("localhost", (40000..40200).collect(), 200);
+        println!("check_ports localhost x200 (cerrados): {:?}", t.elapsed());
+        // Equivalente al código anterior: resolver en cada puerto, mismo pool de 64 hilos.
+        let t = Instant::now();
+        let queue = Arc::new(Mutex::new(40000u16..40200));
+        let hs: Vec<_> = (0..64)
+            .map(|_| {
+                let q = queue.clone();
+                std::thread::spawn(move || loop {
+                    let Some(port) = q.lock().unwrap().next() else { break };
+                    let _ = crate::monitor::tcp_probe("localhost", port, Duration::from_millis(200));
+                })
+            })
+            .collect();
+        hs.into_iter().for_each(|h| h.join().unwrap());
+        println!("antes (DNS por puerto) x200: {:?}", t.elapsed());
     }
 
     #[test]

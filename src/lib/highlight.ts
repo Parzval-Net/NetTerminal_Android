@@ -350,6 +350,9 @@ export function highlightText(text: string, rules: Compiled[]): string {
     .join("");
 }
 
+/** Máximo de texto sin salto de línea que se retiene esperando el resto. */
+const MAX_PENDING = 4096;
+
 /**
  * Procesa el flujo por líneas completas. Una línea incompleta (prompt, eco de teclas)
  * espera unos milisegundos por si llega el resto, y luego se escribe igual.
@@ -386,7 +389,10 @@ export class StreamHighlighter {
       this.pending = this.pending.slice(cut + 1);
     }
     window.clearTimeout(this.timer);
-    if (this.pending) this.timer = window.setTimeout(() => this.flush(), 12);
+    // Salida continua sin saltos de línea (barras de progreso, líneas enormes): no se
+    // retiene indefinidamente ni se acumula a costo cuadrático.
+    if (this.pending.length > MAX_PENDING) this.flush();
+    else if (this.pending) this.timer = window.setTimeout(() => this.flush(), 12);
   }
 
   flush() {

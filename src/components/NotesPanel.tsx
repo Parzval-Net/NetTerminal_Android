@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useRef, useState } from "react";
+import { memo, useCallback, useEffect, useRef, useState } from "react";
 import { invoke } from "@tauri-apps/api/core";
 import type { ITheme } from "@xterm/xterm";
 import { ArrowDownToLine, Check, FolderOpen, Pencil, Plus, Send, SendHorizontal, Trash2, X } from "lucide-react";
@@ -26,7 +26,7 @@ interface Props {
   onCapture: () => string;
 }
 
-export function NotesPanel(p: Props) {
+export const NotesPanel = memo(function NotesPanel(p: Props) {
   const [notes, setNotes] = useState<NoteInfo[]>([]);
   const [current, setCurrent] = useState<string | null>(null);
   const [content, setContent] = useState("");
@@ -269,7 +269,7 @@ export function NotesPanel(p: Props) {
       </footer>
     </aside>
   );
-}
+});
 
 function HeadBtn({ className = "", ...props }: React.ButtonHTMLAttributes<HTMLButtonElement>) {
   return (

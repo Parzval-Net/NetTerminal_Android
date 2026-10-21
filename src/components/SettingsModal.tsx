@@ -324,7 +324,7 @@ export function SettingsModal({
               </>
             )}
 
-            {section === "about" && <About repo={s.updateRepo} />}
+            {section === "about" && <About />}
 
             {section === "data" && (
               <>
@@ -386,59 +386,56 @@ function UpdateSettings({ settings: s, onChange }: { settings: Settings; onChang
   const [status, setStatus] = useState("");
   const [busy, setBusy] = useState(false);
   const [version, setVersion] = useState("");
+  const [repo, setRepo] = useState("");
   useEffect(() => {
-    invoke<string>("app_version").then(setVersion);
+    invoke<string>("app_version").then(setVersion).catch(() => {});
+    invoke<string>("app_repo").then(setRepo).catch(() => {});
   }, []);
   const check = async () => {
     setBusy(true);
     setStatus("");
     try {
-      const u = await invoke<UpdateInfo>("check_update", { repo: s.updateRepo, token: s.updateToken || null });
-      onChange({ updateLastCheck: Date.now(), updateDismissed: "" });
+      const u = await invoke<UpdateInfo>("update_check");
+      if (s.updateDismissed) onChange({ updateDismissed: "" });
       if (u.newer) window.dispatchEvent(new CustomEvent("nt-update-found", { detail: u }));
-      setStatus(u.newer ? `Hay una versión nueva: ${u.latest}. Instálala desde el aviso en la parte superior.` : `Estás al día (${u.latest || u.current}).`);
+      setStatus(
+        u.newer
+          ? u.supported
+            ? `Hay una versión nueva: ${u.latest}. Instálala desde el aviso en la parte superior.`
+            : `Hay una versión nueva: ${u.latest}. ${u.reason ?? ""}`
+          : `Estás al día (${u.current}).`,
+      );
     } catch (e) {
       setStatus(String(e));
     }
     setBusy(false);
   };
   return (
-    <div className="rounded-lg border border-line p-3 space-y-2.5">
-      <div className="flex items-center justify-between">
-        <div>
+    <div className="rounded-lg border border-line p-3 space-y-2">
+      <div className="flex items-center justify-between gap-3">
+        <div className="min-w-0">
           <div>Actualizaciones</div>
           <div className="text-[11.5px] text-muted">
-            Versión instalada {version}. Avisa al abrir la app y permite instalar con un clic; cada actualización se verifica con
-            la firma del proyecto antes de instalarse.
+            Versión instalada {version}. Revisa al abrir la app y cada 6 horas; instala con un clic y verifica la firma del
+            proyecto antes de instalar.
           </div>
         </div>
-        <button onClick={check} disabled={busy} className="px-3 h-7 rounded-md border border-line hover:bg-hover disabled:opacity-40">
+        <button onClick={check} disabled={busy} className="shrink-0 px-3 h-7 rounded-md border border-line hover:bg-hover disabled:opacity-40">
           {busy ? "Buscando…" : "Buscar ahora"}
         </button>
       </div>
-      <div className="grid grid-cols-2 gap-2">
-        <input className="field !h-7 !text-[12px]" placeholder="dueño/repositorio" value={s.updateRepo} onChange={(e) => onChange({ updateRepo: e.target.value.trim() })} />
-        <input
-          className="field !h-7 !text-[12px] font-mono"
-          type="password"
-          placeholder="Token de GitHub (solo si es privado)"
-          value={s.updateToken}
-          onChange={(e) => onChange({ updateToken: e.target.value.trim() })}
-        />
-      </div>
-      <p className="text-[11px] text-muted">
-        El repositorio es público: el token solo hace falta si usas un repositorio privado (fine-grained, solo lectura de
-        Contents, con vencimiento). Se guarda solo en este equipo. La instalación con un clic siempre usa el repositorio oficial.
-      </p>
+      {repo && <p className="text-[11px] text-muted">Fuente: releases de github.com/{repo}</p>}
       {status && <p className="text-[12px] text-accent">{status}</p>}
     </div>
   );
 }
 
-function About({ repo }: { repo: string }) {
+function About() {
   const [version, setVersion] = useState("");
+  const [repo, setRepo] = useState("");
   useEffect(() => {
     invoke<string>("app_version").then(setVersion).catch(() => {});
+    invoke<string>("app_repo").then(setRepo).catch(() => {});
   }, []);
   return (
     <div className="flex flex-col items-center text-center gap-2 py-6">

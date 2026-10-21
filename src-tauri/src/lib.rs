@@ -157,12 +157,12 @@ fn open_dir(which: String, app: tauri::AppHandle, state: State<'_, AppState>) ->
         .map_err(|e| e.to_string())
 }
 
-#[tauri::command]
+#[tauri::command(async)]
 fn list_notes(state: State<'_, AppState>) -> Vec<notes::NoteInfo> {
     notes::list(&state.notes_dir())
 }
 
-#[tauri::command]
+#[tauri::command(async)]
 fn read_note(name: String, state: State<'_, AppState>) -> Result<String, String> {
     notes::read(&state.notes_dir(), &name)
 }
@@ -182,12 +182,12 @@ fn delete_note(name: String, state: State<'_, AppState>) -> Result<(), String> {
     notes::delete(&state.notes_dir(), &name)
 }
 
-#[tauri::command]
+#[tauri::command(async)]
 fn list_scripts(state: State<'_, AppState>) -> Vec<String> {
     scripts::list(&state.data_dir)
 }
 
-#[tauri::command]
+#[tauri::command(async)]
 fn run_script(id: String, script: String, app: tauri::AppHandle, state: State<'_, AppState>) -> Result<String, String> {
     state.scripts.run(app.clone(), id, script, &state.data_dir)
 }
@@ -235,12 +235,12 @@ fn monitor_running(state: State<'_, AppState>) -> Vec<String> {
     state.monitor.running()
 }
 
-#[tauri::command]
+#[tauri::command(async)]
 fn tool_traceroute(host: String, app: tauri::AppHandle, state: State<'_, AppState>) -> Result<String, String> {
     state.jobs.traceroute(app.clone(), &host)
 }
 
-#[tauri::command]
+#[tauri::command(async)]
 fn tool_iperf(params: nettools::IperfParams, app: tauri::AppHandle, state: State<'_, AppState>) -> Result<String, String> {
     state.jobs.iperf(app.clone(), params)
 }
@@ -373,63 +373,22 @@ fn source_ip(host: String) -> Result<String, String> {
     filexfer::source_ip_for(&host)
 }
 
+/// Consulta el último release del repositorio de la app (latest.json firmado).
 #[tauri::command]
-async fn check_update(repo: String, token: Option<String>) -> Result<serde_json::Value, String> {
-    tauri::async_runtime::spawn_blocking(move || {
-        updates::check(&repo, token.as_deref()).map(|u| serde_json::to_value(u).unwrap_or_default())
-    })
-    .await
-    .map_err(|e| e.to_string())?
+async fn update_check(app: tauri::AppHandle) -> Result<updates::UpdateInfo, String> {
+    updates::check(&app).await
 }
 
-/// Si esta instalación puede actualizarse sola, o por qué no.
-fn self_update_blocker() -> Option<&'static str> {
-    if session_store::is_portable() {
-        return Some("En modo portable la actualización es manual: reemplaza los archivos de la carpeta.");
-    }
-    if cfg!(target_os = "linux") && std::env::var_os("APPIMAGE").is_none() {
-        return Some("Instalada con .deb: actualiza con el paquete nuevo o con apt.");
-    }
-    if cfg!(target_os = "macos") && std::env::current_exe().is_ok_and(|p| p.starts_with("/Volumes/")) {
-        return Some("La app corre desde el .dmg: cópiala a Aplicaciones para poder actualizarla.");
-    }
-    None
-}
-
-#[tauri::command]
-fn update_supported() -> serde_json::Value {
-    let blocker = self_update_blocker();
-    serde_json::json!({ "supported": blocker.is_none(), "reason": blocker })
-}
-
-/// Descarga, verifica la firma (clave pública incluida en la app) e instala la versión
-/// nueva; luego reinicia. Solo se llama cuando el usuario lo confirma.
+/// Instala la versión encontrada en la última consulta y reinicia. Solo con confirmación.
 #[tauri::command]
 async fn update_install(app: tauri::AppHandle) -> Result<(), String> {
-    use tauri_plugin_updater::UpdaterExt;
-    if let Some(reason) = self_update_blocker() {
-        return Err(reason.into());
-    }
-    let update = app
-        .updater()
-        .map_err(|e| e.to_string())?
-        .check()
-        .await
-        .map_err(|e| format!("No se pudo consultar la actualización: {e}"))?
-        .ok_or("Ya tienes la última versión")?;
-    let progress = app.clone();
-    let mut done: usize = 0;
-    update
-        .download_and_install(
-            move |chunk, total| {
-                done += chunk;
-                let _ = progress.emit("update-progress", serde_json::json!({ "downloaded": done, "total": total }));
-            },
-            || {},
-        )
-        .await
-        .map_err(|e| format!("No se pudo instalar la actualización: {e}"))?;
-    app.restart()
+    updates::install(app).await
+}
+
+/// Repositorio desde el que se publica y actualiza la app (dueño/nombre).
+#[tauri::command]
+fn app_repo() -> &'static str {
+    updates::repo()
 }
 
 #[tauri::command]
@@ -457,7 +416,7 @@ fn save_text(dest: String, content: String) -> Result<(), String> {
 
 // ---------- Packs de comandos ----------
 
-#[tauri::command]
+#[tauri::command(async)]
 fn cmdpacks_list(state: State<'_, AppState>) -> Vec<serde_json::Value> {
     cmdpacks::list(&state.data_dir)
 }
@@ -504,7 +463,7 @@ fn plugin_cancel(staging: String, state: State<'_, AppState>) {
     plugins::cancel(&state.data_dir, &staging)
 }
 
-#[tauri::command]
+#[tauri::command(async)]
 fn plugin_set_enabled(id: String, enabled: bool, state: State<'_, AppState>) -> Result<(), String> {
     plugins::set_enabled(&state.data_dir, &id, enabled)
 }
@@ -519,7 +478,7 @@ fn plugin_code(id: String, state: State<'_, AppState>) -> Result<String, String>
     plugins::read_code(&state.data_dir, &id)
 }
 
-#[tauri::command]
+#[tauri::command(async)]
 fn plugin_run(
     id: String,
     action: String,
@@ -536,7 +495,7 @@ fn data_dir(state: State<'_, AppState>) -> String {
 }
 
 /// Los ajustes son de la UI: el backend solo los persiste como JSON opaco.
-#[tauri::command]
+#[tauri::command(async)]
 fn get_settings(state: State<'_, AppState>) -> serde_json::Value {
     let path = state.data_dir.join("settings.json");
     let Ok(content) = std::fs::read_to_string(&path) else {
@@ -631,6 +590,7 @@ pub fn run() {
             for f in ["settings.json", "sessions.json"] {
                 session_store::restrict(&data_dir.join(f));
             }
+            app.manage(updates::Pending::default());
             app.manage(AppState {
                 store: SessionStore::new(&data_dir),
                 conns: ConnectionManager::default(),
@@ -694,10 +654,10 @@ pub fn run() {
             cmdpack_export,
             device_run,
             source_ip,
-            check_update,
             app_version,
-            update_supported,
+            update_check,
             update_install,
+            app_repo,
             plugins_list,
             plugin_stage,
             plugin_confirm,

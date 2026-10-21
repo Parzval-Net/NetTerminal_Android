@@ -1,4 +1,4 @@
-import { useCallback, useState } from "react";
+import { memo, useCallback, useState } from "react";
 import { ClipboardCopy, Copy, Eraser, Pencil, PanelLeft, Plus, RefreshCcw, RotateCcw, Undo2, Unplug, Wrench, X } from "lucide-react";
 import { ConnStatus, Tab, TabState, tabTitle } from "../types";
 import { ContextMenu } from "./Sidebar";
@@ -34,7 +34,7 @@ export const statusColor: Record<ConnStatus, string> = {
   closed: "var(--muted)",
 };
 
-export function TabBar({
+export const TabBar = memo(function TabBar({
   tabs,
   states,
   activeId,
@@ -204,4 +204,4 @@ export function TabBar({
       )}
     </div>
   );
-}
+});

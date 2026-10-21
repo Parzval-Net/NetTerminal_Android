@@ -74,6 +74,7 @@ pub fn run(app: AppHandle, conn: String, command: String, timeout_secs: u64) -> 
         let mut output = String::new();
         let mut tail = String::new(); // texto desde la última respuesta automática
         let mut answered = 0;
+        let mut echo = EchoScan::default();
         loop {
             if start.elapsed() > deadline {
                 emit("error", "Tiempo agotado esperando al equipo".into(), None);
@@ -85,12 +86,12 @@ pub fn run(app: AppHandle, conn: String, command: String, timeout_secs: u64) -> 
             for line in chunk.split('\n').map(str::trim_end).filter(|l| !l.is_empty()) {
                 emit("line", line.to_string(), None);
             }
-            let t = tail.trim_end_matches([' ', '\t']).to_string();
-            let reply = if p.more.is_match(&t) {
+            let t = tail.trim_end_matches([' ', '\t']);
+            let reply = if p.more.is_match(t) {
                 Some(" ")
-            } else if p.yes_no.is_match(&t) {
+            } else if p.yes_no.is_match(t) {
                 Some("y\r")
-            } else if p.confirm.is_match(&t) {
+            } else if p.confirm.is_match(t) {
                 Some("\r")
             } else {
                 None
@@ -105,7 +106,7 @@ pub fn run(app: AppHandle, conn: String, command: String, timeout_secs: u64) -> 
                 tail.clear();
                 continue;
             }
-            if finished(p, &output, command.trim()) {
+            if echo.finished(p, &output, command.trim()) {
                 break;
             }
         }
@@ -119,13 +120,37 @@ pub fn run(app: AppHandle, conn: String, command: String, timeout_secs: u64) -> 
 /// El comando terminó si, después de su eco, la última línea es un prompt del equipo.
 /// Si el eco no aparece tal cual (líneas largas que el equipo recorta), se usa toda la
 /// salida, exigiendo al menos un salto de línea.
+#[cfg(test)]
 fn finished(p: &Patterns, output: &str, command: &str) -> bool {
-    let after = output.find(command).map(|i| &output[i + command.len()..]).unwrap_or(output);
-    if !after.contains('\n') {
-        return false;
+    EchoScan::default().finished(p, output, command)
+}
+
+/// Recuerda dónde terminó el eco del comando (o hasta dónde ya se buscó): la salida solo
+/// crece, así que no se vuelve a recorrer completa con cada fragmento.
+#[derive(Default)]
+struct EchoScan {
+    end: Option<usize>,
+    searched: usize,
+}
+
+impl EchoScan {
+    fn finished(&mut self, p: &Patterns, output: &str, command: &str) -> bool {
+        if self.end.is_none() {
+            // El eco puede haber quedado partido entre el fragmento anterior y este.
+            let mut from = self.searched.saturating_sub(command.len());
+            while !output.is_char_boundary(from) {
+                from -= 1;
+            }
+            self.end = output[from..].find(command).map(|i| from + i + command.len());
+            self.searched = output.len();
+        }
+        let after = &output[self.end.unwrap_or(0)..];
+        if !after.contains('\n') {
+            return false;
+        }
+        let last = after.trim_end_matches([' ', '\t']).rsplit('\n').next().unwrap_or("");
+        p.prompt.is_match(last)
     }
-    let last = after.trim_end_matches([' ', '\t']).rsplit('\n').next().unwrap_or("");
-    p.prompt.is_match(last)
 }
 
 /// IP local que el sistema usaría para llegar a `host` (la que el equipo debe usar
@@ -172,6 +197,14 @@ mod tests {
         assert!(!finished(p, "Router#dir flash:\nDirectory of flash:/\n  1  -rw-  33591768  ios.bin", cmd));
         assert!(finished(p, "Router#dir flash:\nDirectory of flash:/\n  1  -rw- 1 a.bin\nRouter#", cmd));
         assert!(finished(p, "<HUAWEI>dir\n  0  -rw-  1  x.cc\n<HUAWEI>", "dir"));
+        // Incremental: eco partido entre fragmentos y salida que llega por partes.
+        let mut e = EchoScan::default();
+        let mut out = String::from("Router#dir fl");
+        assert!(!e.finished(p, &out, cmd));
+        out.push_str("ash:\nDirectory of flash:/\n");
+        assert!(!e.finished(p, &out, cmd));
+        out.push_str("  1  -rw- 1 a.bin\nRouter#");
+        assert!(e.finished(p, &out, cmd));
     }
 
     #[test]

@@ -23,37 +23,48 @@ export const CodeEditor = forwardRef<HTMLTextAreaElement, Props>(function CodeEd
 ) {
   const preRef = useRef<HTMLPreElement>(null);
 
-  const highlighted = useMemo(
-    () =>
-      value.split("\n").map((line, li) => {
-        const spans = runs(line, compiled);
-        if (!spans.length) return <div key={li}>{line || " "}</div>;
-        const parts: React.ReactNode[] = [];
-        let pos = 0;
-        spans.forEach(([s, e, i], k) => {
-          if (s > pos) parts.push(line.slice(pos, s));
-          const st = compiled[i].style;
-          parts.push(
-            <span
-              key={k}
-              style={{
-                color: cssColor(st.color, theme),
-                background: cssColor(st.bg, theme),
-                fontWeight: st.bold ? 700 : undefined,
-                fontStyle: st.italic ? "italic" : undefined,
-                textDecoration: st.underline ? "underline" : undefined,
-              }}
-            >
-              {line.slice(s, e)}
-            </span>,
-          );
-          pos = e;
-        });
-        parts.push(line.slice(pos));
-        return <div key={li}>{parts}</div>;
-      }),
-    [value, compiled, theme],
-  );
+  // Caché por texto de línea: al teclear solo se vuelve a resaltar la línea que cambió.
+  const cache = useMemo(() => new Map<string, React.ReactNode>(), [compiled, theme]);
+
+  const highlighted = useMemo(() => {
+    if (cache.size > 5000) cache.clear();
+    return value.split("\n").map((line, li) => {
+      let body = cache.get(line);
+      if (body === undefined) {
+        body = renderLine(line);
+        cache.set(line, body);
+      }
+      return <div key={li}>{body}</div>;
+    });
+
+    function renderLine(line: string): React.ReactNode {
+      const spans = runs(line, compiled);
+      if (!spans.length) return line || " ";
+      const parts: React.ReactNode[] = [];
+      let pos = 0;
+      spans.forEach(([s, e, i], k) => {
+        if (s > pos) parts.push(line.slice(pos, s));
+        const st = compiled[i].style;
+        parts.push(
+          <span
+            key={k}
+            style={{
+              color: cssColor(st.color, theme),
+              background: cssColor(st.bg, theme),
+              fontWeight: st.bold ? 700 : undefined,
+              fontStyle: st.italic ? "italic" : undefined,
+              textDecoration: st.underline ? "underline" : undefined,
+            }}
+          >
+            {line.slice(s, e)}
+          </span>,
+        );
+        pos = e;
+      });
+      parts.push(line.slice(pos));
+      return parts;
+    }
+  }, [value, cache, compiled, theme]);
 
   const shared: React.CSSProperties = {
     fontFamily: font,

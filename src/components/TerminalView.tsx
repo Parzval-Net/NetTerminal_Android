@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useRef, useState } from "react";
+import { memo, useEffect, useMemo, useRef, useState } from "react";
 import { Terminal } from "@xterm/xterm";
 import { FitAddon } from "@xterm/addon-fit";
 import { SearchAddon } from "@xterm/addon-search";
@@ -54,7 +54,7 @@ interface Props {
 
 const dim = (s: string) => `\x1b[2m${s}\x1b[0m`;
 
-export function TerminalView({ id, session, active, settings, theme, onStatus, onLog, onActivity, register }: Props) {
+export const TerminalView = memo(function TerminalView({ id, session, active, settings, theme, onStatus, onLog, onActivity, register }: Props) {
   const activeRef = useRef(active);
   activeRef.current = active;
   const hostRef = useRef<HTMLDivElement>(null);
@@ -499,7 +499,7 @@ export function TerminalView({ id, session, active, settings, theme, onStatus, o
       )}
     </div>
   );
-}
+});
 
 function IconBtn(props: React.ButtonHTMLAttributes<HTMLButtonElement>) {
   return (

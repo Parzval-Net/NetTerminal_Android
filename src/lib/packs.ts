@@ -217,11 +217,24 @@ const ETHTOOL_SET = /^ethtool -s\b/;
 /** Dentro de un bloque de configuración, estas órdenes cortan servicio. */
 const DISRUPTIVE_IN_CONFIG = /^(shutdown|set status down|disable|no ip address|undo ip address|set .*admin-status down)\b/i;
 
+const riskCache = new Map<string, Risk>();
+
 /**
  * Riesgo según el contenido. Analiza cada línea (sin lo que va tras "|"). Un comando que
  * no se reconoce como consulta se trata como cambio: ante la duda, se pide confirmación.
  */
 export function computeRisk(cmd: string): Risk {
+  let risk = riskCache.get(cmd);
+  if (risk === undefined) {
+    // Es pura: se memoriza para no repetir las regex al recargar o reconstruir el catálogo.
+    if (riskCache.size >= 10000) riskCache.clear();
+    risk = evalRisk(cmd);
+    riskCache.set(cmd, risk);
+  }
+  return risk;
+}
+
+function evalRisk(cmd: string): Risk {
   let risk: Risk = "read";
   const lines = cmd
     .split("\n")
@@ -357,6 +370,8 @@ export function validatePack(raw: unknown): Validation {
 
 export function buildCatalog(packs: Pack[], disabled: string[]): CatalogVendor[] {
   const vendors = new Map<string, CatalogVendor>();
+  // Comandos ya agregados por fabricante (evita buscar en la lista en cada comando).
+  const seen = new Map<string, Set<string>>();
   for (const pack of packs) {
     if (disabled.includes(pack.id)) continue;
     let v = vendors.get(pack.vendor);
@@ -366,8 +381,11 @@ export function buildCatalog(packs: Pack[], disabled: string[]): CatalogVendor[]
     }
     v.detectCommand ??= pack.detectCommand;
     for (const p of pack.platforms ?? []) if (!v.platforms.some((x) => x.id === p.id)) v.platforms.push(p);
+    let cmds = seen.get(v.id);
+    if (!cmds) seen.set(v.id, (cmds = new Set()));
     for (const c of pack.commands) {
-      if (v.commands.some((x) => x.cmd === c.cmd)) continue;
+      if (cmds.has(c.cmd)) continue;
+      cmds.add(c.cmd);
       const computed = computeRisk([c.cmd, ...(c.variants ?? []).map((x) => x.cmd)].join("\n"));
       const effective = maxRisk(c.risk, computed);
       v.commands.push({

@@ -101,15 +101,24 @@ pub fn probe(cfg: &ProbeConfig) -> (bool, Option<f64>, Option<String>) {
 }
 
 pub fn tcp_probe(host: &str, port: u16, timeout: Duration) -> (bool, Option<f64>, Option<String>) {
+    match resolve(host, port) {
+        Ok(addrs) => tcp_probe_addrs(&addrs, timeout),
+        Err(e) => (false, None, Some(e)),
+    }
+}
+
+/// Direcciones del host (acepta IPv6 entre corchetes). El error ya viene con el prefijo "DNS:".
+pub fn resolve(host: &str, port: u16) -> Result<Vec<std::net::SocketAddr>, String> {
     let host = host.trim_matches(|c| c == '[' || c == ']');
-    let addrs = match (host, port).to_socket_addrs() {
-        Ok(a) => a.collect::<Vec<_>>(),
-        Err(e) => return (false, None, Some(format!("DNS: {e}"))),
-    };
+    (host, port).to_socket_addrs().map(Iterator::collect).map_err(|e| format!("DNS: {e}"))
+}
+
+/// Conecta a la primera dirección que responda.
+pub fn tcp_probe_addrs(addrs: &[std::net::SocketAddr], timeout: Duration) -> (bool, Option<f64>, Option<String>) {
     let mut last = String::from("sin dirección");
     for addr in addrs {
         let t0 = Instant::now();
-        match TcpStream::connect_timeout(&addr, timeout) {
+        match TcpStream::connect_timeout(addr, timeout) {
             Ok(_) => return (true, Some(t0.elapsed().as_secs_f64() * 1000.0), None),
             Err(e) => last = e.to_string(),
         }

@@ -57,9 +57,6 @@
   "plugins": {
     "updater": {
       "pubkey": "dW50cnVzdGVkIGNvbW1lbnQ6IG1pbmlzaWduIHB1YmxpYyBrZXk6IDI0RTNDMkUwRjMzMTU4QzQKUldURVdESHo0TUxqSkFldVlHdUZWWlpJeDcrdVRIOExxVjFVSDkwMWswRldWRkloY1JMUlc1VG4K",
-      "endpoints": [
-        "https://github.com/Parzval-Net/Net_Terminal/releases/latest/download/latest.json"
-      ],
       "windows": {
         "installMode": "passive"
       }

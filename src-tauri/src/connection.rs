@@ -13,9 +13,9 @@ use std::net::{Shutdown, TcpStream, ToSocketAddrs};
 use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::mpsc::Sender;
-use std::sync::{Arc, Mutex};
+use std::sync::{Arc, Condvar, Mutex};
 use std::thread;
-use std::time::Duration;
+use std::time::{Duration, Instant};
 use tauri::ipc::{Channel, InvokeResponseBody};
 
 const HISTORY_MAX: usize = 256 * 1024;
@@ -24,6 +24,8 @@ const HISTORY_MAX: usize = 256 * 1024;
 #[derive(Default)]
 struct Mirror {
     stripper: AnsiStripper,
+    /// Búfer reutilizado entre llamadas (evita una asignación por fragmento).
+    scratch: Vec<u8>,
     history: String,
     taps: Vec<std::sync::mpsc::SyncSender<String>>,
 }
@@ -34,26 +36,137 @@ const TAP_CAPACITY: usize = 8192;
 
 impl Mirror {
     fn push(&mut self, bytes: &[u8]) {
-        let text = String::from_utf8_lossy(&self.stripper.strip(bytes)).into_owned();
-        if text.is_empty() {
-            return;
-        }
-        self.taps.retain(|t| !matches!(t.try_send(text.clone()), Err(std::sync::mpsc::TrySendError::Disconnected(_))));
-        self.history.push_str(&text);
-        if self.history.len() > HISTORY_MAX {
-            let mut cut = self.history.len() - HISTORY_MAX;
-            while !self.history.is_char_boundary(cut) {
-                cut += 1;
+        let mut clean = std::mem::take(&mut self.scratch);
+        clean.clear();
+        self.stripper.strip_into(bytes, &mut clean);
+        let text = String::from_utf8_lossy(&clean);
+        if !text.is_empty() {
+            if !self.taps.is_empty() {
+                let owned = text.to_string();
+                self.taps
+                    .retain(|t| !matches!(t.try_send(owned.clone()), Err(std::sync::mpsc::TrySendError::Disconnected(_))));
             }
-            self.history.drain(..cut);
+            self.history.push_str(&text);
+            // Se recorta al doble del tope: mover 256 KB en cada fragmento costaba más que
+            // todo lo demás. `history()` nunca entrega más de HISTORY_MAX.
+            if self.history.len() > 2 * HISTORY_MAX {
+                let mut cut = self.history.len() - HISTORY_MAX;
+                while !self.history.is_char_boundary(cut) {
+                    cut += 1;
+                }
+                self.history.drain(..cut);
+            }
+        }
+        drop(text);
+        self.scratch = clean;
+    }
+
+    /// Últimos `max` bytes (como máximo HISTORY_MAX), cortados en un límite de carácter.
+    fn tail(&self, max: usize) -> &str {
+        let h = &self.history;
+        let mut start = h.len().saturating_sub(max.min(HISTORY_MAX));
+        while !h.is_char_boundary(start) {
+            start += 1;
+        }
+        &h[start..]
+    }
+}
+
+/// Ventana de agrupación hacia el frontend. Un fragmento aislado (eco de una tecla) sale
+/// de inmediato; en una ráfaga se envía como máximo un mensaje por ventana. Cada envío es
+/// un `eval` en el hilo principal del webview y un PTY entrega a menudo una línea por
+/// lectura (~10 bytes), así que sin agrupar un `show run` largo genera cientos de miles.
+const FLUSH_WINDOW: Duration = Duration::from_millis(4);
+/// Con esta cantidad pendiente se envía sin esperar el resto de la ventana.
+const FLUSH_MAX: usize = 256 * 1024;
+
+#[derive(Default)]
+struct Pending {
+    buf: Vec<u8>,
+    closed: bool,
+}
+
+/// Bytes pendientes de enviar al frontend y el hilo que los agrupa.
+struct Outbox {
+    data: Channel<InvokeResponseBody>,
+    pending: Mutex<Pending>,
+    ready: Condvar,
+    /// Tomar el búfer y enviarlo es atómico respecto de otros envíos (mantiene el orden).
+    send_lock: Mutex<()>,
+}
+
+impl Outbox {
+    fn start(data: Channel<InvokeResponseBody>) -> Arc<OutboxHandle> {
+        let ob = Arc::new(Outbox { data, pending: Mutex::default(), ready: Condvar::new(), send_lock: Mutex::new(()) });
+        let worker = ob.clone();
+        thread::spawn(move || worker.run());
+        Arc::new(OutboxHandle(ob))
+    }
+
+    fn push(&self, bytes: &[u8]) {
+        lock(&self.pending).buf.extend_from_slice(bytes);
+        self.ready.notify_one();
+    }
+
+    /// Envía lo pendiente. Devuelve cuántos bytes salieron.
+    fn flush(&self) -> usize {
+        let _order = lock(&self.send_lock);
+        let buf = std::mem::take(&mut lock(&self.pending).buf);
+        let n = buf.len();
+        if n > 0 {
+            let _ = self.data.send(InvokeResponseBody::Raw(buf));
+        }
+        n
+    }
+
+    fn run(&self) {
+        let mut last: Option<Instant> = None;
+        loop {
+            {
+                let mut p = lock(&self.pending);
+                loop {
+                    if p.buf.is_empty() {
+                        if p.closed {
+                            return;
+                        }
+                        p = self.ready.wait(p).unwrap_or_else(|e| e.into_inner());
+                        continue;
+                    }
+                    // En ráfaga (envío reciente): espera al fin de la ventana para agrupar.
+                    let due = last.map(|l| l + FLUSH_WINDOW).filter(|_| !p.closed && p.buf.len() < FLUSH_MAX);
+                    match due.and_then(|d| d.checked_duration_since(Instant::now())) {
+                        Some(left) if !left.is_zero() => {
+                            p = self.ready.wait_timeout(p, left).unwrap_or_else(|e| e.into_inner()).0;
+                        }
+                        _ => break,
+                    }
+                }
+            }
+            self.flush();
+            last = Some(Instant::now());
         }
     }
+}
+
+/// Al soltarse el último `Sink`, el hilo envía lo pendiente y termina.
+struct OutboxHandle(Arc<Outbox>);
+
+impl Drop for OutboxHandle {
+    fn drop(&mut self) {
+        lock(&self.0.pending).closed = true;
+        self.0.ready.notify_one();
+    }
+}
+
+/// Lock que no propaga el envenenamiento: un pánico en otro hilo no debe tumbar la salida.
+fn lock<T>(m: &Mutex<T>) -> std::sync::MutexGuard<'_, T> {
+    m.lock().unwrap_or_else(|e| e.into_inner())
 }
 
 /// Destino de los datos recibidos: frontend + log opcional + espejo de texto.
 #[derive(Clone)]
 pub struct Sink {
-    data: Channel<InvokeResponseBody>,
+    out: Arc<OutboxHandle>,
     exit: Channel<String>,
     exited: Arc<AtomicBool>,
     log: Arc<Mutex<Option<LogWriter>>>,
@@ -61,20 +174,36 @@ pub struct Sink {
 }
 
 impl Sink {
+    fn new(data: Channel<InvokeResponseBody>, exit: Channel<String>) -> Self {
+        Sink {
+            out: Outbox::start(data),
+            exit,
+            exited: Arc::new(AtomicBool::new(false)),
+            log: Arc::new(Mutex::new(None)),
+            mirror: Arc::new(Mutex::new(Mirror::default())),
+        }
+    }
+
     pub fn push(&self, bytes: &[u8]) {
         if bytes.is_empty() {
             return;
         }
-        if let Some(log) = self.log.lock().unwrap().as_mut() {
+        if let Some(log) = lock(&self.log).as_mut() {
             log.write(bytes);
         }
-        self.mirror.lock().unwrap().push(bytes);
-        let _ = self.data.send(InvokeResponseBody::Raw(bytes.to_vec()));
+        // El espejo se actualiza al instante: scripts y MCP no esperan la agrupación.
+        lock(&self.mirror).push(bytes);
+        self.out.0.push(bytes);
     }
 
-    /// Notifica el cierre una sola vez, venga de donde venga.
+    /// Notifica el cierre una sola vez, venga de donde venga. Antes envía lo pendiente
+    /// para que el aviso de cierre no llegue antes que los últimos datos.
     pub fn close(&self, reason: impl Into<String>) {
         if !self.exited.swap(true, Ordering::SeqCst) {
+            // Desde 1 KB el webview pide los datos con un fetch aparte: se le da margen.
+            if self.out.0.flush() >= 1024 {
+                thread::sleep(Duration::from_millis(50));
+            }
             let _ = self.exit.send(reason.into());
         }
     }
@@ -88,15 +217,19 @@ struct AnsiStripper {
 }
 
 impl AnsiStripper {
-    fn strip(&mut self, bytes: &[u8]) -> Vec<u8> {
-        let mut out = Vec::with_capacity(bytes.len());
+    /// Agrega a `out` el texto limpio. Un backspace solo borra lo agregado en esta llamada.
+    fn strip_into(&mut self, bytes: &[u8], out: &mut Vec<u8>) {
+        let base = out.len();
+        out.reserve(bytes.len());
         for &b in bytes {
             match self.state {
                 0 => match b {
                     0x1b => self.state = 1,
                     b'\r' | 0x07 | 0x00 => {}
                     0x08 => {
-                        out.pop();
+                        if out.len() > base {
+                            out.pop();
+                        }
                     }
                     _ => out.push(b),
                 },
@@ -119,7 +252,6 @@ impl AnsiStripper {
                 }
             }
         }
-        out
     }
 }
 
@@ -129,6 +261,10 @@ struct LogWriter {
     stripper: AnsiStripper,
     timestamps: bool,
     line_start: bool,
+    clean: Vec<u8>,
+    out: Vec<u8>,
+    /// Hora ya formateada para el segundo en curso (se formatea una vez por segundo).
+    stamp: (u64, String),
 }
 
 impl LogWriter {
@@ -138,21 +274,46 @@ impl LogWriter {
             stripper: AnsiStripper::default(),
             timestamps,
             line_start: true,
+            clean: Vec::new(),
+            out: Vec::new(),
+            stamp: (u64::MAX, String::new()),
         }
     }
 
-    fn write(&mut self, bytes: &[u8]) {
-        let clean = self.stripper.strip(bytes);
-        let mut out = Vec::with_capacity(clean.len() + 32);
-        for b in clean {
-            if self.timestamps && self.line_start {
-                let ts = chrono::Local::now().format("[%Y-%m-%d %H:%M:%S] ");
-                out.extend_from_slice(ts.to_string().as_bytes());
-            }
-            self.line_start = b == b'\n';
-            out.push(b);
+    fn stamp(&mut self) -> &[u8] {
+        let secs = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .map(|d| d.as_secs())
+            .unwrap_or(0);
+        if self.stamp.0 != secs {
+            self.stamp = (secs, chrono::Local::now().format("[%Y-%m-%d %H:%M:%S] ").to_string());
         }
-        let _ = self.file.write_all(&out);
+        self.stamp.1.as_bytes()
+    }
+
+    fn write(&mut self, bytes: &[u8]) {
+        let mut clean = std::mem::take(&mut self.clean);
+        let mut out = std::mem::take(&mut self.out);
+        clean.clear();
+        out.clear();
+        self.stripper.strip_into(bytes, &mut clean);
+        if self.timestamps {
+            for &b in &clean {
+                if self.line_start {
+                    out.extend_from_slice(self.stamp());
+                }
+                self.line_start = b == b'\n';
+                out.push(b);
+            }
+            let _ = self.file.write_all(&out);
+        } else {
+            if let Some(&last) = clean.last() {
+                self.line_start = last == b'\n';
+            }
+            let _ = self.file.write_all(&clean);
+        }
+        self.clean = clean;
+        self.out = out;
     }
 }
 
@@ -217,6 +378,26 @@ struct Connection {
     session: Session,
 }
 
+impl Connection {
+    fn info(&self, id: &str) -> ConnInfo {
+        let s = &self.session;
+        ConnInfo {
+            id: id.to_string(),
+            name: self.name.clone(),
+            kind: s.session_type.clone(),
+            target: match s.session_type {
+                SessionType::Serial => s.serial_port.clone().unwrap_or_default(),
+                SessionType::Local => "local".into(),
+                _ => format!(
+                    "{}{}",
+                    s.username.as_deref().map(|u| format!("{u}@")).unwrap_or_default(),
+                    s.host.clone().unwrap_or_default()
+                ),
+            },
+        }
+    }
+}
+
 #[derive(Default)]
 pub struct ConnectionManager {
     conns: Mutex<HashMap<String, Connection>>,
@@ -235,13 +416,7 @@ impl ConnectionManager {
         // Una reconexión reutiliza el id: se cierra lo anterior primero.
         self.disconnect(&id);
 
-        let sink = Sink {
-            data,
-            exit,
-            exited: Arc::new(AtomicBool::new(false)),
-            log: Arc::new(Mutex::new(None)),
-            mirror: Arc::new(Mutex::new(Mirror::default())),
-        };
+        let sink = Sink::new(data, exit);
 
         let mut transport = match session.session_type {
             SessionType::Local if session.scp.is_some() => spawn_pty(scp_command(session)?, cols, rows, &sink)?,
@@ -260,7 +435,7 @@ impl ConnectionManager {
             Transport::Serial { port, .. } => spawn_writer(Box::new(port.try_clone().map_err(|e| e.to_string())?), false),
         };
 
-        self.conns.lock().unwrap().insert(
+        lock(&self.conns).insert(
             id,
             Connection {
                 input,
@@ -274,7 +449,7 @@ impl ConnectionManager {
     }
 
     pub fn write(&self, id: &str, data: &[u8]) -> Result<(), String> {
-        let map = self.conns.lock().unwrap();
+        let map = lock(&self.conns);
         let conn = map.get(id).ok_or("Sesión no conectada")?;
         conn.input
             .send(Outgoing::Data(data.to_vec()))
@@ -282,7 +457,7 @@ impl ConnectionManager {
     }
 
     pub fn resize(&self, id: &str, cols: u16, rows: u16) -> Result<(), String> {
-        let mut map = self.conns.lock().unwrap();
+        let mut map = lock(&self.conns);
         let Some(conn) = map.get_mut(id) else {
             return Ok(());
         };
@@ -295,12 +470,14 @@ impl ConnectionManager {
                     pixel_height: 0,
                 })
                 .map_err(|e| e.to_string()),
-            Transport::Telnet { stream, shared, .. } => {
-                let mut s = shared.lock().unwrap();
+            Transport::Telnet { shared, .. } => {
+                let mut s = lock(shared);
                 s.cols = cols;
                 s.rows = rows;
+                // Por el hilo de escritura: un socket con el búfer lleno no debe bloquear
+                // el mapa global (y con él a todas las sesiones).
                 if s.naws {
-                    let _ = stream.write_all(&telnet::naws(cols, rows));
+                    let _ = conn.input.send(Outgoing::Raw(telnet::naws(cols, rows)));
                 }
                 Ok(())
             }
@@ -311,7 +488,7 @@ impl ConnectionManager {
     pub fn send_break(&self, id: &str) -> Result<(), String> {
         // El lock se suelta antes de esperar: un Break serial tarda 300 ms.
         let port = {
-            let map = self.conns.lock().unwrap();
+            let map = lock(&self.conns);
             let conn = map.get(id).ok_or("Sesión no conectada")?;
             match &conn.transport {
                 Transport::Serial { port, .. } => port.try_clone().map_err(|e| e.to_string())?,
@@ -338,16 +515,18 @@ impl ConnectionManager {
         timestamps: bool,
         dir: &Path,
     ) -> Result<Option<String>, String> {
-        let map = self.conns.lock().unwrap();
-        let conn = map.get(id).ok_or("Sesión no conectada")?;
-        let mut log = conn.sink.log.lock().unwrap();
+        // Crear la carpeta y el archivo ocurre sin el lock del mapa global.
+        let (log, name) = {
+            let map = lock(&self.conns);
+            let conn = map.get(id).ok_or("Sesión no conectada")?;
+            (conn.sink.log.clone(), conn.name.clone())
+        };
         if !enabled {
-            *log = None;
+            *lock(&log) = None;
             return Ok(None);
         }
         std::fs::create_dir_all(dir).map_err(|e| e.to_string())?;
-        let safe: String = conn
-            .name
+        let safe: String = name
             .chars()
             .map(|c| if c.is_alphanumeric() || c == '-' || c == '_' { c } else { '_' })
             .collect();
@@ -357,62 +536,45 @@ impl ConnectionManager {
             chrono::Local::now().format("%Y%m%d-%H%M%S")
         ));
         let file = File::create(&path).map_err(|e| e.to_string())?;
-        *log = Some(LogWriter::new(file, timestamps));
+        *lock(&log) = Some(LogWriter::new(file, timestamps));
         Ok(Some(path.to_string_lossy().into_owned()))
     }
 
     pub fn list(&self) -> Vec<ConnInfo> {
-        let map = self.conns.lock().unwrap();
+        let map = lock(&self.conns);
         let mut list: Vec<_> = map
             .iter()
             .filter(|(_, c)| !c.sink.exited.load(Ordering::SeqCst))
-            .map(|(id, c)| ConnInfo {
-                id: id.clone(),
-                name: c.name.clone(),
-                kind: c.session.session_type.clone(),
-                target: match c.session.session_type {
-                    SessionType::Serial => c.session.serial_port.clone().unwrap_or_default(),
-                    SessionType::Local => "local".into(),
-                    _ => format!(
-                        "{}{}",
-                        c.session.username.as_deref().map(|u| format!("{u}@")).unwrap_or_default(),
-                        c.session.host.clone().unwrap_or_default()
-                    ),
-                },
-            })
+            .map(|(id, c)| c.info(id))
             .collect();
         list.sort_by(|a, b| a.id.cmp(&b.id));
         list
     }
 
+    /// Búsqueda directa (antes armaba y recorría la lista completa en cada llamada).
     pub fn info(&self, id: &str) -> Option<(ConnInfo, Session)> {
-        let info = self.list().into_iter().find(|c| c.id == id)?;
-        let session = self.conns.lock().unwrap().get(id)?.session.clone();
-        Some((info, session))
+        let map = lock(&self.conns);
+        let c = map.get(id).filter(|c| !c.sink.exited.load(Ordering::SeqCst))?;
+        Some((c.info(id), c.session.clone()))
     }
 
     /// Últimos `max` caracteres de salida en texto limpio.
     pub fn history(&self, id: &str, max: usize) -> Option<String> {
-        let map = self.conns.lock().unwrap();
-        let mirror = map.get(id)?.sink.mirror.lock().unwrap();
-        let h = &mirror.history;
-        let mut start = h.len().saturating_sub(max);
-        while !h.is_char_boundary(start) {
-            start += 1;
-        }
-        Some(h[start..].to_string())
+        let mirror = lock(&self.conns).get(id)?.sink.mirror.clone();
+        let text = lock(&mirror).tail(max).to_string();
+        Some(text)
     }
 
     /// Suscripción a la salida en vivo; se cancela sola al soltar el receptor.
     pub fn tap(&self, id: &str) -> Option<std::sync::mpsc::Receiver<String>> {
-        let map = self.conns.lock().unwrap();
+        let mirror = lock(&self.conns).get(id)?.sink.mirror.clone();
         let (tx, rx) = std::sync::mpsc::sync_channel(TAP_CAPACITY);
-        map.get(id)?.sink.mirror.lock().unwrap().taps.push(tx);
+        lock(&mirror).taps.push(tx);
         Some(rx)
     }
 
     pub fn disconnect(&self, id: &str) {
-        let Some(conn) = self.conns.lock().unwrap().remove(id) else {
+        let Some(conn) = lock(&self.conns).remove(id) else {
             return;
         };
         // Marcado como cerrado para que los hilos no notifiquen un cierre "inesperado".
@@ -550,6 +712,187 @@ mod tests {
             let ok = std::process::Command::new("ssh").args(["-G", "-o", o, "x"]).output().unwrap();
             assert!(ok.status.success(), "ssh rechazó {o}");
         }
+    }
+
+    /// Micro-benchmark del camino caliente (cargo test --release -- --ignored --nocapture bench_).
+    #[test]
+    #[ignore]
+    fn bench_mirror_and_log() {
+        use std::time::Instant;
+        let line = "\x1b[32mGi1/0/1\x1b[0m   connected    10   a-full a-1000 10/100/1000BaseTX áé\r\n";
+        let chunk: Vec<u8> = line.repeat(1024 / line.len() + 1).into_bytes()[..1024].to_vec();
+        let total = 64 * 1024 * 1024 / chunk.len();
+        let mut m = super::Mirror::default();
+        let t = Instant::now();
+        for _ in 0..total {
+            m.push(&chunk);
+        }
+        let s = t.elapsed().as_secs_f64();
+        println!("mirror sin taps: {:.0} MB/s ({:.2} us/chunk)", 64.0 / s, s * 1e6 / total as f64);
+        let mut m = super::Mirror::default();
+        let (tx, rx) = std::sync::mpsc::sync_channel(super::TAP_CAPACITY);
+        m.taps.push(tx);
+        let t = Instant::now();
+        for _ in 0..total {
+            m.push(&chunk);
+            while rx.try_recv().is_ok() {}
+        }
+        let s = t.elapsed().as_secs_f64();
+        println!("mirror con 1 tap: {:.0} MB/s ({:.2} us/chunk)", 64.0 / s, s * 1e6 / total as f64);
+        let path = std::env::temp_dir().join(format!("nt-bench-{}.log", std::process::id()));
+        let mut w = LogWriter::new(std::fs::File::create(&path).unwrap(), true);
+        let t = Instant::now();
+        for _ in 0..total / 4 {
+            w.write(&chunk);
+        }
+        let s = t.elapsed().as_secs_f64();
+        println!("log con hora: {:.0} MB/s ({:.2} us/chunk)", 16.0 / s, s * 1e6 / (total / 4) as f64);
+        drop(w);
+        let _ = std::fs::remove_file(path);
+    }
+
+    /// Cuántas lecturas produce una salida masiva por PTY (tamaño típico de fragmento).
+    #[test]
+    #[ignore]
+    fn bench_pty_chunk_sizes() {
+        use portable_pty::{native_pty_system, CommandBuilder, PtySize};
+        use std::io::Read;
+        let pair = native_pty_system().openpty(PtySize { rows: 50, cols: 200, pixel_width: 0, pixel_height: 0 }).unwrap();
+        let mut cmd = CommandBuilder::new("sh");
+        cmd.args(["-c", "seq 1 400000"]);
+        let mut child = pair.slave.spawn_command(cmd).unwrap();
+        drop(pair.slave);
+        let mut r = pair.master.try_clone_reader().unwrap();
+        let (sink, log) = test_sink();
+        let (mut reads, mut bytes, mut small) = (0usize, 0usize, 0usize);
+        let mut buf = [0u8; 16 * 1024];
+        let t = std::time::Instant::now();
+        while let Ok(n) = r.read(&mut buf) {
+            if n == 0 {
+                break;
+            }
+            sink.push(&buf[..n]);
+            reads += 1;
+            bytes += n;
+            small += (n < 1024) as usize;
+            if bytes >= 2_700_000 {
+                break;
+            }
+        }
+        let elapsed = t.elapsed();
+        let _ = child.kill();
+        drop(sink);
+        std::thread::sleep(std::time::Duration::from_millis(50));
+        let msgs = log.lock().unwrap().len();
+        println!(
+            "PTY: {bytes} bytes en {reads} lecturas (prom {} B, {small} < 1 KB) en {elapsed:?} -> {msgs} mensajes al frontend",
+            bytes / reads.max(1)
+        );
+    }
+
+    #[test]
+    fn mirror_trims_history_and_feeds_taps() {
+        let mut m = super::Mirror::default();
+        let (tx, rx) = std::sync::mpsc::sync_channel(super::TAP_CAPACITY);
+        m.taps.push(tx);
+        m.push(b"\x1b[1mab\x08c\x1b[0m\r\n");
+        assert_eq!(rx.try_recv().unwrap(), "ac\n");
+        // Un backspace al inicio del fragmento no borra lo anterior (igual que antes).
+        m.push(b"\x08z");
+        assert_eq!(m.tail(100), "ac\nz");
+        let mut all = String::from("ac\nz");
+        for i in 0..40_000 {
+            let line = format!("línea {i}\n");
+            m.push(line.as_bytes());
+            all.push_str(&line);
+        }
+        assert!(m.history.len() <= 2 * super::HISTORY_MAX);
+        let tail = m.tail(usize::MAX);
+        assert!(tail.len() <= super::HISTORY_MAX && tail.len() > super::HISTORY_MAX - 4);
+        assert!(all.ends_with(tail));
+        assert!(all.ends_with(m.tail(50)) && m.tail(50).len() <= 50);
+    }
+
+    /// Canales de prueba que anotan lo recibido en orden.
+    fn test_sink() -> (super::Sink, std::sync::Arc<std::sync::Mutex<Vec<(std::time::Instant, Option<Vec<u8>>)>>>) {
+        use std::sync::{Arc, Mutex};
+        use tauri::ipc::{Channel, InvokeResponseBody};
+        let log: Arc<Mutex<Vec<(std::time::Instant, Option<Vec<u8>>)>>> = Arc::default();
+        let l = log.clone();
+        let data = Channel::new(move |b| {
+            if let InvokeResponseBody::Raw(v) = b {
+                l.lock().unwrap().push((std::time::Instant::now(), Some(v)));
+            }
+            Ok(())
+        });
+        let l = log.clone();
+        let exit = Channel::new(move |_| {
+            l.lock().unwrap().push((std::time::Instant::now(), None));
+            Ok(())
+        });
+        (super::Sink::new(data, exit), log)
+    }
+
+    #[test]
+    fn sink_coalesces_bursts_and_keeps_order() {
+        use std::time::{Duration, Instant};
+        let (sink, log) = test_sink();
+        // Ráfaga: muchas líneas cortas, como entrega un PTY.
+        let mut expected = Vec::new();
+        let pushes = 100_000;
+        for i in 0..pushes {
+            let line = format!("{i}\r\n");
+            sink.push(line.as_bytes());
+            expected.extend_from_slice(line.as_bytes());
+        }
+        std::thread::sleep(Duration::from_millis(50));
+        let msgs = log.lock().unwrap().len();
+        let got: Vec<u8> = log.lock().unwrap().iter().flat_map(|(_, d)| d.clone().unwrap()).collect();
+        assert_eq!(got, expected);
+        println!("ráfaga: {pushes} fragmentos -> {msgs} mensajes al frontend");
+        assert!(msgs < pushes / 10, "{msgs}");
+
+        // Fragmento aislado (eco de una tecla): sale sin esperar la ventana.
+        log.lock().unwrap().clear();
+        let t = Instant::now();
+        sink.push(b"x");
+        while log.lock().unwrap().is_empty() {
+            assert!(t.elapsed() < Duration::from_secs(1));
+            std::thread::yield_now();
+        }
+        let latency = log.lock().unwrap()[0].0 - t;
+        println!("latencia de un fragmento aislado: {latency:?}");
+        assert!(latency < super::FLUSH_WINDOW);
+
+        // El cierre llega después de todos los datos.
+        log.lock().unwrap().clear();
+        for _ in 0..1000 {
+            sink.push(b"fin de sesion\r\n");
+        }
+        sink.close("cerrado");
+        let entries = log.lock().unwrap();
+        let data: usize = entries.iter().filter_map(|(_, d)| d.as_ref().map(Vec::len)).sum();
+        assert_eq!(data, 15_000);
+        assert!(entries.last().unwrap().1.is_none());
+    }
+
+    #[test]
+    fn sink_drop_flushes_and_stops_thread() {
+        let (sink, log) = test_sink();
+        sink.push(b"a");
+        sink.push(b"b");
+        sink.push(b"c");
+        let out = std::sync::Arc::downgrade(&sink.out.0);
+        drop(sink);
+        for _ in 0..100 {
+            if out.upgrade().is_none() {
+                break;
+            }
+            std::thread::sleep(std::time::Duration::from_millis(5));
+        }
+        assert!(out.upgrade().is_none(), "el hilo de envío no terminó");
+        let got: Vec<u8> = log.lock().unwrap().iter().flat_map(|(_, d)| d.clone().unwrap()).collect();
+        assert_eq!(got, b"abc");
     }
 
     #[test]

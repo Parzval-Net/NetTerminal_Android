@@ -17,7 +17,14 @@ pub fn wait_for(rx: &Receiver<String>, re: &Regex, timeout: Duration, buf: &mut 
             return Err(std::mem::take(buf));
         }
         match rx.recv_timeout(left) {
-            Ok(chunk) => buf.push_str(&chunk),
+            Ok(chunk) => {
+                buf.push_str(&chunk);
+                // Lo que ya está en cola se agrega antes de buscar: un PTY entrega a menudo
+                // una línea por fragmento y buscar en todo el búfer con cada una es cuadrático.
+                while let Ok(more) = rx.try_recv() {
+                    buf.push_str(&more);
+                }
+            }
             Err(RecvTimeoutError::Timeout) => return Err(std::mem::take(buf)),
             Err(RecvTimeoutError::Disconnected) => return Err(std::mem::take(buf)),
         }
@@ -64,6 +71,26 @@ mod tests {
         let mut buf = String::new();
         let out = wait_for(&rx, &re, Duration::from_secs(2), &mut buf).unwrap();
         assert!(out.ends_with("Router#"));
+    }
+
+    /// cargo test --release -- --ignored --nocapture bench_
+    #[test]
+    #[ignore]
+    fn bench_wait_for_many_small_chunks() {
+        let n = 20_000;
+        let mut chunks: Vec<String> = (0..n).map(|i| format!("Gi1/0/{i} connected 10 a-full\n")).collect();
+        chunks.push("Router-core#".to_string());
+        for (name, pat) in [("anclado", r"[#>]\s*$"), ("sin anclar", r"Router-core#")] {
+            let (tx, rx) = channel();
+            for c in &chunks {
+                tx.send(c.clone()).unwrap();
+            }
+            let re = Regex::new(pat).unwrap();
+            let mut buf = String::new();
+            let t = Instant::now();
+            let out = wait_for(&rx, &re, Duration::from_secs(120), &mut buf).unwrap();
+            println!("wait_for {name}: {} fragmentos, {} KB en {:?}", n + 1, out.len() / 1024, t.elapsed());
+        }
     }
 
     #[test]

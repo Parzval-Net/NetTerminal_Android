@@ -2,6 +2,7 @@
 name = "net-terminal"
 version = "0.5.3"
 description = "Cliente SSH, Telnet y Serial liviano y multiplataforma"
+repository = "https://github.com/Parzval-Net/Net_Terminal"
 authors = ["NetTerminal"]
 edition = "2021"
 
@@ -30,7 +31,7 @@ ureq = "2"
 sha2 = "0.10"
 if-addrs = "0.13"
 tauri-plugin-dialog = "2"
-zip = { version = "2", default-features = false, features = ["deflate"] }
+zip = { version = "9", default-features = false, features = ["deflate"] }
 md-5 = "0.10"
 tauri-plugin-updater = "2"
 

@@ -75,6 +75,8 @@ jobs:
       # Las compilaciones locales no la necesitan (sin --config no se generan artefactos).
       - run: npx tauri build ${{ matrix.args }} --config src-tauri/tauri.updater.conf.json
         env:
+          # La app se actualiza desde el repositorio que la compila (un fork, desde sí mismo).
+          NT_UPDATE_REPO: ${{ github.repository }}
           TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
           TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD }}
 
@@ -155,8 +157,11 @@ jobs:
         env:
           TAG: ${{ github.ref_name }}
           REPO: ${{ github.repository }}
+          GH_TOKEN: ${{ github.token }}
         run: |
           ver="${TAG#v}"
+          # Las mismas novedades van al release y al aviso dentro de la app.
+          gh api "repos/$REPO/releases/generate-notes" -f tag_name="$TAG" --jq .body > notas.md || echo "Ver el release $TAG" > notas.md
           mac=$(find artefactos -name '*.app.tar.gz' | head -1)
           cp "$mac" "artefactos/NetTerminal_${ver}_universal.app.tar.gz"
           cp "$mac.sig" "artefactos/NetTerminal_${ver}_universal.app.tar.gz.sig"
@@ -173,7 +178,7 @@ jobs:
           mac = pick(f"NetTerminal_{tag[1:]}_universal.app.tar.gz")
           index = {
               "version": tag[1:],
-              "notes": f"https://github.com/{repo}/releases/tag/{tag}",
+              "notes": open("notas.md").read().strip()[:4000],
               "pub_date": datetime.datetime.now(datetime.timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ"),
               "platforms": {
                   "darwin-aarch64": mac,
@@ -192,4 +197,4 @@ jobs:
         run: |
           mapfile -t files < <(find artefactos -type f \( -name '*.dmg' -o -name '*.exe' -o -name '*.AppImage' -o -name '*.deb' -o -name 'NetTerminal-portable.zip' -o -name 'NetTerminal_*_universal.app.tar.gz' -o -name 'latest.json' \))
           gh release create "${{ github.ref_name }}" "${files[@]}" \
-            --repo "${{ github.repository }}" --title "NetTerminal ${{ github.ref_name }}" --generate-notes
+            --repo "${{ github.repository }}" --title "NetTerminal ${{ github.ref_name }}" --notes-file notas.md

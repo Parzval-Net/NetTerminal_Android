@@ -54,8 +54,22 @@ export function LineChart({ points, unit, height = 180, xLabel, title }: Props) 
     let path = "";
     let area = "";
     let segStart: number | null = null;
+    // Con muchas más muestras que píxeles (hasta 3600 por sonda) se dibuja solo el mínimo
+    // y el máximo de cada columna: el trazo se ve igual y el path queda acotado al ancho.
+    const dense = n > (W - PAD.l - PAD.r) * 2;
+    let col = NaN;
+    let lo = 0;
+    let hi = 0;
+    const flushCol = () => {
+      if (Number.isNaN(col)) return;
+      const seg = `L${col},${y(hi)}L${col},${y(lo)}`;
+      path += seg;
+      area += seg;
+      col = NaN;
+    };
     points.forEach((p, i) => {
       if (p.y == null) {
+        flushCol();
         if (segStart != null) area += `L${xs[i - 1]},${H - PAD.b}Z`;
         segStart = null;
         return;
@@ -64,13 +78,25 @@ export function LineChart({ points, unit, height = 180, xLabel, title }: Props) 
         path += `M${xs[i]},${y(p.y)}`;
         area += `M${xs[i]},${H - PAD.b}L${xs[i]},${y(p.y)}`;
         segStart = i;
-      } else {
+      } else if (!dense) {
         path += `L${xs[i]},${y(p.y)}`;
         area += `L${xs[i]},${y(p.y)}`;
+      } else {
+        const c = Math.round(xs[i]);
+        if (c !== col) {
+          flushCol();
+          col = c;
+          lo = hi = p.y;
+        } else {
+          lo = Math.min(lo, p.y);
+          hi = Math.max(hi, p.y);
+        }
       }
     });
+    flushCol();
     if (segStart != null && n) area += `L${xs[n - 1]},${H - PAD.b}Z`;
-    const fails = points.map((p, i) => (p.y == null ? xs[i] : null)).filter((v): v is number => v != null);
+    const failX = points.map((p, i) => (p.y == null ? xs[i] : null)).filter((v): v is number => v != null);
+    const fails = dense ? [...new Set(failX.map(Math.round))] : failX;
     const ticks = [0, 0.5, 1].map((f) => ({ v: ymax * f, y: y(ymax * f) }));
     return { path, area, fails, ticks, xs, ymax };
   }, [points, H, W]);
@@ -80,10 +106,9 @@ export function LineChart({ points, unit, height = 180, xLabel, title }: Props) 
     if (!svg || !points.length) return;
     const r = svg.getBoundingClientRect();
     const x = ((e.clientX - r.left) / r.width) * W;
-    let best = 0;
-    xs.forEach((v, i) => {
-      if (Math.abs(v - x) < Math.abs(xs[best] - x)) best = i;
-    });
+    // Los puntos están equiespaciados: el más cercano se calcula sin recorrerlos.
+    const n = points.length;
+    const best = n <= 1 ? 0 : Math.max(0, Math.min(n - 1, Math.round(((x - PAD.l) / (W - PAD.l - PAD.r)) * (n - 1))));
     setHover(best);
   };
 

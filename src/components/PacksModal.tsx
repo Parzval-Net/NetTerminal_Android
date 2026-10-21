@@ -1,4 +1,4 @@
-import { useEffect, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import { invoke } from "@tauri-apps/api/core";
 import { open, save } from "@tauri-apps/plugin-dialog";
 import { AlertTriangle, Download, FileJson, Lock, Trash2, Upload, X } from "lucide-react";
@@ -58,14 +58,15 @@ export function PacksModal({ packs, disabled, onToggle, onChanged, onClose }: Pr
     await invoke("cmdpack_export", { id, dest }).catch((e) => setError(String(e)));
   };
 
-  const stats = (() => {
+  // Memorizado: mover o redimensionar la ventana vuelve a dibujar el modal.
+  const stats = useMemo(() => {
     const pack = preview?.pack;
     if (!pack) return null;
     const cat = buildCatalog([pack], [])[0];
     const by: Record<Risk, number> = { read: 0, change: 0, disruptive: 0 };
     cat.commands.forEach((c) => by[c.risk]++);
     return { by, escalated: cat.commands.filter((c) => c.escalated).length, total: cat.commands.length };
-  })();
+  }, [preview]);
 
   return (
     <div className="fixed inset-0 z-50 grid place-items-center bg-black/25 p-4" onMouseDown={onClose}>

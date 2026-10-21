@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { invoke } from "@tauri-apps/api/core";
 import { listen } from "@tauri-apps/api/event";
 import { alarmDown, alarmUp } from "./sound";
@@ -171,5 +171,6 @@ export function useMonitors(
     ([id, s]) => s.state === "down" && targets.some((t) => t.id === id && t.active),
   ).length;
 
-  return { samples, status, clear, silence, downCount };
+  // Mismo objeto mientras no lleguen muestras: las vistas memorizadas no se redibujan.
+  return useMemo(() => ({ samples, status, clear, silence, downCount }), [samples, status, clear, silence, downCount]);
 }

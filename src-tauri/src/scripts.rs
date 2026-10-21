@@ -52,8 +52,13 @@ struct ScriptEvent {
 pub fn scripts_dir(data_dir: &Path) -> PathBuf {
     let dir = data_dir.join("scripts");
     let _ = fs::create_dir_all(&dir);
-    // El helper se reescribe siempre para mantenerlo al día con la app.
-    let _ = fs::write(dir.join("netterminal.py"), HELPER);
+    // El helper se mantiene al día con la app, pero solo se reescribe si cambió: antes se
+    // escribía en cada listado y un script que arrancaba en ese momento podía importar
+    // el archivo truncado.
+    let helper = dir.join("netterminal.py");
+    if fs::read(&helper).map(|c| c != HELPER.as_bytes()).unwrap_or(true) {
+        let _ = fs::write(helper, HELPER);
+    }
     let example = dir.join("ejemplo_respaldo.py");
     if !example.exists() {
         let _ = fs::write(example, EXAMPLE);

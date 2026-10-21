@@ -26,6 +26,8 @@ const MAX_BODY: u64 = 1024 * 1024;
 const APPROVAL_TIMEOUT: Duration = Duration::from_secs(120);
 /// Solicitudes de aprobación simultáneas; el resto se rechaza (evita inundar al usuario).
 const MAX_PENDING_APPROVALS: usize = 3;
+/// Peticiones atendidas a la vez; el resto recibe 503.
+const MAX_CONCURRENT: usize = 16;
 
 #[derive(Clone, Default, PartialEq)]
 pub struct McpConfig {
@@ -85,9 +87,13 @@ impl McpServer {
         );
         *self.server.lock().unwrap() = Some(server.clone());
         std::thread::spawn(move || {
+            // Cupo de hilos: cada petición puede esperar hasta 120 s (aprobación o salida).
+            let active = Arc::new(std::sync::atomic::AtomicUsize::new(0));
             for req in server.incoming_requests() {
                 let app = app.clone();
-                std::thread::spawn(move || serve(app, req));
+                if let Err(req) = crate::servers::spawn_limited(&active, MAX_CONCURRENT, req, move |req| serve(app, req)) {
+                    reply(req, 503, None);
+                }
             }
         });
         Ok(format!("Escuchando en http://127.0.0.1:{}/mcp", cfg.port))

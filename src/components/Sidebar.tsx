@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
+import { memo, useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 import {
   ChevronRight,
   ChevronsDownUp,
@@ -69,7 +69,7 @@ function loadCollapsed(): Record<string, boolean> {
   }
 }
 
-export function Sidebar(p: Props) {
+export const Sidebar = memo(function Sidebar(p: Props) {
   const { sessions, extraFolders } = p;
   const [filter, setFilter] = useState("");
   const [collapsed, setCollapsed] = useState<Record<string, boolean>>(loadCollapsed);
@@ -417,7 +417,7 @@ export function Sidebar(p: Props) {
       {menu && <ContextMenu menu={menu} onClose={closeMenu} />}
     </aside>
   );
-}
+});
 
 /** Carpeta destino según la selección: la carpeta seleccionada o la de la sesión seleccionada. */
 function selectedFolder(sel: Selected, sessions: Session[]): string | undefined {

@@ -1,4 +1,4 @@
-import { useMemo, useState } from "react";
+import { memo, useCallback, useDeferredValue, useMemo, useRef, useState } from "react";
 import { writeText } from "@tauri-apps/plugin-clipboard-manager";
 import { openUrl } from "@tauri-apps/plugin-opener";
 import {
@@ -60,32 +60,80 @@ function CmdText({ cmd }: { cmd: string }) {
   );
 }
 
-export function CommandsPanel(p: Props) {
+/** Texto de búsqueda en minúsculas, calculado una vez por comando. */
+const haystacks = new WeakMap<CatalogEntry, string>();
+function haystack(c: CatalogEntry): string {
+  let h = haystacks.get(c);
+  if (h === undefined) {
+    h = `${c.cmd}\n${c.desc}\n${c.note ?? ""}`.toLowerCase();
+    haystacks.set(c, h);
+  }
+  return h;
+}
+
+interface RowActions {
+  run: (c: CatalogEntry, cmd: string) => void;
+  type: (cmd: string) => void;
+  copy: (c: CatalogEntry, cmd: string) => void;
+  fav: (key: string, fav: boolean) => void;
+  edit: (c: CatalogEntry) => void;
+}
+
+export const CommandsPanel = memo(function CommandsPanel(p: Props) {
   const [query, setQuery] = useState("");
+  // El filtro usa el valor diferido: el campo responde al instante aunque la lista sea larga.
+  const deferredQuery = useDeferredValue(query);
   const [onlyRead, setOnlyRead] = useState(false);
   const [onlyFav, setOnlyFav] = useState(false);
   const [open, setOpen] = useState<Record<string, boolean>>({ Sistema: true });
   const [copied, setCopied] = useState<string | null>(null);
   const vendor = p.catalog.find((v) => v.id === p.vendor) ?? p.catalog[0];
   const platform = vendor?.platforms.some((x) => x.id === p.platform) ? p.platform : null;
-  const favKey = (c: CatalogEntry) => `${vendor?.id}:${c.cmd}`;
+  const favSet = useMemo(() => new Set(p.favorites), [p.favorites]);
+
+  // Acciones estables para que las filas memorizadas no se vuelvan a dibujar en cada render.
+  const pRef = useRef(p);
+  pRef.current = p;
+  const actions = useMemo<RowActions>(
+    () => ({
+      run: (c, cmd) => pRef.current.onRun(c, cmd),
+      type: (cmd) => pRef.current.onType(cmd),
+      copy: async (c, cmd) => {
+        await writeText(cmd);
+        setCopied(c.cmd);
+        window.setTimeout(() => setCopied(null), 1500);
+      },
+      fav: (key, fav) => {
+        const f = pRef.current.favorites;
+        pRef.current.onFavorites(fav ? f.filter((x) => x !== key) : [...f, key]);
+      },
+      edit: (c) => pRef.current.onEdit(c),
+    }),
+    [],
+  );
 
   const groups = useMemo(() => {
     if (!vendor) return [];
-    const q = query.trim().toLowerCase();
+    const q = deferredQuery.trim().toLowerCase();
     const list = vendor.commands.filter(
       (c) =>
         appliesTo(c, platform) &&
-        (!q || c.cmd.toLowerCase().includes(q) || c.desc.toLowerCase().includes(q) || c.note?.toLowerCase().includes(q)) &&
+        (!q || haystack(c).includes(q)) &&
         (!onlyRead || c.risk === "read") &&
-        (!onlyFav || p.favorites.includes(`${vendor.id}:${c.cmd}`)),
+        (!onlyFav || favSet.has(`${vendor.id}:${c.cmd}`)),
     );
-    return CATEGORIES.map((cat) => [cat, list.filter((c) => c.cat === cat)] as const).filter(([, l]) => l.length);
-  }, [vendor, platform, query, onlyRead, onlyFav, p.favorites]);
+    const byCat = new Map<string, CatalogEntry[]>();
+    for (const c of list) {
+      const l = byCat.get(c.cat);
+      if (l) l.push(c);
+      else byCat.set(c.cat, [c]);
+    }
+    return CATEGORIES.filter((cat) => byCat.has(cat)).map((cat) => [cat, byCat.get(cat)!] as const);
+  }, [vendor, platform, deferredQuery, onlyRead, onlyFav, favSet]);
 
-  const filtering = !!query.trim() || onlyFav;
+  const filtering = !!deferredQuery.trim() || onlyFav;
   const total = groups.reduce((n, [, l]) => n + l.length, 0);
-  const platLabel = (id: string) => vendor?.platforms.find((x) => x.id === id)?.label ?? id;
+  const platLabel = useCallback((id: string) => vendor?.platforms.find((x) => x.id === id)?.label ?? id, [vendor]);
 
   return (
     <aside className="relative shrink-0 flex flex-col border-l border-line bg-chrome" style={{ width: p.width }}>
@@ -190,75 +238,20 @@ export function CommandsPanel(p: Props) {
                 <span className="ml-auto font-normal">{list.length}</span>
               </button>
               {isOpen &&
-                list.map((c) => {
-                  const cmd = commandFor(c, platform);
-                  const fav = p.favorites.includes(favKey(c));
-                  return (
-                    <div key={c.cmd} className="group rounded-lg px-2 py-1.5 hover:bg-hover">
-                      <div className="flex items-start gap-2">
-                        <div className="min-w-0 flex-1">
-                          <CmdText cmd={cmd} />
-                          <p className="text-[11.5px] text-muted mt-0.5 leading-snug">{c.desc}</p>
-                          {!platform && c.variants?.length ? (
-                            <div className="mt-1 space-y-0.5">
-                              {c.variants.map((v) => (
-                                <div key={v.cmd} className="text-[11px] text-muted">
-                                  <span className="font-medium">{v.platforms.map(platLabel).join(", ")}:</span>{" "}
-                                  <code className="font-mono">{v.cmd}</code>
-                                </div>
-                              ))}
-                            </div>
-                          ) : null}
-                          {c.note && <p className="text-[11px] text-muted mt-0.5 italic leading-snug">{c.note}</p>}
-                          <div className="flex flex-wrap items-center gap-x-2 mt-0.5 text-[10.5px]">
-                            <span className={riskStyle[c.risk]} title={c.escalated ? `El pack lo declaró "${riskLabel[c.declaredRisk]}"; la app lo subió por seguridad` : undefined}>
-                              {riskIcon[c.risk]} {riskLabel[c.risk]}
-                              {c.escalated ? " (ajustado)" : ""}
-                            </span>
-                            {c.platforms?.length ? <span className="text-muted">{c.platforms.map(platLabel).join(", ")}</span> : null}
-                            {!c.builtin && <span className="text-accent">{c.packName}</span>}
-                          </div>
-                        </div>
-                        <button
-                          title={fav ? "Quitar de favoritos" : "Agregar a favoritos"}
-                          onClick={() => p.onFavorites(fav ? p.favorites.filter((f) => f !== favKey(c)) : [...p.favorites, favKey(c)])}
-                          className={`shrink-0 mt-0.5 ${fav ? "text-warn" : "text-muted opacity-0 group-hover:opacity-100"}`}
-                        >
-                          <Star size={13} fill={fav ? "currentColor" : "none"} />
-                        </button>
-                      </div>
-                      <div className="hidden group-hover:flex flex-wrap gap-1 mt-1.5">
-                        <PanelBtn disabled={!p.target} onClick={() => p.onRun(c, cmd)} title={p.target ? `Ejecutar en ${p.target}` : "Conecta una sesión"}>
-                          <Play size={11} /> Ejecutar
-                        </PanelBtn>
-                        {!cmd.includes("\n") && (
-                          <PanelBtn disabled={!p.target} onClick={() => p.onType(cmd)} title="Escribir en la terminal sin Enter">
-                            <TextCursorInput size={11} /> Escribir
-                          </PanelBtn>
-                        )}
-                        <PanelBtn
-                          onClick={async () => {
-                            await writeText(cmd);
-                            setCopied(c.cmd);
-                            window.setTimeout(() => setCopied(null), 1500);
-                          }}
-                        >
-                          {copied === c.cmd ? <CornerDownLeft size={11} /> : <Copy size={11} />} {copied === c.cmd ? "Copiado" : "Copiar"}
-                        </PanelBtn>
-                        {c.source && (
-                          <PanelBtn onClick={() => openUrl(c.source!)} title={c.source}>
-                            <ExternalLink size={11} /> Fuente
-                          </PanelBtn>
-                        )}
-                        {c.packId.startsWith("user-") && (
-                          <PanelBtn onClick={() => p.onEdit(c)}>
-                            <Pencil size={11} /> Editar
-                          </PanelBtn>
-                        )}
-                      </div>
-                    </div>
-                  );
-                })}
+                list.map((c) => (
+                  <CommandRow
+                    key={c.cmd}
+                    c={c}
+                    cmd={commandFor(c, platform)}
+                    favKey={`${vendor.id}:${c.cmd}`}
+                    fav={favSet.has(`${vendor.id}:${c.cmd}`)}
+                    showVariants={!platform}
+                    platLabel={platLabel}
+                    target={p.target}
+                    copied={copied === c.cmd}
+                    actions={actions}
+                  />
+                ))}
             </div>
           );
         })}
@@ -271,7 +264,89 @@ export function CommandsPanel(p: Props) {
       </footer>
     </aside>
   );
-}
+});
+
+const CommandRow = memo(function CommandRow({
+  c,
+  cmd,
+  favKey,
+  fav,
+  showVariants,
+  platLabel,
+  target,
+  copied,
+  actions,
+}: {
+  c: CatalogEntry;
+  cmd: string;
+  favKey: string;
+  fav: boolean;
+  showVariants: boolean;
+  platLabel: (id: string) => string;
+  target: string | null;
+  copied: boolean;
+  actions: RowActions;
+}) {
+  return (
+    <div className="group rounded-lg px-2 py-1.5 hover:bg-hover [content-visibility:auto] [contain-intrinsic-size:auto_64px]">
+      <div className="flex items-start gap-2">
+        <div className="min-w-0 flex-1">
+          <CmdText cmd={cmd} />
+          <p className="text-[11.5px] text-muted mt-0.5 leading-snug">{c.desc}</p>
+          {showVariants && c.variants?.length ? (
+            <div className="mt-1 space-y-0.5">
+              {c.variants.map((v) => (
+                <div key={v.cmd} className="text-[11px] text-muted">
+                  <span className="font-medium">{v.platforms.map(platLabel).join(", ")}:</span>{" "}
+                  <code className="font-mono">{v.cmd}</code>
+                </div>
+              ))}
+            </div>
+          ) : null}
+          {c.note && <p className="text-[11px] text-muted mt-0.5 italic leading-snug">{c.note}</p>}
+          <div className="flex flex-wrap items-center gap-x-2 mt-0.5 text-[10.5px]">
+            <span className={riskStyle[c.risk]} title={c.escalated ? `El pack lo declaró "${riskLabel[c.declaredRisk]}"; la app lo subió por seguridad` : undefined}>
+              {riskIcon[c.risk]} {riskLabel[c.risk]}
+              {c.escalated ? " (ajustado)" : ""}
+            </span>
+            {c.platforms?.length ? <span className="text-muted">{c.platforms.map(platLabel).join(", ")}</span> : null}
+            {!c.builtin && <span className="text-accent">{c.packName}</span>}
+          </div>
+        </div>
+        <button
+          title={fav ? "Quitar de favoritos" : "Agregar a favoritos"}
+          onClick={() => actions.fav(favKey, fav)}
+          className={`shrink-0 mt-0.5 ${fav ? "text-warn" : "text-muted opacity-0 group-hover:opacity-100"}`}
+        >
+          <Star size={13} fill={fav ? "currentColor" : "none"} />
+        </button>
+      </div>
+      <div className="hidden group-hover:flex flex-wrap gap-1 mt-1.5">
+        <PanelBtn disabled={!target} onClick={() => actions.run(c, cmd)} title={target ? `Ejecutar en ${target}` : "Conecta una sesión"}>
+          <Play size={11} /> Ejecutar
+        </PanelBtn>
+        {!cmd.includes("\n") && (
+          <PanelBtn disabled={!target} onClick={() => actions.type(cmd)} title="Escribir en la terminal sin Enter">
+            <TextCursorInput size={11} /> Escribir
+          </PanelBtn>
+        )}
+        <PanelBtn onClick={() => actions.copy(c, cmd)}>
+          {copied ? <CornerDownLeft size={11} /> : <Copy size={11} />} {copied ? "Copiado" : "Copiar"}
+        </PanelBtn>
+        {c.source && (
+          <PanelBtn onClick={() => openUrl(c.source!)} title={c.source}>
+            <ExternalLink size={11} /> Fuente
+          </PanelBtn>
+        )}
+        {c.packId.startsWith("user-") && (
+          <PanelBtn onClick={() => actions.edit(c)}>
+            <Pencil size={11} /> Editar
+          </PanelBtn>
+        )}
+      </div>
+    </div>
+  );
+});
 
 function HeadBtn(props: React.ButtonHTMLAttributes<HTMLButtonElement>) {
   return <button {...props} className="w-7 h-7 shrink-0 grid place-items-center rounded-md text-muted hover:text-fg hover:bg-hover" />;

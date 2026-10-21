@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useState } from "react";
+import { memo, useCallback, useEffect, useState } from "react";
 import { invoke } from "@tauri-apps/api/core";
 import { Activity, ArrowDownUp, Calculator, Gauge, Network, Puzzle, Radar, ScrollText } from "lucide-react";
 import { TopologyTool } from "./TopologyTool";
@@ -47,7 +47,7 @@ interface Props {
  * Pestaña de herramientas. Cada módulo se monta al visitarlo y luego se mantiene
  * vivo oculto, para no perder servidores, logs ni mediciones al cambiar de sección.
  */
-export function ToolsView({ active, settings, update, monitors, connId, terminals, sessions, onConfirm, onScp, onOpenSession }: Props) {
+export const ToolsView = memo(function ToolsView({ active, settings, update, monitors, connId, terminals, sessions, onConfirm, onScp, onOpenSession }: Props) {
   const enabled = NAV.filter((n) => settings.modules[n.id] !== false);
   const [current, setCurrent] = useState<ModuleId>(enabled[0]?.id ?? "monitor");
   const [visited, setVisited] = useState<Set<ModuleId>>(new Set([current]));
@@ -158,4 +158,4 @@ export function ToolsView({ active, settings, update, monitors, connId, terminal
       </div>
     </div>
   );
-}
+});
