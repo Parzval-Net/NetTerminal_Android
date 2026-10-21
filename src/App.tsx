@@ -1,7 +1,8 @@
 import { Suspense, lazy, useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { invoke } from "@tauri-apps/api/core";
 import { Sidebar } from "./components/Sidebar";
-import { TabBar } from "./components/TabBar";
+import { TabBar, type TabBarProps } from "./components/TabBar";
+import { VerticalTabs } from "./components/VerticalTabs";
 import { StatusBar } from "./components/StatusBar";
 import { TerminalView, TermController } from "./components/TerminalView";
 import { CredChange, SessionModal } from "./components/SessionModal";
@@ -834,6 +835,7 @@ function Workspace({
     setExtraFolders: (extraFolders: string[]) => update({ extraFolders }),
     requestClose,
     toggleSidebar: () => setSidebarOpen((o) => !o),
+    setTabLayout: (tabLayout: Settings["tabLayout"]) => update({ tabLayout }),
     renameTab: (id: string, title: string | undefined) => setTabs((ts) => ts.map((t) => (t.id === id ? { ...t, title } : t))),
     duplicateTab: (id: string) => {
       const t = tabs.find((x) => x.id === id);
@@ -940,6 +942,33 @@ function Workspace({
     },
   });
 
+  // Mismos datos y acciones para la barra horizontal y la columna de pestañas verticales.
+  const tabBarProps: TabBarProps = {
+    tabs,
+    states,
+    activeId,
+    onSelect: setActiveId,
+    onClose: h.requestClose,
+    onNew: newLocal,
+    onToggleSidebar: h.toggleSidebar,
+    toolsOpen,
+    onOpenTools: openTools,
+    alerts: monitors.downCount,
+    onRename: h.renameTab,
+    onDuplicate: h.duplicateTab,
+    onReconnect: h.reconnectTab,
+    onDisconnect: h.disconnectTab,
+    onClearScrollback: h.clearScrollback,
+    onResetTerminal: h.resetTerminal,
+    onCopyAll: h.copyAll,
+    activity,
+    split: split?.layout ?? null,
+    onSplit: h.changeSplit,
+    alerted,
+    tabLayout: settings.tabLayout,
+    onTabLayout: h.setTabLayout,
+  };
+
   return (
     <div className="h-full flex bg-bg text-fg">
       {sidebarOpen && (
@@ -1010,31 +1039,10 @@ function Workspace({
           </div>
         )}
         <BroadcastBar />
-        <TabBar
-          tabs={tabs}
-          states={states}
-          activeId={activeId}
-          onSelect={setActiveId}
-          onClose={h.requestClose}
-          onNew={newLocal}
-          onToggleSidebar={h.toggleSidebar}
-          toolsOpen={toolsOpen}
-          onOpenTools={openTools}
-          alerts={monitors.downCount}
-          onRename={h.renameTab}
-          onDuplicate={h.duplicateTab}
-          onReconnect={h.reconnectTab}
-          onDisconnect={h.disconnectTab}
-          onClearScrollback={h.clearScrollback}
-          onResetTerminal={h.resetTerminal}
-          onCopyAll={h.copyAll}
-          activity={activity}
-          split={split?.layout ?? null}
-          onSplit={h.changeSplit}
-          alerted={alerted}
-        />
+        <TabBar {...tabBarProps} />
 
         <div className="flex-1 min-h-0 flex">
+        {settings.tabLayout === "vertical" && <VerticalTabs {...tabBarProps} />}
         <div className="relative flex-1 min-w-0">
           {tabs.map((t) => {
             const pane = splitOn ? split!.panes.indexOf(t.id) : -1;

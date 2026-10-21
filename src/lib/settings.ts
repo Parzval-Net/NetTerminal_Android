@@ -25,8 +25,12 @@ export interface Macro {
   script?: string;
 }
 
+export type TabLayout = "horizontal" | "vertical";
+
 export interface Settings {
   appTheme: "system" | "light" | "dark";
+  /** Pestañas arriba (por defecto) o en una columna a la izquierda. */
+  tabLayout: TabLayout;
   terminalTheme: string;
   fontFamily: string;
   fontSize: number;
@@ -96,6 +100,7 @@ export interface UpdateInfo {
 
 export const defaultSettings: Settings = {
   appTheme: "system",
+  tabLayout: "horizontal",
   terminalTheme: "auto",
   fontFamily: "",
   fontSize: 13,

@@ -143,6 +143,8 @@ const settings = {
 localStorage.clear();
 settings.appTheme = new URLSearchParams(location.search).get("theme") ?? "dark";
 if (location.search.includes("big=")) settings.confirmClose = false;
+if (location.search.includes("scene=vertical")) settings.tabLayout = "vertical";
+if (location.search.includes("collapsed=1")) localStorage.setItem("vtabsCollapsed", "true");
 const topology = {
   nodes: [
     { id: "core-sw01", name: "core-sw01", ip: "192.0.2.1", platform: "C9500-24Y4C", explored: true, x: 420, y: 80 },
@@ -457,6 +459,7 @@ const scenes = {
   credentials: async () => { await click("Ajustes"); await click("Credenciales"); },
   alerts: async () => { await open("core-sw01"); await click("Ajustes"); await click("Alertas"); },
   import: async () => { await click("Ajustes"); await click("Logs y datos"); await click("Desde archivo…"); await click("Leer ~/.ssh/config"); },
+  vertical: async () => { await open("core-sw01"); await open("ar-wan01"); await open("fw-perimetro"); await open("sw-acceso-norte"); },
   broadcast: async () => { await open("core-sw01"); await open("core-sw02"); await open("Shell local"); await click("Notas"); await click("Elegir a qué sesiones se envía"); },
 };
 const scene = new URLSearchParams(location.search).get("scene");

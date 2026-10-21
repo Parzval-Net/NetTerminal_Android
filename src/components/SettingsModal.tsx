@@ -183,6 +183,17 @@ export function SettingsModal({
                   />
                 </Item>
 
+                <Item label="Pestañas" hint="Verticales: en una columna a la izquierda">
+                  <Segmented
+                    value={s.tabLayout}
+                    onChange={(v) => onChange({ tabLayout: v })}
+                    options={[
+                      ["horizontal", "Horizontales"],
+                      ["vertical", "Verticales"],
+                    ]}
+                  />
+                </Item>
+
                 <div>
                   <Label>Tema de terminal</Label>
                   <div className="grid grid-cols-3 gap-2">
