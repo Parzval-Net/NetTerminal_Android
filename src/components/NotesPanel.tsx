@@ -1,7 +1,7 @@
-import { memo, useCallback, useEffect, useRef, useState } from "react";
+import { memo, useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { invoke } from "@tauri-apps/api/core";
 import type { ITheme } from "@xterm/xterm";
-import { ArrowDownToLine, Check, FolderOpen, Pencil, Plus, Send, SendHorizontal, Trash2, X } from "lucide-react";
+import { ArrowDownToLine, Check, FolderOpen, Pencil, Plus, Replace, Search, Send, SendHorizontal, Trash2, X } from "lucide-react";
 import { CodeEditor } from "./CodeEditor";
 import { BroadcastTargetPicker } from "./BroadcastTarget";
 import { Compiled } from "../lib/highlight";
@@ -11,6 +11,24 @@ import { isMac, modLabel } from "../lib/platform";
 interface NoteInfo {
   name: string;
   modified: number;
+}
+
+interface NoteMatch {
+  name: string;
+  line: number;
+  snippet: string;
+}
+
+/** Posiciones de `find` en `text` (texto plano, opcionalmente sin distinguir mayúsculas). */
+function occurrences(text: string, find: string, matchCase: boolean): number[] {
+  if (!find) return [];
+  const hay = matchCase ? text : text.toLowerCase();
+  const needle = matchCase ? find : find.toLowerCase();
+  // toLowerCase puede cambiar el largo en algunos caracteres: entonces se busca tal cual.
+  if (hay.length !== text.length || needle.length !== find.length) return occurrences(text, find, true);
+  const out: number[] = [];
+  for (let i = hay.indexOf(needle); i !== -1 && out.length < 10000; i = hay.indexOf(needle, i + needle.length)) out.push(i);
+  return out;
 }
 
 interface Props {
@@ -36,6 +54,13 @@ export const NotesPanel = memo(function NotesPanel(p: Props) {
   const [confirmDelete, setConfirmDelete] = useState(false);
   const [notice, setNotice] = useState("");
   const editorRef = useRef<HTMLTextAreaElement>(null);
+  // Búsqueda en todas las notas y buscar/reemplazar en la actual (cerradas por defecto).
+  const [tool, setTool] = useState<"search" | "replace" | null>(null);
+  const [query, setQuery] = useState("");
+  const [results, setResults] = useState<NoteMatch[] | null>(null);
+  const [find, setFind] = useState("");
+  const [replaceWith, setReplaceWith] = useState("");
+  const [matchCase, setMatchCase] = useState(false);
   const saveTimer = useRef<number | undefined>(undefined);
   const pendingSave = useRef<{ name: string; content: string } | null>(null);
 
@@ -97,6 +122,50 @@ export const NotesPanel = memo(function NotesPanel(p: Props) {
     };
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
+
+  useEffect(() => {
+    if (tool !== "search" || query.trim().length < 2) return setResults(null);
+    const t = window.setTimeout(async () => {
+      await flushSave();
+      invoke<NoteMatch[]>("search_notes", { query })
+        .then(setResults)
+        .catch(() => setResults([]));
+    }, 250);
+    return () => window.clearTimeout(t);
+  }, [tool, query, flushSave]);
+
+  /** Abre la nota y selecciona la línea encontrada. */
+  const jumpTo = async (m: NoteMatch) => {
+    if (m.name !== current) await open(m.name);
+    window.setTimeout(() => {
+      const ta = editorRef.current;
+      if (!ta) return;
+      const lines = ta.value.split("\n");
+      const start = lines.slice(0, m.line - 1).reduce((n, l) => n + l.length + 1, 0);
+      ta.focus();
+      ta.setSelectionRange(start, start + (lines[m.line - 1]?.length ?? 0));
+      ta.scrollTop = Math.max(0, (m.line - 1) * p.fontSize * 1.5 - ta.clientHeight / 3);
+    }, 30);
+  };
+
+  const hits = useMemo(
+    () => (tool === "replace" ? occurrences(content, find, matchCase) : []),
+    [tool, content, find, matchCase],
+  );
+
+  const replaceAll = () => {
+    if (!hits.length) return;
+    let out = "";
+    let last = 0;
+    for (const i of hits) {
+      out += content.slice(last, i) + replaceWith;
+      last = i + find.length;
+    }
+    edit(out + content.slice(last));
+    flash(`${hits.length} reemplazos`);
+  };
+
+  const toggleTool = (t: "search" | "replace") => setTool((cur) => (cur === t ? null : t));
 
   const edit = (text: string) => {
     setContent(text);
@@ -204,6 +273,12 @@ export const NotesPanel = memo(function NotesPanel(p: Props) {
             ))}
           </select>
         )}
+        <HeadBtn title="Buscar en todas las notas" onClick={() => toggleTool("search")} className={tool === "search" ? "!text-accent" : ""}>
+          <Search size={14} />
+        </HeadBtn>
+        <HeadBtn title="Buscar y reemplazar en esta nota" onClick={() => toggleTool("replace")} className={tool === "replace" ? "!text-accent" : ""}>
+          <Replace size={14} />
+        </HeadBtn>
         <HeadBtn title="Nueva nota" onClick={() => create()}>
           <Plus size={15} />
         </HeadBtn>
@@ -225,6 +300,85 @@ export const NotesPanel = memo(function NotesPanel(p: Props) {
           <X size={15} />
         </HeadBtn>
       </header>
+
+      {tool === "search" && (
+        <div className="border-b border-line px-2 py-1.5 space-y-1">
+          <input
+            autoFocus
+            className="field !h-7 !text-[12px]"
+            placeholder="Buscar en todas las notas (mín. 2 caracteres)"
+            value={query}
+            onChange={(e) => setQuery(e.target.value)}
+            onKeyDown={(e) => {
+              if (e.key === "Escape") setTool(null);
+              if (e.key === "Enter" && results?.[0]) jumpTo(results[0]);
+            }}
+          />
+          {results && (
+            <ul className="max-h-[35vh] overflow-y-auto text-[12px]">
+              {results.length === 0 && <li className="px-1 py-1 text-muted">Sin coincidencias</li>}
+              {results.map((m, i) => (
+                <li key={i}>
+                  <button
+                    onClick={() => jumpTo(m)}
+                    className="w-full text-left px-1.5 py-1 rounded hover:bg-hover"
+                    title={`${m.name}, línea ${m.line}`}
+                  >
+                    <span className="block text-[11px] text-muted truncate">
+                      {m.name} · línea {m.line}
+                    </span>
+                    <span className="block truncate font-mono">{m.snippet}</span>
+                  </button>
+                </li>
+              ))}
+              {results.length >= 200 && <li className="px-1 py-1 text-muted">Se muestran los primeros 200 resultados</li>}
+            </ul>
+          )}
+        </div>
+      )}
+      {tool === "replace" && (
+        <div className="border-b border-line px-2 py-1.5 space-y-1 text-[12px]">
+          <div className="flex items-center gap-1">
+            <input
+              autoFocus
+              className="field !h-7 !text-[12px] flex-1"
+              placeholder="Buscar en esta nota"
+              value={find}
+              onChange={(e) => setFind(e.target.value)}
+              onKeyDown={(e) => e.key === "Escape" && setTool(null)}
+            />
+            <button
+              title="Distinguir mayúsculas"
+              onClick={() => setMatchCase((v) => !v)}
+              className={`w-7 h-7 shrink-0 rounded-md text-[11px] font-semibold hover:bg-hover ${matchCase ? "text-accent bg-hover" : "text-muted"}`}
+            >
+              Aa
+            </button>
+          </div>
+          <div className="flex items-center gap-1">
+            <input
+              className="field !h-7 !text-[12px] flex-1"
+              placeholder="Reemplazar por"
+              value={replaceWith}
+              onChange={(e) => setReplaceWith(e.target.value)}
+              onKeyDown={(e) => {
+                if (e.key === "Escape") setTool(null);
+                if (e.key === "Enter") replaceAll();
+              }}
+            />
+            <button
+              onClick={replaceAll}
+              disabled={!hits.length}
+              className="px-2 h-7 shrink-0 rounded-md border border-line hover:bg-hover disabled:opacity-40"
+            >
+              Reemplazar todo
+            </button>
+          </div>
+          <p className="text-[11px] text-muted">
+            {find ? `${hits.length >= 10000 ? "10.000+" : hits.length} ${hits.length === 1 ? "coincidencia" : "coincidencias"} en ${current ?? "la nota"}` : "Texto plano, sin expresiones regulares"}
+          </p>
+        </div>
+      )}
 
       <CodeEditor
         ref={editorRef}

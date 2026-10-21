@@ -1,7 +1,7 @@
 import { useEffect, useState } from "react";
 import { invoke } from "@tauri-apps/api/core";
-import { RefreshCw, X } from "lucide-react";
-import { SerialPortInfo, Session, SessionType } from "../types";
+import { AlertTriangle, Plus, RefreshCw, Trash2, X } from "lucide-react";
+import { SerialPortInfo, Session, SessionType, Tunnel, TunnelKind } from "../types";
 import { SessionIcon, typeLabel } from "./SessionIcon";
 import { vendorSchemes } from "../lib/highlight";
 import { normPath } from "../lib/folders";
@@ -68,12 +68,17 @@ export function SessionModal({ initial, defaultFolder, folders, onClose, onSave 
       port: p.port === DEFAULT_PORT[p.type] || !p.port ? DEFAULT_PORT[type] : p.port,
     }));
 
+  const [error, setError] = useState("");
+
   const submit = (connect: boolean) => {
+    const tunnelError = s.type === "ssh" ? validateTunnels(s.tunnels ?? []) : null;
+    if (tunnelError) return setError(tunnelError);
     const name =
       s.name.trim() ||
       (s.type === "serial" ? s.serial_port : s.type === "local" ? "Terminal local" : s.host) ||
       typeLabel[s.type];
-    onSave({ ...s, name, folder: normPath(s.folder) || undefined }, connect);
+    const tunnels = s.type === "ssh" && s.tunnels?.length ? s.tunnels : undefined;
+    onSave({ ...s, name, folder: normPath(s.folder) || undefined, tunnels }, connect);
   };
 
   const remote = s.type === "ssh" || s.type === "telnet" || s.type === "raw";
@@ -204,6 +209,13 @@ export function SessionModal({ initial, defaultFolder, folders, onClose, onSave 
                   onChange={(e) => set("ssh_args", e.target.value)}
                 />
               </Field>
+              <TunnelsEditor
+                tunnels={s.tunnels ?? []}
+                onChange={(t) => {
+                  setError("");
+                  set("tunnels", t.length ? t : undefined);
+                }}
+              />
               <label className="flex items-start gap-2.5 text-[12.5px]">
                 <input
                   type="checkbox"
@@ -418,7 +430,8 @@ export function SessionModal({ initial, defaultFolder, folders, onClose, onSave 
           </div>
         )}
 
-        <footer className="flex justify-end gap-2 px-5 py-3 border-t border-line">
+        <footer className="flex items-center justify-end gap-2 px-5 py-3 border-t border-line">
+          {error && <span className="mr-auto text-[11.5px] text-danger truncate">{error}</span>}
           <button
             type="button"
             onClick={() => submit(false)}
@@ -449,5 +462,121 @@ function Field({ label, children }: { label: string; children: React.ReactNode }
       <span className="block mb-1 text-[11.5px] font-medium text-muted">{label}</span>
       {children}
     </label>
+  );
+}
+
+const isPort = (p?: number) => !!p && Number.isInteger(p) && p >= 1 && p <= 65535;
+const ADDR = /^\[?[A-Za-z0-9.:_%*-]+\]?$/;
+
+/** Mensaje de error del primer túnel inválido, o null. */
+function validateTunnels(list: Tunnel[]): string | null {
+  for (const [i, t] of list.entries()) {
+    const n = `Túnel ${i + 1}`;
+    if (!isPort(t.listen_port)) return `${n}: puerto de escucha inválido (1-65535)`;
+    if (t.bind && (!ADDR.test(t.bind.trim()) || t.bind.trim().startsWith("-"))) return `${n}: dirección de escucha inválida`;
+    if (t.kind !== "dynamic") {
+      const h = t.dest_host?.trim() ?? "";
+      if (!h || !ADDR.test(h) || h.startsWith("-") || h.includes("*")) return `${n}: destino inválido`;
+      if (!isPort(t.dest_port)) return `${n}: puerto de destino inválido (1-65535)`;
+    }
+  }
+  return list.length > 32 ? "Máximo 32 túneles por sesión" : null;
+}
+
+const exposed = (t: Tunnel) => ["0.0.0.0", "*", "::", "[::]"].includes(t.bind?.trim() ?? "");
+
+/** Reglas de túnel estructuradas: Local (-L), Remoto (-R) y Dinámico (-D, SOCKS). */
+function TunnelsEditor({ tunnels, onChange }: { tunnels: Tunnel[]; onChange: (t: Tunnel[]) => void }) {
+  const upd = (i: number, p: Partial<Tunnel>) => onChange(tunnels.map((t, k) => (k === i ? { ...t, ...p } : t)));
+  const num = (v: string) => (v.trim() ? Number(v.replace(/\D/g, "")) || 0 : undefined) as number;
+  const warnExposed = tunnels.some(exposed);
+  const warnRemote = tunnels.some((t) => t.kind === "remote");
+  return (
+    <details className="rounded-lg border border-line" open={tunnels.length > 0}>
+      <summary className="px-3 h-9 flex items-center text-[12.5px] cursor-default">
+        Túneles SSH{tunnels.length ? ` (${tunnels.length})` : ""}
+      </summary>
+      <div className="px-3 pb-3 space-y-1.5">
+        {tunnels.map((t, i) => (
+          <div key={i} className="flex items-center gap-1 text-[12px]">
+            <select
+              className="field !h-7 !w-[54px] !px-1 !text-[12px]"
+              title="Local (-L): puerto del PC hacia un destino visto desde el servidor. Remoto (-R): puerto del servidor hacia tu PC. Dinámico (-D): proxy SOCKS."
+              value={t.kind}
+              onChange={(e) => upd(i, { kind: e.target.value as TunnelKind })}
+            >
+              <option value="local">-L</option>
+              <option value="remote">-R</option>
+              <option value="dynamic">-D</option>
+            </select>
+            <input
+              className="field !h-7 !w-[84px] !text-[12px] font-mono"
+              placeholder="127.0.0.1"
+              title="Dirección de escucha"
+              value={t.bind ?? ""}
+              onChange={(e) => upd(i, { bind: e.target.value || undefined })}
+            />
+            <input
+              className="field !h-7 !w-[54px] !text-[12px] font-mono"
+              inputMode="numeric"
+              placeholder="1080"
+              title="Puerto de escucha"
+              value={t.listen_port || ""}
+              onChange={(e) => upd(i, { listen_port: num(e.target.value) })}
+            />
+            {t.kind !== "dynamic" ? (
+              <>
+                <span className="text-muted">→</span>
+                <input
+                  className="field !h-7 flex-1 min-w-0 !text-[12px] font-mono"
+                  placeholder="192.0.2.10"
+                  title="Host de destino"
+                  value={t.dest_host ?? ""}
+                  onChange={(e) => upd(i, { dest_host: e.target.value || undefined })}
+                />
+                <input
+                  className="field !h-7 !w-[54px] !text-[12px] font-mono"
+                  inputMode="numeric"
+                  placeholder="443"
+                  title="Puerto de destino"
+                  value={t.dest_port ?? ""}
+                  onChange={(e) => upd(i, { dest_port: num(e.target.value) })}
+                />
+              </>
+            ) : (
+              <span className="flex-1 text-muted text-[11.5px] truncate">Proxy SOCKS</span>
+            )}
+            <button
+              type="button"
+              title="Quitar túnel"
+              onClick={() => onChange(tunnels.filter((_, k) => k !== i))}
+              className="w-7 h-7 shrink-0 grid place-items-center rounded-md text-muted hover:text-danger hover:bg-hover"
+            >
+              <Trash2 size={13} />
+            </button>
+          </div>
+        ))}
+        <button
+          type="button"
+          disabled={tunnels.length >= 32}
+          onClick={() => onChange([...tunnels, { kind: "local", listen_port: 0 } as Tunnel])}
+          className="flex items-center gap-1.5 px-2 h-7 rounded-md text-[12px] text-muted hover:text-fg hover:bg-hover disabled:opacity-40"
+        >
+          <Plus size={13} /> Agregar túnel
+        </button>
+        {(warnExposed || warnRemote) && (
+          <div className="flex gap-2 p-2 rounded-md border border-warn/40 text-[11.5px]">
+            <AlertTriangle size={13} className="text-warn shrink-0 mt-0.5" />
+            <div className="space-y-0.5">
+              {warnExposed && <p>Escuchar en 0.0.0.0 o * expone el puerto a toda la red, no solo a este PC.</p>}
+              {warnRemote && <p>Un túnel remoto (-R) abre un puerto en el servidor que llega hasta tu PC o tu red.</p>}
+            </div>
+          </div>
+        )}
+        <p className="text-[11.5px] text-muted">
+          Se validan antes de conectar. Escucha por defecto en 127.0.0.1. Los argumentos extra se mantienen aparte.
+        </p>
+      </div>
+    </details>
   );
 }

@@ -731,6 +731,61 @@ fn check_extra_args(args: &[String]) -> Result<(), String> {
     Ok(())
 }
 
+/// Máximo de túneles por sesión.
+const MAX_TUNNELS: usize = 32;
+
+/// Dirección de un túnel (escucha o destino): IPv4, IPv6, nombre o "*". IPv6 va entre corchetes.
+fn tunnel_addr(value: &str, field: &str) -> Result<String, String> {
+    let v = value.trim();
+    let v = v.strip_prefix('[').and_then(|x| x.strip_suffix(']')).unwrap_or(v);
+    let ok = !v.is_empty()
+        && v.len() <= 253
+        && !v.starts_with('-')
+        && v.chars().all(|c| c.is_ascii_alphanumeric() || matches!(c, '.' | ':' | '-' | '_' | '*' | '%'));
+    if !ok {
+        return Err(format!("{field} del túnel es inválido: {v}"));
+    }
+    Ok(if v.contains(':') { format!("[{v}]") } else { v.to_string() })
+}
+
+/// Convierte los túneles estructurados en argumentos -L/-R/-D validados.
+pub(crate) fn tunnel_args(list: &[crate::models::Tunnel]) -> Result<Vec<String>, String> {
+    use crate::models::TunnelKind;
+    if list.len() > MAX_TUNNELS {
+        return Err(format!("Máximo {MAX_TUNNELS} túneles por sesión"));
+    }
+    let mut out = Vec::with_capacity(list.len() * 2);
+    for t in list {
+        if t.listen_port == 0 {
+            return Err("Puerto de escucha del túnel inválido".into());
+        }
+        let bind = tunnel_addr(
+            t.bind.as_deref().filter(|b| !b.trim().is_empty()).unwrap_or("127.0.0.1"),
+            "La dirección de escucha",
+        )?;
+        let spec = if t.kind == TunnelKind::Dynamic {
+            format!("{bind}:{}", t.listen_port)
+        } else {
+            let host = tunnel_addr(t.dest_host.as_deref().unwrap_or(""), "El destino")?;
+            if host.contains('*') {
+                return Err("El destino del túnel no puede ser \"*\"".into());
+            }
+            let port = t.dest_port.filter(|p| *p != 0).ok_or("Falta el puerto de destino del túnel")?;
+            format!("{bind}:{}:{host}:{port}", t.listen_port)
+        };
+        let flag = match t.kind {
+            TunnelKind::Local => "-L",
+            TunnelKind::Remote => "-R",
+            TunnelKind::Dynamic => "-D",
+        };
+        out.push(flag.to_string());
+        out.push(spec);
+    }
+    // Defensa en profundidad: pasan por la misma validación que los argumentos extra.
+    check_extra_args(&out)?;
+    Ok(out)
+}
+
 fn ssh_command(s: &Session) -> Result<CommandBuilder, String> {
     let host = safe_target(s.host.as_deref().unwrap_or(""), "el host")?;
     let mut cmd = CommandBuilder::new(SSH_BIN);
@@ -756,6 +811,9 @@ fn ssh_command(s: &Session) -> Result<CommandBuilder, String> {
         let extra = split_args(extra);
         check_extra_args(&extra)?;
         cmd.args(extra);
+    }
+    if let Some(tunnels) = s.tunnels.as_deref() {
+        cmd.args(tunnel_args(tunnels)?);
     }
     // "--" cierra las opciones: el host nunca se interpreta como opción.
     cmd.arg("--");
@@ -1248,6 +1306,48 @@ mod tests {
         assert!(bad("-- otro-host"));
         assert!(bad("-L"));
         assert!(!bad("-vvv -C -o ServerAliveCountMax=3 -J bastion"));
+    }
+
+    #[test]
+    fn builds_and_validates_tunnels() {
+        use crate::models::{Tunnel, TunnelKind};
+        let t = |kind, bind: Option<&str>, lp, host: Option<&str>, dp| Tunnel {
+            kind,
+            bind: bind.map(String::from),
+            listen_port: lp,
+            dest_host: host.map(String::from),
+            dest_port: dp,
+        };
+        let ok = super::tunnel_args(&[
+            t(TunnelKind::Local, None, 8443, Some("192.0.2.10"), Some(443)),
+            t(TunnelKind::Remote, Some("0.0.0.0"), 9000, Some("localhost"), Some(22)),
+            t(TunnelKind::Dynamic, Some(""), 1080, None, None),
+            t(TunnelKind::Local, Some("::1"), 8080, Some("[2001:db8::5]"), Some(80)),
+        ])
+        .unwrap();
+        assert_eq!(
+            ok,
+            vec![
+                "-L", "127.0.0.1:8443:192.0.2.10:443",
+                "-R", "0.0.0.0:9000:localhost:22",
+                "-D", "127.0.0.1:1080",
+                "-L", "[::1]:8080:[2001:db8::5]:80",
+            ]
+        );
+        // Inyección por destino o dirección, puertos en cero y destinos faltantes.
+        for bad in [
+            t(TunnelKind::Local, None, 80, Some("-oProxyCommand=sh"), Some(1)),
+            t(TunnelKind::Local, None, 80, Some("a b"), Some(1)),
+            t(TunnelKind::Local, Some("1.2.3.4 -v"), 80, Some("h"), Some(1)),
+            t(TunnelKind::Local, None, 0, Some("h"), Some(1)),
+            t(TunnelKind::Local, None, 80, Some("h"), None),
+            t(TunnelKind::Remote, None, 80, None, Some(22)),
+            t(TunnelKind::Local, None, 80, Some("*"), Some(22)),
+        ] {
+            assert!(super::tunnel_args(std::slice::from_ref(&bad)).is_err(), "{bad:?}");
+        }
+        let many: Vec<Tunnel> = (1..=33).map(|p| t(TunnelKind::Dynamic, None, p, None, None)).collect();
+        assert!(super::tunnel_args(&many).is_err());
     }
 
     #[test]

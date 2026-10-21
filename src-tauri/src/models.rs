@@ -38,6 +38,9 @@ pub struct Session {
     /// Argumentos extra para ssh (túneles -L/-D, -A, -o ...).
     #[serde(default)]
     pub ssh_args: Option<String>,
+    /// Túneles SSH estructurados (-L, -R, -D). Se validan antes de pasarlos a ssh.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub tunnels: Option<Vec<Tunnel>>,
     #[serde(default)]
     pub serial_port: Option<String>,
     #[serde(default)]
@@ -73,6 +76,67 @@ pub struct Session {
     pub scp: Option<ScpSpec>,
     #[serde(default)]
     pub created_at: String,
+}
+
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq)]
+#[serde(rename_all = "lowercase")]
+pub enum TunnelKind {
+    /// -L: puerto local hacia un destino visto desde el servidor.
+    Local,
+    /// -R: puerto en el servidor hacia un destino visto desde el PC.
+    Remote,
+    /// -D: proxy SOCKS local.
+    Dynamic,
+}
+
+/// Regla de túnel SSH.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct Tunnel {
+    pub kind: TunnelKind,
+    /// Dirección donde escucha (por defecto 127.0.0.1).
+    #[serde(default)]
+    pub bind: Option<String>,
+    pub listen_port: u16,
+    /// Destino (no aplica a -D).
+    #[serde(default)]
+    pub dest_host: Option<String>,
+    #[serde(default)]
+    pub dest_port: Option<u16>,
+}
+
+impl Session {
+    /// Sesión vacía (para importadores): solo nombre y tipo.
+    pub fn blank(name: String, session_type: SessionType) -> Self {
+        Session {
+            id: String::new(),
+            name,
+            session_type,
+            folder: None,
+            host: None,
+            port: None,
+            username: None,
+            identity_file: None,
+            legacy_ssh: None,
+            jump_host: None,
+            ssh_args: None,
+            tunnels: None,
+            serial_port: None,
+            baud_rate: None,
+            data_bits: None,
+            stop_bits: None,
+            parity: None,
+            flow_control: None,
+            highlight: None,
+            on_connect: None,
+            newline: None,
+            local_echo: None,
+            encoding: None,
+            auto_reconnect: None,
+            platform: None,
+            scp: None,
+            created_at: String::new(),
+        }
+    }
 }
 
 /// Copia SCP entre la carpeta compartida del PC y el equipo.
