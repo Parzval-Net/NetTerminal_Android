@@ -34,3 +34,5 @@ function tone(freqs: number[], step = 0.18, type: OscillatorType = "sine", volum
 export const alarmDown = () => tone([880, 660, 440, 880, 660, 440], 0.16, "square", 0.18);
 /** Recuperación: dos tonos ascendentes, suaves. */
 export const alarmUp = () => tone([523, 784], 0.2, "sine", 0.25);
+/** Alerta por palabra clave: dos tonos breves, distintos de los del monitoreo. */
+export const alertTone = () => tone([988, 740], 0.14, "triangle", 0.22);

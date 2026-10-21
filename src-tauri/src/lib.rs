@@ -2,6 +2,7 @@ mod cmdpacks;
 mod connection;
 mod expect;
 mod filexfer;
+mod logfile;
 mod updates;
 mod mcp;
 mod monitor;
@@ -13,6 +14,7 @@ mod models;
 mod notes;
 mod session_store;
 mod telnet;
+mod triggers;
 
 use connection::ConnectionManager;
 use models::{SerialPortInfo, Session};
@@ -76,7 +78,6 @@ async fn connect(
     cols: u16,
     rows: u16,
     on_data: Channel<InvokeResponseBody>,
-    on_exit: Channel<String>,
     app: tauri::AppHandle,
 ) -> Result<(), String> {
     // SCP: las rutas locales se resuelven aquí, solo dentro de la carpeta compartida.
@@ -101,7 +102,7 @@ async fn connect(
     tauri::async_runtime::spawn_blocking(move || {
         app.state::<AppState>()
             .conns
-            .connect(id, &session, cols, rows, on_data, on_exit)
+            .connect(id, &session, cols, rows, on_data)
     })
     .await
     .map_err(|e| e.to_string())?
@@ -128,16 +129,38 @@ fn send_break(id: String, state: State<'_, AppState>) -> Result<(), String> {
 }
 
 #[tauri::command]
+#[allow(clippy::too_many_arguments)]
 fn set_logging(
     id: String,
     enabled: bool,
     timestamps: Option<bool>,
     resume: Option<String>,
+    pattern: Option<String>,
+    append: Option<bool>,
+    rotate: Option<bool>,
+    mask: Option<bool>,
     state: State<'_, AppState>,
 ) -> Result<Option<String>, String> {
-    state
-        .conns
-        .set_logging(&id, enabled, timestamps.unwrap_or(false), &state.logs_dir(), resume.as_deref())
+    let opts = logfile::LogOptions {
+        timestamps: timestamps.unwrap_or(false),
+        pattern: pattern.unwrap_or_else(|| logfile::DEFAULT_PATTERN.into()),
+        append: append.unwrap_or(false),
+        rotate_daily: rotate.unwrap_or(false),
+        // Sin indicación se enmascara: es lo seguro.
+        mask: mask.unwrap_or(true),
+    };
+    state.conns.set_logging(&id, enabled, opts, &state.logs_dir(), resume.as_deref())
+}
+
+/// Reglas de alerta por palabra clave (solo las activas). Lista vacía: apagadas.
+#[tauri::command]
+fn alerts_configure(rules: Vec<triggers::Rule>, app: tauri::AppHandle, state: State<'_, AppState>) -> Result<(), String> {
+    state.conns.triggers().configure(
+        rules,
+        std::sync::Arc::new(move |hit| {
+            let _ = app.emit("alert-hit", hit);
+        }),
+    )
 }
 
 /// Abre la carpeta de logs ("logs") o la de datos ("data") en el explorador del sistema.
@@ -616,6 +639,7 @@ pub fn run() {
             disconnect,
             send_break,
             set_logging,
+            alerts_configure,
             open_dir,
             data_dir,
             get_settings,

@@ -26,6 +26,8 @@ interface Props {
   onCopyAll: (id: string) => void;
   /** Pestañas con salida nueva sin ver. */
   activity: Set<string>;
+  /** Pestañas con una alerta por palabra clave sin ver. */
+  alerted?: Set<string>;
 }
 
 export const statusColor: Record<ConnStatus, string> = {
@@ -53,6 +55,7 @@ export const TabBar = memo(function TabBar({
   onResetTerminal,
   onCopyAll,
   activity,
+  alerted,
 }: Props) {
   const [editing, setEditing] = useState<string | null>(null);
   const [menu, setMenu] = useState<{ x: number; y: number; items: [string, React.ReactNode, () => void, boolean?][] } | null>(null);
@@ -161,7 +164,11 @@ export const TabBar = memo(function TabBar({
               ) : (
                 <span className={`truncate flex-1 ${t.title ? "italic" : ""}`}>{tabTitle(t)}</span>
               )}
-              {activity.has(t.id) && !active && (
+              {alerted?.has(t.id) && !active ? (
+                <span className="text-[10px] font-semibold text-danger shrink-0" title="Alerta por palabra clave">
+                  ▲
+                </span>
+              ) : activity.has(t.id) && !active && (
                 <span className="text-[10px] font-semibold text-accent shrink-0" title="Salida nueva">
                   ●
                 </span>

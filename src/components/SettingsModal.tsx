@@ -1,6 +1,6 @@
 import { useEffect, useState } from "react";
 import { invoke } from "@tauri-apps/api/core";
-import { Blocks, Bot, Check, FolderOpen, Highlighter, Info, Palette, ScrollText, SquareTerminal, X } from "lucide-react";
+import { BellRing, Blocks, Bot, Check, FolderOpen, Highlighter, Info, Palette, ScrollText, SquareTerminal, X } from "lucide-react";
 import { openUrl } from "@tauri-apps/plugin-opener";
 import logo from "../assets/logo.svg";
 import type { ModuleId } from "../lib/settings";
@@ -8,6 +8,8 @@ import { AiSettings } from "./AiSettings";
 import { useDragResize } from "../lib/useDragResize";
 import type { ITheme } from "@xterm/xterm";
 import { HighlightSettings } from "./HighlightSettings";
+import { AlertSettings } from "./AlertSettings";
+import { allFolders } from "../lib/folders";
 import { readText, writeText } from "@tauri-apps/plugin-clipboard-manager";
 import { Settings, UpdateInfo, defaultSettings } from "../lib/settings";
 import { Session } from "../types";
@@ -26,7 +28,7 @@ interface Props {
   onClose: () => void;
 }
 
-export type Section = "appearance" | "highlight" | "terminal" | "modules" | "ai" | "data" | "about";
+export type Section = "appearance" | "highlight" | "terminal" | "alerts" | "modules" | "ai" | "data" | "about";
 
 const MODULES: [ModuleId, string, string][] = [
   ["monitor", "Monitoreo", "Sondas ICMP/TCP con gráfico y alarma sonora"],
@@ -43,6 +45,7 @@ const sections: { id: Section; label: string; Icon: typeof Palette }[] = [
   { id: "appearance", label: "Apariencia", Icon: Palette },
   { id: "highlight", label: "Resaltado", Icon: Highlighter },
   { id: "terminal", label: "Terminal", Icon: SquareTerminal },
+  { id: "alerts", label: "Alertas", Icon: BellRing },
   { id: "modules", label: "Módulos", Icon: Blocks },
   { id: "ai", label: "Agentes IA", Icon: Bot },
   { id: "data", label: "Logs y datos", Icon: ScrollText },
@@ -326,6 +329,10 @@ export function SettingsModal({
 
             {section === "about" && <About />}
 
+            {section === "alerts" && (
+              <AlertSettings settings={s} folders={allFolders(sessions, s.extraFolders)} onChange={onChange} />
+            )}
+
             {section === "data" && (
               <>
                 <Item label="Grabar logs automáticamente" hint="Cada sesión remota se registra en texto plano">
@@ -333,6 +340,23 @@ export function SettingsModal({
                 </Item>
                 <Item label="Hora en cada línea del log" hint="Formato [AAAA-MM-DD HH:MM:SS], útil como evidencia de cambios">
                   <Switch checked={s.logTimestamps} onChange={(v) => onChange({ logTimestamps: v })} />
+                </Item>
+                <LogNaming settings={s} onChange={onChange} />
+                <Item label="Si el archivo ya existe" hint="Anexar sirve con nombres sin hora, p. ej. un log por equipo y día">
+                  <Segmented
+                    value={s.logAppend ? "append" : "new"}
+                    onChange={(v) => onChange({ logAppend: v === "append" })}
+                    options={[
+                      ["new", "Archivo nuevo"],
+                      ["append", "Anexar"],
+                    ]}
+                  />
+                </Item>
+                <Item label="Rotación diaria" hint="Al cambiar el día se continúa en un archivo con la fecha nueva">
+                  <Switch checked={s.logRotateDaily} onChange={(v) => onChange({ logRotateDaily: v })} />
+                </Item>
+                <Item label="Ocultar secretos en los logs" hint="password, secret, community, key-string, pre-shared-key… se guardan como ****">
+                  <Switch checked={s.logMask} onChange={(v) => onChange({ logMask: v })} />
                 </Item>
                 <Item label="Carpeta de logs">
                   <OpenBtn which="logs" />
@@ -377,6 +401,57 @@ export function SettingsModal({
             <span className="text-[11.5px] text-muted">Los cambios se aplican al instante</span>
           </footer>
         </div>
+      </div>
+    </div>
+  );
+}
+
+const LOG_VARS = ["{session}", "{host}", "{folder}", "{date}", "{time}"];
+
+/** Patrón del nombre del log con vista previa (el backend sanea y lo mantiene en la carpeta de logs). */
+function LogNaming({ settings: s, onChange }: { settings: Settings; onChange: (p: Partial<Settings>) => void }) {
+  const now = new Date();
+  const pad = (n: number) => String(n).padStart(2, "0");
+  const clean = (v: string) => v.replace(/[^\p{L}\p{N}._\u0000-]/gu, "_");
+  const vars: Record<string, string> = {
+    "{session}": "core-sw01",
+    "{host}": "192.0.2.10",
+    "{folder}": "Clientes/Sitio_A/",
+    "{date}": `${now.getFullYear()}${pad(now.getMonth() + 1)}${pad(now.getDate())}`,
+    "{time}": `${pad(now.getHours())}${pad(now.getMinutes())}${pad(now.getSeconds())}`,
+  };
+  const pattern = s.logPattern || defaultSettings.logPattern;
+  let preview = pattern
+    .replace(/\{folder\}[\/\\]?/g, "\u0000")
+    .split(/(\{[a-z]+\})/)
+    .map((part) => vars[part] ?? clean(part))
+    .join("")
+    .replace(/\u0000/g, vars["{folder}"]);
+  if (s.logRotateDaily && !pattern.includes("{date}")) preview += `_${vars["{date}"]}`;
+  return (
+    <div className="space-y-1.5">
+      <Item label="Nombre del archivo" hint="Variables: {session} {host} {folder} {date} {time}. {folder} crea subcarpetas">
+        <input
+          className="field !w-56 font-mono !text-[12px]"
+          value={s.logPattern}
+          maxLength={200}
+          placeholder={defaultSettings.logPattern}
+          onChange={(e) => onChange({ logPattern: e.target.value })}
+        />
+      </Item>
+      <div className="flex flex-wrap items-center gap-1 text-[11px] text-muted">
+        {LOG_VARS.map((v) => (
+          <button
+            key={v}
+            onClick={() => onChange({ logPattern: (s.logPattern || "") + v })}
+            className="px-1.5 h-5 rounded border border-line hover:bg-hover font-mono"
+          >
+            {v}
+          </button>
+        ))}
+      </div>
+      <div className="text-[11px] text-muted truncate font-mono" title={`logs/${preview}.log`}>
+        Ejemplo: logs/{preview}.log
       </div>
     </div>
   );

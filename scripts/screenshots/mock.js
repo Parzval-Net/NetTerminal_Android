@@ -221,9 +221,20 @@ const handlers = {
   list_serial_ports: () => [{ port_name: "/dev/tty.usbserial-0001", port_type: "USB" }],
   tool_iperf_version: () => "iperf 3.17",
   data_dir: () => "~/NetTerminal/data",
-  connect: ({ id, session, onData, onExit }) => {
+  set_logging: ({ enabled }) => (enabled ? "~/NetTerminal/data/logs/core-sw01_20261021-101500.log" : null),
+  // ?alert: simula un aviso de la primera alerta activa sobre la última sesión abierta.
+  alerts_configure: ({ rules }) => {
+    if (location.search.includes("alert") && rules.length)
+      setTimeout(() => {
+        const conn = [...channels.keys()].pop();
+        if (conn) emit("alert-hit", { conn, rule: rules[0].id, line: "%LINK-3-UPDOWN: Interface GigabitEthernet1/0/3, changed state to down" });
+      }, 1500);
+    return null;
+  },
+  // Como el backend real: datos en binario y el cierre como texto por el mismo canal.
+  connect: ({ id, session, onData }) => {
     const text = terminalFor(session).replace(/\r?\n/g, "\r\n");
-    const ch = { data: onData.id, exit: onExit.id, index: 0 };
+    const ch = { data: onData.id, index: 0 };
     channels.set(id, ch);
     const send = (t) => cbs.get(ch.data)?.({ index: ch.index++, message: enc.encode(t).buffer });
     setTimeout(() => send(text), 150);
@@ -241,7 +252,6 @@ const handlers = {
     if (ch) {
       if (!location.search.includes("noend")) {
         cbs.get(ch.data)?.({ end: true, index: ch.index });
-        cbs.get(ch.exit)?.({ end: true, index: 0 });
       }
       channels.delete(id);
     }
