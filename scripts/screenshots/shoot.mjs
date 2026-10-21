@@ -21,6 +21,11 @@ const SHOTS = [
   ["ajustes", "settings", "dark"],
   ["packs", "packs", "light"],
   ["acerca", "about", "dark"],
+  ["vista-dividida", "split", "dark"],
+  ["respaldos", "backup", "light"],
+  ["difusion", "broadcast", "dark"],
+  ["alertas", "alerts", "dark"],
+  ["importar", "import", "light"],
 ];
 const only = process.argv.slice(2);
 
@@ -46,6 +51,12 @@ try {
   const send = (method, params = {}) => new Promise((r) => { const id = ++seq; pending.set(id, r); ws.send(JSON.stringify({ id, method, params })); });
 
   await send("Page.enable");
+  await send("Runtime.enable");
+  ws.addEventListener("message", (ev) => {
+    const m = JSON.parse(ev.data);
+    if (m.method === "Runtime.exceptionThrown") console.error("ERROR en página:", m.params.exceptionDetails?.exception?.description?.split("\n")[0]);
+    if (m.method === "Runtime.consoleAPICalled" && m.params.type === "error") console.error("console.error:", m.params.args?.map((a) => a.value ?? a.description).join(" ").slice(0, 200));
+  });
   mkdirSync(OUT, { recursive: true });
   for (const [name, scene, theme] of SHOTS) {
     if (only.length && !only.includes(name)) continue;

@@ -235,8 +235,8 @@ const handlers = {
   list_sessions: () => sessions,
   get_settings: () => settings,
   save_settings: () => null,
-  app_version: () => "0.6.1",
-  update_check: () => ({ current: "0.6.1", latest: "0.6.1", newer: false, url: "", notes: "", published: "", supported: true, reason: null }),
+  app_version: () => "0.7.0",
+  update_check: () => ({ current: "0.7.0", latest: "0.7.0", newer: false, url: "", notes: "", published: "", supported: true, reason: null }),
   app_repo: () => "Parzval-Net/Net_Terminal",
   cmdpacks_list: () => [],
   list_notes: () => Object.keys(notes).map((name) => ({ name, modified: now })),
@@ -416,6 +416,8 @@ const scenes = {
   packs: async () => { await open("core-sw01"); await click("Catálogo de comandos"); await click("Packs de comandos"); },
   split: async () => { await open("core-sw01"); await open("ar-wan01"); await open("dist-sw01"); await open("sw-acceso-sur"); await click("Vista dividida: ver 2 o 4 pestañas a la vez"); await click("4 en cuadrícula (2x2)"); },
   backup: async () => { await open("core-sw01"); await open("ar-wan01"); await click("Herramientas: monitoreo, diagnóstico, TFTP, syslog, plugins"); await click("Respaldos"); await click("Comparar A y B"); },
+  alerts: async () => { await open("core-sw01"); await click("Ajustes"); await click("Alertas"); },
+  import: async () => { await click("Ajustes"); await click("Logs y datos"); await click("Desde archivo…"); await click("Leer ~/.ssh/config"); },
   broadcast: async () => { await open("core-sw01"); await open("core-sw02"); await open("Shell local"); await click("Notas"); await click("Elegir a qué sesiones se envía"); },
 };
 const scene = new URLSearchParams(location.search).get("scene");
