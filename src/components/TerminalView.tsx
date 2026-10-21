@@ -16,6 +16,8 @@ import { alertHighlights } from "../lib/alerts";
 import { StreamHighlighter, compile, effectiveRules } from "../lib/highlight";
 import { isMac, shortcutFor } from "../lib/platform";
 import { paneBodyStyle } from "../lib/split";
+import { credStatus, needsUnlock } from "../lib/credentials";
+import { VaultUnlock } from "./VaultUnlock";
 
 export interface TermController {
   /** Id de la conexión vigente en el backend (cambia en cada reconexión). */
@@ -112,6 +114,9 @@ export const TerminalView = memo(function TerminalView({ id, session, active, vi
   /** Bloque multilínea pegado que espera confirmación antes de llegar al equipo. */
   const [pasteAsk, setPasteAsk] = useState<string | null>(null);
   const [query, setQuery] = useState("");
+  /** Bóveda bloqueada al conectar una sesión con contraseña guardada: desbloquear u omitir. */
+  const [unlockAsk, setUnlockAsk] = useState(false);
+  const unlockResolve = useRef<((ok: boolean) => void) | null>(null);
 
   useEffect(() => {
     const term = new Terminal({
@@ -165,6 +170,8 @@ export const TerminalView = memo(function TerminalView({ id, session, active, vi
     let legacyOffer = false;
     /** Final de la salida reciente (sin ANSI), para reconocer el prompt. */
     let tail = "";
+    /** El operador eligió conectar sin autocompletar: no se vuelve a preguntar en reconexiones. */
+    let skipUnlock = false;
 
     const newline = () => NEWLINE[sessionRef.current.newline ?? "cr"];
 
@@ -275,6 +282,18 @@ export const TerminalView = memo(function TerminalView({ id, session, active, vi
         }
         if (!activeRef.current) onActivity(id);
       };
+      // Contraseña guardada con la bóveda bloqueada: se pide la maestra antes de conectar.
+      if (s.save_password && s.type !== "local" && !skipUnlock && needsUnlock(await credStatus().catch(() => null))) {
+        const ok = await new Promise<boolean>((resolve) => {
+          unlockResolve.current = resolve;
+          setUnlockAsk(true);
+        });
+        unlockResolve.current = null;
+        setUnlockAsk(false);
+        if (!ok) skipUnlock = true;
+        if (disposed || connIdRef.current !== connId) return;
+        term.focus();
+      }
       try {
         await invoke("connect", {
           id: connId,
@@ -477,6 +496,7 @@ export const TerminalView = memo(function TerminalView({ id, session, active, vi
 
     return () => {
       disposed = true;
+      unlockResolve.current?.(false);
       releaseChannels();
       cancelRetry();
       hl.dispose();
@@ -578,6 +598,30 @@ export const TerminalView = memo(function TerminalView({ id, session, active, vi
       onMouseDownCapture={rect && !active && onFocusPane ? () => onFocusPane(id) : undefined}
     >
       <div ref={hostRef} className="w-full h-full" />
+      {unlockAsk && (
+        <div
+          role="dialog"
+          aria-modal="true"
+          className="absolute left-1/2 top-6 -translate-x-1/2 w-[min(440px,92%)] bg-panel border border-line rounded-xl shadow-pop p-4 z-20 space-y-2"
+          onKeyDown={(e) => {
+            if (e.key === "Escape") unlockResolve.current?.(false);
+          }}
+        >
+          <h3 className="text-[13px] font-semibold">Bóveda de contraseñas bloqueada</h3>
+          <p className="text-[11.5px] text-muted">
+            {session.name} tiene una contraseña guardada. Desbloquea la bóveda para completarla al conectar.
+          </p>
+          <VaultUnlock autoFocus onUnlocked={() => unlockResolve.current?.(true)} />
+          <div className="flex justify-end">
+            <button
+              onClick={() => unlockResolve.current?.(false)}
+              className="px-3 h-7 rounded-md text-[12px] text-muted hover:text-fg hover:bg-hover"
+            >
+              Conectar sin autocompletar
+            </button>
+          </div>
+        </div>
+      )}
       {pasteAsk !== null && (
         <PasteConfirm
           text={pasteAsk}

@@ -27,7 +27,7 @@ Construido con [Tauri 2](https://tauri.app) (backend en Rust) y xterm.js. Usa el
 
 | Área | Detalle |
 | --- | --- |
-| SSH | Usa el OpenSSH del sistema: respeta `~/.ssh/config`, agente, llaves y `known_hosts`. Jump host (ProxyJump), túneles locales, remotos y dinámicos por sesión (escucha en 127.0.0.1 por defecto) y opción de algoritmos legacy para equipos antiguos. La contraseña nunca se guarda. |
+| SSH | Usa el OpenSSH del sistema: respeta `~/.ssh/config`, agente, llaves y `known_hosts`. Jump host (ProxyJump), túneles locales, remotos y dinámicos por sesión (escucha en 127.0.0.1 por defecto) y opción de algoritmos legacy para equipos antiguos. |
 | Telnet | Cliente nativo en Rust (negociación ECHO, SGA, tipo de terminal y tamaño de ventana). No requiere `telnet` instalado. |
 | TCP crudo | Conexión TCP directa sin negociación Telnet, para servidores de consola (puertos 2001+). |
 | Serial | Puertos detectados automáticamente, 1200 a 921600 baudios, 8N1/7E1, control de flujo, envío de Break. |
@@ -41,6 +41,7 @@ Construido con [Tauri 2](https://tauri.app) (backend en Rust) y xterm.js. Usa el
 | Logs | Grabación de la sesión a texto plano (sin códigos de color) en la carpeta `logs`: nombre por patrón (`{session}`, `{host}`, `{folder}`, `{date}`, `{time}`), anexar o archivo nuevo, rotación diaria, hora por línea y secretos enmascarados (activado por defecto). El log continúa en el mismo archivo al reconectar. |
 | Plantillas | Variables `{{nombre}}` en Notas: al enviar se piden los valores (se recuerdan los últimos). |
 | Sesiones | Carpetas y subcarpetas ilimitadas, arrastrar y soltar, menú contextual (conectar todas, nueva sesión aquí, renombrar, duplicar), indicador de sesiones abiertas. |
+| Contraseñas | Opcional por sesión (SSH, Telnet, TCP y Serial): se guarda en una bóveda cifrada de la app (`credentials.vault`) y se completa sola en el primer pedido de contraseña al conectar; en Telnet/Serial también envía el usuario. Campo solo de escritura (nunca se muestra), llave en el llavero del sistema o contraseña maestra en modo portable (Ajustes › Credenciales). |
 | Botones y scripts | Barra de comandos rápidos (texto con `{{variables}}` o script). Scripts Python con API mínima `import netterminal as nt` (`run`, `send`, `wait_for`, `read`), similar a `crt.Screen` de SecureCRT. Incluye ejemplo de respaldo de configuración. |
 | Agentes IA (MCP) | Servidor MCP local para Claude Code, Claude Desktop, Gemini CLI y Codex: listar sesiones, leer salida, ejecutar comandos con aprobación del usuario y modo solo lectura. Apagado por defecto. |
 | Topología | Diagrama de vecinos CDP/LLDP (Cisco, Huawei, Juniper, Fortinet) con estado de puertos y Port-channel, ruta entre dos equipos, snapshots para comparar antes y después de un cambio, y exportación a SVG, draw.io, CSV o Mermaid. |
@@ -152,7 +153,8 @@ Auditoría del binario con REA (Ghidra y utilidades nativas de macOS) y revisió
 | Prompt injection: la salida de equipos se declara como dato no confiable para el agente y cada comando se muestra completo antes de aprobar | Diseño |
 | Resaltado: regex propias o importadas con riesgo de ReDoS se rechazan; los scripts usan el motor `regex` de Rust (tiempo lineal) | Con tests |
 | Telnet: subnegociación acotada a 1 KB | Código |
-| Datos: carpeta 700 y archivos 600 en macOS/Linux; contraseñas nunca se guardan | Verificado |
+| Datos: carpeta 700 y archivos 600 en macOS/Linux | Verificado |
+| Contraseñas guardadas: bóveda XChaCha20-Poly1305 con cabecera autenticada; llave aleatoria de 256 bits en el llavero del sistema (Keychain, Administrador de credenciales, Secret Service) o, en modo portable o sin llavero, derivada con Argon2id (64 MiB, t=3) de una contraseña maestra con espera creciente ante intentos fallidos. Ningún comando devuelve una contraseña a la interfaz; se autocompleta una sola vez en 60 s, nunca tras "Permission denied"/"% Login invalid", en una passphrase de llave SSH, en la confirmación de llave de host ni en un segundo prompt, y solo si el destino coincide con la sesión guardada. No pasa por logs, historial, MCP, scripts ni exportaciones; los búferes se borran de memoria | Con tests |
 | Notas y scripts: nombres saneados, sin rutas fuera de su carpeta | Con tests |
 
 Pendiente para distribución corporativa: firmar con Developer ID + notarización (macOS) y certificado de firma de código (Windows). Sin firma, AppLocker o Intune pueden bloquear la app. Los scripts Python ejecutan código local por diseño: en una carpeta portable compartida, revisa los scripts antes de ejecutarlos.
@@ -241,7 +243,7 @@ Política de seguridad y reporte privado de vulnerabilidades: [SECURITY.md](SECU
 
 ## Desarrollo
 
-Requisitos: Rust estable, Node 20+ y los [prerrequisitos de Tauri](https://tauri.app/start/prerequisites/) de cada sistema operativo (en Linux además `libudev-dev` para serial).
+Requisitos: Rust estable, Node 20+ y los [prerrequisitos de Tauri](https://tauri.app/start/prerequisites/) de cada sistema operativo (en Linux además `libudev-dev` para serial y `libdbus-1-dev` para el llavero del sistema).
 
 ```bash
 npm install

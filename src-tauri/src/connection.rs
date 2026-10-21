@@ -3,6 +3,7 @@
 //! registra en un log de texto plano y mantiene un historial limpio que leen los
 //! scripts y los agentes de IA (MCP).
 
+use crate::autofill::AutoFill;
 use crate::logfile::{LogOptions, LogVars, LogWriter};
 use crate::models::{Session, SessionType};
 use crate::telnet::{self, TelnetShared};
@@ -18,6 +19,7 @@ use std::sync::{Arc, Condvar, Mutex};
 use std::thread;
 use std::time::{Duration, Instant};
 use tauri::ipc::{Channel, InvokeResponseBody};
+use zeroize::Zeroizing;
 
 const HISTORY_MAX: usize = 256 * 1024;
 
@@ -33,6 +35,9 @@ struct Mirror {
     taps: Vec<std::sync::mpsc::SyncSender<String>>,
     /// Alertas por palabra clave (sin reglas, una lectura atómica por fragmento).
     watch: Option<Watcher>,
+    /// Autocompletado de contraseña: solo en sesiones con contraseña guardada y hasta
+    /// que responde o se descarta (luego se suelta y la contraseña se borra de memoria).
+    autofill: Option<(AutoFill, Sender<Outgoing>)>,
 }
 
 /// Cuántos bytes finales son el comienzo de un carácter UTF-8 todavía incompleto.
@@ -87,9 +92,26 @@ impl Mirror {
             if let Some(w) = self.watch.as_mut() {
                 w.feed(&text);
             }
+            if self.autofill.is_some() {
+                self.run_autofill(&text);
+            }
         }
         drop(text);
         self.scratch = clean;
+    }
+
+    fn run_autofill(&mut self, text: &str) {
+        let Some((af, tx)) = self.autofill.as_mut() else {
+            return;
+        };
+        // Va por el hilo de escritura: mismo orden que lo tecleado y nunca pasa por el
+        // log, el historial ni los suscriptores (solo ven lo que devuelve el equipo).
+        if let Some(bytes) = af.feed(text, Instant::now()) {
+            let _ = tx.send(Outgoing::Secret(bytes));
+        }
+        if af.done() {
+            self.autofill = None;
+        }
     }
 
     /// Últimos `max` bytes (como máximo HISTORY_MAX), cortados en un límite de carácter.
@@ -322,9 +344,11 @@ enum Transport {
 }
 
 /// Lo que se envía al equipo. `Raw` no pasa por la codificación Telnet (comandos IAC).
+/// `Secret` es como `Data`, pero sus búferes se borran de memoria tras escribirse.
 enum Outgoing {
     Data(Vec<u8>),
     Raw(Vec<u8>),
+    Secret(Zeroizing<Vec<u8>>),
 }
 
 /// Hilo que escribe en el equipo en orden. Así una consola lenta (Telnet/Serial con el
@@ -333,11 +357,14 @@ fn spawn_writer(mut out: Box<dyn Write + Send>, telnet_encode: bool) -> Sender<O
     let (tx, rx) = std::sync::mpsc::channel::<Outgoing>();
     thread::spawn(move || {
         for msg in rx {
-            let buf = match msg {
-                Outgoing::Data(d) if telnet_encode => telnet::encode_input(&d),
-                Outgoing::Data(d) | Outgoing::Raw(d) => d,
+            let mut send = |buf: &[u8]| out.write_all(buf).and_then(|_| out.flush());
+            let res = match msg {
+                Outgoing::Secret(d) if telnet_encode => send(&Zeroizing::new(telnet::encode_input(&d))),
+                Outgoing::Secret(d) => send(&d),
+                Outgoing::Data(d) if telnet_encode => send(&telnet::encode_input(&d)),
+                Outgoing::Data(d) | Outgoing::Raw(d) => send(&d),
             };
-            if out.write_all(&buf).and_then(|_| out.flush()).is_err() {
+            if res.is_err() {
                 break;
             }
         }
@@ -373,6 +400,12 @@ impl Connection {
     }
 }
 
+/// Contraseña guardada (y usuario para Telnet/Serial) para autocompletar el login.
+pub struct FillSpec {
+    pub secret: Zeroizing<String>,
+    pub user: Option<String>,
+}
+
 #[derive(Default)]
 pub struct ConnectionManager {
     conns: Mutex<HashMap<String, Connection>>,
@@ -387,6 +420,7 @@ impl ConnectionManager {
         cols: u16,
         rows: u16,
         data: Channel<InvokeResponseBody>,
+        fill: Option<FillSpec>,
     ) -> Result<(), String> {
         // Una reconexión reutiliza el id: se cierra lo anterior primero.
         self.disconnect(&id);
@@ -410,6 +444,19 @@ impl ConnectionManager {
             }
             Transport::Serial { port, .. } => spawn_writer(Box::new(port.try_clone().map_err(|e| e.to_string())?), false),
         };
+
+        if let Some(f) = fill {
+            let newline = match session.newline.as_deref() {
+                Some("lf") => "\n",
+                Some("crlf") => "\r\n",
+                _ => "\r",
+            };
+            let mut m = lock(&sink.mirror);
+            // Lo que ya llegó antes de instalarlo (Telnet rápido) también cuenta.
+            let seen = m.tail(1024).to_string();
+            m.autofill = Some((AutoFill::new(f.secret, f.user, newline, Instant::now()), input.clone()));
+            m.run_autofill(&seen);
+        }
 
         lock(&self.conns).insert(
             id,
@@ -1614,5 +1661,64 @@ mod tests {
             assert!(lines[1].ends_with("] Cisco IOS"));
             let _ = std::fs::remove_dir_all(dir);
         }
+    }
+
+    /// Login por TCP con contraseña guardada: se envían usuario y contraseña una sola vez,
+    /// y la contraseña no aparece en el log, el historial ni los suscriptores (MCP/scripts).
+    #[test]
+    fn autofill_login_never_reaches_log_or_history() {
+        use std::io::{BufRead, BufReader, Write};
+        let listener = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
+        let port = listener.local_addr().unwrap().port();
+        let server = std::thread::spawn(move || {
+            let (s, _) = listener.accept().unwrap();
+            let mut w = s.try_clone().unwrap();
+            let mut r = BufReader::new(s);
+            let mut got = Vec::new();
+            std::thread::sleep(std::time::Duration::from_millis(300));
+            w.write_all(b"\r\nUser Access Verification\r\n\r\nUsername: ").unwrap();
+            let mut line = Vec::new();
+            r.read_until(b'\r', &mut line).unwrap();
+            got.push(String::from_utf8_lossy(&line).into_owned());
+            // El equipo hace eco del usuario, no de la contraseña.
+            w.write_all(b"noc\r\nPassword: ").unwrap();
+            line.clear();
+            r.read_until(b'\r', &mut line).unwrap();
+            got.push(String::from_utf8_lossy(&line).into_owned());
+            // Un segundo prompt (enable) no se responde.
+            w.write_all(b"\r\nrouter>enable\r\nPassword: ").unwrap();
+            w.set_read_timeout(Some(std::time::Duration::from_millis(400))).ok();
+            r.get_ref().set_read_timeout(Some(std::time::Duration::from_millis(400))).unwrap();
+            line.clear();
+            let extra = r.read_until(b'\r', &mut line).unwrap_or(0);
+            (got, extra)
+        });
+
+        let session: crate::models::Session = serde_json::from_value(serde_json::json!({
+            "name": "t", "type": "raw", "host": "127.0.0.1", "port": port, "username": "noc"
+        }))
+        .unwrap();
+        let data = tauri::ipc::Channel::new(|_| Ok(()));
+        let mgr = super::ConnectionManager::default();
+        let fill = super::FillSpec { secret: zeroize::Zeroizing::new("Sup3r-S3cret".into()), user: Some("noc".into()) };
+        mgr.connect("c1".into(), &session, 80, 24, data, Some(fill)).unwrap();
+        let dir = std::env::temp_dir().join(format!("nt-af-{}", uuid::Uuid::new_v4()));
+        let opts = crate::logfile::LogOptions { mask: false, ..Default::default() };
+        let path = mgr.set_logging("c1", true, opts, &dir, None).unwrap().unwrap();
+        let tap = mgr.tap("c1").unwrap();
+
+        let (got, extra) = server.join().unwrap();
+        assert_eq!(got, vec!["noc\r".to_string(), "Sup3r-S3cret\r".to_string()]);
+        assert_eq!(extra, 0, "no debe responder el segundo prompt");
+
+        let history = mgr.history("c1", 10_000).unwrap();
+        assert!(history.contains("Password:") && !history.contains("Sup3r"));
+        let tapped: String = tap.try_iter().collect();
+        assert!(!tapped.contains("Sup3r"));
+        mgr.set_logging("c1", false, Default::default(), &dir, None).unwrap();
+        mgr.disconnect("c1");
+        let log = std::fs::read_to_string(&path).unwrap();
+        assert!(log.contains("Username:") && !log.contains("Sup3r"));
+        let _ = std::fs::remove_dir_all(dir);
     }
 }

@@ -55,7 +55,7 @@ jobs:
       - run: npm ci --ignore-scripts && npm audit --audit-level=high
       - run: |
           sudo apt-get update
-          sudo apt-get install -y libwebkit2gtk-4.1-dev libayatana-appindicator3-dev librsvg2-dev libudev-dev
+          sudo apt-get install -y libwebkit2gtk-4.1-dev libayatana-appindicator3-dev librsvg2-dev libudev-dev libdbus-1-dev pkg-config
       - uses: dtolnay/rust-toolchain@b725eda525362e7cf34af9a7243cac1e3f01a7ec # stable (2026-10-16)
         with:
           toolchain: stable
@@ -92,7 +92,7 @@ jobs:
         if: runner.os == 'Linux'
         run: |
           sudo apt-get update
-          sudo apt-get install -y libwebkit2gtk-4.1-dev libayatana-appindicator3-dev librsvg2-dev libudev-dev patchelf
+          sudo apt-get install -y libwebkit2gtk-4.1-dev libayatana-appindicator3-dev librsvg2-dev libudev-dev libdbus-1-dev pkg-config patchelf
 
       # Sin caché de npm ni de cargo: un build que firma no debe restaurar estado de otras
       # ejecuciones (cache poisoning). Los tags no comparten caché entre sí, así que no se pierde velocidad real.

@@ -4,7 +4,7 @@ import { Sidebar } from "./components/Sidebar";
 import { TabBar } from "./components/TabBar";
 import { StatusBar } from "./components/StatusBar";
 import { TerminalView, TermController } from "./components/TerminalView";
-import { SessionModal } from "./components/SessionModal";
+import { CredChange, SessionModal } from "./components/SessionModal";
 import { CommandPalette } from "./components/CommandPalette";
 import { ConfirmDialog } from "./components/ConfirmDialog";
 import { NotesPanel } from "./components/NotesPanel";
@@ -695,9 +695,25 @@ function Workspace({
     return () => window.removeEventListener("keydown", onKey);
   });
 
-  const saveSession = async (session: Session, connect: boolean) => {
+  const saveSession = async (session: Session, connect: boolean, cred: CredChange = { action: "keep" }) => {
     try {
-      const saved = await invoke<Session>("save_session", { session });
+      let saved = await invoke<Session>("save_session", { session });
+      // La contraseña va directo a la bóveda del backend; la sesión solo guarda el indicador.
+      if (cred.action === "set") {
+        try {
+          await invoke("cred_set", { sessionId: saved.id, password: cred.password });
+        } catch (err) {
+          toast(`La sesión se guardó, pero no la contraseña: ${err}`, "error");
+          // Sin una contraseña previa, el indicador no debe quedar activo.
+          const before = sessions.find((x) => x.id === saved.id);
+          if (!before?.save_password)
+            saved = await invoke<Session>("save_session", { session: { ...saved, save_password: undefined } });
+        }
+      } else if (cred.action === "delete") {
+        await invoke("cred_delete", { sessionId: saved.id }).catch((err) =>
+          toast(`No se pudo borrar la contraseña guardada: ${err}`, "error"),
+        );
+      }
       setSessions((prev) =>
         prev.some((s) => s.id === saved.id) ? prev.map((s) => (s.id === saved.id ? saved : s)) : [...prev, saved],
       );
@@ -719,7 +735,7 @@ function Workspace({
       // No se importan los argumentos extra de ssh, los comandos al conectar ni los túneles:
       // una sesión compartida no debe poder inyectar opciones al cliente SSH, abrir puertos
       // ni enviar configuración al equipo sin que quien la importa lo revise.
-      const { ssh_args: _dropped, on_connect: _cmds, scp: _scp, tunnels: _tunnels, ...safe } = s;
+      const { ssh_args: _dropped, on_connect: _cmds, scp: _scp, tunnels: _tunnels, save_password: _pw, ...safe } = s;
       fresh.push({ ...safe, id: "", created_at: "" });
       existing.add(key(s));
     }
@@ -781,7 +797,7 @@ function Workspace({
   const duplicateSession = async (s: Session) => {
     try {
       const saved = await invoke<Session>("save_session", {
-        session: { ...s, id: "", name: `${s.name} (copia)`, created_at: "" },
+        session: { ...s, id: "", name: `${s.name} (copia)`, created_at: "", save_password: undefined },
       });
       setSessions((prev) => [...prev, saved]);
       setModal({ session: saved });

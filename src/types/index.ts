@@ -34,6 +34,8 @@ export interface Session {
   platform?: string;
   /** Pestaña temporal de transferencia SCP. */
   scp?: { upload: boolean; files: string[]; remote_dir: string };
+  /** Autocompletar la contraseña guardada en la bóveda cifrada (nunca viaja al frontend). */
+  save_password?: boolean;
   created_at: string;
 }
 

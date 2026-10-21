@@ -1,6 +1,8 @@
+mod autofill;
 mod backups;
 mod cmdpacks;
 mod connection;
+mod credentials;
 mod expect;
 mod filexfer;
 mod history;
@@ -35,6 +37,7 @@ struct AppState {
     monitor: monitor::Monitor,
     jobs: nettools::Jobs,
     servers: servers::Servers,
+    creds: credentials::Credentials,
     data_dir: PathBuf,
 }
 
@@ -69,9 +72,94 @@ fn add_sessions(sessions: Vec<Session>, state: State<'_, AppState>) -> Result<Ve
     state.store.add_many(sessions)
 }
 
-#[tauri::command]
+#[tauri::command(async)]
 fn delete_session(id: String, state: State<'_, AppState>) -> Result<(), String> {
-    state.store.delete(&id)
+    state.store.delete(&id)?;
+    // Con la bóveda bloqueada la entrada queda huérfana y se limpia al guardar otra.
+    let _ = state.creds.delete(&id);
+    Ok(())
+}
+
+// ---------- Contraseñas guardadas ----------
+// Ningún comando devuelve una contraseña: solo se guardan, se consultan (sí/no) o se borran.
+
+#[tauri::command(async)]
+fn cred_status(state: State<'_, AppState>) -> credentials::Status {
+    state.creds.status()
+}
+
+#[tauri::command(async)]
+fn cred_set(session_id: String, password: String, state: State<'_, AppState>) -> Result<(), String> {
+    let password = zeroize::Zeroizing::new(password);
+    if state.store.get(&session_id).is_none() {
+        return Err("Guarda la sesión antes de su contraseña".into());
+    }
+    state.creds.set(&session_id, &password, &state.store.ids())
+}
+
+#[tauri::command(async)]
+fn cred_has(session_id: String, state: State<'_, AppState>) -> Result<bool, String> {
+    state.creds.has(&session_id)
+}
+
+#[tauri::command(async)]
+fn cred_delete(session_id: String, state: State<'_, AppState>) -> Result<(), String> {
+    state.creds.delete(&session_id)
+}
+
+#[tauri::command(async)]
+fn vault_create(master: String, state: State<'_, AppState>) -> Result<(), String> {
+    let master = zeroize::Zeroizing::new(master);
+    state.creds.create(&master)
+}
+
+#[tauri::command(async)]
+fn vault_unlock(master: String, state: State<'_, AppState>) -> Result<(), String> {
+    let master = zeroize::Zeroizing::new(master);
+    state.creds.unlock(&master)
+}
+
+#[tauri::command]
+fn vault_lock(state: State<'_, AppState>) {
+    state.creds.lock()
+}
+
+#[tauri::command(async)]
+fn vault_change(old: String, new: String, state: State<'_, AppState>) -> Result<(), String> {
+    let (old, new) = (zeroize::Zeroizing::new(old), zeroize::Zeroizing::new(new));
+    state.creds.change(&old, &new)
+}
+
+#[tauri::command(async)]
+fn vault_reset(state: State<'_, AppState>) -> Result<(), String> {
+    state.creds.reset()
+}
+
+/// Contraseña a autocompletar: solo si la sesión guardada lo tiene activo y el destino
+/// pedido es el mismo que el guardado (un frontend comprometido no puede redirigirla a
+/// otro host cambiando el objeto de sesión).
+fn fill_for(session: &Session, state: &AppState) -> Option<connection::FillSpec> {
+    use models::SessionType::*;
+    if session.save_password != Some(true) || session.scp.is_some() || session.session_type == Local {
+        return None;
+    }
+    let saved = state.store.get(&session.id)?;
+    let same = saved.save_password == Some(true)
+        && saved.session_type == session.session_type
+        && saved.host == session.host
+        && saved.port == session.port
+        && saved.serial_port == session.serial_port
+        && saved.username == session.username
+        && saved.jump_host == session.jump_host;
+    if !same {
+        return None;
+    }
+    let secret = state.creds.get(&saved.id)?;
+    let user = match saved.session_type {
+        Telnet | Raw | Serial => saved.username.filter(|u| !u.trim().is_empty()),
+        _ => None,
+    };
+    Some(connection::FillSpec { secret, user })
 }
 
 #[tauri::command(async)]
@@ -109,9 +197,9 @@ async fn connect(
         }
     }
     tauri::async_runtime::spawn_blocking(move || {
-        app.state::<AppState>()
-            .conns
-            .connect(id, &session, cols, rows, on_data)
+        let state = app.state::<AppState>();
+        let fill = fill_for(&session, &state);
+        state.conns.connect(id, &session, cols, rows, on_data, fill)
     })
     .await
     .map_err(|e| e.to_string())?
@@ -693,6 +781,7 @@ pub fn run() {
                 monitor: monitor::Monitor::default(),
                 jobs: nettools::Jobs::default(),
                 servers: servers::Servers::default(),
+                creds: credentials::Credentials::new(&data_dir, session_store::is_portable()),
                 data_dir,
             });
             Ok(())
@@ -772,8 +861,25 @@ pub fn run() {
             plugin_run,
             backup_save,
             backup_list,
-            backup_read
+            backup_read,
+            cred_status,
+            cred_set,
+            cred_has,
+            cred_delete,
+            vault_create,
+            vault_unlock,
+            vault_lock,
+            vault_change,
+            vault_reset
         ])
-        .run(tauri::generate_context!())
-        .expect("error al iniciar NetTerminal");
+        .build(tauri::generate_context!())
+        .expect("error al iniciar NetTerminal")
+        .run(|app, event| {
+            // La llave de la bóveda se borra de memoria al salir.
+            if let tauri::RunEvent::Exit = event {
+                if let Some(state) = app.try_state::<AppState>() {
+                    state.creds.lock();
+                }
+            }
+        });
 }

@@ -74,6 +74,9 @@ pub struct Session {
     /// Transferencia SCP en una pestaña de terminal (solo pestañas temporales).
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub scp: Option<ScpSpec>,
+    /// Autocompletar la contraseña guardada en la bóveda (nunca va en este archivo).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub save_password: Option<bool>,
     #[serde(default)]
     pub created_at: String,
 }
@@ -134,6 +137,7 @@ impl Session {
             auto_reconnect: None,
             platform: None,
             scp: None,
+            save_password: None,
             created_at: String::new(),
         }
     }

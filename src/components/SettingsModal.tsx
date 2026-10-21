@@ -1,6 +1,6 @@
 import { useEffect, useState } from "react";
 import { invoke } from "@tauri-apps/api/core";
-import { BellRing, Blocks, Bot, Check, FolderOpen, Highlighter, Info, Palette, ScrollText, SquareTerminal, X } from "lucide-react";
+import { BellRing, Blocks, Bot, Check, FolderOpen, Highlighter, Info, KeyRound, Palette, ScrollText, SquareTerminal, X } from "lucide-react";
 import { openUrl } from "@tauri-apps/plugin-opener";
 import logo from "../assets/logo.svg";
 import type { ModuleId } from "../lib/settings";
@@ -9,6 +9,7 @@ import { useDragResize } from "../lib/useDragResize";
 import type { ITheme } from "@xterm/xterm";
 import { HighlightSettings } from "./HighlightSettings";
 import { AlertSettings } from "./AlertSettings";
+import { CredentialSettings } from "./CredentialSettings";
 import { allFolders } from "../lib/folders";
 import { readText, writeText } from "@tauri-apps/plugin-clipboard-manager";
 import { Settings, UpdateInfo, defaultSettings } from "../lib/settings";
@@ -30,7 +31,7 @@ interface Props {
   onClose: () => void;
 }
 
-export type Section = "appearance" | "highlight" | "terminal" | "alerts" | "modules" | "ai" | "data" | "about";
+export type Section = "appearance" | "highlight" | "terminal" | "alerts" | "modules" | "ai" | "credentials" | "data" | "about";
 
 const MODULES: [ModuleId, string, string][] = [
   ["monitor", "Monitoreo", "Sondas ICMP/TCP con gráfico y alarma sonora"],
@@ -51,6 +52,7 @@ const sections: { id: Section; label: string; Icon: typeof Palette }[] = [
   { id: "alerts", label: "Alertas", Icon: BellRing },
   { id: "modules", label: "Módulos", Icon: Blocks },
   { id: "ai", label: "Agentes IA", Icon: Bot },
+  { id: "credentials", label: "Credenciales", Icon: KeyRound },
   { id: "data", label: "Logs y datos", Icon: ScrollText },
   { id: "about", label: "Acerca de", Icon: Info },
 ];
@@ -94,9 +96,11 @@ export function SettingsModal({
   };
 
   const exportSessions = async () => {
-    const list = sessions.filter((x) => x.type !== "local").map(({ id: _id, created_at: _c, ...rest }) => rest);
+    const list = sessions
+      .filter((x) => x.type !== "local")
+      .map(({ id: _id, created_at: _c, save_password: _pw, ...rest }) => rest);
     await writeText(JSON.stringify(list, null, 2));
-    flash(`${list.length} sesiones copiadas al portapapeles (sin contraseñas: no se guardan)`);
+    flash(`${list.length} sesiones copiadas al portapapeles (nunca incluye contraseñas)`);
   };
 
   const importSessions = async () => {
@@ -332,6 +336,8 @@ export function SettingsModal({
             )}
 
             {section === "about" && <About />}
+
+            {section === "credentials" && <CredentialSettings />}
 
             {section === "alerts" && (
               <AlertSettings settings={s} folders={allFolders(sessions, s.extraFolders)} onChange={onChange} />

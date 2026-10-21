@@ -139,12 +139,21 @@ impl SessionStore {
             auto_reconnect: None,
             platform: None,
             scp: None,
+            save_password: None,
             created_at: Utc::now().to_rfc3339(),
         }]
     }
 
     pub fn list(&self) -> Vec<Session> {
         self.sessions.lock().unwrap().clone()
+    }
+
+    pub fn get(&self, id: &str) -> Option<Session> {
+        self.sessions.lock().unwrap().iter().find(|s| s.id == id).cloned()
+    }
+
+    pub fn ids(&self) -> Vec<String> {
+        self.sessions.lock().unwrap().iter().map(|s| s.id.clone()).collect()
     }
 
     pub fn save(&self, mut session: Session) -> Result<Session, String> {
@@ -168,6 +177,8 @@ impl SessionStore {
         let now = Utc::now().to_rfc3339();
         for mut s in new {
             s.id = Uuid::new_v4().to_string();
+            // Una sesión importada nunca trae contraseña guardada.
+            s.save_password = None;
             s.created_at = now.clone();
             list.push(s);
         }

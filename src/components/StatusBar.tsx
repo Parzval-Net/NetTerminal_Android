@@ -1,5 +1,5 @@
 import { memo } from "react";
-import { ArrowLeftRight, BookOpen, Bot, Circle, CircleDot, NotebookPen, RotateCcw, Search, Settings, Unplug, Zap } from "lucide-react";
+import { ArrowLeftRight, BookOpen, KeyRound, Bot, Circle, CircleDot, NotebookPen, RotateCcw, Search, Settings, Unplug, Zap } from "lucide-react";
 import { Tab, TabState, historyKey, sessionTarget, tunnelLabel } from "../types";
 import { HistoryMenu } from "./HistoryMenu";
 import { typeLabel } from "./SessionIcon";
@@ -91,6 +91,15 @@ export const StatusBar = memo(function StatusBar({
         >
           <ArrowLeftRight size={11} />
           {session.tunnels.length === 1 ? tunnelLabel(session.tunnels[0]) : `${session.tunnels.length} túneles`}
+        </span>
+      )}
+
+      {session.save_password && session.type !== "local" && (
+        <span
+          className="flex items-center shrink-0 text-fg/80"
+          title="Contraseña guardada: se completa sola en el primer pedido de contraseña al conectar"
+        >
+          <KeyRound size={11} />
         </span>
       )}
 

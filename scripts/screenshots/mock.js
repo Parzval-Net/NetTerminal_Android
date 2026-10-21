@@ -29,6 +29,8 @@ const sessions = [
   id: `s${i}`, name, type, folder, host, username, highlight: highlight || "default",
   port: type === "telnet" ? 23 : 22, serial_port: "/dev/tty.usbserial-0001", baud_rate: 9600,
   created_at: new Date(now - i * 86400000).toISOString(),
+  // Demo: una sesión con contraseña guardada (indicador de llave en la barra de estado).
+  ...(name === "sw-acceso-norte" ? { save_password: true } : {}),
 }));
 
 const CISCO = `
@@ -320,6 +322,21 @@ const handlers = {
     })),
   backup_read: ({ device, file }) => backups[device]?.[file] ?? "",
   save_note: ({ name, content }) => ((notes[name] = content), null),
+  // Bóveda de contraseñas simulada: como el backend real, nunca devuelve una contraseña.
+  // ?vault=portable simula el modo con contraseña maestra.
+  cred_status: () => ({ ...vault, unlocked: vault.exists && vault.unlocked }),
+  cred_set: ({ sessionId }) => ((vault.exists = true), vaultIds.add(sessionId), null),
+  cred_has: ({ sessionId }) => vaultIds.has(sessionId),
+  cred_delete: ({ sessionId }) => (vaultIds.delete(sessionId), null),
+  vault_create: () => ((vault.exists = vault.unlocked = true), null),
+  vault_unlock: ({ master }) => {
+    if (master.length < 8) throw "Contraseña maestra incorrecta o archivo de credenciales alterado";
+    vault.unlocked = true;
+    return null;
+  },
+  vault_lock: () => ((vault.unlocked = false), null),
+  vault_change: () => null,
+  vault_reset: () => ((vault.exists = vault.unlocked = false), vaultIds.clear(), null),
   set_logging: ({ enabled }) => (enabled ? "~/NetTerminal/data/logs/core-sw01_20261021-101500.log" : null),
   // ?alert: simula un aviso de la primera alerta activa sobre la última sesión abierta.
   alerts_configure: ({ rules }) => {
@@ -366,6 +383,10 @@ const handlers = {
     return null;
   },
 };
+
+const vaultPortable = location.search.includes("vault=portable");
+const vault = { backend: vaultPortable ? "vault" : "keychain", exists: !vaultPortable, unlocked: !vaultPortable, portable: vaultPortable };
+const vaultIds = new Set(["s6"]);
 
 window.__TAURI_INTERNALS__ = {
   metadata: { currentWindow: { label: "main" }, currentWebview: { windowLabel: "main", label: "main" } },
@@ -433,6 +454,7 @@ const scenes = {
   split: async () => { await open("core-sw01"); await open("ar-wan01"); await open("dist-sw01"); await open("sw-acceso-sur"); await click("Vista dividida: ver 2 o 4 pestañas a la vez"); await click("4 en cuadrícula (2x2)"); },
   backup: async () => { await open("core-sw01"); await open("ar-wan01"); await click("Herramientas: monitoreo, diagnóstico, TFTP, syslog, plugins"); await click("Respaldos"); await click("Comparar A y B"); },
   legacy: async () => { await open("router-antiguo"); },
+  credentials: async () => { await click("Ajustes"); await click("Credenciales"); },
   alerts: async () => { await open("core-sw01"); await click("Ajustes"); await click("Alertas"); },
   import: async () => { await click("Ajustes"); await click("Logs y datos"); await click("Desde archivo…"); await click("Leer ~/.ssh/config"); },
   broadcast: async () => { await open("core-sw01"); await open("core-sw02"); await open("Shell local"); await click("Notas"); await click("Elegir a qué sesiones se envía"); },
