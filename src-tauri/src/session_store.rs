@@ -124,6 +124,7 @@ impl SessionStore {
             legacy_ssh: None,
             jump_host: None,
             ssh_args: None,
+            tunnels: None,
             serial_port: None,
             baud_rate: None,
             data_bits: None,
@@ -159,6 +160,19 @@ impl SessionStore {
         }
         self.persist(&list)?;
         Ok(session)
+    }
+
+    /// Agrega varias sesiones nuevas en una sola escritura (importaciones grandes).
+    pub fn add_many(&self, new: Vec<Session>) -> Result<Vec<Session>, String> {
+        let mut list = self.sessions.lock().unwrap();
+        let now = Utc::now().to_rfc3339();
+        for mut s in new {
+            s.id = Uuid::new_v4().to_string();
+            s.created_at = now.clone();
+            list.push(s);
+        }
+        self.persist(&list)?;
+        Ok(list.clone())
     }
 
     /// Actualiza varias sesiones existentes en una sola escritura (mover/renombrar carpetas).

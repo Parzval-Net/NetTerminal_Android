@@ -20,6 +20,8 @@ interface Props {
   termTheme: ITheme;
   sessions: Session[];
   onImportSessions: (list: Session[]) => Promise<number>;
+  /** Importación desde archivos de otros clientes. */
+  onImportFile?: () => void;
   initialSection?: Section;
   mcpStatus: string;
   onChange: (patch: Partial<Settings>) => void;
@@ -71,6 +73,7 @@ export function SettingsModal({
   termTheme,
   sessions,
   onImportSessions,
+  onImportFile,
   initialSection,
   mcpStatus,
   onChange,
@@ -337,7 +340,7 @@ export function SettingsModal({
                 <Item label="Carpeta de logs">
                   <OpenBtn which="logs" />
                 </Item>
-                <Item label="Sesiones" hint="Comparte tu lista de equipos con el equipo vía portapapeles (JSON)">
+                <Item label="Sesiones" hint="Comparte tu lista de equipos vía portapapeles (JSON) o importa desde otros clientes">
                   <div className="flex gap-1.5">
                     <button
                       onClick={importSessions}
@@ -345,6 +348,15 @@ export function SettingsModal({
                     >
                       Importar
                     </button>
+                    {onImportFile && (
+                      <button
+                        onClick={onImportFile}
+                        title="PuTTY, SecureCRT, MobaXterm, ~/.ssh/config o CSV"
+                        className="px-3 h-7 rounded-md border border-line hover:bg-hover"
+                      >
+                        Desde archivo…
+                      </button>
+                    )}
                     <button
                       onClick={exportSessions}
                       className="px-3 h-7 rounded-md border border-line hover:bg-hover"

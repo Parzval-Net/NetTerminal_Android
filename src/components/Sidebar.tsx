@@ -3,6 +3,7 @@ import {
   ChevronRight,
   ChevronsDownUp,
   Copy,
+  FileUp,
   Folder,
   FolderOpen,
   FolderPlus,
@@ -52,6 +53,8 @@ interface Props {
   onUpdateSessions: (changed: Session[]) => void;
   onSetExtraFolders: (folders: string[]) => void;
   onConfirm: (req: ConfirmRequest) => void;
+  /** Abre la importación desde PuTTY, SecureCRT, MobaXterm, OpenSSH o CSV. */
+  onImportFile?: () => void;
 }
 
 type MenuItem = [string, React.ReactNode, () => void, boolean?];
@@ -399,6 +402,9 @@ export const Sidebar = memo(function Sidebar(p: Props) {
           openMenu(e, [
             ["Nueva sesión", <Plus size={13} />, () => p.onNew()],
             ["Nueva carpeta", <FolderPlus size={13} />, () => createFolder("")],
+            ...(p.onImportFile
+              ? [["Importar sesiones…", <FileUp size={13} />, p.onImportFile] as MenuItem]
+              : []),
           ])
         }
         {...dropProps("")}
@@ -410,6 +416,11 @@ export const Sidebar = memo(function Sidebar(p: Props) {
         {empty && (
           <div className="px-3 py-8 text-center text-[12px] text-muted">
             {q ? "Sin coincidencias" : "Crea una sesión o una carpeta. Clic derecho para más opciones."}
+            {!q && p.onImportFile && (
+              <button className="block mx-auto mt-2 text-accent hover:underline" onClick={p.onImportFile}>
+                Importar desde PuTTY, SecureCRT, MobaXterm…
+              </button>
+            )}
           </div>
         )}
       </nav>

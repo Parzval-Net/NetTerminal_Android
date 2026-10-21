@@ -2,6 +2,8 @@ mod cmdpacks;
 mod connection;
 mod expect;
 mod filexfer;
+mod history;
+mod importers;
 mod updates;
 mod mcp;
 mod monitor;
@@ -56,6 +58,12 @@ fn save_session(session: Session, state: State<'_, AppState>) -> Result<Session,
 #[tauri::command]
 fn update_sessions(sessions: Vec<Session>, state: State<'_, AppState>) -> Result<Vec<Session>, String> {
     state.store.update_many(sessions)
+}
+
+/// Agrega sesiones importadas en una sola escritura.
+#[tauri::command]
+fn add_sessions(sessions: Vec<Session>, state: State<'_, AppState>) -> Result<Vec<Session>, String> {
+    state.store.add_many(sessions)
 }
 
 #[tauri::command]
@@ -181,6 +189,49 @@ fn rename_note(from: String, to: String, state: State<'_, AppState>) -> Result<S
 #[tauri::command]
 fn delete_note(name: String, state: State<'_, AppState>) -> Result<(), String> {
     notes::delete(&state.notes_dir(), &name)
+}
+
+#[tauri::command(async)]
+fn search_notes(query: String, state: State<'_, AppState>) -> Vec<notes::NoteMatch> {
+    notes::search(&state.notes_dir(), &query)
+}
+
+// ---------- Importación de sesiones e historial ----------
+
+/// Analiza un archivo de otro cliente (elegido por el usuario) y devuelve la vista previa.
+#[tauri::command(async)]
+fn import_sessions_file(path: String, format: Option<String>) -> Result<importers::ImportPreview, String> {
+    importers::parse_file(std::path::Path::new(&path), format.as_deref())
+}
+
+#[tauri::command(async)]
+fn recent_targets(state: State<'_, AppState>) -> Vec<String> {
+    history::recent_list(&state.data_dir)
+}
+
+#[tauri::command(async)]
+fn recent_target_add(target: String, state: State<'_, AppState>) -> Result<Vec<String>, String> {
+    history::recent_add(&state.data_dir, &target)
+}
+
+#[tauri::command(async)]
+fn recent_targets_clear(state: State<'_, AppState>) -> Result<(), String> {
+    history::recent_clear(&state.data_dir)
+}
+
+#[tauri::command(async)]
+fn cmd_history(key: String, state: State<'_, AppState>) -> Vec<history::CmdEntry> {
+    history::cmd_list(&state.data_dir, &key)
+}
+
+#[tauri::command(async)]
+fn cmd_history_add(key: String, command: String, state: State<'_, AppState>) -> Result<bool, String> {
+    history::cmd_add(&state.data_dir, &key, &command)
+}
+
+#[tauri::command(async)]
+fn cmd_history_clear(key: Option<String>, state: State<'_, AppState>) -> Result<(), String> {
+    history::cmd_clear(&state.data_dir, key.as_deref())
 }
 
 #[tauri::command(async)]
@@ -609,6 +660,7 @@ pub fn run() {
             save_session,
             delete_session,
             update_sessions,
+            add_sessions,
             list_serial_ports,
             connect,
             write,
@@ -625,6 +677,14 @@ pub fn run() {
             save_note,
             rename_note,
             delete_note,
+            search_notes,
+            import_sessions_file,
+            recent_targets,
+            recent_target_add,
+            recent_targets_clear,
+            cmd_history,
+            cmd_history_add,
+            cmd_history_clear,
             list_scripts,
             run_script,
             stop_script,

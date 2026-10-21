@@ -1,5 +1,6 @@
 import { useEffect, useMemo, useState } from "react";
-import { Search, Zap } from "lucide-react";
+import { invoke } from "@tauri-apps/api/core";
+import { History, Search, Zap } from "lucide-react";
 import { Session, sessionTarget } from "../types";
 import { SessionIcon, typeLabel } from "./SessionIcon";
 
@@ -45,29 +46,51 @@ export function parseQuick(input: string): Session[] {
   return [ssh, telnet];
 }
 
+/** Forma canónica de un destino rápido, que parseQuick vuelve a interpretar. */
+export function quickTarget(s: Session): string {
+  return `${s.type} ${s.username ? `${s.username}@` : ""}${s.host ?? ""} ${s.port ?? ""}`.trim();
+}
+
 export function CommandPalette({ sessions, onClose, onOpen }: Props) {
   const [query, setQuery] = useState("");
   const [index, setIndex] = useState(0);
+  // Últimos destinos de conexión rápida (archivo en la carpeta de datos, máx. 20).
+  const [recent, setRecent] = useState<string[]>([]);
+  useEffect(() => {
+    invoke<string[]>("recent_targets").then(setRecent).catch(() => {});
+  }, []);
 
   const items = useMemo(() => {
     const q = query.trim().toLowerCase();
+    const recents = q
+      ? []
+      : recent
+          .map((t) => parseQuick(t)[0])
+          .filter((s): s is Session => !!s)
+          .map((s) => ({ session: s, quick: true, recent: true }));
     const saved = sessions
       .filter((s) =>
         !q || [s.name, s.host, s.folder, s.serial_port].some((v) => v?.toLowerCase().includes(q)),
       )
       .slice(0, 50)
-      .map((s) => ({ session: s, quick: false }));
-    const quick = parseQuick(query).map((s) => ({ session: s, quick: true }));
-    return [...saved, ...quick];
-  }, [query, sessions]);
+      .map((s) => ({ session: s, quick: false, recent: false }));
+    const quick = parseQuick(query).map((s) => ({ session: s, quick: true, recent: false }));
+    return [...recents, ...saved, ...quick];
+  }, [query, sessions, recent]);
 
   useEffect(() => setIndex(0), [query]);
 
   const choose = (i: number) => {
     const item = items[i];
     if (!item) return;
+    if (item.quick) invoke("recent_target_add", { target: quickTarget(item.session) }).catch(() => {});
     onOpen(item.session);
     onClose();
+  };
+
+  const clearRecent = () => {
+    invoke("recent_targets_clear").catch(() => {});
+    setRecent([]);
   };
 
   return (
@@ -99,20 +122,34 @@ export function CommandPalette({ sessions, onClose, onOpen }: Props) {
           />
         </div>
         <ul className="max-h-[50vh] overflow-y-auto p-1.5">
-          {items.map(({ session: s, quick }, i) => (
+          {!query.trim() && recent.length > 0 && (
+            <li className="flex items-center justify-between px-3 h-6 text-[11px] text-muted">
+              Conexiones rápidas recientes
+              <button className="hover:text-fg hover:underline" onClick={clearRecent}>
+                Borrar recientes
+              </button>
+            </li>
+          )}
+          {items.map(({ session: s, quick, recent: isRecent }, i) => (
             <li
-              key={quick ? `quick-${s.type}` : s.id}
+              key={isRecent ? `recent-${i}` : quick ? `quick-${s.type}` : s.id}
               onMouseMove={() => setIndex(i)}
               onClick={() => choose(i)}
               className={`flex items-center gap-3 px-3 h-11 rounded-lg ${i === index ? "bg-selected" : ""}`}
             >
-              {quick ? <Zap size={15} className="text-warn shrink-0" /> : <SessionIcon type={s.type} size={15} />}
+              {isRecent ? (
+                <History size={15} className="text-muted shrink-0" />
+              ) : quick ? (
+                <Zap size={15} className="text-warn shrink-0" />
+              ) : (
+                <SessionIcon type={s.type} size={15} />
+              )}
               <div className="min-w-0 flex-1 leading-tight">
                 <div className="truncate">
-                  {quick ? `Conexión rápida ${typeLabel[s.type]}` : s.name}
+                  {isRecent ? sessionTarget(s) : quick ? `Conexión rápida ${typeLabel[s.type]}` : s.name}
                 </div>
                 <div className="truncate text-[11.5px] text-muted">
-                  {sessionTarget(s)}
+                  {isRecent ? "Reciente" : sessionTarget(s)}
                   {!quick && s.folder ? ` · ${s.folder}` : ""}
                 </div>
               </div>

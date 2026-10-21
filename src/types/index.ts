@@ -12,6 +12,8 @@ export interface Session {
   legacy_ssh?: boolean;
   jump_host?: string;
   ssh_args?: string;
+  /** Túneles SSH estructurados (-L, -R, -D). */
+  tunnels?: Tunnel[];
   serial_port?: string;
   baud_rate?: number;
   data_bits?: number;
@@ -33,6 +35,32 @@ export interface Session {
   /** Pestaña temporal de transferencia SCP. */
   scp?: { upload: boolean; files: string[]; remote_dir: string };
   created_at: string;
+}
+
+export type TunnelKind = "local" | "remote" | "dynamic";
+
+export interface Tunnel {
+  kind: TunnelKind;
+  /** Dirección de escucha; vacío = 127.0.0.1. */
+  bind?: string;
+  listen_port: number;
+  dest_host?: string;
+  dest_port?: number;
+}
+
+/** Forma corta de un túnel: L 8443→192.0.2.10:443, D 1080, R 9000→localhost:22. */
+export function tunnelLabel(t: Tunnel): string {
+  const flag = { local: "L", remote: "R", dynamic: "D" }[t.kind];
+  const bind = t.bind && t.bind !== "127.0.0.1" ? `${t.bind}:` : "";
+  return t.kind === "dynamic"
+    ? `${flag} ${bind}${t.listen_port}`
+    : `${flag} ${bind}${t.listen_port}→${t.dest_host ?? ""}:${t.dest_port ?? ""}`;
+}
+
+/** Clave del historial de comandos: id de la sesión guardada o tipo+destino. */
+export function historyKey(s: Session): string {
+  if (s.id && !s.id.startsWith("scp-")) return s.id;
+  return `${s.type}:${s.host ?? s.serial_port ?? "local"}`;
 }
 
 export interface SerialPortInfo {

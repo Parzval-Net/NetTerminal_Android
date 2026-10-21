@@ -27,7 +27,7 @@ import type { Macro, UpdateInfo } from "./lib/settings";
 import { openUrl } from "@tauri-apps/plugin-opener";
 import { Sparkles, X as XIcon } from "lucide-react";
 import { listen } from "@tauri-apps/api/event";
-import { ConnStatus, Session, Tab, TabState, tabTitle } from "./types";
+import { ConnStatus, Session, Tab, TabState, historyKey, tabTitle } from "./types";
 import { localOsVendor, modLabel, shortcutFor } from "./lib/platform";
 import { resolvePreset, useSystemDark } from "./lib/theme";
 import { Settings, useSettings } from "./lib/settings";
@@ -37,6 +37,7 @@ import "./App.css";
 // Vistas pesadas y de uso ocasional: se cargan aparte para aligerar el arranque.
 const ToolsView = lazy(() => import("./components/tools/ToolsView").then((m) => ({ default: m.ToolsView })));
 const SettingsModal = lazy(() => import("./components/SettingsModal").then((m) => ({ default: m.SettingsModal })));
+const ImportDialog = lazy(() => import("./components/ImportDialog").then((m) => ({ default: m.ImportDialog })));
 
 const LOCAL: Session = { id: "local", name: "Terminal local", type: "local", created_at: "" };
 
@@ -117,6 +118,7 @@ function Workspace({
   const [activeId, setActiveId] = useState<string | null>(null);
   const [modal, setModal] = useState<{ session?: Session; folder?: string } | null>(null);
   const [paletteOpen, setPaletteOpen] = useState(false);
+  const [importOpen, setImportOpen] = useState(false);
   const [sidebarOpen, setSidebarOpen] = useState(() => stored("sidebar", true));
   const controllers = useRef(new Map<string, TermController>());
 
@@ -512,9 +514,12 @@ function Workspace({
     if (!trimmed) return;
     const body = trimmed + "\n";
     const lines = trimmed.split("\n");
+    const session = activeTab.session;
     const go = () => {
       ctrl.send(body, settings.sendLineDelay).catch(console.error);
       ctrl.focus();
+      // Historial por equipo: solo envíos explícitos (Notas, catálogo, botones), nunca teclas.
+      if (!session.scp) invoke("cmd_history_add", { key: historyKey(session), command: trimmed }).catch(() => {});
     };
     const remote = activeTab.session.type !== "local";
     // Notas y botones pasan por el mismo motor de riesgo que el catálogo. Lo que puede
@@ -610,19 +615,19 @@ function Workspace({
     const key = (s: Session) =>
       [s.type, s.host ?? "", s.port ?? "", s.serial_port ?? "", s.name.trim().toLowerCase()].join("|");
     const existing = new Set(sessions.map(key));
-    let added = 0;
+    const fresh: Session[] = [];
     for (const s of list) {
       if (existing.has(key(s))) continue;
-      // No se importan los argumentos extra de ssh ni los comandos al conectar: una sesión
-      // compartida no debe poder inyectar opciones al cliente SSH ni enviar configuración
-      // al equipo sin que quien la importa lo revise.
-      const { ssh_args: _dropped, on_connect: _cmds, scp: _scp, ...safe } = s;
-      await invoke("save_session", { session: { ...safe, id: "", created_at: "" } });
+      // No se importan los argumentos extra de ssh, los comandos al conectar ni los túneles:
+      // una sesión compartida no debe poder inyectar opciones al cliente SSH, abrir puertos
+      // ni enviar configuración al equipo sin que quien la importa lo revise.
+      const { ssh_args: _dropped, on_connect: _cmds, scp: _scp, tunnels: _tunnels, ...safe } = s;
+      fresh.push({ ...safe, id: "", created_at: "" });
       existing.add(key(s));
-      added++;
     }
-    setSessions(await invoke<Session[]>("list_sessions"));
-    return added;
+    // Una sola escritura aunque sean cientos de sesiones.
+    setSessions(await invoke<Session[]>(fresh.length ? "add_sessions" : "list_sessions", { sessions: fresh }));
+    return fresh.length;
   };
 
   const deleteSession = async (id: string) => {
@@ -803,6 +808,7 @@ function Workspace({
     },
     toggleNotes: () => setNotesOpen((o) => !o),
     toggleCommands,
+    openImport: () => setImportOpen(true),
   });
 
   return (
@@ -821,6 +827,7 @@ function Workspace({
           onUpdateSessions={h.updateSessions}
           onSetExtraFolders={h.setExtraFolders}
           onConfirm={setConfirm}
+          onImportFile={h.openImport}
         />
       )}
 
@@ -996,6 +1003,7 @@ function Workspace({
           onNotes={h.toggleNotes}
           commandsOpen={commandsOpen}
           onCommands={h.toggleCommands}
+          onResend={h.sendToSession}
         />
       </main>
 
@@ -1016,6 +1024,7 @@ function Workspace({
             termTheme={preset.theme}
             sessions={sessions}
             onImportSessions={importSessions}
+            onImportFile={h.openImport}
             initialSection={settingsSection}
             mcpStatus={mcpStatus}
             onChange={update}
@@ -1110,6 +1119,11 @@ function Workspace({
             then(filled);
           }}
         />
+      )}
+      {importOpen && (
+        <Suspense fallback={null}>
+          <ImportDialog folders={folders} onImport={importSessions} onClose={() => setImportOpen(false)} />
+        </Suspense>
       )}
       {paletteOpen && (
         <CommandPalette sessions={sessions} onClose={() => setPaletteOpen(false)} onOpen={openTab} />

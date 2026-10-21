@@ -196,6 +196,9 @@ function startMonitor(cfg) {
   monitorTimers.set(cfg.id, setInterval(() => emit("monitor-sample", { id: cfg.id, ts: Date.now(), ok: true, rtt: rtt(cfg.id, i++), error: null }), 1000));
 }
 
+let recentTargets = ["ssh admin@192.0.2.50 22", "telnet 203.0.113.9 23"];
+const cmdHistory = { s0: [{ cmd: "show ip interface brief", ts: now - 60000 }, { cmd: "show version", ts: now - 3600000 }] };
+
 const handlers = {
   "plugin:event|listen": ({ event, handler }) => {
     listeners.set(event, [...(listeners.get(event) ?? []), handler]);
@@ -212,6 +215,36 @@ const handlers = {
   list_notes: () => Object.keys(notes).map((name) => ({ name, modified: now })),
   read_note: ({ name }) => notes[name] ?? "",
   list_scripts: () => [],
+  // Búsqueda en notas: texto plano sin distinguir mayúsculas, como el backend.
+  search_notes: ({ query }) => {
+    const q = (query ?? "").trim().toLowerCase();
+    if (q.length < 2) return [];
+    return Object.entries(notes).flatMap(([name, text]) =>
+      text.split("\n").flatMap((l, i) => (l.toLowerCase().includes(q) ? [{ name, line: i + 1, snippet: l.trim().slice(0, 160) }] : [])),
+    ).slice(0, 200);
+  },
+  // Importación: vista previa ficticia (IPs de documentación).
+  import_sessions_file: () => ({
+    format: "putty",
+    sessions: [
+      { id: "", name: "core-sw03", type: "ssh", host: "192.0.2.3", port: 22, username: "admin", folder: "PuTTY", created_at: "" },
+      { id: "", name: "consola-lab", type: "serial", serial_port: "COM3", baud_rate: 9600, folder: "PuTTY", created_at: "" },
+    ],
+    warnings: ["core-sw03: la llave .ppk de PuTTY no se importa (OpenSSH usa otro formato)"],
+  }),
+  add_sessions: ({ sessions: list }) => (sessions.push(...list.map((x, i) => ({ ...x, id: `imp${Date.now()}${i}` }))), [...sessions]),
+  recent_targets: () => [...recentTargets],
+  recent_target_add: ({ target }) => {
+    recentTargets = [target, ...recentTargets.filter((t) => t.toLowerCase() !== target.toLowerCase())].slice(0, 20);
+    return recentTargets;
+  },
+  recent_targets_clear: () => ((recentTargets = []), null),
+  cmd_history: ({ key }) => cmdHistory[key] ?? [],
+  cmd_history_add: ({ key, command }) => {
+    cmdHistory[key] = [{ cmd: command, ts: Date.now() }, ...(cmdHistory[key] ?? []).filter((e) => e.cmd !== command)].slice(0, 50);
+    return true;
+  },
+  cmd_history_clear: ({ key }) => (key ? delete cmdHistory[key] : Object.keys(cmdHistory).forEach((k) => delete cmdHistory[k]), null),
   plugins_list: () => [],
   tftp_files: () => [["c9300-universalk9.17.12.04.SPA.bin", 1_163_845_632], ["AR6100-V300R022C10SPC100.cc", 168_820_736], ["FGT_200F-v7.4.5.out", 92_340_224]],
   local_ips: () => [{ name: "en0", ip: "192.0.2.250" }],
