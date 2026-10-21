@@ -93,7 +93,7 @@ export const defaultSettings: Settings = {
   lineHeight: 1.15,
   cursorStyle: "block",
   cursorBlink: true,
-  scrollback: 10000,
+  scrollback: 5000,
   copyOnSelect: true,
   rightClickPaste: true,
   confirmClose: true,

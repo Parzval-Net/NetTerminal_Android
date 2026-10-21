@@ -152,6 +152,11 @@ jobs:
     permissions:
       contents: write
     steps:
+      # Historial completo para armar las novedades desde los commits entre versiones.
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+          path: repo
       - uses: actions/download-artifact@v4
         with:
           path: artefactos
@@ -164,8 +169,14 @@ jobs:
           GH_TOKEN: ${{ github.token }}
         run: |
           ver="${TAG#v}"
-          # Las mismas novedades van al release y al aviso dentro de la app.
-          gh api "repos/$REPO/releases/generate-notes" -f tag_name="$TAG" --jq .body > notas.md || echo "Ver el release $TAG" > notas.md
+          # Las mismas novedades van al release y al aviso dentro de la app: los mensajes de
+          # los commits desde la versión anterior (sin líneas de coautoría).
+          prev=$(git -C repo describe --tags --abbrev=0 "$TAG^" 2>/dev/null || true)
+          git -C repo log --no-merges --format='### %s%n%n%b' ${prev:+"$prev..$TAG"} \
+            | grep -v -i '^co-authored-by:' | cat -s > notas.md
+          [ -s notas.md ] || gh api "repos/$REPO/releases/generate-notes" -f tag_name="$TAG" --jq .body > notas.md
+          [ -n "$prev" ] && printf '\nCambios completos: https://github.com/%s/compare/%s...%s\n' "$REPO" "$prev" "$TAG" >> notas.md
+          cat notas.md
           mac=$(find artefactos -name '*.app.tar.gz' | head -1)
           cp "$mac" "artefactos/NetTerminal_${ver}_universal.app.tar.gz"
           cp "$mac.sig" "artefactos/NetTerminal_${ver}_universal.app.tar.gz.sig"

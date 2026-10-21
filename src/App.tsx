@@ -182,6 +182,20 @@ function Workspace({
     setActiveId(id);
   }, []);
 
+  // Aviso único por ejecución: con muchas pestañas el historial de pantalla domina la memoria
+  // (medido: unos 3 MB por cada 1.000 líneas llenas por pestaña).
+  const memoryHinted = useRef(false);
+  useEffect(() => {
+    if (memoryHinted.current || tabs.length <= 15) return;
+    memoryHinted.current = true;
+    const mb = Math.round((tabs.length * settings.scrollback * 3) / 1000);
+    toast(
+      `Tienes ${tabs.length} sesiones abiertas: con el historial lleno pueden ocupar hasta ~${mb} MB. ` +
+        "Si el equipo anda lento, cierra las que no uses o baja el historial en Ajustes › Terminal.",
+    );
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [tabs.length]);
+
   const sessionsRef = useRef(sessions);
   sessionsRef.current = sessions;
 

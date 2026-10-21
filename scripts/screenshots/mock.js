@@ -5,6 +5,7 @@
 const cbs = new Map();
 let nextId = 1;
 const listeners = new Map(); // evento -> [callbackId]
+const channels = new Map(); // conexión -> canales de datos
 const enc = new TextEncoder();
 
 function emit(event, payload) {
@@ -138,6 +139,7 @@ const settings = {
 // Cada carga parte limpia.
 localStorage.clear();
 settings.appTheme = new URLSearchParams(location.search).get("theme") ?? "dark";
+if (location.search.includes("big=")) settings.confirmClose = false;
 const topology = {
   nodes: [
     { id: "core-sw01", name: "core-sw01", ip: "192.0.2.1", platform: "C9500-24Y4C", explored: true, x: 420, y: 80 },
@@ -203,8 +205,8 @@ const handlers = {
   list_sessions: () => sessions,
   get_settings: () => settings,
   save_settings: () => null,
-  app_version: () => "0.6.0",
-  update_check: () => ({ current: "0.6.0", latest: "0.6.0", newer: false, url: "", notes: "", published: "", supported: true, reason: null }),
+  app_version: () => "0.6.1",
+  update_check: () => ({ current: "0.6.1", latest: "0.6.1", newer: false, url: "", notes: "", published: "", supported: true, reason: null }),
   app_repo: () => "Parzval-Net/Net_Terminal",
   cmdpacks_list: () => [],
   list_notes: () => Object.keys(notes).map((name) => ({ name, modified: now })),
@@ -219,10 +221,30 @@ const handlers = {
   list_serial_ports: () => [{ port_name: "/dev/tty.usbserial-0001", port_type: "USB" }],
   tool_iperf_version: () => "iperf 3.17",
   data_dir: () => "~/NetTerminal/data",
-  connect: ({ session, onData }) => {
+  connect: ({ id, session, onData, onExit }) => {
     const text = terminalFor(session).replace(/\r?\n/g, "\r\n");
-    let index = 0;
-    setTimeout(() => cbs.get(onData.id)?.({ index: index++, message: enc.encode(text).buffer }), 150);
+    const ch = { data: onData.id, exit: onExit.id, index: 0 };
+    channels.set(id, ch);
+    const send = (t) => cbs.get(ch.data)?.({ index: ch.index++, message: enc.encode(t).buffer });
+    setTimeout(() => send(text), 150);
+    // ?big=N: salida pesada (N líneas) para medir memoria y fugas.
+    const big = Number(new URLSearchParams(location.search).get("big") ?? 0);
+    for (let i = 0; i < big; i += 5000) {
+      const lines = Array.from({ length: Math.min(5000, big - i) }, (_, k) => `linea ${i + k} GigabitEthernet1/0/${k % 48} up up 192.0.2.${k % 254}`);
+      setTimeout(() => send(lines.join("\r\n") + "\r\n"), 300 + i / 50);
+    }
+    return null;
+  },
+  // Como el backend real: al cerrar se suelta el canal y el frontend recibe "end".
+  disconnect: ({ id }) => {
+    const ch = channels.get(id);
+    if (ch) {
+      if (!location.search.includes("noend")) {
+        cbs.get(ch.data)?.({ end: true, index: ch.index });
+        cbs.get(ch.exit)?.({ end: true, index: 0 });
+      }
+      channels.delete(id);
+    }
     return null;
   },
 };

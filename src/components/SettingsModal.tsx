@@ -279,13 +279,13 @@ export function SettingsModal({
 
             {section === "terminal" && (
               <>
-                <Item label="Historial (scrollback)" hint="Líneas que se conservan por pestaña">
+                <Item label="Historial (scrollback)" hint="Líneas por pestaña. Cada 1.000 líneas llenas ocupan unos 3 MB; el log en disco guarda todo">
                   <select
                     className="field !w-32"
                     value={s.scrollback}
                     onChange={(e) => onChange({ scrollback: Number(e.target.value) })}
                   >
-                    {[1000, 5000, 10000, 50000, 100000].map((v) => (
+                    {[1000, 2000, 5000, 10000, 50000, 100000].map((v) => (
                       <option key={v} value={v}>
                         {v.toLocaleString("es-CL")}
                       </option>

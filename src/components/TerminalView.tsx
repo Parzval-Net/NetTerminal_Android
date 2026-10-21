@@ -55,6 +55,9 @@ interface Props {
   register: (id: string, ctrl: TermController | null) => void;
 }
 
+/** Manejador vacío a nivel de módulo: uno creado dentro de la terminal retendría su contexto. */
+const NOOP = () => {};
+
 const dim = (s: string) => `\x1b[2m${s}\x1b[0m`;
 
 export const TerminalView = memo(function TerminalView({ id, session, active, settings, theme, onStatus, onLog, logPath, onActivity, register }: Props) {
@@ -135,6 +138,11 @@ export const TerminalView = memo(function TerminalView({ id, session, active, se
     let manualClose = false;
     let retries = 0;
     let retryTimer: number | undefined;
+    let channels: Channel<unknown>[] = [];
+    const releaseChannels = () => {
+      for (const ch of channels) ch.onmessage = NOOP;
+      channels = [];
+    };
     let lastDataAt = 0;
     /** Final de la salida reciente (sin ANSI), para reconocer el prompt. */
     let tail = "";
@@ -195,6 +203,9 @@ export const TerminalView = memo(function TerminalView({ id, session, active, se
       } catch {
         decoder = new TextDecoder();
       }
+      // Los canales de la conexión anterior dejan de retener la terminal (y su historial)
+      // aunque el aviso de cierre del backend no llegue.
+      releaseChannels();
       const onData = new Channel<ArrayBuffer>();
       onData.onmessage = (buf) => {
         if (connIdRef.current !== connId) return;
@@ -205,6 +216,7 @@ export const TerminalView = memo(function TerminalView({ id, session, active, se
         if (!activeRef.current) onActivity(id);
       };
       const onExit = new Channel<string>();
+      channels = [onData as Channel<unknown>, onExit as Channel<unknown>];
       onExit.onmessage = (reason) => {
         if (connIdRef.current !== connId) return;
         hl.flush();
@@ -413,6 +425,7 @@ export const TerminalView = memo(function TerminalView({ id, session, active, se
 
     return () => {
       disposed = true;
+      releaseChannels();
       cancelRetry();
       hl.dispose();
       register(id, null);
