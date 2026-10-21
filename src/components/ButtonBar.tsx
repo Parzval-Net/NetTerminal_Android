@@ -3,6 +3,7 @@ import { invoke } from "@tauri-apps/api/core";
 import { FileCode2, FolderOpen, Pencil, Plus, Square, Trash2 } from "lucide-react";
 import { Macro } from "../lib/settings";
 import { ContextMenu } from "./Sidebar";
+import { BroadcastTargetPicker } from "./BroadcastTarget";
 
 interface Props {
   macros: Macro[];
@@ -77,6 +78,7 @@ export const ButtonBar = memo(function ButtonBar(p: Props) {
       </button>
 
       <div className="ml-auto shrink-0 flex items-center gap-1 pl-2">
+        {p.macros.length > 0 && <BroadcastTargetPicker />}
         {p.running ? (
           <button
             onClick={p.onStopScript}

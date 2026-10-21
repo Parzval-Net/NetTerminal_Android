@@ -1,5 +1,6 @@
 import { memo, useCallback, useState } from "react";
-import { ClipboardCopy, Copy, Eraser, Pencil, PanelLeft, Plus, RefreshCcw, RotateCcw, Undo2, Unplug, Wrench, X } from "lucide-react";
+import { ClipboardCopy, Columns2, Copy, Eraser, LayoutGrid, Pencil, PanelLeft, Plus, RefreshCcw, RotateCcw, Rows2, Square, Undo2, Unplug, Wrench, X } from "lucide-react";
+import { SplitLayout, layoutLabel } from "../lib/split";
 import { ConnStatus, Tab, TabState, tabTitle } from "../types";
 import { ContextMenu } from "./Sidebar";
 import { SessionIcon } from "./SessionIcon";
@@ -26,6 +27,9 @@ interface Props {
   onCopyAll: (id: string) => void;
   /** Pestañas con salida nueva sin ver. */
   activity: Set<string>;
+  /** Vista dividida activa (null: una sola terminal). */
+  split?: SplitLayout | null;
+  onSplit?: (layout: SplitLayout | null) => void;
 }
 
 export const statusColor: Record<ConnStatus, string> = {
@@ -53,6 +57,8 @@ export const TabBar = memo(function TabBar({
   onResetTerminal,
   onCopyAll,
   activity,
+  split = null,
+  onSplit,
 }: Props) {
   const [editing, setEditing] = useState<string | null>(null);
   const [menu, setMenu] = useState<{ x: number; y: number; items: [string, React.ReactNode, () => void, boolean?][] } | null>(null);
@@ -190,6 +196,29 @@ export const TabBar = memo(function TabBar({
           <Plus size={16} />
         </button>
       </div>
+      {onSplit && (
+        <button
+          onClick={(e) => {
+            const r = e.currentTarget.getBoundingClientRect();
+            const icons = { cols: <Columns2 size={13} />, rows: <Rows2 size={13} />, grid: <LayoutGrid size={13} /> };
+            setMenu({
+              x: r.right - 200,
+              y: r.bottom + 4,
+              items: [
+                ["Vista única", <Square size={13} />, () => onSplit(null), split === null],
+                ...(["cols", "rows", "grid"] as SplitLayout[]).map(
+                  (l) => [layoutLabel[l], icons[l], () => onSplit(l), split === l] as [string, React.ReactNode, () => void, boolean],
+                ),
+              ],
+            });
+          }}
+          title={split ? `Vista dividida: ${layoutLabel[split]}` : "Vista dividida: ver 2 o 4 pestañas a la vez"}
+          aria-pressed={!!split}
+          className={`mb-1.5 w-7 h-7 shrink-0 grid place-items-center rounded-md hover:bg-hover ${split ? "text-accent" : "text-muted hover:text-fg"}`}
+        >
+          {split === "rows" ? <Rows2 size={15} /> : split === "grid" ? <LayoutGrid size={15} /> : <Columns2 size={15} />}
+        </button>
+      )}
       {(!toolsOpen || alerts > 0) && (
         <button
           onClick={onOpenTools}

@@ -4,7 +4,7 @@ import type { HlRule } from "./highlight";
 import type { MonitorTarget } from "./monitors";
 import type { TopoSnapshot, Topology } from "./topology";
 
-export type ModuleId = "monitor" | "diag" | "topology" | "subnet" | "perf" | "transfer" | "syslog" | "plugins";
+export type ModuleId = "monitor" | "diag" | "topology" | "subnet" | "perf" | "transfer" | "syslog" | "plugins" | "backup";
 
 export interface SpeedResult {
   ts: string;
@@ -115,7 +115,7 @@ export const defaultSettings: Settings = {
   mcpToken: "",
   mcpApproval: true,
   mcpReadOnly: false,
-  modules: { monitor: true, diag: true, topology: true, subnet: true, perf: true, transfer: true, syslog: true, plugins: true },
+  modules: { monitor: true, diag: true, topology: true, subnet: true, perf: true, transfer: true, syslog: true, plugins: true, backup: true },
   monitors: [],
   tftpPort: 69,
   httpPort: 8080,

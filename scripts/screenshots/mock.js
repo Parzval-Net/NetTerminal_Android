@@ -177,6 +177,33 @@ settings.topoSnapshots = [{
 }];
 
 
+// Respaldos de configuración (Herramientas › Respaldos): dos versiones previas de core-sw01.
+const connSessions = new Map(); // conexión -> sesión
+const backupRuns = new Map(); // equipo -> respaldos hechos en esta carga
+function fakeConfig(name, vendor, rev) {
+  if (vendor === "huawei")
+    return `#\n sysname ${name}\n#\nvlan batch 10 20${rev ? " 30" : ""}\n#\naaa\n local-user admin password irreversible-cipher $1a$demo$\n#\ninterface GigabitEthernet0/0/0\n ip address 198.51.100.1 255.255.255.0\n#\nsnmp-agent community read cipher %^%#demo%^%#\n#\nreturn`;
+  const lines = [
+    "!", `hostname ${name}`, "!", "enable secret 9 $9$demo$demo", "username admin privilege 15 secret 9 $9$demo", "!",
+    "vlan 10", " name USUARIOS", "vlan 20", " name VOZ", ...(rev ? ["vlan 30", " name CAMARAS"] : []), "!",
+  ];
+  for (let i = 1; i <= 24; i++)
+    lines.push(`interface GigabitEthernet1/0/${i}`, ` description ${i === 1 ? "UPLINK dist-sw01" : rev && i === 7 ? "CAMARA PISO 2" : "USUARIO"}`, ` switchport access vlan ${rev && i === 7 ? 30 : 10}`, " switchport mode access", i === 4 ? " shutdown" : " no shutdown", "!");
+  lines.push("snmp-server community DEMO RO 10", "tacacs-server host 192.0.2.50 key 7 0822455D0A16", "!", "line vty 0 15", " transport input ssh", "!", "end");
+  return lines.join("\n");
+}
+const backups = {
+  "core-sw01": {
+    "2026-10-14_093000.txt": fakeConfig("core-sw01", "cisco", 0).replace("enable secret 9 $9$demo$demo", "enable secret 9 ****").replace("DEMO", "****").replace("0822455D0A16", "****"),
+    "2026-10-20_181500.txt": fakeConfig("core-sw01", "cisco", 1).replace("enable secret 9 $9$demo$demo", "enable secret 9 ****").replace("DEMO", "****").replace("0822455D0A16", "****"),
+  },
+};
+const stamp = () => {
+  const d = new Date();
+  const p = (n) => String(n).padStart(2, "0");
+  return `${d.getFullYear()}-${p(d.getMonth() + 1)}-${p(d.getDate())}_${p(d.getHours())}${p(d.getMinutes())}${p(d.getSeconds())}`;
+};
+
 const monitorTimers = new Map();
 function rtt(id, i) {
   const base = { m1: 2, m2: 6, m3: 28 }[id] ?? 10;
@@ -221,7 +248,39 @@ const handlers = {
   list_serial_ports: () => [{ port_name: "/dev/tty.usbserial-0001", port_type: "USB" }],
   tool_iperf_version: () => "iperf 3.17",
   data_dir: () => "~/NetTerminal/data",
+  device_run: ({ conn, command }) => {
+    const s = connSessions.get(conn);
+    const job = `job-${nextId++}`;
+    const name = s?.name ?? "equipo";
+    const rev = (backupRuns.get(name) ?? 0) % 2;
+    backupRuns.set(name, (backupRuns.get(name) ?? 0) + 1);
+    const prompt = s?.highlight === "huawei" ? `<${name}>` : `${name}#`;
+    const body = /running-config|current-configuration/.test(command)
+      ? `${s?.highlight === "huawei" ? "" : "Building configuration...\n\nCurrent configuration : 4211 bytes\n"}${fakeConfig(name, s?.highlight, rev)}`
+      : "";
+    const output = `${prompt}${command}\r\n${body.replace(/\n/g, "\r\n")}\r\n${prompt}`;
+    setTimeout(() => {
+      emit("tool-job", { job, kind: "result", text: "", data: { ok: true, output } });
+      emit("tool-job", { job, kind: "done", text: "" });
+    }, 600 + Math.random() * 600);
+    return job;
+  },
+  backup_save: ({ device, content, mask }) => {
+    const dev = device.replace(/[^\w.-]/g, "_");
+    const file = `${stamp()}.txt`;
+    const text = mask ? content.replace(/(secret \d |community |key 7 )\S+/g, "$1****") : content;
+    backups[dev] = { ...(backups[dev] ?? {}), [file]: text };
+    return file;
+  },
+  backup_list: () =>
+    Object.entries(backups).map(([device, files]) => ({
+      device,
+      files: Object.keys(files).sort().reverse().map((name) => ({ name, size: files[name].length, modified: now / 1000 })),
+    })),
+  backup_read: ({ device, file }) => backups[device]?.[file] ?? "",
+  save_note: ({ name, content }) => ((notes[name] = content), null),
   connect: ({ id, session, onData, onExit }) => {
+    connSessions.set(id, session);
     const text = terminalFor(session).replace(/\r?\n/g, "\r\n");
     const ch = { data: onData.id, exit: onExit.id, index: 0 };
     channels.set(id, ch);
@@ -312,6 +371,9 @@ const scenes = {
   about: async () => { await click("Ajustes"); await click("Acerca de"); },
   settings: async () => { await open("core-sw01"); await click("Ajustes"); },
   packs: async () => { await open("core-sw01"); await click("Catálogo de comandos"); await click("Packs de comandos"); },
+  split: async () => { await open("core-sw01"); await open("ar-wan01"); await open("dist-sw01"); await open("sw-acceso-sur"); await click("Vista dividida: ver 2 o 4 pestañas a la vez"); await click("4 en cuadrícula (2x2)"); },
+  backup: async () => { await open("core-sw01"); await open("ar-wan01"); await click("Herramientas: monitoreo, diagnóstico, TFTP, syslog, plugins"); await click("Respaldos"); await click("Comparar A y B"); },
+  broadcast: async () => { await open("core-sw01"); await open("core-sw02"); await open("Shell local"); await click("Notas"); await click("Elegir a qué sesiones se envía"); },
 };
 const scene = new URLSearchParams(location.search).get("scene");
 if (scene && scenes[scene]) window.addEventListener("load", () => wait(600).then(scenes[scene]));

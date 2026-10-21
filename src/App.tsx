@@ -10,7 +10,7 @@ import { ConfirmDialog } from "./components/ConfirmDialog";
 import { NotesPanel } from "./components/NotesPanel";
 import { CommandsPanel } from "./components/CommandsPanel";
 import { vendorFor } from "./lib/commands";
-import { CatalogEntry, Pack, PackCommand, buildCatalog, computeRisk, detectPlatform, riskLabel, validatePack } from "./lib/packs";
+import { CatalogEntry, Pack, PackCommand, Risk, buildCatalog, computeRisk, detectPlatform, riskLabel, validatePack } from "./lib/packs";
 import type { ScpRequest } from "./components/tools/FileManager";
 import { runOnDevice } from "./lib/deviceRun";
 import { PacksModal } from "./components/PacksModal";
@@ -31,6 +31,10 @@ import { ConnStatus, Session, Tab, TabState, tabTitle } from "./types";
 import { localOsVendor, modLabel, shortcutFor } from "./lib/platform";
 import { resolvePreset, useSystemDark } from "./lib/theme";
 import { Settings, useSettings } from "./lib/settings";
+import { BroadcastBar, BroadcastDialog } from "./components/BroadcastDialog";
+import { Resolved, isBroadcastRunning, publishWorkspace, resolveTargets, runBroadcast, targetLabel, useBroadcastTarget, useWorkspace } from "./lib/broadcast";
+import { SplitPanes } from "./components/SplitPanes";
+import { SplitLayout, SplitState, fillPanes, paneRect } from "./lib/split";
 import logo from "./assets/logo.svg";
 import "./App.css";
 
@@ -357,6 +361,82 @@ function Workspace({
   const activeCtrl = () => (activeId ? controllers.current.get(activeId) : undefined);
   const activeConnected = !!activeTab && states[activeTab.id]?.status === "connected";
 
+  // ---------- Vista dividida ----------
+  const [split, setSplit] = useState<SplitState | null>(null);
+  /** Panel que recibe la pestaña elegida en la barra cuando no está en ningún panel. */
+  const focusPaneRef = useRef(0);
+  const splitOn = !!split && activeId !== "tools";
+  const tabIdsKey = tabs.map((t) => t.id).join(",");
+  // Pestañas cerradas dejan su panel vacío.
+  useEffect(() => {
+    setSplit((s) =>
+      s && s.panes.some((id) => id && !tabs.some((t) => t.id === id))
+        ? { ...s, panes: s.panes.map((id) => (id && tabs.some((t) => t.id === id) ? id : null)) }
+        : s,
+    );
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [tabIdsKey]);
+  // Elegir en la barra una pestaña que no está a la vista la pone en el panel con foco.
+  useEffect(() => {
+    if (!split || !activeId || activeId === "tools") return;
+    const i = split.panes.indexOf(activeId);
+    if (i >= 0) focusPaneRef.current = i;
+    else setSplit({ ...split, panes: split.panes.map((id, k) => (k === focusPaneRef.current ? activeId : id)) });
+  }, [activeId, split]);
+  const changeSplit = (layout: SplitLayout | null) => {
+    if (!layout) return setSplit(null);
+    const ids = tabs.map((t) => t.id);
+    setSplit((s) => ({ layout, panes: fillPanes(layout, s?.panes ?? [], ids, activeId !== "tools" ? activeId : null) }));
+    if (activeId === "tools") setActiveId(lastTermRef.current);
+  };
+  const pickPane = (pane: number, tabId: string | null) => {
+    setSplit((s) => {
+      if (!s) return s;
+      const panes = [...s.panes];
+      const other = tabId ? panes.indexOf(tabId) : -1;
+      if (other >= 0) panes[other] = panes[pane];
+      panes[pane] = tabId;
+      return { ...s, panes };
+    });
+    focusPaneRef.current = pane;
+    if (tabId) setActiveId(tabId);
+  };
+  const visibleKey = splitOn ? split!.panes.filter(Boolean).join(",") : null;
+  const visiblePanes = useMemo(() => (visibleKey === null ? null : visibleKey.split(",").filter(Boolean)), [visibleKey]);
+
+  // ---------- Difusión (envío a varias sesiones) ----------
+  const bcTarget = useBroadcastTarget();
+  const broadcastMode = bcTarget.mode !== "current";
+  const workspace = useWorkspace();
+  const [broadcast, setBroadcast] = useState<{ text: string; resolved: Resolved; declared?: Risk } | null>(null);
+  const [bcDelay, setBcDelay] = useState(() => stored("broadcastDelay", 300));
+  useEffect(() => persist("broadcastDelay", bcDelay), [bcDelay]);
+  useEffect(() => {
+    publishWorkspace({
+      tabs: tabs.map((t) => ({ id: t.id, title: tabTitle(t), session: t.session, status: states[t.id]?.status ?? "connecting" })),
+      panes: visiblePanes,
+      activeId,
+    });
+  }, [tabs, states, activeId, visiblePanes]);
+  /** Destino que muestran Notas y catálogo: la pestaña activa o el grupo de difusión. */
+  const sendTarget = broadcastMode ? targetLabel(bcTarget, workspace) : activeConnected ? tabTitle(activeTab!) : null;
+  const openBroadcast = (text: string, declared?: Risk) => {
+    if (isBroadcastRunning()) return toast("Hay un envío a varias sesiones en curso", "error");
+    const resolved = resolveTargets(bcTarget, tabs, (id) => states[id]?.status, activeId, visiblePanes);
+    setBroadcast({ text, resolved, declared });
+  };
+  const startBroadcast = (deviceDelayMs: number) => {
+    if (!broadcast) return;
+    setBcDelay(deviceDelayMs);
+    const { text, resolved } = broadcast;
+    setBroadcast(null);
+    // Mismo cuerpo que el envío normal: cada línea con Enter, también la última.
+    const body = text.replace(/\s+$/, "") + "\n";
+    runBroadcast(resolved.targets, resolved.skipped, body, { lineDelayMs: settings.sendLineDelay, deviceDelayMs }, (id) =>
+      controllers.current.get(id),
+    ).catch((e) => toast(String(e), "error"));
+  };
+
   // Notas: resaltado según el fabricante de la sesión activa.
   const notesRules = useMemo(
     () =>
@@ -498,8 +578,9 @@ function Workspace({
   };
 
   /** `checked`: el riesgo ya se confirmó (catálogo) y no se vuelve a preguntar. */
-  const sendToSession = (text: string, checked = false) => {
-    const then = (t: string) => sendResolved(t, checked);
+  const sendToSession = (text: string, checked = false, declared?: Risk) => {
+    // Las variables {{...}} se piden una sola vez, también al enviar a varias sesiones.
+    const then = (t: string) => (broadcastMode ? openBroadcast(t, declared) : sendResolved(t, checked));
     if (templateVars(text).length) return setTemplate({ text, then });
     then(text);
   };
@@ -758,6 +839,8 @@ function Workspace({
       activeCtrl()?.focus();
     },
     runCommand: (c: CatalogEntry, cmd: string) => {
+      // En difusión el diálogo propio confirma el riesgo con la cantidad de equipos.
+      if (broadcastMode) return sendToSession(cmd, false, c.risk);
       if (c.risk === "read") return sendToSession(cmd);
       setConfirm({
         title: c.risk === "disruptive" ? "Este comando puede cortar servicio" : "Este comando cambia configuración o estado",
@@ -803,6 +886,10 @@ function Workspace({
     },
     toggleNotes: () => setNotesOpen((o) => !o),
     toggleCommands,
+    changeSplit,
+    pickPane,
+    cancelBroadcast: () => setBroadcast(null),
+    startBroadcast,
   });
 
   return (
@@ -873,6 +960,7 @@ function Workspace({
             )}
           </div>
         )}
+        <BroadcastBar />
         <TabBar
           tabs={tabs}
           states={states}
@@ -892,16 +980,23 @@ function Workspace({
           onResetTerminal={h.resetTerminal}
           onCopyAll={h.copyAll}
           activity={activity}
+          split={split?.layout ?? null}
+          onSplit={h.changeSplit}
         />
 
         <div className="flex-1 min-h-0 flex">
         <div className="relative flex-1 min-w-0">
-          {tabs.map((t) => (
+          {tabs.map((t) => {
+            const pane = splitOn ? split!.panes.indexOf(t.id) : -1;
+            return (
             <TerminalView
               key={t.id}
               id={t.id}
               session={t.session}
               active={t.id === activeId}
+              visible={splitOn ? pane >= 0 : t.id === activeId}
+              rect={pane >= 0 ? paneRect(split!.layout, pane) : undefined}
+              onFocusPane={setActiveId}
               settings={settings}
               theme={preset.theme}
               onStatus={onStatus}
@@ -910,7 +1005,11 @@ function Workspace({
               onActivity={markActivity}
               register={register}
             />
-          ))}
+            );
+          })}
+          {splitOn && (
+            <SplitPanes split={split!} tabs={tabs} states={states} activeId={activeId} onPick={h.pickPane} onFocus={setActiveId} />
+          )}
           {toolsOpen && (
             <Suspense fallback={null}>
               <ToolsView
@@ -943,7 +1042,7 @@ function Workspace({
             detecting={detecting}
             favorites={settings.favCommands}
             onFavorites={h.setFavorites}
-            target={activeConnected ? tabTitle(activeTab!) : null}
+            target={sendTarget}
             onClose={h.closeCommands}
             onRun={h.runCommand}
             onType={h.typeCommand}
@@ -961,7 +1060,7 @@ function Workspace({
             theme={preset.theme}
             font={settings.fontFamily}
             fontSize={Math.max(11, settings.fontSize - 1)}
-            target={activeConnected ? activeTab!.session.name : null}
+            target={broadcastMode ? sendTarget : activeConnected ? activeTab!.session.name : null}
             onSend={h.sendToSession}
             onCapture={h.capture}
           />
@@ -971,7 +1070,7 @@ function Workspace({
         {settings.showButtonBar && (
           <ButtonBar
             macros={settings.macros}
-            connected={activeConnected}
+            connected={activeConnected || broadcastMode}
             running={scriptRun}
             onRun={h.runMacro}
             onRunScript={h.runScript}
@@ -1052,6 +1151,16 @@ function Workspace({
             }));
             setMacroEdit(undefined);
           }}
+        />
+      )}
+      {broadcast && (
+        <BroadcastDialog
+          text={broadcast.text}
+          resolved={broadcast.resolved}
+          declared={broadcast.declared}
+          delayMs={bcDelay}
+          onCancel={h.cancelBroadcast}
+          onConfirm={h.startBroadcast}
         />
       )}
       {approvals[0] && (
