@@ -1,6 +1,6 @@
-import { memo, useCallback, useEffect, useState } from "react";
+import { Suspense, lazy, memo, useCallback, useEffect, useState } from "react";
 import { invoke } from "@tauri-apps/api/core";
-import { Activity, ArrowDownUp, Calculator, Gauge, Network, Puzzle, Radar, ScrollText } from "lucide-react";
+import { Activity, ArrowDownUp, Calculator, DatabaseBackup, Gauge, Network, Puzzle, Radar, ScrollText } from "lucide-react";
 import { TopologyTool } from "./TopologyTool";
 import type { Session } from "../../types";
 import { ModuleId, Settings, SpeedResult } from "../../lib/settings";
@@ -14,6 +14,9 @@ import { SyslogTool } from "./SyslogTool";
 import { PluginsTool } from "./PluginsTool";
 import type { ScpRequest, TerminalRef } from "./FileManager";
 
+// Respaldos y diff: se cargan al abrir el módulo.
+const BackupTool = lazy(() => import("./BackupTool"));
+
 const NAV: { id: ModuleId; label: string; Icon: typeof Activity }[] = [
   { id: "monitor", label: "Monitoreo", Icon: Activity },
   { id: "diag", label: "Diagnóstico", Icon: Radar },
@@ -22,6 +25,7 @@ const NAV: { id: ModuleId; label: string; Icon: typeof Activity }[] = [
   { id: "perf", label: "Velocidad", Icon: Gauge },
   { id: "transfer", label: "TFTP / HTTP", Icon: ArrowDownUp },
   { id: "syslog", label: "Syslog", Icon: ScrollText },
+  { id: "backup", label: "Respaldos", Icon: DatabaseBackup },
   { id: "plugins", label: "Plugins", Icon: Puzzle },
 ];
 
@@ -121,6 +125,12 @@ export const ToolsView = memo(function ToolsView({ active, settings, update, mon
         return <SyslogTool settings={settings} running={running} onChange={update} refreshRunning={refreshRunning} />;
       case "plugins":
         return <PluginsTool connId={connId} onConfirm={onConfirm} />;
+      case "backup":
+        return (
+          <Suspense fallback={null}>
+            <BackupTool terminals={terminals} />
+          </Suspense>
+        );
     }
   };
 

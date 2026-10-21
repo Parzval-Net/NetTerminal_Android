@@ -37,6 +37,7 @@ const MODULES: [ModuleId, string, string][] = [
   ["transfer", "TFTP / HTTP", "Servir firmware y recibir respaldos desde equipos"],
   ["syslog", "Syslog", "Recibir logs de equipos en vivo"],
   ["plugins", "Plugins", "Extensiones instalables en Python"],
+  ["backup", "Respaldos", "Respaldo de configuración por fabricante y comparación de versiones"],
 ];
 
 const sections: { id: Section; label: string; Icon: typeof Palette }[] = [

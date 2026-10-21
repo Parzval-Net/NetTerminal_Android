@@ -1,3 +1,4 @@
+mod backups;
 mod cmdpacks;
 mod connection;
 mod expect;
@@ -150,6 +151,7 @@ fn open_dir(which: String, app: tauri::AppHandle, state: State<'_, AppState>) ->
         "tftp" => state.data_dir.join("tftp"),
         "plugins" => state.data_dir.join("plugins"),
         "syslog" => state.data_dir.join("syslog"),
+        "backups" => backups::root(&state.data_dir),
         _ => state.data_dir.clone(),
     };
     std::fs::create_dir_all(&dir).map_err(|e| e.to_string())?;
@@ -415,6 +417,23 @@ fn save_text(dest: String, content: String) -> Result<(), String> {
     std::fs::write(&dest, content).map_err(|e| e.to_string())
 }
 
+// ---------- Respaldos de configuración ----------
+
+#[tauri::command(async)]
+fn backup_save(device: String, content: String, mask: bool, state: State<'_, AppState>) -> Result<String, String> {
+    backups::save(&state.data_dir, &device, &content, mask)
+}
+
+#[tauri::command(async)]
+fn backup_list(state: State<'_, AppState>) -> serde_json::Value {
+    serde_json::to_value(backups::list(&state.data_dir)).unwrap_or_default()
+}
+
+#[tauri::command(async)]
+fn backup_read(device: String, file: String, state: State<'_, AppState>) -> Result<String, String> {
+    backups::read(&state.data_dir, &device, &file)
+}
+
 // ---------- Packs de comandos ----------
 
 #[tauri::command(async)]
@@ -666,7 +685,10 @@ pub fn run() {
             plugin_set_enabled,
             plugin_uninstall,
             plugin_code,
-            plugin_run
+            plugin_run,
+            backup_save,
+            backup_list,
+            backup_read
         ])
         .run(tauri::generate_context!())
         .expect("error al iniciar NetTerminal");
