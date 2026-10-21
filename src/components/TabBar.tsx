@@ -1,12 +1,14 @@
 import { memo, useCallback, useState } from "react";
-import { ClipboardCopy, Columns2, Copy, Eraser, LayoutGrid, Pencil, PanelLeft, Plus, RefreshCcw, RotateCcw, Rows2, Square, Undo2, Unplug, Wrench, X } from "lucide-react";
+import { Columns2, LayoutGrid, PanelLeft, Plus, Rows2, Wrench, X } from "lucide-react";
 import { SplitLayout, layoutLabel } from "../lib/split";
+import type { TabLayout } from "../lib/settings";
+import { MenuItem, layoutItem, splitMenuItems, tabMenuItems } from "./tabMenu";
 import { ConnStatus, Tab, TabState, tabTitle } from "../types";
 import { ContextMenu } from "./Sidebar";
 import { SessionIcon } from "./SessionIcon";
 import { modLabel } from "../lib/platform";
 
-interface Props {
+export interface TabBarProps {
   tabs: Tab[];
   states: Record<string, TabState>;
   activeId: string | null;
@@ -32,6 +34,9 @@ interface Props {
   onSplit?: (layout: SplitLayout | null) => void;
   /** Pestañas con una alerta por palabra clave sin ver. */
   alerted?: Set<string>;
+  /** "vertical": las pestañas van en VerticalTabs y esta barra solo deja las acciones globales. */
+  tabLayout?: TabLayout;
+  onTabLayout?: (layout: TabLayout) => void;
 }
 
 export const statusColor: Record<ConnStatus, string> = {
@@ -40,7 +45,8 @@ export const statusColor: Record<ConnStatus, string> = {
   closed: "var(--muted)",
 };
 
-export const TabBar = memo(function TabBar({
+export const TabBar = memo(function TabBar(props: TabBarProps) {
+  const {
   tabs,
   states,
   activeId,
@@ -52,19 +58,15 @@ export const TabBar = memo(function TabBar({
   onOpenTools,
   alerts,
   onRename,
-  onDuplicate,
-  onReconnect,
-  onDisconnect,
-  onClearScrollback,
-  onResetTerminal,
-  onCopyAll,
   activity,
   split = null,
   onSplit,
   alerted,
-}: Props) {
+  tabLayout,
+  } = props;
+  const vertical = tabLayout === "vertical";
   const [editing, setEditing] = useState<string | null>(null);
-  const [menu, setMenu] = useState<{ x: number; y: number; items: [string, React.ReactNode, () => void, boolean?][] } | null>(null);
+  const [menu, setMenu] = useState<{ x: number; y: number; items: MenuItem[] } | null>(null);
   const closeMenu = useCallback(() => setMenu(null), []);
 
   const commit = (id: string, value: string) => {
@@ -84,8 +86,16 @@ export const TabBar = memo(function TabBar({
       >
         <PanelLeft size={16} />
       </button>
-      <div className="flex-1 min-w-0 flex items-end gap-0.5 overflow-x-auto [scrollbar-width:none]">
-        {toolsOpen && (
+      <div
+        className="flex-1 min-w-0 self-stretch flex items-end gap-0.5 overflow-x-auto [scrollbar-width:none]"
+        onContextMenu={(e) => {
+          // Clic derecho en el espacio libre de la barra: alternar horizontal/vertical.
+          if (e.target !== e.currentTarget || !props.onTabLayout) return;
+          e.preventDefault();
+          setMenu({ x: e.clientX, y: e.clientY, items: layoutItem(props) });
+        }}
+      >
+        {!vertical && toolsOpen && (
           <div
             onMouseDown={(e) => {
               if (e.button === 1) onClose("tools");
@@ -113,7 +123,7 @@ export const TabBar = memo(function TabBar({
             </button>
           </div>
         )}
-        {tabs.map((t) => {
+        {!vertical && tabs.map((t) => {
           const active = t.id === activeId;
           const status = states[t.id]?.status ?? "connecting";
           return (
@@ -132,17 +142,7 @@ export const TabBar = memo(function TabBar({
                 setMenu({
                   x: e.clientX,
                   y: e.clientY,
-                  items: [
-                    ["Renombrar", <Pencil size={13} />, () => setEditing(t.id)],
-                    ["Restaurar nombre original", <Undo2 size={13} />, () => onRename(t.id, undefined), !t.title],
-                    ["Duplicar", <Copy size={13} />, () => onDuplicate(t.id)],
-                    ["Reconectar", <RotateCcw size={13} />, () => onReconnect(t.id)],
-                    ["Desconectar", <Unplug size={13} />, () => onDisconnect(t.id), states[t.id]?.status === "closed"],
-                    ["Copiar toda la salida", <ClipboardCopy size={13} />, () => onCopyAll(t.id)],
-                    ["Limpiar historial", <Eraser size={13} />, () => onClearScrollback(t.id)],
-                    ["Reiniciar terminal", <RefreshCcw size={13} />, () => onResetTerminal(t.id)],
-                    ["Cerrar", <X size={13} />, () => onClose(t.id)],
-                  ],
+                  items: tabMenuItems(t, states[t.id], props, () => setEditing(t.id)),
                 });
               }}
               title={`${tabTitle(t)}${t.title ? ` (${t.session.name})` : ""}\nDoble clic: renombrar · clic derecho: opciones · clic medio: cerrar`}
@@ -195,29 +195,19 @@ export const TabBar = memo(function TabBar({
           );
         })}
         {menu && <ContextMenu menu={menu} onClose={closeMenu} />}
-        <button
+        {!vertical && <button
           onClick={onNew}
           title={`Terminal local (${modLabel}T)`}
           className="mb-1.5 ml-1 w-7 h-7 shrink-0 grid place-items-center rounded-md text-muted hover:text-fg hover:bg-hover"
         >
           <Plus size={16} />
-        </button>
+        </button>}
       </div>
       {onSplit && (
         <button
           onClick={(e) => {
             const r = e.currentTarget.getBoundingClientRect();
-            const icons = { cols: <Columns2 size={13} />, rows: <Rows2 size={13} />, grid: <LayoutGrid size={13} /> };
-            setMenu({
-              x: r.right - 200,
-              y: r.bottom + 4,
-              items: [
-                ["Vista única", <Square size={13} />, () => onSplit(null), split === null],
-                ...(["cols", "rows", "grid"] as SplitLayout[]).map(
-                  (l) => [layoutLabel[l], icons[l], () => onSplit(l), split === l] as [string, React.ReactNode, () => void, boolean],
-                ),
-              ],
-            });
+            setMenu({ x: r.right - 200, y: r.bottom + 4, items: splitMenuItems(split, onSplit) });
           }}
           title={split ? `Vista dividida: ${layoutLabel[split]}` : "Vista dividida: ver 2 o 4 pestañas a la vez"}
           aria-pressed={!!split}
