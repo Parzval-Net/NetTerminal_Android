@@ -14,6 +14,7 @@ import { fontStack } from "../lib/theme";
 import { Settings } from "../lib/settings";
 import { StreamHighlighter, compile, effectiveRules } from "../lib/highlight";
 import { isMac, shortcutFor } from "../lib/platform";
+import { paneBodyStyle } from "../lib/split";
 
 export interface TermController {
   /** Id de la conexión vigente en el backend (cambia en cada reconexión). */
@@ -43,7 +44,14 @@ const reconnectSecs = (attempt: number) => Math.min(60, 5 * 2 ** Math.max(0, att
 interface Props {
   id: string;
   session: Session;
+  /** Pestaña con el foco de teclado. */
   active: boolean;
+  /** Se ve en pantalla (en vista dividida puede verse sin tener el foco). Por defecto = active. */
+  visible?: boolean;
+  /** Vista dividida: rectángulo "x,y,w,h" en % del área; sin él ocupa todo. */
+  rect?: string;
+  /** Vista dividida: clic en el panel para darle el foco. */
+  onFocusPane?: (id: string) => void;
   settings: Settings;
   theme: ITheme;
   onStatus: (id: string, status: ConnStatus) => void;
@@ -60,9 +68,10 @@ const NOOP = () => {};
 
 const dim = (s: string) => `\x1b[2m${s}\x1b[0m`;
 
-export const TerminalView = memo(function TerminalView({ id, session, active, settings, theme, onStatus, onLog, logPath, onActivity, register }: Props) {
-  const activeRef = useRef(active);
-  activeRef.current = active;
+export const TerminalView = memo(function TerminalView({ id, session, active, visible = active, rect, onFocusPane, settings, theme, onStatus, onLog, logPath, onActivity, register }: Props) {
+  // "Visible" decide WebGL y el aviso de actividad; "active" (foco) decide el teclado.
+  const activeRef = useRef(visible);
+  activeRef.current = visible;
   const hostRef = useRef<HTMLDivElement>(null);
   const termRef = useRef<Terminal | null>(null);
   const fitRef = useRef<FitAddon | null>(null);
@@ -471,7 +480,7 @@ export const TerminalView = memo(function TerminalView({ id, session, active, se
   useEffect(() => {
     const term = termRef.current;
     if (!term) return;
-    if (active) {
+    if (visible) {
       if (!webglRef.current) {
         try {
           const webgl = new WebglAddon();
@@ -486,7 +495,6 @@ export const TerminalView = memo(function TerminalView({ id, session, active, se
         }
       }
       fitRef.current?.fit();
-      term.focus();
       return;
     }
     const release = window.setTimeout(() => {
@@ -494,6 +502,10 @@ export const TerminalView = memo(function TerminalView({ id, session, active, se
       webglRef.current = null;
     }, 30_000);
     return () => window.clearTimeout(release);
+  }, [visible]);
+
+  useEffect(() => {
+    if (active) termRef.current?.focus();
   }, [active]);
 
   const findNext = (back = false) => {
@@ -518,8 +530,9 @@ export const TerminalView = memo(function TerminalView({ id, session, active, se
 
   return (
     <div
-      className="absolute inset-0"
-      style={{ visibility: active ? "visible" : "hidden", background: theme.background }}
+      className={rect ? "absolute" : "absolute inset-0"}
+      style={{ ...(rect ? paneBodyStyle(rect) : null), visibility: visible ? "visible" : "hidden", background: theme.background }}
+      onMouseDownCapture={rect && !active && onFocusPane ? () => onFocusPane(id) : undefined}
     >
       <div ref={hostRef} className="w-full h-full" />
       {pasteAsk !== null && (

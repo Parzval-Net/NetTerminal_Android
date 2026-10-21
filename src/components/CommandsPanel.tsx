@@ -1,5 +1,6 @@
 import { memo, useCallback, useDeferredValue, useMemo, useRef, useState } from "react";
 import { writeText } from "@tauri-apps/plugin-clipboard-manager";
+import { BroadcastTargetPicker } from "./BroadcastTarget";
 import { openUrl } from "@tauri-apps/plugin-opener";
 import {
   ChevronRight,
@@ -258,9 +259,12 @@ export const CommandsPanel = memo(function CommandsPanel(p: Props) {
         {total === 0 && <p className="p-4 text-center text-[12px] text-muted">Sin resultados</p>}
       </div>
 
-      <footer className="px-3 py-1.5 border-t border-line text-[11px] text-muted">
-        {p.target ? `Destino: ${p.target}` : "Sin sesión conectada"}
-        {platform ? ` · ${platLabel(platform)}` : ""} · verifica la sintaxis en tu versión
+      <footer className="flex items-center gap-2 px-3 py-1.5 border-t border-line text-[11px] text-muted">
+        <span className="flex-1 min-w-0 truncate">
+          {p.target ? `Destino: ${p.target}` : "Sin sesión conectada"}
+          {platform ? ` · ${platLabel(platform)}` : ""} · verifica la sintaxis en tu versión
+        </span>
+        <BroadcastTargetPicker />
       </footer>
     </aside>
   );

@@ -3,6 +3,7 @@ import { invoke } from "@tauri-apps/api/core";
 import type { ITheme } from "@xterm/xterm";
 import { ArrowDownToLine, Check, FolderOpen, Pencil, Plus, Send, SendHorizontal, Trash2, X } from "lucide-react";
 import { CodeEditor } from "./CodeEditor";
+import { BroadcastTargetPicker } from "./BroadcastTarget";
 import { Compiled } from "../lib/highlight";
 import { fontStack } from "../lib/theme";
 import { isMac, modLabel } from "../lib/platform";
@@ -259,8 +260,9 @@ export const NotesPanel = memo(function NotesPanel(p: Props) {
             <ArrowDownToLine size={13} /> Capturar
           </FootBtn>
         </div>
-        <div className="flex items-center justify-between text-[11px] text-muted h-4">
-          <span className="truncate">{notice || (p.target ? `Destino: ${p.target}` : "Sin sesión conectada")}</span>
+        <div className="flex items-center gap-2 text-[11px] text-muted h-6">
+          <span className="truncate flex-1 min-w-0">{notice || (p.target ? `Destino: ${p.target}` : "Sin sesión conectada")}</span>
+          <BroadcastTargetPicker />
           <span className="flex items-center gap-1 shrink-0">
             {saved ? <Check size={11} /> : null}
             {saved ? "Guardado" : "Guardando…"}
