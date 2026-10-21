@@ -3,11 +3,12 @@
 //! registra en un log de texto plano y mantiene un historial limpio que leen los
 //! scripts y los agentes de IA (MCP).
 
+use crate::logfile::{LogOptions, LogVars, LogWriter};
 use crate::models::{Session, SessionType};
 use crate::telnet::{self, TelnetShared};
+use crate::triggers::{self, Watcher};
 use portable_pty::{native_pty_system, ChildKiller, CommandBuilder, MasterPty, PtySize};
 use std::collections::HashMap;
-use std::fs::File;
 use std::io::{Read, Write};
 use std::net::{Shutdown, TcpStream, ToSocketAddrs};
 use std::path::{Path, PathBuf};
@@ -30,6 +31,8 @@ struct Mirror {
     partial: Vec<u8>,
     history: String,
     taps: Vec<std::sync::mpsc::SyncSender<String>>,
+    /// Alertas por palabra clave (sin reglas, una lectura atómica por fragmento).
+    watch: Option<Watcher>,
 }
 
 /// Cuántos bytes finales son el comienzo de un carácter UTF-8 todavía incompleto.
@@ -80,6 +83,9 @@ impl Mirror {
                     cut += 1;
                 }
                 self.history.drain(..cut);
+            }
+            if let Some(w) = self.watch.as_mut() {
+                w.feed(&text);
             }
         }
         drop(text);
@@ -133,15 +139,28 @@ impl Outbox {
         self.ready.notify_one();
     }
 
-    /// Envía lo pendiente. Devuelve cuántos bytes salieron.
-    fn flush(&self) -> usize {
+    /// Envía lo pendiente.
+    fn flush(&self) {
         let _order = lock(&self.send_lock);
+        self.flush_locked();
+    }
+
+    fn flush_locked(&self) {
         let buf = std::mem::take(&mut lock(&self.pending).buf);
-        let n = buf.len();
-        if n > 0 {
+        if !buf.is_empty() {
             let _ = self.data.send(InvokeResponseBody::Raw(buf));
         }
-        n
+    }
+
+    /// Envía lo pendiente y después el aviso de cierre por el mismo canal (un string JSON;
+    /// los datos van como binario). El canal del frontend entrega en orden de índice, así
+    /// que el cierre nunca se adelanta a los últimos datos, aunque estos viajen por fetch.
+    fn finish(&self, reason: &str) {
+        let _order = lock(&self.send_lock);
+        self.flush_locked();
+        if let Ok(json) = serde_json::to_string(reason) {
+            let _ = self.data.send(InvokeResponseBody::Json(json));
+        }
     }
 
     fn run(&self) {
@@ -192,17 +211,15 @@ fn lock<T>(m: &Mutex<T>) -> std::sync::MutexGuard<'_, T> {
 #[derive(Clone)]
 pub struct Sink {
     out: Arc<OutboxHandle>,
-    exit: Channel<String>,
     exited: Arc<AtomicBool>,
     log: Arc<Mutex<Option<LogWriter>>>,
     mirror: Arc<Mutex<Mirror>>,
 }
 
 impl Sink {
-    fn new(data: Channel<InvokeResponseBody>, exit: Channel<String>) -> Self {
+    fn new(data: Channel<InvokeResponseBody>) -> Self {
         Sink {
             out: Outbox::start(data),
-            exit,
             exited: Arc::new(AtomicBool::new(false)),
             log: Arc::new(Mutex::new(None)),
             mirror: Arc::new(Mutex::new(Mirror::default())),
@@ -221,15 +238,10 @@ impl Sink {
         self.out.0.push(bytes);
     }
 
-    /// Notifica el cierre una sola vez, venga de donde venga. Antes envía lo pendiente
-    /// para que el aviso de cierre no llegue antes que los últimos datos.
+    /// Notifica el cierre una sola vez, venga de donde venga, detrás de los últimos datos.
     pub fn close(&self, reason: impl Into<String>) {
         if !self.exited.swap(true, Ordering::SeqCst) {
-            // Desde 1 KB el webview pide los datos con un fetch aparte: se le da margen.
-            if self.out.0.flush() >= 1024 {
-                thread::sleep(Duration::from_millis(50));
-            }
-            let _ = self.exit.send(reason.into());
+            self.out.0.finish(&reason.into());
         }
     }
 }
@@ -237,13 +249,13 @@ impl Sink {
 /// Quita secuencias ANSI, retornos de carro y caracteres de control sueltos.
 /// Conserva el estado entre llamadas porque una secuencia puede venir partida.
 #[derive(Default)]
-struct AnsiStripper {
+pub(crate) struct AnsiStripper {
     state: u8, // 0 normal, 1 ESC, 2 CSI, 3 OSC
 }
 
 impl AnsiStripper {
     /// Agrega a `out` el texto limpio. Un backspace solo borra lo agregado en esta llamada.
-    fn strip_into(&mut self, bytes: &[u8], out: &mut Vec<u8>) {
+    pub(crate) fn strip_into(&mut self, bytes: &[u8], out: &mut Vec<u8>) {
         let base = out.len();
         out.reserve(bytes.len());
         for &b in bytes {
@@ -277,68 +289,6 @@ impl AnsiStripper {
                 }
             }
         }
-    }
-}
-
-/// Log en texto plano, con la hora al inicio de cada línea si se pide.
-struct LogWriter {
-    file: File,
-    stripper: AnsiStripper,
-    timestamps: bool,
-    line_start: bool,
-    clean: Vec<u8>,
-    out: Vec<u8>,
-    /// Hora ya formateada para el segundo en curso (se formatea una vez por segundo).
-    stamp: (u64, String),
-}
-
-impl LogWriter {
-    fn new(file: File, timestamps: bool) -> Self {
-        Self {
-            file,
-            stripper: AnsiStripper::default(),
-            timestamps,
-            line_start: true,
-            clean: Vec::new(),
-            out: Vec::new(),
-            stamp: (u64::MAX, String::new()),
-        }
-    }
-
-    fn stamp(&mut self) -> &[u8] {
-        let secs = std::time::SystemTime::now()
-            .duration_since(std::time::UNIX_EPOCH)
-            .map(|d| d.as_secs())
-            .unwrap_or(0);
-        if self.stamp.0 != secs {
-            self.stamp = (secs, chrono::Local::now().format("[%Y-%m-%d %H:%M:%S] ").to_string());
-        }
-        self.stamp.1.as_bytes()
-    }
-
-    fn write(&mut self, bytes: &[u8]) {
-        let mut clean = std::mem::take(&mut self.clean);
-        let mut out = std::mem::take(&mut self.out);
-        clean.clear();
-        out.clear();
-        self.stripper.strip_into(bytes, &mut clean);
-        if self.timestamps {
-            for &b in &clean {
-                if self.line_start {
-                    out.extend_from_slice(self.stamp());
-                }
-                self.line_start = b == b'\n';
-                out.push(b);
-            }
-            let _ = self.file.write_all(&out);
-        } else {
-            if let Some(&last) = clean.last() {
-                self.line_start = last == b'\n';
-            }
-            let _ = self.file.write_all(&clean);
-        }
-        self.clean = clean;
-        self.out = out;
     }
 }
 
@@ -426,6 +376,7 @@ impl Connection {
 #[derive(Default)]
 pub struct ConnectionManager {
     conns: Mutex<HashMap<String, Connection>>,
+    triggers: Arc<triggers::Hub>,
 }
 
 impl ConnectionManager {
@@ -436,12 +387,12 @@ impl ConnectionManager {
         cols: u16,
         rows: u16,
         data: Channel<InvokeResponseBody>,
-        exit: Channel<String>,
     ) -> Result<(), String> {
         // Una reconexión reutiliza el id: se cierra lo anterior primero.
         self.disconnect(&id);
 
-        let sink = Sink::new(data, exit);
+        let sink = Sink::new(data);
+        lock(&sink.mirror).watch = Some(Watcher::new(self.triggers.clone(), id.clone(), session.folder.as_deref()));
 
         let mut transport = match session.session_type {
             SessionType::Local if session.scp.is_some() => spawn_pty(scp_command(session)?, cols, rows, &sink)?,
@@ -532,20 +483,32 @@ impl ConnectionManager {
         port.clear_break().map_err(|e| e.to_string())
     }
 
+    /// Alertas por palabra clave, compartidas por todas las conexiones.
+    pub fn triggers(&self) -> &triggers::Hub {
+        &self.triggers
+    }
+
     /// Activa o desactiva el log. Devuelve la ruta del archivo cuando se activa.
     pub fn set_logging(
         &self,
         id: &str,
         enabled: bool,
-        timestamps: bool,
+        opts: LogOptions,
         dir: &Path,
         resume: Option<&str>,
     ) -> Result<Option<String>, String> {
         // Crear la carpeta y el archivo ocurre sin el lock del mapa global.
-        let (log, name) = {
+        let (log, vars) = {
             let map = lock(&self.conns);
             let conn = map.get(id).ok_or("Sesión no conectada")?;
-            (conn.sink.log.clone(), conn.name.clone())
+            let s = &conn.session;
+            let host = match s.session_type {
+                SessionType::Serial => s.serial_port.as_deref().and_then(|p| p.rsplit(['/', '\\']).next()).unwrap_or(""),
+                SessionType::Local => "local",
+                _ => s.host.as_deref().unwrap_or(""),
+            };
+            let vars = LogVars { session: conn.name.clone(), host: host.to_string(), folder: s.folder.clone().unwrap_or_default() };
+            (conn.sink.log.clone(), vars)
         };
         if !enabled {
             *lock(&log) = None;
@@ -554,24 +517,13 @@ impl ConnectionManager {
         std::fs::create_dir_all(dir).map_err(|e| e.to_string())?;
         // Reconexión: se sigue escribiendo en el mismo archivo para no fragmentar la evidencia
         // de una ventana de cambio. Solo se acepta un .log que ya exista en la carpeta de logs.
-        if let Some(prev) = resume.and_then(|p| resumable_log(dir, Path::new(p))) {
-            let mut file = std::fs::OpenOptions::new().append(true).open(&prev).map_err(|e| e.to_string())?;
-            let _ = writeln!(file, "\n── Reconectado {} ──", chrono::Local::now().format("%Y-%m-%d %H:%M:%S"));
-            *lock(&log) = Some(LogWriter::new(file, timestamps));
-            return Ok(Some(prev.to_string_lossy().into_owned()));
-        }
-        let safe: String = name
-            .chars()
-            .map(|c| if c.is_alphanumeric() || c == '-' || c == '_' { c } else { '_' })
-            .collect();
-        let path: PathBuf = dir.join(format!(
-            "{}_{}.log",
-            safe,
-            chrono::Local::now().format("%Y%m%d-%H%M%S")
-        ));
-        let file = File::create(&path).map_err(|e| e.to_string())?;
-        *lock(&log) = Some(LogWriter::new(file, timestamps));
-        Ok(Some(path.to_string_lossy().into_owned()))
+        let writer = match resume.and_then(|p| resumable_log(dir, Path::new(p))) {
+            Some(prev) => LogWriter::resume(&prev, dir, opts, vars)?,
+            None => LogWriter::create(dir, opts, vars)?,
+        };
+        let path = writer.path().to_string_lossy().into_owned();
+        *lock(&log) = Some(writer);
+        Ok(Some(path))
     }
 
     pub fn list(&self) -> Vec<ConnInfo> {
@@ -625,11 +577,11 @@ impl ConnectionManager {
     }
 }
 
-/// Ruta de un log existente dentro de la carpeta de logs (sin salir de ella).
+/// Ruta de un log existente dentro de la carpeta de logs o sus subcarpetas (sin salir de ella).
 fn resumable_log(dir: &Path, path: &Path) -> Option<PathBuf> {
     let dir = dir.canonicalize().ok()?;
     let path = path.canonicalize().ok()?;
-    (path.parent() == Some(dir.as_path()) && path.extension().is_some_and(|e| e == "log") && path.is_file()).then_some(path)
+    (path.starts_with(&dir) && path.extension().is_some_and(|e| e == "log") && path.is_file()).then_some(path)
 }
 
 
@@ -1181,7 +1133,15 @@ pub fn list_serial_ports() -> Vec<crate::models::SerialPortInfo> {
 
 #[cfg(test)]
 mod tests {
-    use super::LogWriter;
+    use crate::logfile::{LogOptions, LogVars, LogWriter};
+
+    /// Log de prueba en una carpeta temporal propia.
+    fn test_log(mask: bool) -> (LogWriter, std::path::PathBuf) {
+        let dir = std::env::temp_dir().join(format!("nt-log-{}", uuid::Uuid::new_v4()));
+        let opts = LogOptions { timestamps: true, mask, ..Default::default() };
+        let vars = LogVars { session: "t".into(), ..Default::default() };
+        (LogWriter::create(&dir, opts, vars).unwrap(), dir)
+    }
 
     #[test]
     fn builds_safe_scp_commands() {
@@ -1400,16 +1360,32 @@ mod tests {
         }
         let s = t.elapsed().as_secs_f64();
         println!("mirror con 1 tap: {:.0} MB/s ({:.2} us/chunk)", 64.0 / s, s * 1e6 / total as f64);
-        let path = std::env::temp_dir().join(format!("nt-bench-{}.log", std::process::id()));
-        let mut w = LogWriter::new(std::fs::File::create(&path).unwrap(), true);
+        for mask in [false, true] {
+            let (mut w, dir) = test_log(mask);
+            let t = Instant::now();
+            for _ in 0..total / 4 {
+                w.write(&chunk);
+            }
+            let s = t.elapsed().as_secs_f64();
+            println!("log con hora, enmascarado={mask}: {:.0} MB/s ({:.2} us/chunk)", 16.0 / s, s * 1e6 / (total / 4) as f64);
+            drop(w);
+            let _ = std::fs::remove_dir_all(dir);
+        }
+        // Mirror con alertas activas (3 reglas que no coinciden).
+        let hub = std::sync::Arc::new(crate::triggers::Hub::default());
+        let rules = ["%LINK-3-UPDOWN", "%SYS-5-RESTART", "BGP.*Down"]
+            .iter()
+            .enumerate()
+            .map(|(i, p)| serde_json::from_value(serde_json::json!({"id": i.to_string(), "pattern": p, "regex": true})).unwrap())
+            .collect();
+        hub.configure(rules, std::sync::Arc::new(|_| {})).unwrap();
+        let mut m = super::Mirror { watch: Some(super::Watcher::new(hub, "c".into(), None)), ..Default::default() };
         let t = Instant::now();
-        for _ in 0..total / 4 {
-            w.write(&chunk);
+        for _ in 0..total {
+            m.push(&chunk);
         }
         let s = t.elapsed().as_secs_f64();
-        println!("log con hora: {:.0} MB/s ({:.2} us/chunk)", 16.0 / s, s * 1e6 / (total / 4) as f64);
-        drop(w);
-        let _ = std::fs::remove_file(path);
+        println!("mirror con 3 alertas: {:.0} MB/s ({:.2} us/chunk)", 64.0 / s, s * 1e6 / total as f64);
     }
 
     /// Cuántas lecturas produce una salida masiva por PTY (tamaño típico de fragmento).
@@ -1474,8 +1450,7 @@ mod tests {
         assert!(all.ends_with(m.tail(50)) && m.tail(50).len() <= 50);
     }
 
-    /// Canales de prueba que anotan lo recibido en orden.
-    /// Mensajes recibidos por el canal de prueba (None = aviso de cierre).
+    /// Mensajes recibidos por el canal de prueba, en orden (None = aviso de cierre).
     type Received = std::sync::Arc<std::sync::Mutex<Vec<(std::time::Instant, Option<Vec<u8>>)>>>;
 
     fn test_sink() -> (super::Sink, Received) {
@@ -1484,17 +1459,49 @@ mod tests {
         let log: Received = Arc::default();
         let l = log.clone();
         let data = Channel::new(move |b| {
-            if let InvokeResponseBody::Raw(v) = b {
-                l.lock().unwrap().push((std::time::Instant::now(), Some(v)));
+            let entry = match b {
+                InvokeResponseBody::Raw(v) => Some(v),
+                InvokeResponseBody::Json(_) => None,
+            };
+            l.lock().unwrap().push((std::time::Instant::now(), entry));
+            Ok(())
+        });
+        (super::Sink::new(data), log)
+    }
+
+    /// Un host Telnet que envía mucho y cierra: el cierre va por el mismo canal, después
+    /// de todos los datos (antes podía adelantarse a datos grandes, que viajan por fetch).
+    #[test]
+    fn telnet_close_arrives_after_all_data() {
+        use std::io::Write;
+        for raw in [false, true] {
+            let listener = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
+            let port = listener.local_addr().unwrap().port();
+            let payload: Vec<u8> = (0..200_000u32).map(|i| b'a' + (i % 26) as u8).collect();
+            let p = payload.clone();
+            let server = std::thread::spawn(move || {
+                let (mut s, _) = listener.accept().unwrap();
+                s.write_all(&p).unwrap();
+                // Cierra de inmediato (sin esperar), el caso que provocaba la carrera.
+            });
+            let session: crate::models::Session = serde_json::from_value(serde_json::json!({
+                "name": "t", "type": if raw { "raw" } else { "telnet" }, "host": "127.0.0.1", "port": port
+            }))
+            .unwrap();
+            let (sink, log) = test_sink();
+            let _t = super::open_telnet(&session, 80, 24, &sink, raw).unwrap();
+            server.join().unwrap();
+            let t = std::time::Instant::now();
+            while !log.lock().unwrap().iter().any(|(_, d)| d.is_none()) {
+                assert!(t.elapsed() < std::time::Duration::from_secs(5), "sin aviso de cierre");
+                std::thread::sleep(std::time::Duration::from_millis(5));
             }
-            Ok(())
-        });
-        let l = log.clone();
-        let exit = Channel::new(move |_| {
-            l.lock().unwrap().push((std::time::Instant::now(), None));
-            Ok(())
-        });
-        (super::Sink::new(data, exit), log)
+            let entries = log.lock().unwrap();
+            assert!(entries.last().unwrap().1.is_none(), "el cierre debe ser el último mensaje");
+            assert_eq!(entries.iter().filter(|(_, d)| d.is_none()).count(), 1);
+            let got: Vec<u8> = entries.iter().filter_map(|(_, d)| d.clone()).flatten().collect();
+            assert_eq!(got, payload);
+        }
     }
 
     #[test]
@@ -1561,16 +1568,18 @@ mod tests {
 
     #[test]
     fn log_strips_ansi_and_stamps_lines() {
-        let path = std::env::temp_dir().join(format!("nt-log-{}.log", std::process::id()));
-        let mut w = LogWriter::new(std::fs::File::create(&path).unwrap(), true);
-        w.write(b"\x1b[32mRouter#\x1b[0m show ver\r\nCisco");
-        w.write(b" IOS\r\n");
-        drop(w);
-        let text = std::fs::read_to_string(&path).unwrap();
-        let lines: Vec<_> = text.lines().collect();
-        assert_eq!(lines.len(), 2);
-        assert!(lines[0].starts_with('[') && lines[0].ends_with("] Router# show ver"));
-        assert!(lines[1].ends_with("] Cisco IOS"));
-        let _ = std::fs::remove_file(path);
+        for mask in [false, true] {
+            let (mut w, dir) = test_log(mask);
+            w.write(b"\x1b[32mRouter#\x1b[0m show ver\r\nCisco");
+            w.write(b" IOS\r\n");
+            let path = w.path().to_path_buf();
+            drop(w);
+            let text = std::fs::read_to_string(&path).unwrap();
+            let lines: Vec<_> = text.lines().collect();
+            assert_eq!(lines.len(), 2);
+            assert!(lines[0].starts_with('[') && lines[0].ends_with("] Router# show ver"));
+            assert!(lines[1].ends_with("] Cisco IOS"));
+            let _ = std::fs::remove_dir_all(dir);
+        }
     }
 }

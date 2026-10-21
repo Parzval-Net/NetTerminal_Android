@@ -11,7 +11,8 @@ import { ChevronDown, ChevronUp, X } from "lucide-react";
 import type { ITheme } from "@xterm/xterm";
 import { ConnStatus, Session } from "../types";
 import { fontStack } from "../lib/theme";
-import { Settings } from "../lib/settings";
+import { Settings, logOptions } from "../lib/settings";
+import { alertHighlights } from "../lib/alerts";
 import { StreamHighlighter, compile, effectiveRules } from "../lib/highlight";
 import { isMac, shortcutFor } from "../lib/platform";
 import { paneBodyStyle } from "../lib/split";
@@ -91,12 +92,12 @@ export const TerminalView = memo(function TerminalView({ id, session, active, vi
           {
             enabled: settings.highlightEnabled,
             schemes: settings.highlightSchemes,
-            custom: settings.customRules,
+            custom: [...alertHighlights(settings.alertRules, session.folder), ...settings.customRules],
           },
           session.highlight,
         ),
       ),
-    [settings.highlightEnabled, settings.highlightSchemes, settings.customRules, session.highlight],
+    [settings.highlightEnabled, settings.highlightSchemes, settings.customRules, settings.alertRules, session.highlight, session.folder],
   );
   const compiledRef = useRef(compiled);
   compiledRef.current = compiled;
@@ -215,19 +216,20 @@ export const TerminalView = memo(function TerminalView({ id, session, active, vi
       // Los canales de la conexión anterior dejan de retener la terminal (y su historial)
       // aunque el aviso de cierre del backend no llegue.
       releaseChannels();
-      const onData = new Channel<ArrayBuffer>();
+      // Datos en binario; el cierre llega por el mismo canal como texto, detrás de los
+      // últimos datos (el canal entrega en orden aunque los bloques grandes viajen por fetch).
+      const onData = new Channel<ArrayBuffer | string>();
       onData.onmessage = (buf) => {
         if (connIdRef.current !== connId) return;
+        if (typeof buf === "string") return onExit(buf);
         lastDataAt = Date.now();
         const text = decoder.decode(new Uint8Array(buf), { stream: true });
         tail = (tail + text).slice(-400);
         hl.push(text);
         if (!activeRef.current) onActivity(id);
       };
-      const onExit = new Channel<string>();
-      channels = [onData as Channel<unknown>, onExit as Channel<unknown>];
-      onExit.onmessage = (reason) => {
-        if (connIdRef.current !== connId) return;
+      channels = [onData as Channel<unknown>];
+      const onExit = (reason: string) => {
         hl.flush();
         setStatus("closed");
         if (sessionRef.current.scp) {
@@ -252,7 +254,6 @@ export const TerminalView = memo(function TerminalView({ id, session, active, vi
           cols: term.cols,
           rows: term.rows,
           onData,
-          onExit,
         });
         if (disposed || connIdRef.current !== connId) {
           invoke("disconnect", { id: connId }).catch(() => {});
@@ -268,7 +269,7 @@ export const TerminalView = memo(function TerminalView({ id, session, active, vi
             invoke<string | null>("set_logging", {
               id: connId,
               enabled: true,
-              timestamps: settingsRef.current.logTimestamps,
+              ...logOptions(settingsRef.current),
               resume,
             })
               .then((path) => onLog(id, path))

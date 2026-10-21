@@ -30,7 +30,8 @@ import { listen } from "@tauri-apps/api/event";
 import { ConnStatus, Session, Tab, TabState, historyKey, tabTitle } from "./types";
 import { localOsVendor, modLabel, shortcutFor } from "./lib/platform";
 import { resolvePreset, useSystemDark } from "./lib/theme";
-import { Settings, useSettings } from "./lib/settings";
+import { Settings, logOptions, useSettings } from "./lib/settings";
+import { useAlerts } from "./lib/alerts";
 import { BroadcastBar, BroadcastDialog } from "./components/BroadcastDialog";
 import { Resolved, isBroadcastRunning, publishWorkspace, resolveTargets, runBroadcast, targetLabel, useBroadcastTarget, useWorkspace } from "./lib/broadcast";
 import { SplitPanes } from "./components/SplitPanes";
@@ -241,6 +242,22 @@ function Workspace({
   useEffect(() => {
     if (activeId) setActivity((a) => (a.has(activeId) ? new Set([...a].filter((x) => x !== activeId)) : a));
   }, [activeId]);
+
+  // Alertas por palabra clave: aviso, sonido y marca en la pestaña (se limpia al verla).
+  const [alerted, setAlerted] = useState<Set<string>>(new Set());
+  useEffect(() => {
+    if (activeId) setAlerted((a) => (a.has(activeId) ? new Set([...a].filter((x) => x !== activeId)) : a));
+  }, [activeId]);
+  useAlerts(
+    settings.alertRules,
+    (hit, rule) => {
+      const tab = tabs.find((t) => t.id === hit.conn.split("#")[0]);
+      if (!tab) return;
+      if (rule.toast) toast(`${tabTitle(tab)} · ${rule.name || rule.pattern}: ${hit.line}`, "error");
+      if (rule.markTab && tab.id !== activeId) setAlerted((a) => (a.has(tab.id) ? a : new Set(a).add(tab.id)));
+    },
+    (msg) => toast(msg, "error"),
+  );
 
   // Actualizaciones: el latest.json firmado del repositorio de la app, al abrir y cada 6 h.
   // Lo que se anuncia es lo que se instala, y siempre con confirmación.
@@ -730,7 +747,7 @@ function Workspace({
       const path = await invoke<string | null>("set_logging", {
         id: ctrl.connId(),
         enabled,
-        timestamps: settings.logTimestamps,
+        ...logOptions(settings),
       });
       const id = activeId;
       setStates((s) => (s[id] ? { ...s, [id]: { ...s[id], logPath: path } } : s));
@@ -989,6 +1006,7 @@ function Workspace({
           activity={activity}
           split={split?.layout ?? null}
           onSplit={h.changeSplit}
+          alerted={alerted}
         />
 
         <div className="flex-1 min-h-0 flex">

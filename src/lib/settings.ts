@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import { invoke } from "@tauri-apps/api/core";
 import type { HlRule } from "./highlight";
+import { type AlertRule, exampleAlerts } from "./alerts";
 import type { MonitorTarget } from "./monitors";
 import type { TopoSnapshot, Topology } from "./topology";
 
@@ -71,6 +72,14 @@ export interface Settings {
   /** Diagrama de topología en curso (se guarda con los datos, también en modo portable). */
   topology: Topology;
   topoSnapshots: TopoSnapshot[];
+  /** Nombre del log: {session} {host} {folder} {date} {time}. */
+  logPattern: string;
+  /** Anexar si el archivo ya existe (si no, se crea uno nuevo). */
+  logAppend: boolean;
+  logRotateDaily: boolean;
+  /** Reemplaza por **** contraseñas, secrets, communities y llaves en los logs. */
+  logMask: boolean;
+  alertRules: AlertRule[];
 }
 
 export interface UpdateInfo {
@@ -129,7 +138,21 @@ export const defaultSettings: Settings = {
   disabledPacks: [],
   topology: { nodes: [], links: [] },
   topoSnapshots: [],
+  logPattern: "{session}_{date}-{time}",
+  logAppend: false,
+  logRotateDaily: false,
+  logMask: true,
+  alertRules: exampleAlerts,
 };
+
+/** Opciones de log que se pasan a set_logging. */
+export const logOptions = (s: Settings) => ({
+  timestamps: s.logTimestamps,
+  pattern: s.logPattern,
+  append: s.logAppend,
+  rotate: s.logRotateDaily,
+  mask: s.logMask,
+});
 
 export function newToken(): string {
   const bytes = new Uint8Array(24);

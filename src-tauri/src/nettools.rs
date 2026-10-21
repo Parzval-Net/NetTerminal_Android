@@ -162,8 +162,8 @@ impl Jobs {
         self.cancels.lock().unwrap().insert(job.clone(), cancel.clone());
         let id = job.clone();
         let cancels = self.cancels.clone();
-        std::thread::spawn(move || {
-            let res = run_speedtest(&app, &id, &cancel);
+        tauri::async_runtime::spawn(async move {
+            let res = run_speedtest(&app, &id, &cancel).await;
             cancels.lock().unwrap().remove(&id);
             match res {
                 Ok(v) => emit(&app, &id, "result", String::new(), Some(v)),
@@ -280,12 +280,20 @@ pub fn local_ips() -> Vec<LocalIf> {
 
 const CF: &str = "https://speed.cloudflare.com";
 
-fn agent() -> ureq::Agent {
-    ureq::AgentBuilder::new()
-        .timeout(Duration::from_secs(60))
-        .try_proxy_from_env(true)
+/// Cliente HTTP: proxy desde HTTP(S)_PROXY/NO_PROXY o la configuración del sistema, y
+/// certificados del almacén del sistema (sirve con proxies corporativos que inspeccionan TLS).
+fn client() -> Result<reqwest::Client, String> {
+    // reqwest viene sin proveedor criptográfico: se usa ring, igual que el actualizador.
+    if rustls::crypto::CryptoProvider::get_default().is_none() {
+        let _ = rustls::crypto::ring::default_provider().install_default();
+    }
+    reqwest::Client::builder()
+        .connect_timeout(Duration::from_secs(15))
+        // Inactividad, no duración total: una bajada de 25 MB en un enlace lento sigue siendo válida.
+        .read_timeout(Duration::from_secs(30))
         .user_agent(concat!("NetTerminal/", env!("CARGO_PKG_VERSION")))
         .build()
+        .map_err(|e| e.to_string())
 }
 
 fn percentile(mut v: Vec<f64>, p: f64) -> f64 {
@@ -309,31 +317,37 @@ fn server_time_ms(headers: &[&str]) -> f64 {
         .sum()
 }
 
-fn run_speedtest(app: &AppHandle, job: &str, cancel: &AtomicBool) -> Result<Value, String> {
-    let agent = agent();
+async fn run_speedtest(app: &AppHandle, job: &str, cancel: &AtomicBool) -> Result<Value, String> {
+    let client = client()?;
     let progress = |phase: &str, value: f64, pct: f64| {
         emit(app, job, "line", String::new(), Some(json!({"phase": phase, "value": value, "progress": pct})));
     };
+    let cancelled = || cancel.load(Ordering::SeqCst);
 
     // Latencia: tiempo de respuesta menos el tiempo de proceso informado por el servidor.
     let mut latencies = Vec::new();
     let mut meta = json!({});
     for i in 0..20 {
-        if cancel.load(Ordering::SeqCst) {
+        if cancelled() {
             return Err("Cancelado".into());
         }
         let t0 = Instant::now();
-        let resp = agent.get(&format!("{CF}/__down?bytes=0")).call().map_err(|e| format!("Sin conexión con Cloudflare: {e}"))?;
+        let resp = client
+            .get(format!("{CF}/__down?bytes=0"))
+            .send()
+            .await
+            .map_err(|e| format!("Sin conexión con Cloudflare: {e}"))?;
         let total = t0.elapsed().as_secs_f64() * 1000.0;
-        let server = server_time_ms(&resp.all("server-timing"));
+        let h = resp.headers();
+        let timing: Vec<&str> = h.get_all("server-timing").iter().filter_map(|v| v.to_str().ok()).collect();
+        let server = server_time_ms(&timing);
         if i == 0 {
+            let get = |k: &str| h.get(k).and_then(|v| v.to_str().ok()).map(str::to_owned);
             meta = json!({
-                "colo": resp.header("cf-meta-colo")
-                    .map(str::to_owned)
-                    .or_else(|| resp.header("cf-ray").and_then(|r| r.rsplit('-').next()).map(str::to_owned)),
-                "city": resp.header("cf-meta-city"),
-                "country": resp.header("cf-meta-country"),
-                "asn": resp.header("cf-meta-asn"),
+                "colo": get("cf-meta-colo").or_else(|| get("cf-ray").and_then(|r| r.rsplit('-').next().map(str::to_owned))),
+                "city": get("cf-meta-city"),
+                "country": get("cf-meta-country"),
+                "asn": get("cf-meta-asn"),
             });
         }
         if i > 0 {
@@ -349,23 +363,26 @@ fn run_speedtest(app: &AppHandle, job: &str, cancel: &AtomicBool) -> Result<Valu
     };
 
     // Bajada y subida: varias mediciones; se informa el percentil 90 (criterio de Cloudflare).
+    // La bajada se lee por fragmentos (sin acumular el cuerpo) y cuenta hasta el último byte.
     let down_sizes = [100_000usize, 1_000_000, 1_000_000, 10_000_000, 10_000_000, 25_000_000, 25_000_000];
     let mut down = Vec::new();
     for (i, size) in down_sizes.iter().enumerate() {
-        if cancel.load(Ordering::SeqCst) {
+        if cancelled() {
             return Err("Cancelado".into());
         }
         let t0 = Instant::now();
-        let resp = agent.get(&format!("{CF}/__down?bytes={size}")).call().map_err(|e| e.to_string())?;
-        let mut reader = resp.into_reader();
-        let mut buf = vec![0u8; 64 * 1024];
+        let mut resp = client
+            .get(format!("{CF}/__down?bytes={size}"))
+            .send()
+            .await
+            .and_then(|r| r.error_for_status())
+            .map_err(|e| e.to_string())?;
         let mut n = 0usize;
-        loop {
-            let r = reader.read(&mut buf).map_err(|e| e.to_string())?;
-            if r == 0 {
-                break;
+        while let Some(chunk) = resp.chunk().await.map_err(|e| e.to_string())? {
+            n += chunk.len();
+            if cancelled() {
+                return Err("Cancelado".into());
             }
-            n += r;
         }
         let secs = t0.elapsed().as_secs_f64().max(0.001);
         let mbps = n as f64 * 8.0 / secs / 1e6;
@@ -375,18 +392,22 @@ fn run_speedtest(app: &AppHandle, job: &str, cancel: &AtomicBool) -> Result<Valu
         progress("download", mbps, (i + 1) as f64 / down_sizes.len() as f64);
     }
 
+    // Subida: desde enviar el cuerpo hasta la respuesta del servidor (igual que antes).
     let up_sizes = [1_000_000usize, 1_000_000, 5_000_000, 5_000_000, 10_000_000];
     let mut up = Vec::new();
     for (i, size) in up_sizes.iter().enumerate() {
-        if cancel.load(Ordering::SeqCst) {
+        if cancelled() {
             return Err("Cancelado".into());
         }
         let body = vec![0u8; *size];
         let t0 = Instant::now();
-        agent
-            .post(&format!("{CF}/__up"))
-            .set("Content-Type", "application/octet-stream")
-            .send_bytes(&body)
+        client
+            .post(format!("{CF}/__up"))
+            .header("Content-Type", "application/octet-stream")
+            .body(body)
+            .send()
+            .await
+            .and_then(|r| r.error_for_status())
             .map_err(|e| e.to_string())?;
         let mbps = *size as f64 * 8.0 / t0.elapsed().as_secs_f64().max(0.001) / 1e6;
         up.push(mbps);
@@ -480,6 +501,29 @@ mod tests {
         let h = ["cfSpeedEdge;dur=4, cfSpeedWorker;dur=21", "cfL4;desc=\"?proto=TCP&rtt=4197\""];
         assert_eq!(server_time_ms(&h), 25.0);
         assert_eq!(server_time_ms(&[]), 0.0);
+    }
+
+    /// Contra Cloudflare real: cargo test -- --ignored --nocapture net_cloudflare
+    #[test]
+    #[ignore]
+    fn net_cloudflare_timing_and_streaming() {
+        tauri::async_runtime::block_on(async {
+            let c = client().unwrap();
+            let t0 = Instant::now();
+            let r = c.get(format!("{CF}/__down?bytes=0")).send().await.unwrap();
+            let total = t0.elapsed().as_secs_f64() * 1000.0;
+            let timing: Vec<&str> = r.headers().get_all("server-timing").iter().filter_map(|v| v.to_str().ok()).collect();
+            println!("total {total:.1} ms, server {:.1} ms, cabeceras {timing:?}", server_time_ms(&timing));
+            assert!(!timing.is_empty());
+            let mut r = c.get(format!("{CF}/__down?bytes=1000000")).send().await.unwrap();
+            let mut n = 0;
+            while let Some(ch) = r.chunk().await.unwrap() {
+                n += ch.len();
+            }
+            assert_eq!(n, 1_000_000);
+            let up = c.post(format!("{CF}/__up")).body(vec![0u8; 100_000]).send().await.unwrap();
+            assert!(up.status().is_success());
+        });
     }
 
     #[test]
