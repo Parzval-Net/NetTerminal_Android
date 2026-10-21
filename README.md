@@ -6,7 +6,7 @@ Construido con [Tauri 2](https://tauri.app) (backend en Rust) y xterm.js. Usa el
 
 ![NetTerminal: sesiones en carpetas, terminal con resaltado por fabricante y catálogo de comandos](docs/screenshots/terminal.png)
 
-**Ficha del producto:** [página](docs/index.html) · [PDF para compartir](docs/NetTerminal-ficha.pdf) · [Descargar la última versión](https://github.com/Parzval-Net/Net_Terminal/releases/latest)
+**Ficha del producto:** [página](https://parzval-net.github.io/Net_Terminal/) · [PDF para compartir](docs/NetTerminal-ficha.pdf) · [Descargar la última versión](https://github.com/Parzval-Net/Net_Terminal/releases/latest)
 
 ## Capturas
 
