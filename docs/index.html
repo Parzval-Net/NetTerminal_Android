@@ -1,0 +1,239 @@
+<!doctype html>
+<html lang="es">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>NetTerminal</title>
+<meta name="description" content="Cliente SSH, Telnet, Serial y terminal local, liviano y multiplataforma, para el trabajo diario con equipos de red.">
+<link rel="icon" href="logo.svg">
+<style>
+  :root {
+    --bg: #f6f7fb; --panel: #ffffff; --text: #141821; --muted: #5b6475; --line: #e3e6ee;
+    --accent: #2f6bff; --accent-2: #1e2f8c; --ok: #12915a; --warn: #b7791f; --chip: #eef2ff;
+    --shadow: 0 1px 2px rgba(16,24,40,.06), 0 12px 32px rgba(16,24,40,.08);
+  }
+  @media (prefers-color-scheme: dark) {
+    :root:not([data-theme="light"]) {
+      --bg: #0d1016; --panel: #151a23; --text: #e8ecf4; --muted: #98a2b3; --line: #252c38;
+      --accent: #6b9bff; --accent-2: #3b7bff; --ok: #3ccf8e; --warn: #f0b75a; --chip: #1b2333;
+      --shadow: 0 1px 2px rgba(0,0,0,.4), 0 12px 32px rgba(0,0,0,.35);
+    }
+  }
+  * { box-sizing: border-box; }
+  html { scroll-behavior: smooth; }
+  body { margin: 0; background: var(--bg); color: var(--text); font: 16px/1.55 -apple-system, BlinkMacSystemFont, "Segoe UI", Inter, Roboto, sans-serif; }
+  a { color: var(--accent); text-decoration: none; }
+  .wrap { max-width: 1160px; margin: 0 auto; padding: 0 24px; }
+  img { max-width: 100%; display: block; }
+
+  header.hero { position: relative; overflow: hidden; padding: 72px 0 56px; }
+  .hero::before { content: ""; position: absolute; inset: -40% -10% auto; height: 520px;
+    background: radial-gradient(600px 300px at 20% 30%, color-mix(in srgb, var(--accent) 22%, transparent), transparent 70%),
+                radial-gradient(520px 280px at 85% 10%, color-mix(in srgb, var(--accent-2) 22%, transparent), transparent 70%); pointer-events: none; }
+  .hero-grid { position: relative; display: grid; grid-template-columns: 1fr 1.08fr; gap: 40px; align-items: center; }
+  .brand { display: flex; align-items: center; gap: 14px; margin-bottom: 22px; }
+  .brand img { width: 56px; height: 56px; filter: drop-shadow(0 6px 14px rgba(47,107,255,.35)); }
+  .brand span { font-weight: 700; font-size: 22px; letter-spacing: -.01em; }
+  h1 { font-size: clamp(28px, 3.1vw, 38px); line-height: 1.08; letter-spacing: -.025em; margin: 0 0 18px; }
+  h1 em { font-style: normal; background: linear-gradient(90deg, var(--accent), var(--accent-2)); -webkit-background-clip: text; background-clip: text; color: transparent; }
+  .lead { color: var(--muted); font-size: 18px; max-width: 34em; margin: 0 0 28px; }
+  .cta { display: flex; flex-wrap: wrap; gap: 12px; }
+  .btn { display: inline-flex; align-items: center; gap: 8px; height: 46px; padding: 0 20px; border-radius: 12px; font-weight: 600; font-size: 15px; border: 1px solid var(--line); background: var(--panel); color: var(--text); box-shadow: var(--shadow); }
+  .btn.primary { background: linear-gradient(180deg, var(--accent), var(--accent-2)); color: #fff; border: 0; }
+  .os { margin-top: 18px; color: var(--muted); font-size: 14px; }
+  .shot { border-radius: 14px; overflow: hidden; border: 1px solid var(--line); box-shadow: 0 30px 60px -20px rgba(16,24,40,.35); background: #0d1016; }
+  .shot .bar { height: 30px; display: flex; align-items: center; gap: 7px; padding: 0 12px; background: #1a1f29; }
+  .shot .bar i { width: 11px; height: 11px; border-radius: 50%; display: block; }
+
+  .stats { display: grid; grid-template-columns: repeat(5, 1fr); gap: 14px; margin: 8px 0 72px; }
+  .stat { background: var(--panel); border: 1px solid var(--line); border-radius: 14px; padding: 18px; box-shadow: var(--shadow); }
+  .stat b { display: block; font-size: 26px; letter-spacing: -.02em; }
+  .stat span { color: var(--muted); font-size: 13.5px; }
+
+  section { padding: 0 0 72px; }
+  .kicker { color: var(--accent); font-weight: 700; font-size: 13px; letter-spacing: .08em; text-transform: uppercase; }
+  h2 { font-size: clamp(26px, 3vw, 34px); letter-spacing: -.02em; margin: 6px 0 10px; }
+  .sub { color: var(--muted); max-width: 46em; margin: 0 0 28px; }
+
+  .features { display: grid; grid-template-columns: repeat(3, 1fr); gap: 16px; }
+  .feat { background: var(--panel); border: 1px solid var(--line); border-radius: 14px; padding: 20px; box-shadow: var(--shadow); }
+  .feat .ic { width: 38px; height: 38px; border-radius: 10px; display: grid; place-items: center; background: var(--chip); color: var(--accent); margin-bottom: 12px; }
+  .feat h3 { margin: 0 0 6px; font-size: 16.5px; }
+  .feat p { margin: 0; color: var(--muted); font-size: 14.5px; }
+
+  .gallery { display: grid; grid-template-columns: repeat(2, 1fr); gap: 22px; }
+  figure { margin: 0; background: var(--panel); border: 1px solid var(--line); border-radius: 14px; overflow: hidden; box-shadow: var(--shadow); }
+  figure img { border-bottom: 1px solid var(--line); }
+  figcaption { padding: 14px 16px; font-size: 14.5px; color: var(--muted); }
+  figcaption b { color: var(--text); }
+
+  .vendors { display: flex; flex-wrap: wrap; gap: 10px; }
+  .chip { padding: 8px 14px; border-radius: 999px; background: var(--panel); border: 1px solid var(--line); font-size: 14px; font-weight: 600; }
+  .chip small { color: var(--muted); font-weight: 500; margin-left: 6px; }
+
+  .two { display: grid; grid-template-columns: 1fr 1fr; gap: 16px; }
+  .card { background: var(--panel); border: 1px solid var(--line); border-radius: 14px; padding: 22px; box-shadow: var(--shadow); }
+  .card h3 { margin: 0 0 12px; font-size: 17px; }
+  .card ul { margin: 0; padding-left: 20px; color: var(--muted); font-size: 14.5px; }
+  .card li { margin: 6px 0; }
+  .card li b { color: var(--text); font-weight: 600; }
+
+  table { width: 100%; border-collapse: collapse; font-size: 14.5px; }
+  th, td { text-align: left; padding: 10px 12px; border-bottom: 1px solid var(--line); }
+  th { color: var(--muted); font-weight: 600; font-size: 13px; }
+  td code { font-size: 13px; }
+
+  footer { border-top: 1px solid var(--line); padding: 28px 0 40px; color: var(--muted); font-size: 14px; }
+  footer .wrap { display: flex; flex-wrap: wrap; justify-content: space-between; gap: 12px; }
+
+  @media (max-width: 900px) {
+    .hero-grid, .two, .gallery { grid-template-columns: 1fr; }
+    .features { grid-template-columns: 1fr 1fr; }
+    .stats { grid-template-columns: repeat(2, 1fr); }
+  }
+  @media (max-width: 560px) {
+    .wrap { padding: 0 16px; }
+    .features { grid-template-columns: 1fr; }
+    header.hero { padding-top: 44px; }
+  }
+</style>
+</head>
+<body>
+
+<header class="hero">
+  <div class="wrap hero-grid">
+    <div>
+      <div class="brand"><img src="logo.svg" alt=""><span>NetTerminal</span></div>
+      <h1>El cliente de conexión<br><em>liviano</em> para equipos de red</h1>
+      <p class="lead">SSH, Telnet, Serial y terminal local en una sola app. Sesiones en carpetas, catálogo de comandos verificados por fabricante, herramientas de red y automatización segura, sin lo que no se usa en el día a día.</p>
+      <div class="cta">
+        <a class="btn primary" href="https://github.com/Parzval-Net/Net_Terminal/releases/latest">
+          <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 3v12m0 0l-5-5m5 5l5-5M5 21h14"/></svg>
+          Descargar la última versión
+        </a>
+        <a class="btn" href="https://github.com/Parzval-Net/Net_Terminal">
+          <svg width="18" height="18" viewBox="0 0 24 24" fill="currentColor"><path d="M12 .5a11.5 11.5 0 0 0-3.64 22.41c.58.1.79-.25.79-.56v-2c-3.2.7-3.88-1.37-3.88-1.37-.53-1.33-1.29-1.69-1.29-1.69-1.05-.72.08-.7.08-.7 1.16.08 1.77 1.19 1.77 1.19 1.03 1.77 2.71 1.26 3.37.96.1-.75.4-1.26.73-1.55-2.55-.29-5.24-1.28-5.24-5.69 0-1.26.45-2.29 1.19-3.1-.12-.29-.52-1.46.11-3.05 0 0 .97-.31 3.17 1.18a11 11 0 0 1 5.77 0c2.2-1.49 3.17-1.18 3.17-1.18.63 1.59.23 2.76.11 3.05.74.81 1.19 1.84 1.19 3.1 0 4.42-2.69 5.39-5.25 5.68.41.36.78 1.06.78 2.14v3.17c0 .31.21.67.8.56A11.5 11.5 0 0 0 12 .5z"/></svg>
+          Código en GitHub
+        </a>
+      </div>
+      <p class="os">macOS (Intel y Apple Silicon) · Windows 10/11 · Linux (AppImage y .deb) · Portable sin instalar</p>
+    </div>
+    <div class="shot">
+      <div class="bar"><i style="background:#ff5f57"></i><i style="background:#febc2e"></i><i style="background:#28c840"></i></div>
+      <img src="screenshots/terminal.png" alt="Terminal con resaltado por fabricante, sesiones en carpetas y catálogo de comandos">
+    </div>
+  </div>
+</header>
+
+<div class="wrap">
+  <div class="stats">
+    <div class="stat"><b>~7 MB</b><span>tamaño de la app instalada</span></div>
+    <div class="stat"><b>~80 MB</b><span>memoria en reposo</span></div>
+    <div class="stat"><b>0 %</b><span>CPU sin actividad</span></div>
+    <div class="stat"><b>1.777</b><span>comandos verificados con fuente</span></div>
+    <div class="stat"><b>3</b><span>sistemas operativos, una sola app</span></div>
+  </div>
+
+  <section id="funciones">
+    <div class="kicker">Funciones</div>
+    <h2>Todo lo del día a día, nada que estorbe</h2>
+    <p class="sub">Pensado para ingenieros de red: conexiones rápidas, documentación y cambios controlados. Lo que no usas no se carga ni consume recursos.</p>
+    <div class="features">
+      <div class="feat"><div class="ic"><svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M4 17l6-6-6-6M12 19h8"/></svg></div><h3>SSH, Telnet, Serial y local</h3><p>OpenSSH del sistema con llaves, agente, jump host y túneles. Telnet nativo, TCP crudo para servidores de consola y Serial con Break.</p></div>
+      <div class="feat"><div class="ic"><svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M3 7h6l2 2h10v10H3z"/></svg></div><h3>Sesiones en carpetas</h3><p>Carpetas ilimitadas, conexión rápida con historial e importación desde ssh_config, PuTTY, SecureCRT, MobaXterm y CSV.</p></div>
+      <div class="feat"><div class="ic"><svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M4 5h16M4 12h16M4 19h10"/></svg></div><h3>Catálogo de comandos</h3><p>Cisco, Juniper, Fortinet, Huawei, Check Point, WatchGuard, Windows, macOS y Linux, con sintaxis por plataforma y nivel de riesgo.</p></div>
+      <div class="feat"><div class="ic"><svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="3" y="3" width="8" height="8" rx="1"/><rect x="13" y="3" width="8" height="8" rx="1"/><rect x="3" y="13" width="8" height="8" rx="1"/><rect x="13" y="13" width="8" height="8" rx="1"/></svg></div><h3>Vista dividida y difusión</h3><p>Hasta 4 terminales a la vez y envío a varias sesiones con lista de equipos, riesgo por línea y botón Detener.</p></div>
+      <div class="feat"><div class="ic"><svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="6" cy="6" r="2.5"/><circle cx="18" cy="6" r="2.5"/><circle cx="12" cy="18" r="2.5"/><path d="M8 7.5l3 8M16 7.5l-3 8M8.5 6h7"/></svg></div><h3>Topología CDP/LLDP</h3><p>Diagrama de vecinos con puertos y Port-channel, ruta entre equipos, snapshots de antes y después, y exportación a draw.io.</p></div>
+      <div class="feat"><div class="ic"><svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M12 3v12M8 11l4 4 4-4M4 21h16"/></svg></div><h3>Respaldos y comparación</h3><p>Respaldo de configuración solo con comandos de consulta, secretos enmascarados y comparación entre fechas o equipos.</p></div>
+      <div class="feat"><div class="ic"><svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M3 12h4l3-8 4 16 3-8h4"/></svg></div><h3>Herramientas de red</h3><p>Monitoreo con alarma, ping y traceroute, puertos, subredes, speedtest e iperf3, servidores TFTP/HTTP y Syslog, gestor de archivos.</p></div>
+      <div class="feat"><div class="ic"><svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M18 8a6 6 0 1 0-12 0c0 7-3 9-3 9h18s-3-2-3-9M13.7 21a2 2 0 0 1-3.4 0"/></svg></div><h3>Alertas y logs</h3><p>Avisos por palabra clave en la salida y logs con nombre por patrón, rotación diaria y secretos enmascarados.</p></div>
+      <div class="feat"><div class="ic"><svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M12 2l3 7h7l-5.5 4.5 2 7.5L12 16l-6.5 5 2-7.5L2 9h7z"/></svg></div><h3>Notas, macros y agentes IA</h3><p>Plantillas con variables, botones de comandos, scripts Python y servidor MCP local con aprobación por comando.</p></div>
+    </div>
+  </section>
+
+  <section id="capturas">
+    <div class="kicker">Capturas</div>
+    <h2>Así se ve</h2>
+    <p class="sub">Todas las capturas usan datos ficticios: direcciones de documentación (RFC 5737) y nombres genéricos.</p>
+    <div class="gallery">
+      <figure><img src="screenshots/vista-dividida.png" alt="Vista dividida 2x2" loading="lazy"><figcaption><b>Vista dividida.</b> Cuatro equipos a la vez durante una ventana de cambio.</figcaption></figure>
+      <figure><img src="screenshots/topologia.png" alt="Topología CDP/LLDP" loading="lazy"><figcaption><b>Topología.</b> Ruta resaltada entre dos equipos con los puertos de cada salto.</figcaption></figure>
+      <figure><img src="screenshots/respaldos.png" alt="Respaldos y comparación" loading="lazy"><figcaption><b>Respaldos.</b> Comparación entre versiones con las líneas agregadas y quitadas.</figcaption></figure>
+      <figure><img src="screenshots/monitoreo.png" alt="Monitoreo" loading="lazy"><figcaption><b>Monitoreo.</b> Latencia, pérdida y caídas con alarma sonora.</figcaption></figure>
+      <figure><img src="screenshots/notas.png" alt="Notas y plantillas" loading="lazy"><figcaption><b>Notas y plantillas.</b> Variables que se piden al enviar a la sesión.</figcaption></figure>
+      <figure><img src="screenshots/comandos-so.png" alt="Comandos de sistema operativo" loading="lazy"><figcaption><b>Comandos de sistema.</b> Consultas de red para Windows, macOS y Linux.</figcaption></figure>
+      <figure><img src="screenshots/alertas.png" alt="Alertas" loading="lazy"><figcaption><b>Alertas.</b> Reglas por texto o expresión, globales o por carpeta.</figcaption></figure>
+      <figure><img src="screenshots/importar.png" alt="Importar sesiones" loading="lazy"><figcaption><b>Importar sesiones.</b> Desde otros clientes, con vista previa y sin contraseñas.</figcaption></figure>
+    </div>
+  </section>
+
+  <section id="catalogo">
+    <div class="kicker">Catálogo</div>
+    <h2>1.777 comandos con fuente oficial</h2>
+    <p class="sub">Cada comando trae explicación, nivel de riesgo calculado por la app y la sintaxis correcta según la plataforma detectada en el equipo.</p>
+    <div class="vendors">
+      <span class="chip">Cisco<small>IOS · IOS-XE · NX-OS · IOS-XR · ASA</small></span>
+      <span class="chip">Juniper<small>Junos · Evolved</small></span>
+      <span class="chip">Fortinet<small>FortiOS 6.4 a 7.6</small></span>
+      <span class="chip">Huawei<small>VRP5 · VRP8 · YunShan</small></span>
+      <span class="chip">Check Point<small>R80.40 a R82</small></span>
+      <span class="chip">WatchGuard<small>Fireware</small></span>
+      <span class="chip">Windows<small>10 · 11 · Server</small></span>
+      <span class="chip">macOS<small>12 a 27</small></span>
+      <span class="chip">Linux<small>Debian · Ubuntu · RHEL · Fedora · SUSE · Arch · Alpine</small></span>
+    </div>
+  </section>
+
+  <section id="seguridad">
+    <div class="kicker">Seguridad</div>
+    <h2>Diseñada para entornos corporativos</h2>
+    <p class="sub">Cambios controlados, nada de secretos en texto plano y actualizaciones verificadas.</p>
+    <div class="two">
+      <div class="card">
+        <h3>Operación segura</h3>
+        <ul>
+          <li><b>Las contraseñas nunca se guardan:</b> SSH usa tus llaves y agente.</li>
+          <li><b>Riesgo por comando:</b> lo que puede cortar servicio siempre pide confirmación.</li>
+          <li><b>Envío a varias sesiones</b> con lista de equipos y confirmación escribiendo la cantidad.</li>
+          <li><b>Secretos enmascarados</b> en logs y respaldos.</li>
+          <li><b>Pegado de varias líneas</b> con vista previa antes de llegar al equipo.</li>
+        </ul>
+      </div>
+      <div class="card">
+        <h3>Código y distribución</h3>
+        <ul>
+          <li><b>Actualizaciones firmadas:</b> se verifica la firma antes de instalar y siempre con confirmación.</li>
+          <li><b>Auditoría automática</b> de dependencias (npm y cargo) que detiene la publicación.</li>
+          <li><b>Argumentos SSH validados</b> contra inyección de comandos.</li>
+          <li><b>Plugins con revisión de código</b> y bloqueo si sus archivos cambian.</li>
+          <li><b>Datos con permisos</b> solo para tu usuario (macOS/Linux).</li>
+        </ul>
+      </div>
+    </div>
+  </section>
+
+  <section id="descargas">
+    <div class="kicker">Descargas</div>
+    <h2>Instala o lleva en un pendrive</h2>
+    <p class="sub">Sin permisos de administrador. Los instaladores y el zip portable están en cada <a href="https://github.com/Parzval-Net/Net_Terminal/releases/latest">release</a>.</p>
+    <div class="card">
+      <table>
+        <tr><th>Sistema</th><th>Archivo</th><th>Actualización</th></tr>
+        <tr><td>macOS (Intel y Apple Silicon)</td><td><code>.dmg</code></td><td>Con un clic, firmada</td></tr>
+        <tr><td>Windows 10/11</td><td><code>-setup.exe</code> (por usuario)</td><td>Con un clic, firmada</td></tr>
+        <tr><td>Linux</td><td><code>.AppImage</code> · <code>.deb</code></td><td>AppImage con un clic · .deb con apt</td></tr>
+        <tr><td>Portable (los 3 sistemas)</td><td><code>NetTerminal-portable.zip</code></td><td>Manual, datos en la carpeta <code>data</code></td></tr>
+      </table>
+    </div>
+  </section>
+</div>
+
+<footer>
+  <div class="wrap">
+    <span>NetTerminal · Creado por Nicolás Rivera · Vibecodeado con Claude Code</span>
+    <span>Tauri 2 · Rust · xterm.js · <a href="https://github.com/Parzval-Net/Net_Terminal">GitHub</a></span>
+  </div>
+</footer>
+
+</body>
+</html>
