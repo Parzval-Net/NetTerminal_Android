@@ -150,6 +150,40 @@ fn walk(root: &Path) -> Result<Vec<(String, u64)>, String> {
     Ok(out)
 }
 
+/// Extensiones que Python carga como código sin que la revisión pueda mostrarlo: bytecode
+/// (`import x` usa x.pyc si no hay x.py), extensiones nativas y archivos .pth.
+const OPAQUE_CODE: [&str; 8] = ["pyc", "pyo", "so", "pyd", "dylib", "dll", "pth", "exe"];
+
+/// Declaración de codificación de PEP 263 en una de las dos primeras líneas.
+fn coding_cookie(line: &str) -> Option<String> {
+    static RE: std::sync::OnceLock<regex::Regex> = std::sync::OnceLock::new();
+    let re = RE.get_or_init(|| regex::Regex::new(r"^[ \t\x0c]*#.*?coding[:=][ \t]*([-\w.]+)").unwrap());
+    re.captures(line).map(|c| c[1].to_ascii_lowercase().replace('_', "-"))
+}
+
+/// Todo el código que Python ejecutará debe verse tal cual en la revisión: sin bytecode ni
+/// binarios, y los .py en UTF-8 sin otra codificación declarada (con `coding: utf-7`, un
+/// comentario como `# +AAo-print(1)` se ejecuta aunque en pantalla parezca inofensivo).
+fn check_reviewable(root: &Path, files: &[(String, u64)]) -> Result<(), String> {
+    for (rel, _) in files {
+        let ext = Path::new(rel).extension().and_then(|e| e.to_str()).unwrap_or("").to_ascii_lowercase();
+        if OPAQUE_CODE.contains(&ext.as_str()) {
+            return Err(format!("El plugin incluye código que no se puede revisar: {rel}"));
+        }
+        if ext != "py" {
+            continue;
+        }
+        let bytes = fs::read(root.join(rel)).map_err(|e| e.to_string())?;
+        let text = std::str::from_utf8(&bytes).map_err(|_| format!("{rel} no está en UTF-8"))?;
+        if let Some(enc) = text.lines().take(2).find_map(coding_cookie) {
+            if enc != "utf-8" && enc != "utf8" {
+                return Err(format!("{rel} declara la codificación {enc}: solo se acepta UTF-8"));
+            }
+        }
+    }
+    Ok(())
+}
+
 /// SHA-256 sobre rutas y contenidos (orden estable).
 fn hash(root: &Path) -> Result<String, String> {
     let mut h = Sha256::new();
@@ -246,6 +280,7 @@ pub fn stage(data: &Path, source: &Path) -> Result<Preview, String> {
         let root = plugin_root(&staging)?;
         let manifest = read_manifest(&root)?;
         let files = walk(&root)?;
+        check_reviewable(&root, &files)?;
         let code = code_listing(&root, &manifest.entry, &files);
         let replaces = dir(data).join(&manifest.id).is_dir().then(|| manifest.id.clone());
         Ok(Preview { staging: staging_id.clone(), manifest, files, code, replaces })
@@ -415,6 +450,8 @@ pub fn run(
     if &hash(&root)? != approved {
         return Err("El plugin cambió desde que lo aprobaste. Revísalo y vuelve a habilitarlo.".into());
     }
+    // Plugins aprobados con versiones anteriores, antes de esta validación.
+    check_reviewable(&root, &walk(&root)?)?;
     // Bytecode no verificado por el hash: se borra y Python corre con -B para no regenerarlo.
     remove_pycache(&root);
     if !m.actions.iter().any(|a| a.id == action) {
@@ -525,6 +562,33 @@ mod tests {
             assert!(list(&data).iter().all(|p| p.enabled));
         }
         println!("plugins_list (5 plugins x 4 MB): primera {first:?}, siguientes {:?} c/u", t.elapsed() / 20);
+        let _ = fs::remove_dir_all(base);
+    }
+
+    #[test]
+    fn rejects_code_hidden_from_review() {
+        let base = std::env::temp_dir().join(format!("nt-plug3-{}", std::process::id()));
+        let data = base.join("data");
+        // UTF-7: el "comentario" ejecuta print() en Python.
+        let src = base.join("utf7");
+        sample(&src);
+        fs::write(src.join("main.py"), "# -*- coding: utf-7 -*-\n# nada +AAo-print(1)\n").unwrap();
+        assert!(stage(&data, &src).err().unwrap().contains("utf-7"));
+        // Bytecode sin fuente: `import helper` cargaría helper.pyc sin mostrarlo.
+        let src = base.join("pyc");
+        sample(&src);
+        fs::write(src.join("helper.pyc"), b"\x00\x00").unwrap();
+        assert!(stage(&data, &src).err().unwrap().contains("helper.pyc"));
+        // Latin-1 no se puede mostrar íntegro.
+        let src = base.join("latin1");
+        sample(&src);
+        fs::write(src.join("lib.py"), b"x = '\xe1'\n").unwrap();
+        assert!(stage(&data, &src).is_err());
+        // UTF-8 declarado explícitamente sigue funcionando.
+        let src = base.join("ok");
+        sample(&src);
+        fs::write(src.join("main.py"), "# -*- coding: utf-8 -*-\nprint('ñ')\n").unwrap();
+        assert!(stage(&data, &src).is_ok());
         let _ = fs::remove_dir_all(base);
     }
 

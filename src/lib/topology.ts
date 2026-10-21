@@ -595,7 +595,13 @@ export function toMermaid(t: Topology): string {
 
 export function toCsv(t: Topology): string {
   const node = (id: string) => t.nodes.find((n) => n.id === id);
-  const q = (s: string | undefined) => `"${(s ?? "").replace(/"/g, '""')}"`;
+  // Nombres y descripciones vienen de los equipos (CDP/LLDP): una celda que empieza con
+  // = + - @ sería una fórmula al abrir el CSV en Excel. Se antepone ' (OWASP CSV injection).
+  const q = (s: string | undefined) => {
+    const v = s ?? "";
+    const formula = /^[=@\t\r]/.test(v) || /^[+-](?!\d+(\.\d+)?$)./.test(v);
+    return `"${(formula ? `'${v}` : v).replace(/"/g, '""')}"`;
+  };
   return [
     "equipo_a,ip_a,puerto_a,estado_a,velocidad_a,descripcion_a,equipo_b,ip_b,puerto_b,estado_b,velocidad_b,descripcion_b,agregado,protocolo",
     ...t.links.map((l) => {

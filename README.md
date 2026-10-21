@@ -131,6 +131,11 @@ Auditoría del binario con REA (Ghidra y utilidades nativas de macOS) y revisió
 | Sin secretos ni conexiones salientes incrustadas, sin rutas locales (`--remap-path-prefix` en CI) | Verificado |
 | Dependencias: `npm audit` y `cargo audit` sin vulnerabilidades (bloquean el CI) | Verificado |
 | SSH: el host no puede inyectar opciones (`--` y validación); "argumentos extra" se valida con la misma semántica de getopt que ssh (flags agrupados incluidos) y bloquea ProxyCommand, LocalCommand, KnownHostsCommand, Match, Include, PKCS11Provider, SecurityKeyProvider, -F, -I, -E y argumentos sueltos; ni estos argumentos ni los comandos al conectar se importan desde JSON | Con tests |
+| Comandos ocultos: un `\r` o caracteres de control dentro de un comando (packs, MCP, pegado) se tratan como líneas separadas o se rechazan, así lo que se confirma es exactamente lo que llega al equipo; el pegado quita marcadores de "bracketed paste" | Con tests |
+| Plugins: se rechaza código que la revisión no puede mostrar (bytecode .pyc, binarios nativos, .pth, archivos que no son UTF-8 o que declaran otra codificación) | Con tests |
+| Host, jump host y usuario de SSH sin metacaracteres de shell (defensa ante CVE-2023-51385 en OpenSSH < 9.6, como el de Windows) | Con tests |
+| Exportaciones CSV sin fórmulas ejecutables en Excel; Syslog sin inyección de líneas falsas en el log; CSP con `object-src`, `base-uri`, `form-action` y `frame-src` en `none` | Código |
+| Repositorio y publicación: acciones fijadas a SHA, permisos mínimos, sin interpolación en scripts, secretos de firma solo en el paso que firma, el tag debe apuntar a `main` y coincidir con la versión, Dependabot y [SECURITY.md](SECURITY.md); historial revisado con gitleaks y workflows con zizmor | Verificado |
 | Envío a varias sesiones: lista de equipos y riesgo por línea antes de enviar, confirmación escribiendo la cantidad de equipos para cambios, envío secuencial con "Detener"; los agentes MCP no pueden usarlo | Código |
 | Logs y respaldos: secretos (password, secret, community, key, PSK) enmascarados por defecto; rutas saneadas dentro de la carpeta de datos; permisos 600 | Con tests |
 | Importación: tope de 5 MB, validación de host, usuario y carpeta; se descartan contraseñas, `ssh_args`, comandos al conectar, proxies y túneles | Con tests |
@@ -222,6 +227,9 @@ Permisos: `session` (leer y enviar comandos a la sesión), `network`, `files`. S
 1. Sube la versión en `package.json`, `src-tauri/Cargo.toml` y `src-tauri/tauri.conf.json`.
 2. `git tag v0.5.3 && git push origin v0.5.3`
 3. El workflow compila los 3 sistemas, firma los paquetes de actualización y crea el Release con instaladores, zip portable y `latest.json`.
+4. El workflow valida que el tag apunte a un commit de `main` y coincida con la versión de `tauri.conf.json`. El job que firma usa el environment `release`: apruébalo en la pestaña Actions para continuar.
+
+Política de seguridad y reporte privado de vulnerabilidades: [SECURITY.md](SECURITY.md).
 
 ### Actualización con un clic
 

@@ -609,7 +609,7 @@ fn safe_target(value: &str, field: &str) -> Result<String, String> {
     if v.is_empty() {
         return Err(format!("Falta {field}"));
     }
-    if v.starts_with('-') || v.chars().any(|c| c.is_whitespace() || c.is_control()) {
+    if v.starts_with('-') || v.chars().any(|c| c.is_whitespace() || c.is_control() || SHELL_META.contains(&c)) {
         return Err(format!("{field} inválido: {v}"));
     }
     // IPv6 entre corchetes ("[2001:db8::1]") se normaliza: ssh lo espera sin corchetes.
@@ -618,6 +618,21 @@ fn safe_target(value: &str, field: &str) -> Result<String, String> {
         return Err(format!("{field} inválido"));
     }
     Ok(v.to_string())
+}
+
+/// Caracteres que una shell interpreta. OpenSSH anterior a 9.6 (p. ej. el que trae Windows)
+/// arma con el host, el usuario o el jump host comandos que pasan por `sh -c` (ProxyJump y
+/// ProxyCommand con %h/%r de ~/.ssh/config, CVE-2023-51385). Un nombre de equipo nunca los usa.
+const SHELL_META: &[char] = &['`', '$', ';', '|', '&', '<', '>', '(', ')', '\'', '"', '\\', '{', '}', '*', '?', '!', '#', '~'];
+
+/// Usuario para `-l`: sin control, espacios ni metacaracteres de shell (se permite "\" para
+/// cuentas DOMINIO\usuario).
+fn safe_user(user: &str) -> Result<&str, String> {
+    let bad = |c: char| c.is_whitespace() || c.is_control() || (SHELL_META.contains(&c) && c != '\\');
+    if user.starts_with('-') || user.chars().any(bad) {
+        return Err(format!("Usuario inválido: {user}"));
+    }
+    Ok(user)
 }
 
 /// Opciones de ssh que ejecutan comandos locales. No se aceptan en "argumentos extra"
@@ -746,7 +761,7 @@ fn ssh_command(s: &Session) -> Result<CommandBuilder, String> {
         cmd.args(["-p", &port.to_string()]);
     }
     if let Some(user) = s.username.as_deref().filter(|u| !u.is_empty()) {
-        cmd.args(["-l", user]);
+        cmd.args(["-l", safe_user(user)?]);
     }
     if let Some(key) = s.identity_file.as_deref().filter(|k| !k.is_empty()) {
         cmd.args(["-i", key]);
@@ -808,7 +823,7 @@ fn scp_command(s: &Session) -> Result<CommandBuilder, String> {
         return Err("Carpeta remota inválida".into());
     }
     let user = s.username.as_deref().map(str::trim).filter(|u| !u.is_empty());
-    if user.is_some_and(|u| u.starts_with('-') || u.contains(['@', ' ', ':'])) {
+    if user.is_some_and(|u| u.contains(['@', ':']) || safe_user(u).is_err()) {
         return Err("Usuario inválido".into());
     }
     let remote = |file: &str| -> Result<String, String> {
@@ -1266,6 +1281,24 @@ mod tests {
         assert!(bad("-- otro-host"));
         assert!(bad("-L"));
         assert!(!bad("-vvv -C -o ServerAliveCountMax=3 -J bastion"));
+    }
+
+    #[test]
+    fn rejects_shell_metacharacters_for_old_openssh() {
+        // OpenSSH < 9.6 pasa el jump host y %h/%r por `sh -c` (CVE-2023-51385).
+        for bad in ["x$(touch${IFS}/tmp/p)", "a;id", "h`id`", "h|nc", "a&b"] {
+            assert!(super::safe_target(bad, "el jump host").is_err(), "{bad}");
+        }
+        assert!(super::safe_target("admin@bastion:2222,10.0.0.1", "el jump host").is_ok());
+        assert!(super::safe_target("fe80::1%en0", "host").is_ok());
+        assert!(super::safe_user("$(id)").is_err());
+        assert!(super::safe_user("o'neil").is_err());
+        assert_eq!(super::safe_user("DOM\\noc").unwrap(), "DOM\\noc");
+        let s: crate::models::Session = serde_json::from_value(serde_json::json!({
+            "name": "sw", "type": "ssh", "host": "10.0.0.1", "username": "$(id)"
+        }))
+        .unwrap();
+        assert!(super::ssh_command(&s).is_err());
     }
 
     #[test]

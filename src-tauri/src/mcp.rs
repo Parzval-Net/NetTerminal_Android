@@ -204,6 +204,26 @@ fn serve(app: AppHandle, mut req: tiny_http::Request) {
     }
 }
 
+/// Comando tal como se mostrará al aprobarlo. Lo que el equipo recibe debe ser exactamente
+/// lo que el usuario ve: un "\r" suelto ejecutaría una segunda línea que el diálogo muestra
+/// como un espacio, y caracteres de control (Ctrl-U, backspace, ESC) o de dirección Unicode
+/// pueden ocultar o reordenar lo que realmente se ejecuta.
+fn visible_command(raw: &str) -> Result<String, String> {
+    let cmd = raw.replace("\r\n", "\n").replace('\r', "\n");
+    let cmd = cmd.trim_end();
+    if cmd.is_empty() {
+        return Err("Comando vacío".into());
+    }
+    let hidden = |c: char| {
+        (c.is_control() && c != '\n' && c != '\t')
+            || matches!(c, '\u{200B}'..='\u{200F}' | '\u{202A}'..='\u{202E}' | '\u{2066}'..='\u{2069}' | '\u{FEFF}')
+    };
+    if let Some(c) = cmd.chars().find(|c| hidden(*c)) {
+        return Err(format!("El comando contiene un carácter de control no permitido (U+{:04X})", c as u32));
+    }
+    Ok(cmd.to_string())
+}
+
 fn rpc_error(id: Value, code: i64, message: &str) -> Value {
     json!({"jsonrpc": "2.0", "id": id, "error": {"code": code, "message": message}})
 }
@@ -333,10 +353,8 @@ fn call_tool(app: &AppHandle, cfg: &McpConfig, name: &str, args: &Value) -> Resu
         }
         "send_command" if !cfg.read_only => {
             let id = args["connection_id"].as_str().unwrap_or("");
-            let command = args["command"].as_str().unwrap_or("").trim_end();
-            if command.is_empty() {
-                return Err("Comando vacío".into());
-            }
+            let command = visible_command(args["command"].as_str().unwrap_or(""))?;
+            let command = command.as_str();
             let (info, session) = state.conns.info(id).ok_or("Conexión no encontrada. Usa list_connections.")?;
             let local = session.session_type == crate::models::SessionType::Local;
             if (cfg.require_approval || local) && !state.mcp.ask(app, name, &info.name, command) {
@@ -344,7 +362,7 @@ fn call_tool(app: &AppHandle, cfg: &McpConfig, name: &str, args: &Value) -> Resu
                 return Err("El usuario rechazó la ejecución".into());
             }
             let rx = state.conns.tap(id).ok_or("Conexión no encontrada")?;
-            let data = command.replace("\r\n", "\n").replace('\n', "\r") + "\r";
+            let data = command.replace('\n', "\r") + "\r";
             state.conns.write(id, data.as_bytes())?;
             let wait = Duration::from_secs_f64(args["wait_seconds"].as_f64().unwrap_or(5.0).clamp(0.5, 120.0));
             let out = expect::collect(&rx, Duration::from_millis(1500), wait);
@@ -388,6 +406,17 @@ mod tests {
         // Host header (DNS rebinding sin Origin)
         assert!(origin_allowed(Some(&format!("http://{}", "127.0.0.1:47821"))));
         assert!(!origin_allowed(Some(&format!("http://{}", "attacker.example:47821"))));
+    }
+
+    #[test]
+    fn approval_shows_exactly_what_is_sent() {
+        assert_eq!(visible_command("show ver\r\nshow clock \n").unwrap(), "show ver\nshow clock");
+        // Un "\r" suelto es otra línea: se muestra como tal en la aprobación.
+        assert_eq!(visible_command("show clock\rreload").unwrap(), "show clock\nreload");
+        for bad in ["show ver\x15reload", "show\x08\x08", "a\x1b[2Kb", "show \u{202E}daolr", "x\u{200B}y", ""] {
+            assert!(visible_command(bad).is_err(), "{bad:?}");
+        }
+        assert!(visible_command("interface Gi0/1\n\tdescription uplink").is_ok());
     }
 
     #[test]

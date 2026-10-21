@@ -335,21 +335,26 @@ export const TerminalView = memo(function TerminalView({ id, session, active, vi
     });
 
     // Pegar varias líneas en un equipo remoto equivale a aplicar configuración: se confirma.
+    // Un "\r" suelto también es otra línea para el equipo.
     const needsConfirm = (text: string) =>
-      settingsRef.current.confirmSend && sessionRef.current.type !== "local" && /\r?\n\s*\S/.test(text.trimEnd());
+      settingsRef.current.confirmSend && sessionRef.current.type !== "local" && /[\r\n]\s*\S/.test(text.trimEnd());
+    // Sin los marcadores de pegado entre corchetes: un texto copiado que trae "ESC[201~"
+    // cerraría el modo antes de tiempo y la shell ejecutaría el resto como si se tecleara.
+    const cleanPaste = (text: string) => text.replace(/\x1b\[20[01]~/g, "");
     const paste = async () => {
-      const text = await readText().catch(() => "");
+      const text = cleanPaste(await readText().catch(() => ""));
       if (!text) return;
       if (needsConfirm(text)) setPasteAsk(text);
       else term.paste(text);
     };
     // Cmd+V en macOS llega por el menú nativo como evento "paste", sin pasar por paste().
     const onNativePaste = (e: ClipboardEvent) => {
-      const text = e.clipboardData?.getData("text/plain") ?? "";
-      if (!needsConfirm(text)) return;
+      const text = cleanPaste(e.clipboardData?.getData("text/plain") ?? "");
+      if (!text) return;
       e.preventDefault();
       e.stopPropagation();
-      setPasteAsk(text);
+      if (needsConfirm(text)) setPasteAsk(text);
+      else term.paste(text);
     };
     hostRef.current!.addEventListener("paste", onNativePaste, true);
 

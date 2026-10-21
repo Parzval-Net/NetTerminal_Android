@@ -236,6 +236,8 @@ export function computeRisk(cmd: string): Risk {
 
 function evalRisk(cmd: string): Risk {
   let risk: Risk = "read";
+  // Un "\r" suelto también separa comandos en el equipo.
+  cmd = cmd.replace(/\r\n?/g, "\n");
   const lines = cmd
     .split("\n")
     .map((l) => l.split("|")[0].trim())
@@ -263,6 +265,12 @@ function evalRisk(cmd: string): Risk {
 const ID = /^[a-z0-9][a-z0-9_.-]{0,63}$/;
 const MAX_COMMANDS = 3000;
 const str = (v: unknown, max: number): v is string => typeof v === "string" && v.length > 0 && v.length <= max;
+/**
+ * Caracteres que el catálogo no muestra pero el equipo sí interpreta: un "\r" suelto ejecuta
+ * otra línea, Ctrl-U o backspace borran lo anterior y los de dirección Unicode reordenan el
+ * texto. Un pack importado podría usarlos para que "show clock" esconda un "reload".
+ */
+const HIDDEN_CHARS = /[\x00-\x08\x0b-\x1f\x7f\u200b-\u200f\u202a-\u202e\u2066-\u2069\ufeff]/;
 const VARIABLE_OK = (cmd: string) => (cmd.match(/\{\{[^}]*\}\}/g) ?? []).every((m) => /^\{\{\s*[\w.-]+\s*\}\}$/.test(m));
 
 export interface Validation {
@@ -314,6 +322,10 @@ export function validatePack(raw: unknown): Validation {
       warnings.push("Comando sin cmd o desc descartado");
       continue;
     }
+    if (HIDDEN_CHARS.test(c.cmd)) {
+      warnings.push(`Comando con caracteres de control descartado: ${c.cmd.replace(HIDDEN_CHARS, "?").slice(0, 60)}`);
+      continue;
+    }
     if (!VARIABLE_OK(c.cmd)) {
       warnings.push(`Variable inválida en: ${c.cmd.slice(0, 60)}`);
       continue;
@@ -325,7 +337,7 @@ export function validatePack(raw: unknown): Validation {
     const plats = Array.isArray(c.platforms) ? (c.platforms as unknown[]).filter((x): x is string => typeof x === "string" && platformIds.has(x)) : undefined;
     const variants = Array.isArray(c.variants)
       ? (c.variants as Record<string, unknown>[])
-          .filter((v) => v && str(v.cmd, 2000) && Array.isArray(v.platforms) && VARIABLE_OK(v.cmd as string))
+          .filter((v) => v && str(v.cmd, 2000) && !HIDDEN_CHARS.test(v.cmd) && Array.isArray(v.platforms) && VARIABLE_OK(v.cmd as string))
           .map((v) => ({
             cmd: v.cmd as string,
             platforms: (v.platforms as unknown[]).filter((x): x is string => typeof x === "string" && platformIds.has(x)),

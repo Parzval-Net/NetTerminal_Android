@@ -171,7 +171,7 @@ impl Servers {
                                 .map(|f| (day, f));
                         }
                         if let Some((_, f)) = file.as_mut() {
-                            let _ = writeln!(f, "{} {} <{}.{}> {}", chrono::Local::now().format("%H:%M:%S"), msg.src, msg.facility, msg.severity, msg.msg);
+                            let _ = writeln!(f, "{} {} <{}.{}> {}", chrono::Local::now().format("%H:%M:%S"), msg.src, msg.facility, msg.severity, one_line(&msg.msg));
                         }
                     }
                     batch.push(msg);
@@ -256,6 +256,12 @@ pub fn parse_syslog(raw: &str, peer: SocketAddr) -> SyslogMsg {
         facility: (pri >> 3) as u8,
         msg: rest.trim().chars().take(4000).collect(),
     }
+}
+
+/// Una línea por mensaje en el archivo: un salto de línea dentro del mensaje (UDP sin
+/// autenticación) permitiría agregar entradas falsas con otra hora e IP de origen.
+fn one_line(msg: &str) -> String {
+    msg.chars().map(|c| if c.is_control() && c != '\t' { ' ' } else { c }).collect()
 }
 
 // ---------- TFTP: una transferencia ----------
@@ -655,6 +661,8 @@ mod tests {
         assert_eq!(m.src, "10.0.0.1");
         let raw = parse_syslog("sin prioridad", peer);
         assert_eq!(raw.severity, 5);
+        let forged = parse_syslog("<14>hola\n10:00:00 10.9.9.9 <4.0> falso", peer);
+        assert!(!one_line(&forged.msg).contains('\n'));
     }
 
     #[test]

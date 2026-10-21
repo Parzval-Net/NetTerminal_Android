@@ -5,23 +5,62 @@ on:
   push:
     tags: ["v*"]
 
+# Mínimo privilegio: el token solo lee. El job "release" eleva a contents: write.
+permissions:
+  contents: read
+
+# Un solo build por ref; no se cancela uno en curso para no dejar un release a medias.
+concurrency:
+  group: build-${{ github.ref }}
+  cancel-in-progress: false
+
+# Acciones de terceros fijadas a SHA completo (el comentario indica la versión).
+# Dependabot (.github/dependabot.yml) propone las actualizaciones.
+
 jobs:
-  # Dependencias con vulnerabilidades conocidas (RustSec y npm) detienen el build.
-  audit:
+  # Solo se publica un tag que apunte a un commit de main y cuya versión coincida con la app.
+  verify:
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-node@v4
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+      - name: Tag sobre main y versión consistente
+        if: startsWith(github.ref, 'refs/tags/v')
+        env:
+          TAG: ${{ github.ref_name }}
+        run: |
+          git merge-base --is-ancestor "$GITHUB_SHA" origin/main \
+            || { echo "::error::El tag $TAG no apunta a un commit de main"; exit 1; }
+          app=$(python3 -c "import json;print(json.load(open('src-tauri/tauri.conf.json'))['version'])")
+          [ "v$app" = "$TAG" ] \
+            || { echo "::error::El tag $TAG no coincide con la versión de tauri.conf.json (v$app)"; exit 1; }
+
+  # Dependencias con vulnerabilidades conocidas (RustSec y npm) detienen el build.
+  audit:
+    needs: verify
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4.4.0
         with:
           node-version: 22
-      - run: npm ci && npm audit --audit-level=high
+          # Sin caché de dependencias (v4 lo ignora con un aviso; desde v5 la caché es implícita).
+          package-manager-cache: false
+      # --ignore-scripts: ningún paquete npm ejecuta código al instalarse (solo fsevents
+      # declara script y es opcional de macOS; el build no lo necesita).
+      - run: npm ci --ignore-scripts && npm audit --audit-level=high
       - run: |
           sudo apt-get update
           sudo apt-get install -y libwebkit2gtk-4.1-dev libayatana-appindicator3-dev librsvg2-dev libudev-dev
-      - uses: dtolnay/rust-toolchain@stable
+      - uses: dtolnay/rust-toolchain@b725eda525362e7cf34af9a7243cac1e3f01a7ec # stable (2026-10-16)
         with:
+          toolchain: stable
           components: clippy
-      - run: cargo install cargo-audit --locked
+      - run: cargo install cargo-audit --version 0.22.2 --locked
       - run: cargo audit
         working-directory: src-tauri
       - run: cargo test
@@ -30,7 +69,9 @@ jobs:
         working-directory: src-tauri
 
   build:
-    needs: audit
+    needs: [verify, audit]
+    # Los secretos de firma viven en el environment "release" (revisión manual del dueño).
+    environment: release
     strategy:
       fail-fast: false
       matrix:
@@ -43,7 +84,9 @@ jobs:
             args: ""
     runs-on: ${{ matrix.os }}
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+        with:
+          persist-credentials: false
 
       - name: Dependencias Linux
         if: runner.os == 'Linux'
@@ -51,58 +94,71 @@ jobs:
           sudo apt-get update
           sudo apt-get install -y libwebkit2gtk-4.1-dev libayatana-appindicator3-dev librsvg2-dev libudev-dev patchelf
 
-      - uses: actions/setup-node@v4
+      # Sin caché de npm ni de cargo: un build que firma no debe restaurar estado de otras
+      # ejecuciones (cache poisoning). Los tags no comparten caché entre sí, así que no se pierde velocidad real.
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4.4.0
         with:
           node-version: 22
-          cache: npm
+          # Sin caché de dependencias (v4 lo ignora con un aviso; desde v5 la caché es implícita).
+          package-manager-cache: false
 
-      - uses: dtolnay/rust-toolchain@stable
+      - uses: dtolnay/rust-toolchain@b725eda525362e7cf34af9a7243cac1e3f01a7ec # stable (2026-10-16)
         with:
+          toolchain: stable
           targets: ${{ runner.os == 'macOS' && 'aarch64-apple-darwin,x86_64-apple-darwin' || '' }}
 
-      - uses: swatinem/rust-cache@v2
-        with:
-          workspaces: src-tauri
-
-      - run: npm ci
+      - run: npm ci --ignore-scripts
 
       # Evita incrustar rutas del runner (usuario, carpetas) en los mensajes de pánico.
       - name: Recortar rutas locales del binario
         shell: bash
         run: |
           H="$HOME"; [ "$RUNNER_OS" = "Windows" ] && H="$(cygpath -w "$HOME")"
-          W="${{ github.workspace }}"
+          W="$GITHUB_WORKSPACE"
           # Formato codificado (separador 0x1f): admite rutas con espacios.
           printf 'CARGO_ENCODED_RUSTFLAGS=--remap-path-prefix=%s=~\x1f--remap-path-prefix=%s=.\n' "$H" "$W" >> "$GITHUB_ENV"
 
-      # Firma de actualizaciones: la clave privada vive solo en los secretos del repositorio.
+      # Firma de actualizaciones: la clave privada solo existe en este paso y solo para tags v*.
       # Las compilaciones locales no la necesitan (sin --config no se generan artefactos).
-      - run: npx tauri build ${{ matrix.args }} --config src-tauri/tauri.updater.conf.json
+      - name: Compilar y firmar (tag)
+        if: startsWith(github.ref, 'refs/tags/v')
+        shell: bash
+        run: npx tauri build $ARGS --config src-tauri/tauri.updater.conf.json
         env:
+          ARGS: ${{ matrix.args }}
           # La app se actualiza desde el repositorio que la compila (un fork, desde sí mismo).
           NT_UPDATE_REPO: ${{ github.repository }}
           TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
           TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD }}
+
+      # Ejecución manual (workflow_dispatch): build de prueba sin firma ni secretos.
+      - name: Compilar sin firma (manual)
+        if: ${{ !startsWith(github.ref, 'refs/tags/v') }}
+        shell: bash
+        run: npx tauri build $ARGS
+        env:
+          ARGS: ${{ matrix.args }}
+          NT_UPDATE_REPO: ${{ github.repository }}
 
       # Pieza portable de cada sistema, en tar para conservar permisos de ejecución.
       - name: Pieza portable
         shell: bash
         run: |
           mkdir -p piece
-          case "${{ runner.os }}" in
+          case "$RUNNER_OS" in
             Windows) cp src-tauri/target/release/net-terminal.exe piece/NetTerminal.exe ;;
             macOS)   cp -R src-tauri/target/universal-apple-darwin/release/bundle/macos/NetTerminal.app piece/ ;;
             Linux)   cp src-tauri/target/release/bundle/appimage/*.AppImage piece/NetTerminal.AppImage
                      chmod +x piece/NetTerminal.AppImage ;;
           esac
-          tar -czf portable-${{ runner.os }}.tgz -C piece .
+          tar -czf "portable-$RUNNER_OS.tgz" -C piece .
 
-      - uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
         with:
           name: portable-${{ runner.os }}
           path: portable-${{ runner.os }}.tgz
 
-      - uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
         with:
           name: instaladores-${{ runner.os }}
           path: |
@@ -118,7 +174,7 @@ jobs:
     needs: build
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/download-artifact@v4
+      - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4.3.0
         with:
           pattern: portable-*
           merge-multiple: true
@@ -139,7 +195,7 @@ jobs:
           compartidos por los tres sistemas. No requiere permisos de administrador.
           EOF
           zip -qry NetTerminal-portable.zip NetTerminal
-      - uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
         with:
           name: NetTerminal-portable
           path: NetTerminal-portable.zip
@@ -153,11 +209,12 @@ jobs:
       contents: write
     steps:
       # Historial completo para armar las novedades desde los commits entre versiones.
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
         with:
           fetch-depth: 0
           path: repo
-      - uses: actions/download-artifact@v4
+          persist-credentials: false
+      - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4.3.0
         with:
           path: artefactos
       # Índice que consulta el actualizador de la app: versión, URL y firma por plataforma.
@@ -208,8 +265,10 @@ jobs:
 
       - name: Crear release
         env:
+          TAG: ${{ github.ref_name }}
+          REPO: ${{ github.repository }}
           GH_TOKEN: ${{ github.token }}
         run: |
           mapfile -t files < <(find artefactos -type f \( -name '*.dmg' -o -name '*.exe' -o -name '*.AppImage' -o -name '*.deb' -o -name 'NetTerminal-portable.zip' -o -name 'NetTerminal_*_universal.app.tar.gz' -o -name 'latest.json' \))
-          gh release create "${{ github.ref_name }}" "${files[@]}" \
-            --repo "${{ github.repository }}" --title "NetTerminal ${{ github.ref_name }}" --notes-file notas.md
+          gh release create "$TAG" "${files[@]}" \
+            --repo "$REPO" --title "NetTerminal $TAG" --notes-file notas.md --verify-tag
