@@ -75,17 +75,36 @@ pub fn run(app: AppHandle, conn: String, command: String, timeout_secs: u64) -> 
         let mut tail = String::new(); // texto desde la última respuesta automática
         let mut answered = 0;
         let mut echo = EchoScan::default();
+        // Líneas completas hacia la interfaz: un fragmento puede cortar una línea a la mitad.
+        let mut partial = String::new();
+        let flush = |partial: &mut String, all: bool| {
+            while let Some(i) = partial.find('\n') {
+                let line = partial[..i].trim_end().to_string();
+                partial.drain(..=i);
+                if !line.is_empty() {
+                    emit("line", line, None);
+                }
+            }
+            // Sin salto de línea tras una pausa (prompts, preguntas de confirmación).
+            if all && !partial.trim().is_empty() {
+                emit("line", partial.trim_end().to_string(), None);
+                partial.clear();
+            }
+        };
         loop {
             if start.elapsed() > deadline {
+                flush(&mut partial, true);
                 emit("error", "Tiempo agotado esperando al equipo".into(), None);
                 break;
             }
-            let Ok(chunk) = rx.recv_timeout(Duration::from_millis(500)) else { continue };
+            let Ok(chunk) = rx.recv_timeout(Duration::from_millis(500)) else {
+                flush(&mut partial, true);
+                continue;
+            };
             output.push_str(&chunk);
             tail.push_str(&chunk);
-            for line in chunk.split('\n').map(str::trim_end).filter(|l| !l.is_empty()) {
-                emit("line", line.to_string(), None);
-            }
+            partial.push_str(&chunk);
+            flush(&mut partial, false);
             let t = tail.trim_end_matches([' ', '\t']);
             let reply = if p.more.is_match(t) {
                 Some(" ")
@@ -110,6 +129,7 @@ pub fn run(app: AppHandle, conn: String, command: String, timeout_secs: u64) -> 
                 break;
             }
         }
+        flush(&mut partial, true);
         let failed = p.error.is_match(&output);
         emit("result", String::new(), Some(json!({ "ok": !failed, "output": output })));
         emit("done", String::new(), None);

@@ -36,8 +36,9 @@ export interface TermController {
 }
 
 const NEWLINE = { cr: "\r", lf: "\n", crlf: "\r\n" } as const;
-const RECONNECT_SECS = 5;
 const MAX_RECONNECTS = 30;
+/** Espera creciente (5, 10, 20, 40, 60 s…) para no gatillar bloqueos de cuenta en TACACS/RADIUS. */
+const reconnectSecs = (attempt: number) => Math.min(60, 5 * 2 ** Math.max(0, attempt - 1));
 
 interface Props {
   id: string;
@@ -47,6 +48,8 @@ interface Props {
   theme: ITheme;
   onStatus: (id: string, status: ConnStatus) => void;
   onLog: (id: string, path: string | null) => void;
+  /** Log activo de la pestaña: al reconectar se sigue escribiendo en el mismo archivo. */
+  logPath: string | null;
   /** Llegó salida mientras la pestaña no estaba visible. */
   onActivity: (id: string) => void;
   register: (id: string, ctrl: TermController | null) => void;
@@ -54,7 +57,7 @@ interface Props {
 
 const dim = (s: string) => `\x1b[2m${s}\x1b[0m`;
 
-export const TerminalView = memo(function TerminalView({ id, session, active, settings, theme, onStatus, onLog, onActivity, register }: Props) {
+export const TerminalView = memo(function TerminalView({ id, session, active, settings, theme, onStatus, onLog, logPath, onActivity, register }: Props) {
   const activeRef = useRef(active);
   activeRef.current = active;
   const hostRef = useRef<HTMLDivElement>(null);
@@ -67,6 +70,8 @@ export const TerminalView = memo(function TerminalView({ id, session, active, se
   sessionRef.current = session;
   const settingsRef = useRef(settings);
   settingsRef.current = settings;
+  const logPathRef = useRef(logPath);
+  logPathRef.current = logPath;
   const compiled = useMemo(
     () =>
       compile(
@@ -106,13 +111,6 @@ export const TerminalView = memo(function TerminalView({ id, session, active, se
     term.loadAddon(search);
     term.loadAddon(new WebLinksAddon((_e, uri) => openUrl(uri)));
     term.open(hostRef.current!);
-    try {
-      const webgl = new WebglAddon();
-      webgl.onContextLoss(() => webgl.dispose());
-      term.loadAddon(webgl);
-    } catch {
-      // Sin WebGL se usa el renderizador DOM.
-    }
     fit.fit();
     termRef.current = term;
     fitRef.current = fit;
@@ -138,7 +136,8 @@ export const TerminalView = memo(function TerminalView({ id, session, active, se
     let retries = 0;
     let retryTimer: number | undefined;
     let lastDataAt = 0;
-    let gotData = false;
+    /** Final de la salida reciente (sin ANSI), para reconocer el prompt. */
+    let tail = "";
 
     const newline = () => NEWLINE[sessionRef.current.newline ?? "cr"];
 
@@ -148,26 +147,43 @@ export const TerminalView = memo(function TerminalView({ id, session, active, se
     };
 
     /** Envía los "comandos al conectar" cuando el equipo deja de escribir (prompt listo). */
+    // Prompt típico de equipos y shells; nunca se envía sobre un pedido de credenciales.
+    const PROMPT = /[>#$%\]]\s*$/;
+    const CREDENTIALS = /(password|passphrase|contraseña|username|user name|login)[^\n]*:\s*$/i;
+    const cleanTail = () => tail.replace(/\x1b\[[0-9;?]*[ -\/]*[@-~]/g, "").replace(/\r/g, "");
+    /** Espera a que el equipo muestre su prompt (o quede en silencio sin pedir credenciales). */
+    const waitReady = async (connId: string, since: number, maxMs: number) => {
+      const start = Date.now();
+      while (Date.now() - start < maxMs) {
+        await new Promise((r) => setTimeout(r, 150));
+        if (disposed || connIdRef.current !== connId || statusRef.current !== "connected") return false;
+        if (lastDataAt <= since) continue;
+        const quiet = Date.now() - lastDataAt;
+        const t = cleanTail();
+        if (CREDENTIALS.test(t)) continue;
+        if ((PROMPT.test(t) && quiet > 200) || quiet > 1500) return true;
+      }
+      return false;
+    };
+
     const runOnConnect = async (connId: string) => {
       const lines = (sessionRef.current.on_connect ?? "").split("\n").map((l) => l.trim()).filter(Boolean);
       if (!lines.length) return;
-      const start = Date.now();
-      while (Date.now() - start < 8000) {
-        await new Promise((r) => setTimeout(r, 200));
-        if (connIdRef.current !== connId || statusRef.current !== "connected") return;
-        if (gotData && Date.now() - lastDataAt > 700) break;
-      }
+      // Hasta 2 minutos: da tiempo a escribir la contraseña antes del primer comando.
+      if (!(await waitReady(connId, 0, 120_000))) return;
       for (const line of lines) {
         if (disposed || connIdRef.current !== connId || statusRef.current !== "connected") return;
+        const sent = Date.now();
         await invoke("write", { id: connId, data: line + newline() }).catch(() => {});
-        await new Promise((r) => setTimeout(r, 400));
+        await waitReady(connId, sent, 5000);
       }
     };
 
     const connect = async () => {
       cancelRetry();
       manualClose = false;
-      gotData = false;
+      tail = "";
+      lastDataAt = 0;
       const connId = `${id}#${++attempt}`;
       connIdRef.current = connId;
       setStatus("connecting");
@@ -183,8 +199,9 @@ export const TerminalView = memo(function TerminalView({ id, session, active, se
       onData.onmessage = (buf) => {
         if (connIdRef.current !== connId) return;
         lastDataAt = Date.now();
-        gotData = true;
-        hl.push(decoder.decode(new Uint8Array(buf), { stream: true }));
+        const text = decoder.decode(new Uint8Array(buf), { stream: true });
+        tail = (tail + text).slice(-400);
+        hl.push(text);
         if (!activeRef.current) onActivity(id);
       };
       const onExit = new Channel<string>();
@@ -197,10 +214,11 @@ export const TerminalView = memo(function TerminalView({ id, session, active, se
           term.write(`\r\n${dim(`── ${reason}. Transferencia terminada: puedes cerrar esta pestaña ──`)}\r\n`);
         } else if (!manualClose && sessionRef.current.auto_reconnect && retries < MAX_RECONNECTS) {
           retries++;
+          const wait = reconnectSecs(retries);
           term.write(
-            `\r\n${dim(`── ${reason}. Reconectando en ${RECONNECT_SECS} s (intento ${retries}/${MAX_RECONNECTS}) · Enter: ahora · Esc: cancelar ──`)}\r\n`,
+            `\r\n${dim(`── ${reason}. Reconectando en ${wait} s (intento ${retries}/${MAX_RECONNECTS}) · Enter: ahora · Esc: cancelar ──`)}\r\n`,
           );
-          retryTimer = window.setTimeout(connect, RECONNECT_SECS * 1000);
+          retryTimer = window.setTimeout(connect, wait * 1000);
         } else {
           term.write(`\r\n${dim(`── ${reason}. Presiona Enter para reconectar ──`)}\r\n`);
         }
@@ -223,11 +241,14 @@ export const TerminalView = memo(function TerminalView({ id, session, active, se
           setStatus("connected");
           retries = 0;
           runOnConnect(connId);
-          if (settingsRef.current.autoLog) {
+          // Un log activado a mano (o el automático) continúa en su archivo tras reconectar.
+          const resume = logPathRef.current;
+          if (resume || settingsRef.current.autoLog) {
             invoke<string | null>("set_logging", {
               id: connId,
               enabled: true,
               timestamps: settingsRef.current.logTimestamps,
+              resume,
             })
               .then((path) => onLog(id, path))
               .catch(() => {});
@@ -238,10 +259,11 @@ export const TerminalView = memo(function TerminalView({ id, session, active, se
         setStatus("closed");
         if (sessionRef.current.auto_reconnect && !manualClose && retries < MAX_RECONNECTS) {
           retries++;
+          const wait = reconnectSecs(retries);
           term.write(
-            `\r\n\x1b[31m${err}\x1b[0m\r\n${dim(`── Reintentando en ${RECONNECT_SECS} s (intento ${retries}/${MAX_RECONNECTS}) · Esc: cancelar ──`)}\r\n`,
+            `\r\n\x1b[31m${err}\x1b[0m\r\n${dim(`── Reintentando en ${wait} s (intento ${retries}/${MAX_RECONNECTS}) · Esc: cancelar ──`)}\r\n`,
           );
-          retryTimer = window.setTimeout(connect, RECONNECT_SECS * 1000);
+          retryTimer = window.setTimeout(connect, wait * 1000);
         } else {
           term.write(`\r\n\x1b[31m${err}\x1b[0m\r\n${dim("── Presiona Enter para reintentar ──")}\r\n`);
         }
@@ -429,11 +451,36 @@ export const TerminalView = memo(function TerminalView({ id, session, active, se
     settings.scrollback,
   ]);
 
+  // WebGL solo en la pestaña visible: Chromium limita los contextos WebGL activos y, con
+  // muchas pestañas, perdía los más antiguos sin control. Al ocultarse se libera tras un
+  // rato (cambiar de pestaña y volver no lo recrea) y se usa el renderizador DOM.
+  const webglRef = useRef<WebglAddon | null>(null);
   useEffect(() => {
+    const term = termRef.current;
+    if (!term) return;
     if (active) {
+      if (!webglRef.current) {
+        try {
+          const webgl = new WebglAddon();
+          webgl.onContextLoss(() => {
+            webgl.dispose();
+            if (webglRef.current === webgl) webglRef.current = null;
+          });
+          term.loadAddon(webgl);
+          webglRef.current = webgl;
+        } catch {
+          // Sin WebGL se usa el renderizador DOM.
+        }
+      }
       fitRef.current?.fit();
-      termRef.current?.focus();
+      term.focus();
+      return;
     }
+    const release = window.setTimeout(() => {
+      webglRef.current?.dispose();
+      webglRef.current = null;
+    }, 30_000);
+    return () => window.clearTimeout(release);
   }, [active]);
 
   const findNext = (back = false) => {

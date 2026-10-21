@@ -189,6 +189,21 @@ impl SessionStore {
     }
 }
 
+
+
+/// Copia un archivo de datos que no se pudo leer completo a `<nombre>.corrupt-<unix>.json`.
+pub fn backup_corrupt(path: &Path) {
+    let ts = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map(|d| d.as_secs())
+        .unwrap_or(0);
+    let stem = path.file_stem().and_then(|s| s.to_str()).unwrap_or("datos");
+    let dest = path.with_file_name(format!("{stem}.corrupt-{ts}.json"));
+    if fs::copy(path, &dest).is_ok() {
+        restrict(&dest);
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::portable_root;
@@ -238,18 +253,5 @@ mod tests {
             Some(usb.clone())
         );
         assert_eq!(portable_root(&usb.join("NetTerminal.exe"), None), Some(usb));
-    }
-}
-
-/// Copia un archivo de datos que no se pudo leer completo a `<nombre>.corrupt-<unix>.json`.
-pub fn backup_corrupt(path: &Path) {
-    let ts = std::time::SystemTime::now()
-        .duration_since(std::time::UNIX_EPOCH)
-        .map(|d| d.as_secs())
-        .unwrap_or(0);
-    let stem = path.file_stem().and_then(|s| s.to_str()).unwrap_or("datos");
-    let dest = path.with_file_name(format!("{stem}.corrupt-{ts}.json"));
-    if fs::copy(path, &dest).is_ok() {
-        restrict(&dest);
     }
 }

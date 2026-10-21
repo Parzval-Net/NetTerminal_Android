@@ -19,10 +19,14 @@ jobs:
           sudo apt-get update
           sudo apt-get install -y libwebkit2gtk-4.1-dev libayatana-appindicator3-dev librsvg2-dev libudev-dev
       - uses: dtolnay/rust-toolchain@stable
+        with:
+          components: clippy
       - run: cargo install cargo-audit --locked
       - run: cargo audit
         working-directory: src-tauri
       - run: cargo test
+        working-directory: src-tauri
+      - run: cargo clippy --all-targets -- -D warnings
         working-directory: src-tauri
 
   build:

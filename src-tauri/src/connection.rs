@@ -26,8 +26,28 @@ struct Mirror {
     stripper: AnsiStripper,
     /// Búfer reutilizado entre llamadas (evita una asignación por fragmento).
     scratch: Vec<u8>,
+    /// Bytes de un carácter UTF-8 que quedó partido entre dos fragmentos (máx. 3).
+    partial: Vec<u8>,
     history: String,
     taps: Vec<std::sync::mpsc::SyncSender<String>>,
+}
+
+/// Cuántos bytes finales son el comienzo de un carácter UTF-8 todavía incompleto.
+fn incomplete_utf8_tail(b: &[u8]) -> usize {
+    for i in 1..=b.len().min(3) {
+        let c = b[b.len() - i];
+        if c & 0xC0 == 0x80 {
+            continue;
+        }
+        let needed = match c {
+            0xF0.. => 4,
+            0xE0.. => 3,
+            0xC0.. => 2,
+            _ => 1,
+        };
+        return if needed > i { i } else { 0 };
+    }
+    0
 }
 
 /// Fragmentos pendientes por suscriptor. Un script que solo envía y nunca lee no debe
@@ -38,8 +58,13 @@ impl Mirror {
     fn push(&mut self, bytes: &[u8]) {
         let mut clean = std::mem::take(&mut self.scratch);
         clean.clear();
+        clean.append(&mut self.partial);
         self.stripper.strip_into(bytes, &mut clean);
-        let text = String::from_utf8_lossy(&clean);
+        // Un carácter partido (á, ñ, ─) se completa con el fragmento siguiente en vez de
+        // convertirse en U+FFFD para scripts y agentes.
+        let keep = incomplete_utf8_tail(&clean);
+        self.partial.extend_from_slice(&clean[clean.len() - keep..]);
+        let text = String::from_utf8_lossy(&clean[..clean.len() - keep]);
         if !text.is_empty() {
             if !self.taps.is_empty() {
                 let owned = text.to_string();
@@ -514,6 +539,7 @@ impl ConnectionManager {
         enabled: bool,
         timestamps: bool,
         dir: &Path,
+        resume: Option<&str>,
     ) -> Result<Option<String>, String> {
         // Crear la carpeta y el archivo ocurre sin el lock del mapa global.
         let (log, name) = {
@@ -526,6 +552,14 @@ impl ConnectionManager {
             return Ok(None);
         }
         std::fs::create_dir_all(dir).map_err(|e| e.to_string())?;
+        // Reconexión: se sigue escribiendo en el mismo archivo para no fragmentar la evidencia
+        // de una ventana de cambio. Solo se acepta un .log que ya exista en la carpeta de logs.
+        if let Some(prev) = resume.and_then(|p| resumable_log(dir, Path::new(p))) {
+            let mut file = std::fs::OpenOptions::new().append(true).open(&prev).map_err(|e| e.to_string())?;
+            let _ = writeln!(file, "\n── Reconectado {} ──", chrono::Local::now().format("%Y-%m-%d %H:%M:%S"));
+            *lock(&log) = Some(LogWriter::new(file, timestamps));
+            return Ok(Some(prev.to_string_lossy().into_owned()));
+        }
         let safe: String = name
             .chars()
             .map(|c| if c.is_alphanumeric() || c == '-' || c == '_' { c } else { '_' })
@@ -591,325 +625,14 @@ impl ConnectionManager {
     }
 }
 
-#[cfg(test)]
-mod tests {
-    use super::LogWriter;
-
-    #[test]
-    fn builds_safe_scp_commands() {
-        use crate::models::{ScpSpec, Session, SessionType};
-        let mut s: Session = serde_json::from_value(serde_json::json!({
-            "name": "sw", "type": "local", "host": "10.0.0.1", "username": "noc", "port": 22
-        }))
-        .unwrap();
-        s.session_type = SessionType::Local;
-        s.scp = Some(ScpSpec {
-            upload: false,
-            files: vec!["ios.bin".into()],
-            remote_dir: "flash:".into(),
-            local_paths: vec![],
-            local_dir: "/tmp/tftp".into(),
-        });
-        assert!(super::scp_command(&s).is_ok());
-        // Nombres que intentan inyectar opciones o rutas
-        for bad in ["-oProxyCommand=x", "../etc/passwd", "a b"] {
-            s.scp.as_mut().unwrap().files = vec![bad.into()];
-            assert!(super::scp_command(&s).is_err(), "{bad}");
-        }
-        s.scp.as_mut().unwrap().files = vec!["ok.bin".into()];
-        s.scp.as_mut().unwrap().remote_dir = "-F/tmp/x".into();
-        assert!(super::scp_command(&s).is_err());
-        s.scp.as_mut().unwrap().remote_dir = "flash:".into();
-        s.host = Some("-oProxyCommand=sh".into());
-        assert!(super::scp_command(&s).is_err());
-    }
-
-    #[test]
-    fn writer_thread_keeps_order_and_encodes_telnet() {
-        use std::sync::{Arc, Mutex};
-        #[derive(Clone, Default)]
-        struct Shared(Arc<Mutex<Vec<u8>>>);
-        impl std::io::Write for Shared {
-            fn write(&mut self, b: &[u8]) -> std::io::Result<usize> {
-                self.0.lock().unwrap().extend_from_slice(b);
-                Ok(b.len())
-            }
-            fn flush(&mut self) -> std::io::Result<()> {
-                Ok(())
-            }
-        }
-        let out = Shared::default();
-        let tx = super::spawn_writer(Box::new(out.clone()), false);
-        for i in 0..500 {
-            tx.send(super::Outgoing::Data(format!("{i},").into_bytes())).unwrap();
-        }
-        drop(tx);
-        let expected: String = (0..500).map(|i| format!("{i},")).collect();
-        for _ in 0..50 {
-            if out.0.lock().unwrap().len() == expected.len() {
-                break;
-            }
-            std::thread::sleep(std::time::Duration::from_millis(10));
-        }
-        assert_eq!(String::from_utf8(out.0.lock().unwrap().clone()).unwrap(), expected);
-
-        // Telnet: los datos se codifican (IAC duplicado) y los comandos Raw no.
-        let out = Shared::default();
-        let tx = super::spawn_writer(Box::new(out.clone()), true);
-        tx.send(super::Outgoing::Data(vec![255])).unwrap();
-        tx.send(super::Outgoing::Raw(vec![255, 243])).unwrap();
-        drop(tx);
-        std::thread::sleep(std::time::Duration::from_millis(100));
-        assert_eq!(*out.0.lock().unwrap(), vec![255, 255, 255, 243]);
-    }
-
-    #[test]
-    fn rejects_argument_injection() {
-        assert!(super::safe_target("-oProxyCommand=sh", "host").is_err());
-        assert!(super::safe_target("10.0.0.1 -v", "host").is_err());
-        assert_eq!(super::safe_target(" router.lab ", "host").unwrap(), "router.lab");
-        let bad = |s: &str| super::check_extra_args(&super::split_args(s)).is_err();
-        assert!(bad("-oProxyCommand=curl x|sh"));
-        assert!(bad("-o ProxyCommand=nc %h %p"));
-        assert!(bad("-o 'LocalCommand id'"));
-        assert!(bad("-F /tmp/evil_config"));
-        assert!(bad("-o KnownHostsCommand=/bin/x"));
-        assert!(!bad("-L 8443:10.0.0.1:443 -A -o StrictHostKeyChecking=accept-new"));
-        assert!(!bad("-f -N -D 1080"));
-        // Flags agrupados y opciones que cargan código.
-        assert!(bad("-voProxyCommand=sh\\ -c\\ x"));
-        assert!(bad("-vF/tmp/cfg"));
-        assert!(bad("-oPKCS11Provider=/tmp/x.dylib"));
-        assert!(bad("-o SecurityKeyProvider=/tmp/x"));
-        assert!(bad("-I /tmp/lib.so"));
-        assert!(bad("-o Include=/tmp/x"));
-        assert!(bad("evil.example"));
-        assert!(bad("-- otro-host"));
-        assert!(bad("-L"));
-        assert!(!bad("-vvv -C -o ServerAliveCountMax=3 -J bastion"));
-    }
-
-    #[test]
-    fn splits_ssh_args_with_quotes() {
-        assert_eq!(
-            super::split_args(r#"-L 8443:10.0.0.1:443 -o "ProxyCommand=nc -X 5 %h %p" -A"#),
-            vec!["-L", "8443:10.0.0.1:443", "-o", "ProxyCommand=nc -X 5 %h %p", "-A"]
-        );
-        assert!(super::split_args("   ").is_empty());
-    }
-
-    #[test]
-    fn legacy_options_only_use_supported_algorithms() {
-        let opts = super::legacy_options();
-        // En OpenSSH >= 10 ssh-dss ya no existe y no debe pedirse.
-        let ver = std::process::Command::new("ssh").arg("-V").output();
-        if let Ok(v) = ver {
-            if String::from_utf8_lossy(&v.stderr).contains("OpenSSH_10") {
-                assert!(opts.iter().all(|o| !o.contains("ssh-dss")));
-            }
-        }
-        for o in opts {
-            let ok = std::process::Command::new("ssh").args(["-G", "-o", o, "x"]).output().unwrap();
-            assert!(ok.status.success(), "ssh rechazó {o}");
-        }
-    }
-
-    /// Micro-benchmark del camino caliente (cargo test --release -- --ignored --nocapture bench_).
-    #[test]
-    #[ignore]
-    fn bench_mirror_and_log() {
-        use std::time::Instant;
-        let line = "\x1b[32mGi1/0/1\x1b[0m   connected    10   a-full a-1000 10/100/1000BaseTX áé\r\n";
-        let chunk: Vec<u8> = line.repeat(1024 / line.len() + 1).into_bytes()[..1024].to_vec();
-        let total = 64 * 1024 * 1024 / chunk.len();
-        let mut m = super::Mirror::default();
-        let t = Instant::now();
-        for _ in 0..total {
-            m.push(&chunk);
-        }
-        let s = t.elapsed().as_secs_f64();
-        println!("mirror sin taps: {:.0} MB/s ({:.2} us/chunk)", 64.0 / s, s * 1e6 / total as f64);
-        let mut m = super::Mirror::default();
-        let (tx, rx) = std::sync::mpsc::sync_channel(super::TAP_CAPACITY);
-        m.taps.push(tx);
-        let t = Instant::now();
-        for _ in 0..total {
-            m.push(&chunk);
-            while rx.try_recv().is_ok() {}
-        }
-        let s = t.elapsed().as_secs_f64();
-        println!("mirror con 1 tap: {:.0} MB/s ({:.2} us/chunk)", 64.0 / s, s * 1e6 / total as f64);
-        let path = std::env::temp_dir().join(format!("nt-bench-{}.log", std::process::id()));
-        let mut w = LogWriter::new(std::fs::File::create(&path).unwrap(), true);
-        let t = Instant::now();
-        for _ in 0..total / 4 {
-            w.write(&chunk);
-        }
-        let s = t.elapsed().as_secs_f64();
-        println!("log con hora: {:.0} MB/s ({:.2} us/chunk)", 16.0 / s, s * 1e6 / (total / 4) as f64);
-        drop(w);
-        let _ = std::fs::remove_file(path);
-    }
-
-    /// Cuántas lecturas produce una salida masiva por PTY (tamaño típico de fragmento).
-    #[test]
-    #[ignore]
-    fn bench_pty_chunk_sizes() {
-        use portable_pty::{native_pty_system, CommandBuilder, PtySize};
-        use std::io::Read;
-        let pair = native_pty_system().openpty(PtySize { rows: 50, cols: 200, pixel_width: 0, pixel_height: 0 }).unwrap();
-        let mut cmd = CommandBuilder::new("sh");
-        cmd.args(["-c", "seq 1 400000"]);
-        let mut child = pair.slave.spawn_command(cmd).unwrap();
-        drop(pair.slave);
-        let mut r = pair.master.try_clone_reader().unwrap();
-        let (sink, log) = test_sink();
-        let (mut reads, mut bytes, mut small) = (0usize, 0usize, 0usize);
-        let mut buf = [0u8; 16 * 1024];
-        let t = std::time::Instant::now();
-        while let Ok(n) = r.read(&mut buf) {
-            if n == 0 {
-                break;
-            }
-            sink.push(&buf[..n]);
-            reads += 1;
-            bytes += n;
-            small += (n < 1024) as usize;
-            if bytes >= 2_700_000 {
-                break;
-            }
-        }
-        let elapsed = t.elapsed();
-        let _ = child.kill();
-        drop(sink);
-        std::thread::sleep(std::time::Duration::from_millis(50));
-        let msgs = log.lock().unwrap().len();
-        println!(
-            "PTY: {bytes} bytes en {reads} lecturas (prom {} B, {small} < 1 KB) en {elapsed:?} -> {msgs} mensajes al frontend",
-            bytes / reads.max(1)
-        );
-    }
-
-    #[test]
-    fn mirror_trims_history_and_feeds_taps() {
-        let mut m = super::Mirror::default();
-        let (tx, rx) = std::sync::mpsc::sync_channel(super::TAP_CAPACITY);
-        m.taps.push(tx);
-        m.push(b"\x1b[1mab\x08c\x1b[0m\r\n");
-        assert_eq!(rx.try_recv().unwrap(), "ac\n");
-        // Un backspace al inicio del fragmento no borra lo anterior (igual que antes).
-        m.push(b"\x08z");
-        assert_eq!(m.tail(100), "ac\nz");
-        let mut all = String::from("ac\nz");
-        for i in 0..40_000 {
-            let line = format!("línea {i}\n");
-            m.push(line.as_bytes());
-            all.push_str(&line);
-        }
-        assert!(m.history.len() <= 2 * super::HISTORY_MAX);
-        let tail = m.tail(usize::MAX);
-        assert!(tail.len() <= super::HISTORY_MAX && tail.len() > super::HISTORY_MAX - 4);
-        assert!(all.ends_with(tail));
-        assert!(all.ends_with(m.tail(50)) && m.tail(50).len() <= 50);
-    }
-
-    /// Canales de prueba que anotan lo recibido en orden.
-    fn test_sink() -> (super::Sink, std::sync::Arc<std::sync::Mutex<Vec<(std::time::Instant, Option<Vec<u8>>)>>>) {
-        use std::sync::{Arc, Mutex};
-        use tauri::ipc::{Channel, InvokeResponseBody};
-        let log: Arc<Mutex<Vec<(std::time::Instant, Option<Vec<u8>>)>>> = Arc::default();
-        let l = log.clone();
-        let data = Channel::new(move |b| {
-            if let InvokeResponseBody::Raw(v) = b {
-                l.lock().unwrap().push((std::time::Instant::now(), Some(v)));
-            }
-            Ok(())
-        });
-        let l = log.clone();
-        let exit = Channel::new(move |_| {
-            l.lock().unwrap().push((std::time::Instant::now(), None));
-            Ok(())
-        });
-        (super::Sink::new(data, exit), log)
-    }
-
-    #[test]
-    fn sink_coalesces_bursts_and_keeps_order() {
-        use std::time::{Duration, Instant};
-        let (sink, log) = test_sink();
-        // Ráfaga: muchas líneas cortas, como entrega un PTY.
-        let mut expected = Vec::new();
-        let pushes = 100_000;
-        for i in 0..pushes {
-            let line = format!("{i}\r\n");
-            sink.push(line.as_bytes());
-            expected.extend_from_slice(line.as_bytes());
-        }
-        std::thread::sleep(Duration::from_millis(50));
-        let msgs = log.lock().unwrap().len();
-        let got: Vec<u8> = log.lock().unwrap().iter().flat_map(|(_, d)| d.clone().unwrap()).collect();
-        assert_eq!(got, expected);
-        println!("ráfaga: {pushes} fragmentos -> {msgs} mensajes al frontend");
-        assert!(msgs < pushes / 10, "{msgs}");
-
-        // Fragmento aislado (eco de una tecla): sale sin esperar la ventana.
-        log.lock().unwrap().clear();
-        let t = Instant::now();
-        sink.push(b"x");
-        while log.lock().unwrap().is_empty() {
-            assert!(t.elapsed() < Duration::from_secs(1));
-            std::thread::yield_now();
-        }
-        let latency = log.lock().unwrap()[0].0 - t;
-        println!("latencia de un fragmento aislado: {latency:?}");
-        assert!(latency < super::FLUSH_WINDOW);
-
-        // El cierre llega después de todos los datos.
-        log.lock().unwrap().clear();
-        for _ in 0..1000 {
-            sink.push(b"fin de sesion\r\n");
-        }
-        sink.close("cerrado");
-        let entries = log.lock().unwrap();
-        let data: usize = entries.iter().filter_map(|(_, d)| d.as_ref().map(Vec::len)).sum();
-        assert_eq!(data, 15_000);
-        assert!(entries.last().unwrap().1.is_none());
-    }
-
-    #[test]
-    fn sink_drop_flushes_and_stops_thread() {
-        let (sink, log) = test_sink();
-        sink.push(b"a");
-        sink.push(b"b");
-        sink.push(b"c");
-        let out = std::sync::Arc::downgrade(&sink.out.0);
-        drop(sink);
-        for _ in 0..100 {
-            if out.upgrade().is_none() {
-                break;
-            }
-            std::thread::sleep(std::time::Duration::from_millis(5));
-        }
-        assert!(out.upgrade().is_none(), "el hilo de envío no terminó");
-        let got: Vec<u8> = log.lock().unwrap().iter().flat_map(|(_, d)| d.clone().unwrap()).collect();
-        assert_eq!(got, b"abc");
-    }
-
-    #[test]
-    fn log_strips_ansi_and_stamps_lines() {
-        let path = std::env::temp_dir().join(format!("nt-log-{}.log", std::process::id()));
-        let mut w = LogWriter::new(std::fs::File::create(&path).unwrap(), true);
-        w.write(b"\x1b[32mRouter#\x1b[0m show ver\r\nCisco");
-        w.write(b" IOS\r\n");
-        drop(w);
-        let text = std::fs::read_to_string(&path).unwrap();
-        let lines: Vec<_> = text.lines().collect();
-        assert_eq!(lines.len(), 2);
-        assert!(lines[0].starts_with('[') && lines[0].ends_with("] Router# show ver"));
-        assert!(lines[1].ends_with("] Cisco IOS"));
-        let _ = std::fs::remove_file(path);
-    }
+/// Ruta de un log existente dentro de la carpeta de logs (sin salir de ella).
+fn resumable_log(dir: &Path, path: &Path) -> Option<PathBuf> {
+    let dir = dir.canonicalize().ok()?;
+    let path = path.canonicalize().ok()?;
+    (path.parent() == Some(dir.as_path()) && path.extension().is_some_and(|e| e == "log") && path.is_file()).then_some(path)
 }
+
+
 
 // ---------- PTY (local y SSH) ----------
 
@@ -936,6 +659,11 @@ fn safe_target(value: &str, field: &str) -> Result<String, String> {
     }
     if v.starts_with('-') || v.chars().any(|c| c.is_whitespace() || c.is_control()) {
         return Err(format!("{field} inválido: {v}"));
+    }
+    // IPv6 entre corchetes ("[2001:db8::1]") se normaliza: ssh lo espera sin corchetes.
+    let v = v.strip_prefix('[').and_then(|x| x.strip_suffix(']')).unwrap_or(v);
+    if v.is_empty() || v.starts_with('-') {
+        return Err(format!("{field} inválido"));
     }
     Ok(v.to_string())
 }
@@ -1078,6 +806,8 @@ fn scp_command(s: &Session) -> Result<CommandBuilder, String> {
             return Err(format!("Nombre de archivo inválido: {file}"));
         }
         let sep = if remote_dir.is_empty() || remote_dir.ends_with(['/', ':']) { "" } else { "/" };
+        // scp separa host y ruta con ":", así que una IPv6 va entre corchetes.
+        let host = if host.contains(':') { format!("[{host}]") } else { host.clone() };
         Ok(format!("{}{host}:{remote_dir}{sep}{file}", user.map(|u| format!("{u}@")).unwrap_or_default()))
     };
 
@@ -1251,7 +981,7 @@ fn open_telnet(s: &Session, cols: u16, rows: u16, sink: &Sink, raw: bool) -> Res
     let host = s
         .host
         .as_deref()
-        .map(str::trim)
+        .map(|h| h.trim().trim_start_matches('[').trim_end_matches(']'))
         .filter(|h| !h.is_empty())
         .ok_or("Falta el host")?;
     let port = s.port.unwrap_or(23);
@@ -1389,4 +1119,358 @@ pub fn list_serial_ports() -> Vec<crate::models::SerialPortInfo> {
         .collect();
     ports.sort_by(|a, b| a.port_name.cmp(&b.port_name));
     ports
+}
+
+#[cfg(test)]
+mod tests {
+    use super::LogWriter;
+
+    #[test]
+    fn builds_safe_scp_commands() {
+        use crate::models::{ScpSpec, Session, SessionType};
+        let mut s: Session = serde_json::from_value(serde_json::json!({
+            "name": "sw", "type": "local", "host": "10.0.0.1", "username": "noc", "port": 22
+        }))
+        .unwrap();
+        s.session_type = SessionType::Local;
+        s.scp = Some(ScpSpec {
+            upload: false,
+            files: vec!["ios.bin".into()],
+            remote_dir: "flash:".into(),
+            local_paths: vec![],
+            local_dir: "/tmp/tftp".into(),
+        });
+        assert!(super::scp_command(&s).is_ok());
+        // Nombres que intentan inyectar opciones o rutas
+        for bad in ["-oProxyCommand=x", "../etc/passwd", "a b"] {
+            s.scp.as_mut().unwrap().files = vec![bad.into()];
+            assert!(super::scp_command(&s).is_err(), "{bad}");
+        }
+        s.scp.as_mut().unwrap().files = vec!["ok.bin".into()];
+        s.scp.as_mut().unwrap().remote_dir = "-F/tmp/x".into();
+        assert!(super::scp_command(&s).is_err());
+        s.scp.as_mut().unwrap().remote_dir = "flash:".into();
+        s.host = Some("-oProxyCommand=sh".into());
+        assert!(super::scp_command(&s).is_err());
+    }
+
+    #[test]
+    fn writer_thread_keeps_order_and_encodes_telnet() {
+        use std::sync::{Arc, Mutex};
+        #[derive(Clone, Default)]
+        struct Shared(Arc<Mutex<Vec<u8>>>);
+        impl std::io::Write for Shared {
+            fn write(&mut self, b: &[u8]) -> std::io::Result<usize> {
+                self.0.lock().unwrap().extend_from_slice(b);
+                Ok(b.len())
+            }
+            fn flush(&mut self) -> std::io::Result<()> {
+                Ok(())
+            }
+        }
+        let out = Shared::default();
+        let tx = super::spawn_writer(Box::new(out.clone()), false);
+        for i in 0..500 {
+            tx.send(super::Outgoing::Data(format!("{i},").into_bytes())).unwrap();
+        }
+        drop(tx);
+        let expected: String = (0..500).map(|i| format!("{i},")).collect();
+        for _ in 0..50 {
+            if out.0.lock().unwrap().len() == expected.len() {
+                break;
+            }
+            std::thread::sleep(std::time::Duration::from_millis(10));
+        }
+        assert_eq!(String::from_utf8(out.0.lock().unwrap().clone()).unwrap(), expected);
+
+        // Telnet: los datos se codifican (IAC duplicado) y los comandos Raw no.
+        let out = Shared::default();
+        let tx = super::spawn_writer(Box::new(out.clone()), true);
+        tx.send(super::Outgoing::Data(vec![255])).unwrap();
+        tx.send(super::Outgoing::Raw(vec![255, 243])).unwrap();
+        drop(tx);
+        std::thread::sleep(std::time::Duration::from_millis(100));
+        assert_eq!(*out.0.lock().unwrap(), vec![255, 255, 255, 243]);
+    }
+
+    #[test]
+    fn mirror_joins_utf8_split_between_chunks() {
+        let mut m = super::Mirror::default();
+        let s = "interfaz ñandú ─ ok".as_bytes();
+        for chunk in s.chunks(1) {
+            m.push(chunk);
+        }
+        assert_eq!(m.tail(1000), "interfaz ñandú ─ ok");
+        assert_eq!(super::incomplete_utf8_tail("ab".as_bytes()), 0);
+        assert_eq!(super::incomplete_utf8_tail(&[b'a', 0xE2, 0x94]), 2);
+        assert_eq!(super::incomplete_utf8_tail(&[0xC3]), 1);
+        assert_eq!(super::incomplete_utf8_tail("ñ".as_bytes()), 0);
+    }
+
+    #[test]
+    fn resumes_only_logs_inside_the_log_folder() {
+        let dir = std::env::temp_dir().join(format!("nt-logs-{}", uuid::Uuid::new_v4()));
+        std::fs::create_dir_all(&dir).unwrap();
+        let ok = dir.join("core_20261020.log");
+        std::fs::write(&ok, "x").unwrap();
+        let other = dir.join("notas.txt");
+        std::fs::write(&other, "x").unwrap();
+        assert!(super::resumable_log(&dir, &ok).is_some());
+        assert!(super::resumable_log(&dir, &other).is_none());
+        assert!(super::resumable_log(&dir, &dir.join("no-existe.log")).is_none());
+        assert!(super::resumable_log(&dir, &dir.join("../core_20261020.log")).is_none());
+        std::fs::remove_dir_all(&dir).unwrap();
+    }
+
+    #[test]
+    fn rejects_argument_injection() {
+        assert!(super::safe_target("-oProxyCommand=sh", "host").is_err());
+        assert!(super::safe_target("10.0.0.1 -v", "host").is_err());
+        assert_eq!(super::safe_target(" router.lab ", "host").unwrap(), "router.lab");
+        assert_eq!(super::safe_target("[2001:db8::1]", "host").unwrap(), "2001:db8::1");
+        assert!(super::safe_target("[-oProxyCommand=x]", "host").is_err());
+        let bad = |s: &str| super::check_extra_args(&super::split_args(s)).is_err();
+        assert!(bad("-oProxyCommand=curl x|sh"));
+        assert!(bad("-o ProxyCommand=nc %h %p"));
+        assert!(bad("-o 'LocalCommand id'"));
+        assert!(bad("-F /tmp/evil_config"));
+        assert!(bad("-o KnownHostsCommand=/bin/x"));
+        assert!(!bad("-L 8443:10.0.0.1:443 -A -o StrictHostKeyChecking=accept-new"));
+        assert!(!bad("-f -N -D 1080"));
+        // Flags agrupados y opciones que cargan código.
+        assert!(bad("-voProxyCommand=sh\\ -c\\ x"));
+        assert!(bad("-vF/tmp/cfg"));
+        assert!(bad("-oPKCS11Provider=/tmp/x.dylib"));
+        assert!(bad("-o SecurityKeyProvider=/tmp/x"));
+        assert!(bad("-I /tmp/lib.so"));
+        assert!(bad("-o Include=/tmp/x"));
+        assert!(bad("evil.example"));
+        assert!(bad("-- otro-host"));
+        assert!(bad("-L"));
+        assert!(!bad("-vvv -C -o ServerAliveCountMax=3 -J bastion"));
+    }
+
+    #[test]
+    fn splits_ssh_args_with_quotes() {
+        assert_eq!(
+            super::split_args(r#"-L 8443:10.0.0.1:443 -o "ProxyCommand=nc -X 5 %h %p" -A"#),
+            vec!["-L", "8443:10.0.0.1:443", "-o", "ProxyCommand=nc -X 5 %h %p", "-A"]
+        );
+        assert!(super::split_args("   ").is_empty());
+    }
+
+    #[test]
+    fn legacy_options_only_use_supported_algorithms() {
+        let opts = super::legacy_options();
+        // En OpenSSH >= 10 ssh-dss ya no existe y no debe pedirse.
+        let ver = std::process::Command::new("ssh").arg("-V").output();
+        if let Ok(v) = ver {
+            if String::from_utf8_lossy(&v.stderr).contains("OpenSSH_10") {
+                assert!(opts.iter().all(|o| !o.contains("ssh-dss")));
+            }
+        }
+        for o in opts {
+            let ok = std::process::Command::new("ssh").args(["-G", "-o", o, "x"]).output().unwrap();
+            assert!(ok.status.success(), "ssh rechazó {o}");
+        }
+    }
+
+    /// Micro-benchmark del camino caliente (cargo test --release -- --ignored --nocapture bench_).
+    #[test]
+    #[ignore]
+    fn bench_mirror_and_log() {
+        use std::time::Instant;
+        let line = "\x1b[32mGi1/0/1\x1b[0m   connected    10   a-full a-1000 10/100/1000BaseTX áé\r\n";
+        let chunk: Vec<u8> = line.repeat(1024 / line.len() + 1).into_bytes()[..1024].to_vec();
+        let total = 64 * 1024 * 1024 / chunk.len();
+        let mut m = super::Mirror::default();
+        let t = Instant::now();
+        for _ in 0..total {
+            m.push(&chunk);
+        }
+        let s = t.elapsed().as_secs_f64();
+        println!("mirror sin taps: {:.0} MB/s ({:.2} us/chunk)", 64.0 / s, s * 1e6 / total as f64);
+        let mut m = super::Mirror::default();
+        let (tx, rx) = std::sync::mpsc::sync_channel(super::TAP_CAPACITY);
+        m.taps.push(tx);
+        let t = Instant::now();
+        for _ in 0..total {
+            m.push(&chunk);
+            while rx.try_recv().is_ok() {}
+        }
+        let s = t.elapsed().as_secs_f64();
+        println!("mirror con 1 tap: {:.0} MB/s ({:.2} us/chunk)", 64.0 / s, s * 1e6 / total as f64);
+        let path = std::env::temp_dir().join(format!("nt-bench-{}.log", std::process::id()));
+        let mut w = LogWriter::new(std::fs::File::create(&path).unwrap(), true);
+        let t = Instant::now();
+        for _ in 0..total / 4 {
+            w.write(&chunk);
+        }
+        let s = t.elapsed().as_secs_f64();
+        println!("log con hora: {:.0} MB/s ({:.2} us/chunk)", 16.0 / s, s * 1e6 / (total / 4) as f64);
+        drop(w);
+        let _ = std::fs::remove_file(path);
+    }
+
+    /// Cuántas lecturas produce una salida masiva por PTY (tamaño típico de fragmento).
+    #[test]
+    #[ignore]
+    fn bench_pty_chunk_sizes() {
+        use portable_pty::{native_pty_system, CommandBuilder, PtySize};
+        use std::io::Read;
+        let pair = native_pty_system().openpty(PtySize { rows: 50, cols: 200, pixel_width: 0, pixel_height: 0 }).unwrap();
+        let mut cmd = CommandBuilder::new("sh");
+        cmd.args(["-c", "seq 1 400000"]);
+        let mut child = pair.slave.spawn_command(cmd).unwrap();
+        drop(pair.slave);
+        let mut r = pair.master.try_clone_reader().unwrap();
+        let (sink, log) = test_sink();
+        let (mut reads, mut bytes, mut small) = (0usize, 0usize, 0usize);
+        let mut buf = [0u8; 16 * 1024];
+        let t = std::time::Instant::now();
+        while let Ok(n) = r.read(&mut buf) {
+            if n == 0 {
+                break;
+            }
+            sink.push(&buf[..n]);
+            reads += 1;
+            bytes += n;
+            small += (n < 1024) as usize;
+            if bytes >= 2_700_000 {
+                break;
+            }
+        }
+        let elapsed = t.elapsed();
+        let _ = child.kill();
+        drop(sink);
+        std::thread::sleep(std::time::Duration::from_millis(50));
+        let msgs = log.lock().unwrap().len();
+        println!(
+            "PTY: {bytes} bytes en {reads} lecturas (prom {} B, {small} < 1 KB) en {elapsed:?} -> {msgs} mensajes al frontend",
+            bytes / reads.max(1)
+        );
+    }
+
+    #[test]
+    fn mirror_trims_history_and_feeds_taps() {
+        let mut m = super::Mirror::default();
+        let (tx, rx) = std::sync::mpsc::sync_channel(super::TAP_CAPACITY);
+        m.taps.push(tx);
+        m.push(b"\x1b[1mab\x08c\x1b[0m\r\n");
+        assert_eq!(rx.try_recv().unwrap(), "ac\n");
+        // Un backspace al inicio del fragmento no borra lo anterior (igual que antes).
+        m.push(b"\x08z");
+        assert_eq!(m.tail(100), "ac\nz");
+        let mut all = String::from("ac\nz");
+        for i in 0..40_000 {
+            let line = format!("línea {i}\n");
+            m.push(line.as_bytes());
+            all.push_str(&line);
+        }
+        assert!(m.history.len() <= 2 * super::HISTORY_MAX);
+        let tail = m.tail(usize::MAX);
+        assert!(tail.len() <= super::HISTORY_MAX && tail.len() > super::HISTORY_MAX - 4);
+        assert!(all.ends_with(tail));
+        assert!(all.ends_with(m.tail(50)) && m.tail(50).len() <= 50);
+    }
+
+    /// Canales de prueba que anotan lo recibido en orden.
+    /// Mensajes recibidos por el canal de prueba (None = aviso de cierre).
+    type Received = std::sync::Arc<std::sync::Mutex<Vec<(std::time::Instant, Option<Vec<u8>>)>>>;
+
+    fn test_sink() -> (super::Sink, Received) {
+        use std::sync::Arc;
+        use tauri::ipc::{Channel, InvokeResponseBody};
+        let log: Received = Arc::default();
+        let l = log.clone();
+        let data = Channel::new(move |b| {
+            if let InvokeResponseBody::Raw(v) = b {
+                l.lock().unwrap().push((std::time::Instant::now(), Some(v)));
+            }
+            Ok(())
+        });
+        let l = log.clone();
+        let exit = Channel::new(move |_| {
+            l.lock().unwrap().push((std::time::Instant::now(), None));
+            Ok(())
+        });
+        (super::Sink::new(data, exit), log)
+    }
+
+    #[test]
+    fn sink_coalesces_bursts_and_keeps_order() {
+        use std::time::{Duration, Instant};
+        let (sink, log) = test_sink();
+        // Ráfaga: muchas líneas cortas, como entrega un PTY.
+        let mut expected = Vec::new();
+        let pushes = 100_000;
+        for i in 0..pushes {
+            let line = format!("{i}\r\n");
+            sink.push(line.as_bytes());
+            expected.extend_from_slice(line.as_bytes());
+        }
+        std::thread::sleep(Duration::from_millis(50));
+        let msgs = log.lock().unwrap().len();
+        let got: Vec<u8> = log.lock().unwrap().iter().flat_map(|(_, d)| d.clone().unwrap()).collect();
+        assert_eq!(got, expected);
+        println!("ráfaga: {pushes} fragmentos -> {msgs} mensajes al frontend");
+        assert!(msgs < pushes / 10, "{msgs}");
+
+        // Fragmento aislado (eco de una tecla): sale sin esperar la ventana.
+        log.lock().unwrap().clear();
+        let t = Instant::now();
+        sink.push(b"x");
+        while log.lock().unwrap().is_empty() {
+            assert!(t.elapsed() < Duration::from_secs(1));
+            std::thread::yield_now();
+        }
+        let latency = log.lock().unwrap()[0].0 - t;
+        println!("latencia de un fragmento aislado: {latency:?}");
+        assert!(latency < super::FLUSH_WINDOW);
+
+        // El cierre llega después de todos los datos.
+        log.lock().unwrap().clear();
+        for _ in 0..1000 {
+            sink.push(b"fin de sesion\r\n");
+        }
+        sink.close("cerrado");
+        let entries = log.lock().unwrap();
+        let data: usize = entries.iter().filter_map(|(_, d)| d.as_ref().map(Vec::len)).sum();
+        assert_eq!(data, 15_000);
+        assert!(entries.last().unwrap().1.is_none());
+    }
+
+    #[test]
+    fn sink_drop_flushes_and_stops_thread() {
+        let (sink, log) = test_sink();
+        sink.push(b"a");
+        sink.push(b"b");
+        sink.push(b"c");
+        let out = std::sync::Arc::downgrade(&sink.out.0);
+        drop(sink);
+        for _ in 0..100 {
+            if out.upgrade().is_none() {
+                break;
+            }
+            std::thread::sleep(std::time::Duration::from_millis(5));
+        }
+        assert!(out.upgrade().is_none(), "el hilo de envío no terminó");
+        let got: Vec<u8> = log.lock().unwrap().iter().flat_map(|(_, d)| d.clone().unwrap()).collect();
+        assert_eq!(got, b"abc");
+    }
+
+    #[test]
+    fn log_strips_ansi_and_stamps_lines() {
+        let path = std::env::temp_dir().join(format!("nt-log-{}.log", std::process::id()));
+        let mut w = LogWriter::new(std::fs::File::create(&path).unwrap(), true);
+        w.write(b"\x1b[32mRouter#\x1b[0m show ver\r\nCisco");
+        w.write(b" IOS\r\n");
+        drop(w);
+        let text = std::fs::read_to_string(&path).unwrap();
+        let lines: Vec<_> = text.lines().collect();
+        assert_eq!(lines.len(), 2);
+        assert!(lines[0].starts_with('[') && lines[0].ends_with("] Router# show ver"));
+        assert!(lines[1].ends_with("] Cisco IOS"));
+        let _ = std::fs::remove_file(path);
+    }
 }

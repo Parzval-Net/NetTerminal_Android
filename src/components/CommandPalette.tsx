@@ -12,15 +12,31 @@ interface Props {
 /**
  * Interpreta conexiones rápidas:
  *   ssh admin@10.0.0.1:2222 · telnet 10.0.0.1 2323 · admin@router · 10.0.0.1
+ *   2001:db8::1 · [2001:db8::1]:2222 · telnet fe80::1%en0 2323
  */
-function parseQuick(input: string): Session[] {
+export function parseQuick(input: string): Session[] {
   const q = input.trim();
   if (!q || /\s{2,}/.test(q)) return [];
-  const m = q.match(/^(?:(ssh|telnet)\s+)?(?:([^@\s]+)@)?([\w.\-:[\]]+?)(?::(\d+)|\s+(\d+))?$/i);
+  const m = q.match(/^(?:(ssh|telnet)\s+)?(?:([^@\s]+)@)?(\S+?)(?:\s+(\d+))?$/i);
   if (!m) return [];
-  const [, proto, user, host, p1, p2] = m;
-  if (!/[.\-:]|^[a-z][\w-]*$/i.test(host)) return [];
-  const port = p1 || p2 ? Number(p1 || p2) : undefined;
+  const [, proto, user, target, spacePort] = m;
+  let host: string;
+  let colonPort: string | undefined;
+  const bracket = target.match(/^\[([0-9a-f:.%\w-]+)\](?::(\d+))?$/i);
+  if (bracket) [, host, colonPort] = bracket;
+  else if ((target.match(/:/g) ?? []).length > 1) {
+    // IPv6 sin corchetes: los ":" son parte de la dirección (el puerto va separado por espacio).
+    if (!/^[0-9a-f:.]+(%[\w.-]+)?$/i.test(target)) return [];
+    host = target;
+  } else {
+    const hp = target.match(/^([\w.-]+)(?::(\d+))?$/);
+    if (!hp) return [];
+    [, host, colonPort] = hp;
+    if (!/[.-]|^[a-z][\w-]*$/i.test(host)) return [];
+  }
+  const p = colonPort || spacePort;
+  const port = p ? Number(p) : undefined;
+  if (port !== undefined && (port < 1 || port > 65535)) return [];
   const base = { id: "", folder: undefined, created_at: new Date().toISOString() };
   const ssh: Session = { ...base, type: "ssh", name: host, host, port: port ?? 22, username: user };
   const telnet: Session = { ...base, type: "telnet", name: host, host, port: port ?? 23 };

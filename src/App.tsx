@@ -10,7 +10,7 @@ import { ConfirmDialog } from "./components/ConfirmDialog";
 import { NotesPanel } from "./components/NotesPanel";
 import { CommandsPanel } from "./components/CommandsPanel";
 import { vendorFor } from "./lib/commands";
-import { CatalogEntry, Pack, PackCommand, buildCatalog, detectPlatform, riskLabel, validatePack } from "./lib/packs";
+import { CatalogEntry, Pack, PackCommand, buildCatalog, computeRisk, detectPlatform, riskLabel, validatePack } from "./lib/packs";
 import type { ScpRequest } from "./components/tools/FileManager";
 import { runOnDevice } from "./lib/deviceRun";
 import { PacksModal } from "./components/PacksModal";
@@ -324,7 +324,7 @@ function Workspace({
   const onStatus = useCallback((id: string, status: ConnStatus) => {
     setStates((s) =>
       s[id]
-        ? { ...s, [id]: { status, logPath: status === "closed" ? null : s[id].logPath } }
+        ? { ...s, [id]: { ...s[id], status } }
         : s,
     );
   }, []);
@@ -483,12 +483,14 @@ function Workspace({
     setCommandsOpen((o) => !o);
   };
 
-  const sendToSession = (text: string) => {
-    if (templateVars(text).length) return setTemplate({ text, then: sendResolved });
-    sendResolved(text);
+  /** `checked`: el riesgo ya se confirmó (catálogo) y no se vuelve a preguntar. */
+  const sendToSession = (text: string, checked = false) => {
+    const then = (t: string) => sendResolved(t, checked);
+    if (templateVars(text).length) return setTemplate({ text, then });
+    then(text);
   };
 
-  const sendResolved = (text: string) => {
+  const sendResolved = (text: string, checked = false) => {
     const ctrl = activeCtrl();
     if (!ctrl || !activeTab || !ctrl.isConnected()) return;
     // Cada línea se ejecuta con Enter, también la última.
@@ -500,12 +502,23 @@ function Workspace({
       ctrl.send(body, settings.sendLineDelay).catch(console.error);
       ctrl.focus();
     };
-    if (settings.confirmSend && lines.length > 1 && activeTab.session.type !== "local") {
-      const preview = lines.slice(0, 4).join("\n") + (lines.length > 4 ? "\n…" : "");
+    const remote = activeTab.session.type !== "local";
+    // Notas y botones pasan por el mismo motor de riesgo que el catálogo. Lo que puede
+    // cortar servicio se confirma siempre; el resto según "Confirmar envío de varias líneas".
+    const risk = remote && !checked ? computeRisk(trimmed) : "read";
+    const ask = remote && (risk === "disruptive" || (settings.confirmSend && (lines.length > 1 || risk === "change")));
+    if (ask) {
+      const preview = lines.slice(0, 6).join("\n") + (lines.length > 6 ? "\n…" : "");
       setConfirm({
-        title: `¿Enviar ${lines.length} líneas a ${activeTab.session.name}?`,
-        message: preview,
+        title:
+          risk === "disruptive"
+            ? `Puede cortar servicio en ${tabTitle(activeTab)}`
+            : lines.length > 1
+              ? `¿Enviar ${lines.length} líneas a ${tabTitle(activeTab)}?`
+              : `¿Enviar a ${tabTitle(activeTab)}?`,
+        message: `${risk !== "read" ? `${riskLabel[risk]}.\n\n` : ""}${preview}`,
         label: "Enviar",
+        danger: risk === "disruptive",
         action: go,
       });
     } else go();
@@ -607,6 +620,12 @@ function Workspace({
     const ctrl = activeCtrl();
     if (!ctrl || !activeId) return;
     const enabled = !states[activeId]?.logPath;
+    // Sesión cerrada: apagar el log solo evita que se reanude al reconectar.
+    if (!enabled && states[activeId]?.status !== "connected") {
+      const id = activeId;
+      setStates((s) => (s[id] ? { ...s, [id]: { ...s[id], logPath: null } } : s));
+      return;
+    }
     try {
       const path = await invoke<string | null>("set_logging", {
         id: ctrl.connId(),
@@ -671,7 +690,9 @@ function Workspace({
   );
 
   const h = useHandlers({
-    openMany: (list: Session[]) => list.forEach(openTab),
+    // En tandas de 5 cada 1,5 s: abrir 40 sesiones de golpe satura AAA/TACACS y la CPU.
+    openMany: (list: Session[]) =>
+      list.forEach((s, i) => (i < 5 ? openTab(s) : window.setTimeout(() => openTab(s), Math.floor(i / 5) * 1500))),
     newSession: (folder?: string) => setModal({ folder }),
     editSession: (session: Session) => setModal({ session }),
     duplicateSession,
@@ -729,7 +750,7 @@ function Workspace({
         message: `${riskLabel[c.risk]} en ${activeTab ? tabTitle(activeTab) : "la sesión"}:\n\n${cmd}`,
         label: "Ejecutar",
         danger: c.risk === "disruptive",
-        action: () => sendToSession(cmd),
+        action: () => sendToSession(cmd, true),
       });
     },
     typeCommand: (cmd: string) => {
@@ -871,6 +892,7 @@ function Workspace({
               theme={preset.theme}
               onStatus={onStatus}
               onLog={onLog}
+              logPath={states[t.id]?.logPath ?? null}
               onActivity={markActivity}
               register={register}
             />

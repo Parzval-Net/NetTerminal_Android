@@ -435,6 +435,24 @@ pub fn run(
     )
 }
 
+
+
+fn remove_pycache(root: &Path) {
+    let mut stack = vec![root.to_path_buf()];
+    while let Some(d) = stack.pop() {
+        for e in fs::read_dir(&d).into_iter().flatten().flatten() {
+            let Ok(ft) = e.file_type() else { continue };
+            if ft.is_dir() && !ft.is_symlink() {
+                if e.file_name() == "__pycache__" {
+                    let _ = fs::remove_dir_all(e.path());
+                } else {
+                    stack.push(e.path());
+                }
+            }
+        }
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -529,21 +547,5 @@ mod tests {
         assert!(err.contains("peligrosa"), "{err}");
         assert!(!base.join("data/plugins/evil.py").exists() && !base.join("data/evil.py").exists());
         let _ = fs::remove_dir_all(base);
-    }
-}
-
-fn remove_pycache(root: &Path) {
-    let mut stack = vec![root.to_path_buf()];
-    while let Some(d) = stack.pop() {
-        for e in fs::read_dir(&d).into_iter().flatten().flatten() {
-            let Ok(ft) = e.file_type() else { continue };
-            if ft.is_dir() && !ft.is_symlink() {
-                if e.file_name() == "__pycache__" {
-                    let _ = fs::remove_dir_all(e.path());
-                } else {
-                    stack.push(e.path());
-                }
-            }
-        }
     }
 }

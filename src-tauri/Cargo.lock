@@ -2433,7 +2433,7 @@ dependencies = [
 
 [[package]]
 name = "net-terminal"
-version = "0.5.3"
+version = "0.6.0"
 dependencies = [
  "chrono",
  "if-addrs",

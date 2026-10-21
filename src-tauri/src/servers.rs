@@ -696,7 +696,7 @@ mod tests {
         let client = UdpSocket::bind("127.0.0.1:0").unwrap();
         client.set_read_timeout(Some(Duration::from_secs(2))).unwrap();
         let mut rrq = vec![0, 1];
-        rrq.extend(b"fw.bin\0octet\0blksize\01428\0");
+        rrq.extend(b"fw.bin\0octet\0blksize\x001428\0");
         client.send_to(&rrq, addr).unwrap();
         let mut got: Vec<u8> = Vec::new();
         let mut buf = vec![0u8; 1432];

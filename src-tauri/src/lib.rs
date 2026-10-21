@@ -132,11 +132,12 @@ fn set_logging(
     id: String,
     enabled: bool,
     timestamps: Option<bool>,
+    resume: Option<String>,
     state: State<'_, AppState>,
 ) -> Result<Option<String>, String> {
     state
         .conns
-        .set_logging(&id, enabled, timestamps.unwrap_or(false), &state.logs_dir())
+        .set_logging(&id, enabled, timestamps.unwrap_or(false), &state.logs_dir(), resume.as_deref())
 }
 
 /// Abre la carpeta de logs ("logs") o la de datos ("data") en el explorador del sistema.
