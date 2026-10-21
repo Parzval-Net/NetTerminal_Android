@@ -140,7 +140,7 @@
     <p class="sub">Pensado para ingenieros de red: conexiones rápidas, documentación y cambios controlados. Lo que no usas no se carga ni consume recursos.</p>
     <div class="features">
       <div class="feat"><div class="ic"><svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M4 17l6-6-6-6M12 19h8"/></svg></div><h3>SSH, Telnet, Serial y local</h3><p>OpenSSH del sistema con llaves, agente, jump host y túneles. Telnet nativo, TCP crudo para servidores de consola y Serial con Break.</p></div>
-      <div class="feat"><div class="ic"><svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M3 7h6l2 2h10v10H3z"/></svg></div><h3>Sesiones en carpetas</h3><p>Carpetas ilimitadas, conexión rápida con historial e importación desde ssh_config, PuTTY, SecureCRT, MobaXterm y CSV.</p></div>
+      <div class="feat"><div class="ic"><svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M3 7h6l2 2h10v10H3z"/></svg></div><h3>Sesiones y contraseñas</h3><p>Carpetas ilimitadas, importación desde ssh_config, PuTTY, SecureCRT, MobaXterm y CSV, y contraseñas en una bóveda cifrada que nunca se muestra.</p></div>
       <div class="feat"><div class="ic"><svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M4 5h16M4 12h16M4 19h10"/></svg></div><h3>Catálogo de comandos</h3><p>Cisco, Juniper, Fortinet, Huawei, Check Point, WatchGuard, Windows, macOS y Linux, con sintaxis por plataforma y nivel de riesgo.</p></div>
       <div class="feat"><div class="ic"><svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="3" y="3" width="8" height="8" rx="1"/><rect x="13" y="3" width="8" height="8" rx="1"/><rect x="3" y="13" width="8" height="8" rx="1"/><rect x="13" y="13" width="8" height="8" rx="1"/></svg></div><h3>Vista dividida y difusión</h3><p>Hasta 4 terminales a la vez y envío a varias sesiones con lista de equipos, riesgo por línea y botón Detener.</p></div>
       <div class="feat"><div class="ic"><svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="6" cy="6" r="2.5"/><circle cx="18" cy="6" r="2.5"/><circle cx="12" cy="18" r="2.5"/><path d="M8 7.5l3 8M16 7.5l-3 8M8.5 6h7"/></svg></div><h3>Topología CDP/LLDP</h3><p>Diagrama de vecinos con puertos y Port-channel, ruta entre equipos, snapshots de antes y después, y exportación a draw.io.</p></div>
@@ -164,6 +164,8 @@
       <figure><img src="screenshots/comandos-so.png" alt="Comandos de sistema operativo" loading="lazy"><figcaption><b>Comandos de sistema.</b> Consultas de red para Windows, macOS y Linux.</figcaption></figure>
       <figure><img src="screenshots/alertas.png" alt="Alertas" loading="lazy"><figcaption><b>Alertas.</b> Reglas por texto o expresión, globales o por carpeta.</figcaption></figure>
       <figure><img src="screenshots/importar.png" alt="Importar sesiones" loading="lazy"><figcaption><b>Importar sesiones.</b> Desde otros clientes, con vista previa y sin contraseñas.</figcaption></figure>
+      <figure><img src="screenshots/pestanas-verticales.png" alt="Pestañas verticales" loading="lazy"><figcaption><b>Pestañas verticales.</b> Opcionales, con ancho ajustable o solo íconos.</figcaption></figure>
+      <figure><img src="screenshots/credenciales.png" alt="Contraseñas guardadas" loading="lazy"><figcaption><b>Contraseñas guardadas.</b> Cifradas, nunca visibles y escritas solo al conectar.</figcaption></figure>
     </div>
   </section>
 
@@ -202,7 +204,7 @@
       <div class="card">
         <h3>Operación segura</h3>
         <ul>
-          <li><b>Las contraseñas nunca se guardan:</b> SSH usa tus llaves y agente.</li>
+          <li><b>Contraseñas cifradas</b> (XChaCha20-Poly1305) y nunca visibles; SSH también admite llaves y agente.</li>
           <li><b>Riesgo por comando:</b> lo que puede cortar servicio siempre pide confirmación.</li>
           <li><b>Envío a varias sesiones</b> con lista de equipos y confirmación escribiendo la cantidad.</li>
           <li><b>Secretos enmascarados</b> en logs y respaldos.</li>

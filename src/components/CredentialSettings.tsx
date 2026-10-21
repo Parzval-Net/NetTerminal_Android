@@ -2,14 +2,9 @@ import { useEffect, useState } from "react";
 import { invoke } from "@tauri-apps/api/core";
 import { KeyRound, Lock, ShieldCheck } from "lucide-react";
 import { CredStatus, credStatus, masterStrength, strengthText } from "../lib/credentials";
-import { isMac } from "../lib/platform";
 import { VaultUnlock } from "./VaultUnlock";
 
-const KEYCHAIN = isMac
-  ? "Llavero de macOS (Keychain)"
-  : navigator.userAgent.includes("Windows")
-    ? "Administrador de credenciales de Windows"
-    : "Secret Service (GNOME Keyring / KWallet)";
+const KEYCHAIN = "llavero del sistema operativo";
 
 /** Ajustes › Credenciales: estado de la bóveda y contraseña maestra. */
 export function CredentialSettings() {

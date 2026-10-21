@@ -1,6 +1,6 @@
 [package]
 name = "net-terminal"
-version = "0.7.2"
+version = "0.8.0"
 description = "Cliente SSH, Telnet y Serial liviano y multiplataforma"
 repository = "https://github.com/Parzval-Net/Net_Terminal"
 authors = ["NetTerminal"]

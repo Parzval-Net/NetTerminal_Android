@@ -27,7 +27,10 @@ const SHOTS = [
   ["difusion", "broadcast", "light"],
   ["alertas", "alerts", "light"],
   ["importar", "import", "light"],
+  ["pestanas-verticales", "vertical", "light"],
+  ["credenciales", "credentials", "light"],
   ["modo-oscuro", "terminal", "dark"],
+  ["pestanas-verticales-oscuro", "vertical", "dark"],
   ["modo-oscuro-dividida", "split", "dark"],
 ];
 const only = process.argv.slice(2);
