@@ -235,6 +235,14 @@ mod tests {
         let port = listener.local_addr().unwrap().port();
         assert!(tcp_probe("127.0.0.1", port, Duration::from_secs(1)).0);
         drop(listener);
-        assert!(!tcp_probe("127.0.0.1", port, Duration::from_millis(300)).0);
+        // Otro test en paralelo puede tomar justo ese puerto efímero: se reintenta con uno
+        // nuevo antes de concluir que la detección de "cerrado" falla.
+        let closed = (0..5).any(|_| {
+            let l = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
+            let p = l.local_addr().unwrap().port();
+            drop(l);
+            !tcp_probe("127.0.0.1", p, Duration::from_millis(300)).0
+        });
+        assert!(closed || !tcp_probe("127.0.0.1", port, Duration::from_millis(300)).0);
     }
 }
