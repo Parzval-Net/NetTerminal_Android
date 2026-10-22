@@ -8,15 +8,12 @@
 //! autocompletado al conectar). La llave queda en memoria en un búfer que se borra al
 //! bloquear y al salir.
 
-use argon2::{Algorithm, Argon2, Params, Version};
-use chacha20poly1305::aead::rand_core::RngCore;
-use chacha20poly1305::aead::{Aead, KeyInit, OsRng, Payload};
-use chacha20poly1305::{XChaCha20Poly1305, XNonce};
+use crate::seal::{self, derive, random, write_atomic, Throttle};
+use crate::seal::{Kdf, KDF_DEFAULT};
 use serde::Serialize;
 use std::collections::HashMap;
 use std::path::{Path, PathBuf};
 use std::sync::{Mutex, OnceLock};
-use std::time::{Duration, Instant};
 use zeroize::{Zeroize, Zeroizing};
 
 const MAGIC: &[u8; 7] = b"NTVAULT";
@@ -38,24 +35,6 @@ enum Mode {
     Master = 1,
 }
 
-/// Parámetros de Argon2id (memoria en KiB).
-#[derive(Clone, Copy, PartialEq, Debug)]
-pub struct Kdf {
-    pub m: u32,
-    pub t: u32,
-    pub p: u32,
-}
-
-/// Recomendación OWASP para Argon2id con 64 MiB (m=64 MiB, t=3, p=1).
-pub const KDF_DEFAULT: Kdf = Kdf { m: 64 * 1024, t: 3, p: 1 };
-
-impl Kdf {
-    /// Límites al leer un archivo: uno manipulado no debe pedir gigas de memoria.
-    fn sane(&self) -> bool {
-        (8..=1024 * 1024).contains(&self.m) && (1..=10).contains(&self.t) && (1..=8).contains(&self.p)
-    }
-}
-
 #[derive(Clone, Debug)]
 struct Header {
     mode: Mode,
@@ -70,9 +49,7 @@ impl Header {
         h[..7].copy_from_slice(MAGIC);
         h[7] = VERSION;
         h[8] = self.mode as u8;
-        h[9..13].copy_from_slice(&self.kdf.m.to_le_bytes());
-        h[13..17].copy_from_slice(&self.kdf.t.to_le_bytes());
-        h[17..21].copy_from_slice(&self.kdf.p.to_le_bytes());
+        self.kdf.encode(&mut h[9..21]);
         h[21..37].copy_from_slice(&self.salt);
         h[37..61].copy_from_slice(&self.nonce);
         h
@@ -91,8 +68,7 @@ impl Header {
             1 => Mode::Master,
             _ => return Err(bad()),
         };
-        let u = |i: usize| u32::from_le_bytes([b[i], b[i + 1], b[i + 2], b[i + 3]]);
-        let kdf = Kdf { m: u(9), t: u(13), p: u(17) };
+        let kdf = Kdf::decode(&b[9..21]);
         if mode == Mode::Master && !kdf.sane() {
             return Err(bad());
         }
@@ -182,8 +158,7 @@ pub struct Status {
 #[derive(Default)]
 struct Inner {
     key: Option<Zeroizing<[u8; 32]>>,
-    failures: u32,
-    retry_at: Option<Instant>,
+    throttle: Throttle,
 }
 
 pub struct Credentials {
@@ -198,21 +173,6 @@ pub struct Credentials {
 
 fn lock<T>(m: &Mutex<T>) -> std::sync::MutexGuard<'_, T> {
     m.lock().unwrap_or_else(|e| e.into_inner())
-}
-
-fn random<const N: usize>() -> [u8; N] {
-    let mut b = [0u8; N];
-    OsRng.fill_bytes(&mut b);
-    b
-}
-
-fn derive(master: &str, salt: &[u8], kdf: Kdf) -> Result<Zeroizing<[u8; 32]>, String> {
-    let params = Params::new(kdf.m, kdf.t, kdf.p, Some(32)).map_err(|e| e.to_string())?;
-    let mut key = Zeroizing::new([0u8; 32]);
-    Argon2::new(Algorithm::Argon2id, Version::V0x13, params)
-        .hash_password_into(master.as_bytes(), salt, key.as_mut())
-        .map_err(|e| e.to_string())?;
-    Ok(key)
 }
 
 fn check_master(master: &str) -> Result<(), String> {
@@ -231,24 +191,6 @@ fn check_id(id: &str) -> Result<(), String> {
         return Err("Sesión inválida".into());
     }
     Ok(())
-}
-
-/// Escritura atómica con permisos 600 desde la creación (Unix).
-fn write_atomic(path: &Path, data: &[u8]) -> Result<(), String> {
-    use std::io::Write;
-    let tmp = path.with_extension("vault.tmp");
-    let _ = std::fs::remove_file(&tmp);
-    let mut opts = std::fs::OpenOptions::new();
-    opts.write(true).create_new(true);
-    #[cfg(unix)]
-    {
-        use std::os::unix::fs::OpenOptionsExt;
-        opts.mode(0o600);
-    }
-    let mut f = opts.open(&tmp).map_err(|e| e.to_string())?;
-    f.write_all(data).and_then(|_| f.sync_all()).map_err(|e| e.to_string())?;
-    drop(f);
-    std::fs::rename(&tmp, path).map_err(|e| e.to_string())
 }
 
 impl Credentials {
@@ -295,9 +237,7 @@ impl Credentials {
 
     fn decrypt(key: &[u8; 32], bytes: &[u8]) -> Result<Entries, String> {
         let header = Header::decode(bytes)?;
-        let plain = XChaCha20Poly1305::new(key.into())
-            .decrypt(XNonce::from_slice(&header.nonce), Payload { msg: &bytes[HEADER_LEN..], aad: &bytes[..HEADER_LEN] })
-            .map(Zeroizing::new)
+        let plain = seal::decrypt(key, &header.nonce, &bytes[HEADER_LEN..], &bytes[..HEADER_LEN])
             .map_err(|_| "Contraseña maestra incorrecta o archivo de credenciales alterado".to_string())?;
         serde_json::from_slice::<HashMap<String, String>>(&plain)
             .map(Entries)
@@ -307,30 +247,13 @@ impl Credentials {
     fn encrypt_write(&self, key: &[u8; 32], mode: Mode, kdf: Kdf, salt: [u8; 16], entries: &Entries) -> Result<(), String> {
         let header = Header { mode, kdf, salt, nonce: random() }.encode();
         let plain = Zeroizing::new(serde_json::to_vec(&entries.0).map_err(|e| e.to_string())?);
-        let ct = XChaCha20Poly1305::new(key.into())
-            .encrypt(XNonce::from_slice(&header[37..61]), Payload { msg: &plain, aad: &header })
-            .map_err(|_| "No se pudo cifrar la bóveda".to_string())?;
+        let mut nonce = [0u8; 24];
+        nonce.copy_from_slice(&header[37..61]);
+        let ct = seal::encrypt(key, &nonce, &plain, &header).map_err(|_| "No se pudo cifrar la bóveda".to_string())?;
         let mut out = Vec::with_capacity(HEADER_LEN + ct.len());
         out.extend_from_slice(&header);
         out.extend_from_slice(&ct);
         write_atomic(&self.path, &out)
-    }
-
-    /// Espera exponencial tras intentos fallidos de contraseña maestra (1, 2, 4… hasta 60 s).
-    fn throttle(inner: &Inner) -> Result<(), String> {
-        if let Some(at) = inner.retry_at {
-            let now = Instant::now();
-            if now < at {
-                return Err(format!("Demasiados intentos. Espera {} s", (at - now).as_secs() + 1));
-            }
-        }
-        Ok(())
-    }
-
-    fn fail(inner: &mut Inner) {
-        inner.failures = inner.failures.saturating_add(1);
-        let secs = 1u64 << (inner.failures - 1).min(6);
-        inner.retry_at = Some(Instant::now() + Duration::from_secs(secs.min(60)));
     }
 
     /// Asegura la llave en memoria. En modo llavero la lee (o la crea con la bóveda si
@@ -396,7 +319,7 @@ impl Credentials {
             return Err("Contraseña demasiado larga".into());
         }
         let mut inner = lock(&self.inner);
-        Self::throttle(&inner)?;
+        inner.throttle.check()?;
         let (h, bytes) = self.read()?.ok_or("No hay bóveda creada")?;
         if h.mode != Mode::Master {
             return self.ensure_key(&mut inner, false).map(|_| ());
@@ -405,12 +328,11 @@ impl Credentials {
         match Self::decrypt(&key, &bytes) {
             Ok(_) => {
                 inner.key = Some(key);
-                inner.failures = 0;
-                inner.retry_at = None;
+                inner.throttle.reset();
                 Ok(())
             }
             Err(e) => {
-                Self::fail(&mut inner);
+                inner.throttle.fail();
                 Err(e)
             }
         }
@@ -423,7 +345,7 @@ impl Credentials {
     pub fn change(&self, old: &str, new: &str) -> Result<(), String> {
         check_master(new)?;
         let mut inner = lock(&self.inner);
-        Self::throttle(&inner)?;
+        inner.throttle.check()?;
         let (h, bytes) = self.read()?.ok_or("No hay bóveda creada")?;
         if h.mode != Mode::Master {
             return Err("Esta bóveda usa el llavero del sistema: no tiene contraseña maestra".into());
@@ -432,7 +354,7 @@ impl Credentials {
         let entries = match Self::decrypt(&old_key, &bytes) {
             Ok(e) => e,
             Err(e) => {
-                Self::fail(&mut inner);
+                inner.throttle.fail();
                 return Err(e);
             }
         };
@@ -440,8 +362,7 @@ impl Credentials {
         let key = derive(new, &salt, self.kdf)?;
         self.encrypt_write(&key, Mode::Master, self.kdf, salt, &entries)?;
         inner.key = Some(key);
-        inner.failures = 0;
-        inner.retry_at = None;
+        inner.throttle.reset();
         Ok(())
     }
 
@@ -579,15 +500,15 @@ mod tests {
         assert!(c.unlock("otra-maestra").is_err());
         // Tras un fallo hay espera antes del siguiente intento.
         assert!(c.unlock("maestra-larga").unwrap_err().contains("Espera"));
-        lock(&c.inner).retry_at = None;
+        lock(&c.inner).throttle.retry_at = None;
         c.unlock("maestra-larga").unwrap();
         assert!(c.has("s1").unwrap());
 
         c.change("maestra-larga", "nueva-maestra").unwrap();
         c.lock();
-        lock(&c.inner).retry_at = None;
+        lock(&c.inner).throttle.retry_at = None;
         assert!(c.unlock("maestra-larga").is_err());
-        lock(&c.inner).retry_at = None;
+        lock(&c.inner).throttle.retry_at = None;
         c.unlock("nueva-maestra").unwrap();
         assert_eq!(c.get("s1").as_deref().map(|s| s.as_str()), Some("Cl4ve$ecreta"));
 
@@ -613,17 +534,17 @@ mod tests {
             bad[i] ^= 0x01;
             std::fs::write(&path, &bad).unwrap();
             c.lock();
-            lock(&c.inner).retry_at = None;
+            lock(&c.inner).throttle.retry_at = None;
             assert!(c.unlock("maestra-larga").is_err(), "byte {i}");
         }
         // Parámetros absurdos en la cabecera: se rechazan sin intentar derivar.
         let mut bad = good.clone();
         bad[9..13].copy_from_slice(&u32::MAX.to_le_bytes());
         std::fs::write(&path, &bad).unwrap();
-        lock(&c.inner).retry_at = None;
+        lock(&c.inner).throttle.retry_at = None;
         assert!(c.unlock("maestra-larga").unwrap_err().contains("no es válido"));
         std::fs::write(&path, &good).unwrap();
-        lock(&c.inner).retry_at = None;
+        lock(&c.inner).throttle.retry_at = None;
         c.unlock("maestra-larga").unwrap();
         std::fs::remove_dir_all(&d).unwrap();
     }

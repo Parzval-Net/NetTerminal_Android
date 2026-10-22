@@ -125,6 +125,22 @@ end
 write memory`,
   "checklist-cambio.txt": "1. Respaldo de configuración\n2. show ip int brief (antes)\n3. Aplicar cambio\n4. Validar\n",
 };
+// Notas protegidas simuladas: el contenido solo se entrega con la contraseña correcta
+// (contraseña de demo, nunca vuelve al frontend). La llave "abierta" es solo el nombre.
+const secureNotes = {
+  "accesos-sitio-central": {
+    password: "demo-clave-2026",
+    content: `! Accesos de emergencia (datos ficticios)
+! Consola fuera de banda
+ssh admin@192.0.2.250
+enable secret {{enable}}
+!
+snmp-server community {{comunidad}} RO 10
+tacacs-server host 192.0.2.50 key {{tacacs}}`,
+  },
+};
+let unlockedNote = null;
+const NOTE_LOCKED = "La nota está bloqueada. Ingresa su contraseña para abrirla";
 
 const settings = {
   monitors: [
@@ -251,16 +267,58 @@ const handlers = {
   update_check: () => ({ current: "0.8.0", latest: "0.8.0", newer: false, url: "", notes: "", published: "", supported: true, reason: null }),
   app_repo: () => "Parzval-Net/Net_Terminal",
   cmdpacks_list: () => [],
-  list_notes: () => Object.keys(notes).map((name) => ({ name, modified: now })),
-  read_note: ({ name }) => notes[name] ?? "",
+  list_notes: () => [
+    ...Object.keys(notes).map((name) => ({ name, modified: now, protected: false })),
+    ...Object.keys(secureNotes).map((name) => ({ name, modified: now - 3600000, protected: true })),
+  ],
+  read_note: ({ name }) => {
+    if (secureNotes[name]) throw "La nota está protegida con contraseña";
+    return notes[name] ?? "";
+  },
+  // Notas protegidas: mismas reglas que el backend (contraseña mínima, nunca se devuelve).
+  note_unlock: ({ name, password }) => {
+    const n = secureNotes[name];
+    unlockedNote = null;
+    if (!n || n.password !== password) throw "Contraseña incorrecta o archivo de la nota alterado";
+    unlockedNote = name;
+    return n.content;
+  },
+  note_protect: ({ name, password }) => {
+    if ([...password].length < 8) throw "La contraseña debe tener al menos 8 caracteres";
+    secureNotes[name] = { password, content: notes[name] ?? "" };
+    delete notes[name];
+    unlockedNote = name;
+    return null;
+  },
+  note_save_secure: ({ name, content }) => {
+    if (unlockedNote !== name) throw NOTE_LOCKED;
+    secureNotes[name].content = content;
+    return null;
+  },
+  note_touch: ({ name }) => unlockedNote === name,
+  note_lock: () => ((unlockedNote = null), null),
+  note_unprotect: ({ name }) => {
+    if (unlockedNote !== name) throw NOTE_LOCKED;
+    notes[name] = secureNotes[name].content;
+    delete secureNotes[name];
+    unlockedNote = null;
+    return null;
+  },
+  note_change_password: ({ name, old, new: next }) => {
+    if (secureNotes[name]?.password !== old) throw "Contraseña incorrecta o archivo de la nota alterado";
+    secureNotes[name].password = next;
+    return null;
+  },
   list_scripts: () => [],
   // Búsqueda en notas: texto plano sin distinguir mayúsculas, como el backend.
   search_notes: ({ query }) => {
     const q = (query ?? "").trim().toLowerCase();
     if (q.length < 2) return [];
+    // Las protegidas solo coinciden por nombre y sin contenido.
+    const locked = Object.keys(secureNotes).filter((n) => n.toLowerCase().includes(q)).map((name) => ({ name, line: 0, snippet: "", protected: true }));
     return Object.entries(notes).flatMap(([name, text]) =>
-      text.split("\n").flatMap((l, i) => (l.toLowerCase().includes(q) ? [{ name, line: i + 1, snippet: l.trim().slice(0, 160) }] : [])),
-    ).slice(0, 200);
+      text.split("\n").flatMap((l, i) => (l.toLowerCase().includes(q) ? [{ name, line: i + 1, snippet: l.trim().slice(0, 160), protected: false }] : [])),
+    ).concat(locked).slice(0, 200);
   },
   // Importación: vista previa ficticia (IPs de documentación).
   import_sessions_file: () => ({
@@ -323,7 +381,11 @@ const handlers = {
       files: Object.keys(files).sort().reverse().map((name) => ({ name, size: files[name].length, modified: now / 1000 })),
     })),
   backup_read: ({ device, file }) => backups[device]?.[file] ?? "",
-  save_note: ({ name, content }) => ((notes[name] = content), null),
+  save_note: ({ name, content }) => {
+    if (secureNotes[name]) throw "La nota está protegida con contraseña";
+    notes[name] = content;
+    return null;
+  },
   // Bóveda de contraseñas simulada: como el backend real, nunca devuelve una contraseña.
   // ?vault=portable simula el modo con contraseña maestra.
   cred_status: () => ({ ...vault, unlocked: vault.exists && vault.unlocked }),
@@ -460,6 +522,23 @@ const scenes = {
   alerts: async () => { await open("core-sw01"); await click("Ajustes"); await click("Alertas"); },
   import: async () => { await click("Ajustes"); await click("Logs y datos"); await click("Desde archivo…"); await click("Leer ~/.ssh/config"); },
   vertical: async () => { await open("core-sw01"); await open("ar-wan01"); await open("fw-perimetro"); await open("sw-acceso-norte"); },
+  // Nota protegida: se elige, se desbloquea con la contraseña de demo y se abren sus opciones.
+  "secure-note": async () => {
+    await open("core-sw01");
+    await click("Notas");
+    await wait(400);
+    const sel = [...document.querySelectorAll("select")].find((x) => [...x.options].some((o) => o.value === "accesos-sitio-central"));
+    Object.getOwnPropertyDescriptor(HTMLSelectElement.prototype, "value").set.call(sel, "accesos-sitio-central");
+    sel.dispatchEvent(new Event("change", { bubbles: true }));
+    await wait(400);
+    const pw = document.querySelector('input[type="password"]');
+    Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, "value").set.call(pw, "demo-clave-2026");
+    pw.dispatchEvent(new Event("input", { bubbles: true }));
+    await wait(100);
+    pw.form.requestSubmit();
+    await wait(400);
+    await click("Protección de la nota");
+  },
   broadcast: async () => { await open("core-sw01"); await open("core-sw02"); await open("Shell local"); await click("Notas"); await click("Elegir a qué sesiones se envía"); },
 };
 const scene = new URLSearchParams(location.search).get("scene");

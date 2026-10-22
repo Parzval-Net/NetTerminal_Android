@@ -1,5 +1,6 @@
 // Genera las capturas del README con datos ficticios, controlando Chrome por DevTools Protocol.
-// Uso: `npx vite --port 1430` en otra terminal y luego `node scripts/screenshots/shoot.mjs`.
+// Uso: `npx vite --port 1430` en otra terminal y luego `node scripts/screenshots/shoot.mjs`
+// (otro puerto: PORT=1436 node scripts/screenshots/shoot.mjs).
 import { spawn } from "node:child_process";
 import { mkdtempSync, mkdirSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
@@ -7,7 +8,7 @@ import { join } from "node:path";
 import { fileURLToPath } from "node:url";
 
 const CHROME = process.env.CHROME ?? "/Applications/Google Chrome.app/Contents/MacOS/Google Chrome";
-const BASE = "http://localhost:1430/scripts/screenshots/demo.html";
+const BASE = `http://localhost:${process.env.PORT ?? 1430}/scripts/screenshots/demo.html`;
 const OUT = fileURLToPath(new URL("../../docs/screenshots/", import.meta.url));
 const SHOTS = [
   // Todas en modo claro para que sean uniformes; el modo oscuro y los temas van aparte.
@@ -29,6 +30,7 @@ const SHOTS = [
   ["importar", "import", "light"],
   ["pestanas-verticales", "vertical", "light"],
   ["credenciales", "credentials", "light"],
+  ["notas-protegidas", "secure-note", "light"],
   ["modo-oscuro", "terminal", "dark"],
   ["pestanas-verticales-oscuro", "vertical", "dark"],
   ["modo-oscuro-dividida", "split", "dark"],
