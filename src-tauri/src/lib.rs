@@ -15,6 +15,7 @@ mod nettools;
 mod plugins;
 mod servers;
 mod scripts;
+mod seal;
 mod models;
 mod notes;
 mod session_store;
@@ -38,6 +39,7 @@ struct AppState {
     jobs: nettools::Jobs,
     servers: servers::Servers,
     creds: credentials::Credentials,
+    secure_notes: notes::SecureNotes,
     data_dir: PathBuf,
 }
 
@@ -296,12 +298,58 @@ fn save_note(name: String, content: String, state: State<'_, AppState>) -> Resul
 
 #[tauri::command]
 fn rename_note(from: String, to: String, state: State<'_, AppState>) -> Result<String, String> {
-    notes::rename(&state.notes_dir(), &from, &to)
+    let name = notes::rename(&state.notes_dir(), &from, &to)?;
+    state.secure_notes.renamed(&from, &name);
+    Ok(name)
 }
 
 #[tauri::command]
 fn delete_note(name: String, state: State<'_, AppState>) -> Result<(), String> {
+    state.secure_notes.forget(&name);
     notes::delete(&state.notes_dir(), &name)
+}
+
+// Notas protegidas: la contraseña solo entra (nunca vuelve al frontend) y la llave queda en
+// memoria del backend mientras la nota está abierta.
+
+#[tauri::command(async)]
+fn note_protect(name: String, password: String, idle_secs: u64, state: State<'_, AppState>) -> Result<(), String> {
+    let password = zeroize::Zeroizing::new(password);
+    state.secure_notes.protect(&state.notes_dir(), &name, &password, idle_secs)
+}
+
+#[tauri::command(async)]
+fn note_unlock(name: String, password: String, idle_secs: u64, state: State<'_, AppState>) -> Result<String, String> {
+    let password = zeroize::Zeroizing::new(password);
+    let text = state.secure_notes.unlock(&state.notes_dir(), &name, &password, idle_secs)?;
+    Ok(String::clone(&text))
+}
+
+#[tauri::command(async)]
+fn note_save_secure(name: String, content: String, state: State<'_, AppState>) -> Result<(), String> {
+    let content = zeroize::Zeroizing::new(content);
+    state.secure_notes.save(&state.notes_dir(), &name, &content)
+}
+
+#[tauri::command]
+fn note_touch(name: String, state: State<'_, AppState>) -> bool {
+    state.secure_notes.touch(&name)
+}
+
+#[tauri::command]
+fn note_lock(state: State<'_, AppState>) {
+    state.secure_notes.lock()
+}
+
+#[tauri::command(async)]
+fn note_unprotect(name: String, state: State<'_, AppState>) -> Result<(), String> {
+    state.secure_notes.unprotect(&state.notes_dir(), &name)
+}
+
+#[tauri::command(async)]
+fn note_change_password(name: String, old: String, new: String, state: State<'_, AppState>) -> Result<(), String> {
+    let (old, new) = (zeroize::Zeroizing::new(old), zeroize::Zeroizing::new(new));
+    state.secure_notes.change(&state.notes_dir(), &name, &old, &new)
 }
 
 #[tauri::command(async)]
@@ -782,6 +830,7 @@ pub fn run() {
                 jobs: nettools::Jobs::default(),
                 servers: servers::Servers::default(),
                 creds: credentials::Credentials::new(&data_dir, session_store::is_portable()),
+                secure_notes: notes::SecureNotes::default(),
                 data_dir,
             });
             Ok(())
@@ -810,6 +859,13 @@ pub fn run() {
             rename_note,
             delete_note,
             search_notes,
+            note_protect,
+            note_unlock,
+            note_save_secure,
+            note_touch,
+            note_lock,
+            note_unprotect,
+            note_change_password,
             import_sessions_file,
             recent_targets,
             recent_target_add,
@@ -875,10 +931,11 @@ pub fn run() {
         .build(tauri::generate_context!())
         .expect("error al iniciar NetTerminal")
         .run(|app, event| {
-            // La llave de la bóveda se borra de memoria al salir.
+            // La llave de la bóveda y la de la nota abierta se borran de memoria al salir.
             if let tauri::RunEvent::Exit = event {
                 if let Some(state) = app.try_state::<AppState>() {
                     state.creds.lock();
+                    state.secure_notes.lock();
                 }
             }
         });
