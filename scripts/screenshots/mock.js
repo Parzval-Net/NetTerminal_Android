@@ -160,6 +160,12 @@ localStorage.clear();
 settings.appTheme = new URLSearchParams(location.search).get("theme") ?? "dark";
 if (location.search.includes("big=")) settings.confirmClose = false;
 if (location.search.includes("scene=vertical")) settings.tabLayout = "vertical";
+// ?term=<id>: tema de terminal preseleccionado (capturas de temas).
+settings.terminalTheme = new URLSearchParams(location.search).get("term") ?? "auto";
+// ?logsdir=1: carpeta de logs elegida por el usuario (modo portable, con su aviso).
+let logsDir = location.search.includes("logsdir=1") ? "/Volumes/USB/Logs-NOC" : "";
+if (logsDir) settings.logsDir = logsDir;
+const logsDirInfo = () => ({ path: logsDir || "~/NetTerminal/data/logs", default: "~/NetTerminal/data/logs", custom: !!logsDir, portable: !!logsDir });
 if (location.search.includes("collapsed=1")) localStorage.setItem("vtabsCollapsed", "true");
 const topology = {
   nodes: [
@@ -351,6 +357,8 @@ const handlers = {
   list_serial_ports: () => [{ port_name: "/dev/tty.usbserial-0001", port_type: "USB" }],
   tool_iperf_version: () => "iperf 3.17",
   data_dir: () => "~/NetTerminal/data",
+  logs_dir_get: () => logsDirInfo(),
+  logs_dir_set: ({ path }) => ((logsDir = path ?? ""), logsDirInfo()),
   device_run: ({ conn, command }) => {
     const s = connSessions.get(conn);
     const job = `job-${nextId++}`;
@@ -514,6 +522,11 @@ const scenes = {
   oscmds: async () => { await open("Shell local"); await click("Catálogo de comandos"); },
   about: async () => { await click("Ajustes"); await click("Acerca de"); },
   settings: async () => { await open("core-sw01"); await click("Ajustes"); },
+  logs: async () => { await open("core-sw01"); await click("Ajustes"); await click("Logs"); },
+  quick: async () => { await click("Conexión rápida (SSH, Telnet, Serial) sin guardar"); const h = document.querySelector('input[placeholder="10.0.0.1 o hostname"]'); if (h) { Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, "value").set.call(h, "192.0.2.77"); h.dispatchEvent(new Event("input", { bubbles: true })); } },
+  quickserial: async () => { await click("Conexión rápida (SSH, Telnet, Serial) sin guardar"); await click("Serial"); },
+  // Pestaña abierta por conexión rápida: "Guardar como sesión…" en la barra de estado.
+  quicktab: async () => { await click("Conexión rápida (SSH, Telnet, Serial) sin guardar"); const h = document.querySelector('input[placeholder="10.0.0.1 o hostname"]'); Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, "value").set.call(h, "192.0.2.77"); h.dispatchEvent(new Event("input", { bubbles: true })); await click("Conectar"); },
   packs: async () => { await open("core-sw01"); await click("Catálogo de comandos"); await click("Packs de comandos"); },
   split: async () => { await open("core-sw01"); await open("ar-wan01"); await open("dist-sw01"); await open("sw-acceso-sur"); await click("Vista dividida: ver 2 o 4 pestañas a la vez"); await click("4 en cuadrícula (2x2)"); },
   backup: async () => { await open("core-sw01"); await open("ar-wan01"); await click("Herramientas: monitoreo, diagnóstico, TFTP, syslog, plugins"); await click("Respaldos"); await click("Comparar A y B"); },

@@ -41,11 +41,14 @@ struct AppState {
     creds: credentials::Credentials,
     secure_notes: notes::SecureNotes,
     data_dir: PathBuf,
+    /// Carpeta de logs elegida por el usuario (validada); None: `data/logs`.
+    logs_root: std::sync::Mutex<Option<PathBuf>>,
 }
 
 impl AppState {
     fn logs_dir(&self) -> PathBuf {
-        self.data_dir.join("logs")
+        let custom = self.logs_root.lock().unwrap_or_else(|e| e.into_inner()).clone();
+        custom.unwrap_or_else(|| self.data_dir.join("logs"))
     }
 
     fn notes_dir(&self) -> PathBuf {
@@ -260,6 +263,42 @@ fn alerts_configure(rules: Vec<triggers::Rule>, app: tauri::AppHandle, state: St
             let _ = app.emit("alert-hit", hit);
         }),
     )
+}
+
+/// Carpeta de logs en uso. `custom`: la eligió el usuario; `portable`: los logs fuera de
+/// `data/` no viajan con la carpeta portable.
+#[derive(serde::Serialize)]
+struct LogsDirInfo {
+    path: String,
+    default: String,
+    custom: bool,
+    portable: bool,
+}
+
+fn logs_dir_info(state: &AppState) -> LogsDirInfo {
+    LogsDirInfo {
+        path: state.logs_dir().to_string_lossy().into_owned(),
+        default: state.data_dir.join("logs").to_string_lossy().into_owned(),
+        custom: state.logs_root.lock().unwrap_or_else(|e| e.into_inner()).is_some(),
+        portable: session_store::is_portable(),
+    }
+}
+
+#[tauri::command]
+fn logs_dir_get(state: State<'_, AppState>) -> LogsDirInfo {
+    logs_dir_info(&state)
+}
+
+/// Fija la carpeta de logs (None o vacío: la predeterminada). Solo acepta una carpeta
+/// absoluta, existente y con permiso de escritura; nunca la raíz del disco.
+#[tauri::command(async)]
+fn logs_dir_set(path: Option<String>, state: State<'_, AppState>) -> Result<LogsDirInfo, String> {
+    let dir = match path.as_deref().map(str::trim).filter(|p| !p.is_empty()) {
+        Some(p) => Some(logfile::validate_dir(p)?),
+        None => None,
+    };
+    *state.logs_root.lock().unwrap_or_else(|e| e.into_inner()) = dir;
+    Ok(logs_dir_info(&state))
 }
 
 /// Abre la carpeta de logs ("logs") o la de datos ("data") en el explorador del sistema.
@@ -832,6 +871,7 @@ pub fn run() {
                 creds: credentials::Credentials::new(&data_dir, session_store::is_portable()),
                 secure_notes: notes::SecureNotes::default(),
                 data_dir,
+                logs_root: std::sync::Mutex::new(None),
             });
             Ok(())
         })
@@ -848,6 +888,8 @@ pub fn run() {
             disconnect,
             send_break,
             set_logging,
+            logs_dir_get,
+            logs_dir_set,
             alerts_configure,
             open_dir,
             data_dir,

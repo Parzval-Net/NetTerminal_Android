@@ -1,7 +1,8 @@
-import { useEffect, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import { invoke } from "@tauri-apps/api/core";
-import { BellRing, Blocks, Bot, Check, FolderOpen, Highlighter, Info, KeyRound, Palette, ScrollText, SquareTerminal, X } from "lucide-react";
+import { ArrowLeftRight, BellRing, Blocks, Bot, Check, FolderOpen, Highlighter, Info, KeyRound, Palette, ScrollText, Search, SquareTerminal, X } from "lucide-react";
 import { openUrl } from "@tauri-apps/plugin-opener";
+import { open as openDialog } from "@tauri-apps/plugin-dialog";
 import logo from "../assets/logo.svg";
 import type { ModuleId } from "../lib/settings";
 import { AiSettings } from "./AiSettings";
@@ -31,7 +32,7 @@ interface Props {
   onClose: () => void;
 }
 
-export type Section = "appearance" | "highlight" | "terminal" | "alerts" | "modules" | "ai" | "credentials" | "data" | "about";
+export type Section = "appearance" | "highlight" | "terminal" | "alerts" | "modules" | "ai" | "credentials" | "data" | "sessions" | "about";
 
 const MODULES: [ModuleId, string, string][] = [
   ["monitor", "Monitoreo", "Sondas ICMP/TCP con gráfico y alarma sonora"],
@@ -45,16 +46,23 @@ const MODULES: [ModuleId, string, string][] = [
   ["backup", "Respaldos", "Respaldo de configuración por fabricante y comparación de versiones"],
 ];
 
-const sections: { id: Section; label: string; Icon: typeof Palette }[] = [
-  { id: "appearance", label: "Apariencia", Icon: Palette },
-  { id: "highlight", label: "Resaltado", Icon: Highlighter },
-  { id: "terminal", label: "Terminal", Icon: SquareTerminal },
-  { id: "alerts", label: "Alertas", Icon: BellRing },
-  { id: "modules", label: "Módulos", Icon: Blocks },
-  { id: "ai", label: "Agentes IA", Icon: Bot },
-  { id: "credentials", label: "Credenciales", Icon: KeyRound },
-  { id: "data", label: "Logs y datos", Icon: ScrollText },
-  { id: "about", label: "Acerca de", Icon: Info },
+/**
+ * Secciones agrupadas por tarea (General, Sesiones y datos, Herramientas, Integraciones):
+ * grupos de 2 a 3 ítems con etiquetas que describen qué configura cada uno, en vez de una
+ * lista plana de nueve. Los ids se conservan para que los enlaces directos sigan funcionando.
+ * `keywords`: lo que busca el cuadro de búsqueda (etiquetas de los ajustes de la sección).
+ */
+const sections: { id: Section; label: string; Icon: typeof Palette; group: string; keywords: string }[] = [
+  { id: "appearance", label: "Apariencia", Icon: Palette, group: "General", keywords: "interfaz claro oscuro sistema pestañas verticales horizontales tema de terminal fuente tamaño interlineado cursor parpadeante colores" },
+  { id: "terminal", label: "Terminal", Icon: SquareTerminal, group: "General", keywords: "historial scrollback copiar al seleccionar pegar clic derecho confirmar al cerrar confirmar envío varias líneas barra de botones pausa entre líneas notas" },
+  { id: "highlight", label: "Resaltado", Icon: Highlighter, group: "General", keywords: "resaltado sintaxis reglas regex esquemas fabricante cisco juniper huawei fortinet colores exportar importar" },
+  { id: "data", label: "Logs", Icon: ScrollText, group: "Sesiones y datos", keywords: "logs grabar automáticamente hora en cada línea nombre del archivo patrón anexar rotación diaria ocultar secretos carpeta de logs" },
+  { id: "credentials", label: "Credenciales", Icon: KeyRound, group: "Sesiones y datos", keywords: "contraseñas guardadas bóveda llavero contraseña maestra portable credenciales" },
+  { id: "sessions", label: "Importar y exportar", Icon: ArrowLeftRight, group: "Sesiones y datos", keywords: "sesiones importar exportar portapapeles json putty securecrt mobaxterm ssh config csv carpeta de datos portable" },
+  { id: "modules", label: "Módulos", Icon: Blocks, group: "Herramientas", keywords: "módulos monitoreo diagnóstico topología subredes velocidad tftp http syslog plugins respaldos herramientas" },
+  { id: "alerts", label: "Alertas", Icon: BellRing, group: "Herramientas", keywords: "alertas palabra clave reglas sonido aviso pestaña expresión regular" },
+  { id: "ai", label: "Agentes IA", Icon: Bot, group: "Integraciones", keywords: "agentes ia mcp claude gemini codex puerto token aprobación solo lectura servidor" },
+  { id: "about", label: "Acerca de", Icon: Info, group: "Acerca de", keywords: "versión actualizaciones buscar ahora github repositorio autor" },
 ];
 
 const FONTS = [
@@ -89,6 +97,25 @@ export function SettingsModal({
   const win = useDragResize("settingsWindow");
   const [dataDir, setDataDir] = useState("");
   const [notice, setNotice] = useState("");
+  const [query, setQuery] = useState("");
+  const q = query.trim().toLowerCase();
+  const visible = useMemo(
+    () => (q ? sections.filter((x) => x.label.toLowerCase().includes(q) || x.keywords.includes(q)) : sections),
+    [q],
+  );
+  // Al buscar se muestra la primera sección que coincide.
+  useEffect(() => {
+    if (q && visible.length && !visible.some((x) => x.id === section)) setSection(visible[0].id);
+  }, [q, visible, section]);
+  const groups = useMemo(() => {
+    const out: { name: string; items: typeof sections }[] = [];
+    for (const x of visible) {
+      const g = out.find((o) => o.name === x.group);
+      if (g) g.items.push(x);
+      else out.push({ name: x.group, items: [x] });
+    }
+    return out;
+  }, [visible]);
 
   const flash = (msg: string) => {
     setNotice(msg);
@@ -139,22 +166,40 @@ export function SettingsModal({
         onMouseDown={(e) => e.stopPropagation()}
       >
         <nav className="w-12 @[640px]:w-44 shrink-0 bg-chrome border-r border-line p-2 space-y-0.5 overflow-y-auto">
-          <div {...win.handle} className="hidden @[640px]:block px-2 pt-1.5 pb-3 text-[14px] font-semibold select-none">
+          <div {...win.handle} className="hidden @[640px]:block px-2 pt-1.5 pb-2 text-[14px] font-semibold select-none">
             Ajustes
           </div>
-          {sections.map(({ id, label, Icon }) => (
-            <button
-              key={id}
-              onClick={() => setSection(id)}
-              title={label}
-              className={`w-full flex items-center gap-2 px-2 h-8 rounded-md text-left ${
-                section === id ? "bg-selected text-fg" : "text-muted hover:text-fg hover:bg-hover"
-              }`}
-            >
-              <Icon size={15} className="shrink-0" />
-              <span className="hidden @[640px]:inline truncate">{label}</span>
-            </button>
+          <label className="hidden @[640px]:flex items-center gap-1.5 mx-1 mb-2 h-7 px-2 rounded-md border border-line bg-field">
+            <Search size={13} className="text-muted shrink-0" />
+            <input
+              className="flex-1 min-w-0 bg-transparent outline-none text-[12px] placeholder:text-muted"
+              placeholder="Buscar ajuste"
+              aria-label="Buscar ajuste"
+              value={query}
+              onChange={(e) => setQuery(e.target.value)}
+            />
+          </label>
+          {groups.map((g) => (
+            <div key={g.name} className="pb-1.5">
+              {g.name !== "Acerca de" && (
+                <div className="hidden @[640px]:block px-2 pt-1.5 pb-1 text-[10.5px] font-semibold uppercase tracking-wide text-muted">{g.name}</div>
+              )}
+              {g.items.map(({ id, label, Icon }) => (
+                <button
+                  key={id}
+                  onClick={() => setSection(id)}
+                  title={label}
+                  className={`w-full flex items-center gap-2 px-2 h-8 rounded-md text-left ${
+                    section === id ? "bg-selected text-fg" : "text-muted hover:text-fg hover:bg-hover"
+                  }`}
+                >
+                  <Icon size={15} className="shrink-0" />
+                  <span className="hidden @[640px]:inline truncate">{label}</span>
+                </button>
+              ))}
+            </div>
           ))}
+          {q && !visible.length && <p className="px-2 text-[11.5px] text-muted">Sin resultados</p>}
         </nav>
 
         <div className="flex-1 min-w-0 flex flex-col">
@@ -346,7 +391,7 @@ export function SettingsModal({
               </>
             )}
 
-            {section === "about" && <About />}
+            {section === "about" && <About settings={s} onChange={onChange} />}
 
             {section === "credentials" && <CredentialSettings />}
 
@@ -379,9 +424,12 @@ export function SettingsModal({
                 <Item label="Ocultar secretos en los logs" hint="password, secret, community, key-string, pre-shared-key… se guardan como ****">
                   <Switch checked={s.logMask} onChange={(v) => onChange({ logMask: v })} />
                 </Item>
-                <Item label="Carpeta de logs">
-                  <OpenBtn which="logs" />
-                </Item>
+                <LogsFolder settings={s} onChange={onChange} />
+              </>
+            )}
+
+            {section === "sessions" && (
+              <>
                 <Item label="Sesiones" hint="Comparte tu lista de equipos vía portapapeles (JSON) o importa desde otros clientes">
                   <div className="flex gap-1.5">
                     <button
@@ -408,7 +456,6 @@ export function SettingsModal({
                   </div>
                 </Item>
                 {notice && <p className="text-[11.5px] text-accent -mt-2">{notice}</p>}
-                <UpdateSettings settings={s} onChange={onChange} />
                 <Item label="Carpeta de datos" hint={dataDir}>
                   <OpenBtn which="data" />
                 </Item>
@@ -487,6 +534,59 @@ function LogNaming({ settings: s, onChange }: { settings: Settings; onChange: (p
   );
 }
 
+interface LogsDirInfo {
+  path: string;
+  default: string;
+  custom: boolean;
+  portable: boolean;
+}
+
+/** Carpeta de logs: el backend valida (absoluta, existente, con escritura) y la aplica al instante. */
+function LogsFolder({ settings: s, onChange }: { settings: Settings; onChange: (p: Partial<Settings>) => void }) {
+  const [info, setInfo] = useState<LogsDirInfo | null>(null);
+  const [error, setError] = useState("");
+  useEffect(() => {
+    invoke<LogsDirInfo>("logs_dir_get").then(setInfo).catch(() => {});
+  }, [s.logsDir]);
+  const apply = async (path: string) => {
+    setError("");
+    try {
+      setInfo(await invoke<LogsDirInfo>("logs_dir_set", { path: path || null }));
+      onChange({ logsDir: path });
+    } catch (e) {
+      setError(String(e));
+    }
+  };
+  const pick = async () => {
+    const dir = await openDialog({ directory: true, multiple: false, title: "Carpeta de logs", defaultPath: info?.path }).catch(() => null);
+    if (typeof dir === "string") apply(dir);
+  };
+  return (
+    <div className="space-y-1.5">
+      <Item label="Carpeta de logs" hint={info?.path ?? ""}>
+        <div className="flex gap-1.5">
+          <button onClick={pick} className="px-3 h-7 rounded-md border border-line hover:bg-hover">
+            Elegir…
+          </button>
+          <OpenBtn which="logs" />
+        </div>
+      </Item>
+      {s.logsDir && (
+        <div className="flex items-center gap-2 text-[11.5px] text-muted">
+          <button onClick={() => apply("")} className="hover:text-fg hover:underline">
+            Restablecer a la predeterminada
+          </button>
+          <span className="truncate" title={info?.default}>({info?.default})</span>
+        </div>
+      )}
+      {s.logsDir && info?.portable && (
+        <p className="text-[11.5px] text-warn">Modo portable: los logs fuera de la carpeta data/ no viajan con el pendrive.</p>
+      )}
+      {error && <p className="text-[11.5px] text-danger">{error}</p>}
+    </div>
+  );
+}
+
 function UpdateSettings({ settings: s, onChange }: { settings: Settings; onChange: (p: Partial<Settings>) => void }) {
   const [status, setStatus] = useState("");
   const [busy, setBusy] = useState(false);
@@ -535,7 +635,8 @@ function UpdateSettings({ settings: s, onChange }: { settings: Settings; onChang
   );
 }
 
-function About() {
+/** Acerca de: versión, autor, repositorio y el bloque de actualizaciones (misma información). */
+function About({ settings, onChange }: { settings: Settings; onChange: (p: Partial<Settings>) => void }) {
   const [version, setVersion] = useState("");
   const [repo, setRepo] = useState("");
   useEffect(() => {
@@ -543,7 +644,8 @@ function About() {
     invoke<string>("app_repo").then(setRepo).catch(() => {});
   }, []);
   return (
-    <div className="flex flex-col items-center text-center gap-2 py-6">
+    <div className="space-y-5">
+    <div className="flex flex-col items-center text-center gap-2 pt-4">
       <img src={logo} alt="" className="w-16 h-16" />
       <div className="text-[18px] font-semibold">NetTerminal</div>
       <div className="text-[12px] text-muted">Versión {version}</div>
@@ -559,6 +661,8 @@ function About() {
           github.com/{repo}
         </button>
       )}
+    </div>
+    <UpdateSettings settings={settings} onChange={onChange} />
     </div>
   );
 }

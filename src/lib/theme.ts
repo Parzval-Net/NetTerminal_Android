@@ -81,6 +81,17 @@ export const presets: TermPreset[] = [
     ]),
   },
   {
+    // Monocromo ámbar (monitores de fósforo P3): todos los ANSI son tonos naranja/ámbar con
+    // luminancia distinta para que el resaltado se distinga. Texto 9,0:1 sobre el fondo (WCAG AA).
+    id: "amber",
+    name: "Ámbar",
+    dark: true,
+    theme: t("#1a1208", "#ff9f1c", "#ff9f1c", "rgba(255,159,28,0.25)", [
+      "#2b1d0c", "#ff6a3d", "#e0a030", "#ffc85c", "#c47a1c", "#f0885a", "#ffb84a", "#ffd79a",
+      "#a67c3c", "#ff8a65", "#f5b547", "#ffe08a", "#d99b3a", "#ffa07a", "#ffcf6e", "#fff0d0",
+    ]),
+  },
+  {
     id: "dracula",
     name: "Dracula",
     dark: true,
@@ -114,6 +125,66 @@ export const presets: TermPreset[] = [
     theme: t("#282828", "#ebdbb2", "#ebdbb2", "#504945", [
       "#282828", "#cc241d", "#98971a", "#d79921", "#458588", "#b16286", "#689d6a", "#a89984",
       "#928374", "#fb4934", "#b8bb26", "#fabd2f", "#83a598", "#d3869b", "#8ec07c", "#ebdbb2",
+    ]),
+  },
+  {
+    // https://github.com/folke/tokyonight.nvim (extras/alacritty/tokyonight_night.toml)
+    id: "tokyo-night",
+    name: "Tokyo Night",
+    dark: true,
+    theme: t("#1a1b26", "#c0caf5", "#c0caf5", "#33467c", [
+      "#15161e", "#f7768e", "#9ece6a", "#e0af68", "#7aa2f7", "#bb9af7", "#7dcfff", "#a9b1d6",
+      "#414868", "#f7768e", "#9ece6a", "#e0af68", "#7aa2f7", "#bb9af7", "#7dcfff", "#c0caf5",
+    ]),
+  },
+  {
+    // https://github.com/catppuccin/alacritty (catppuccin-mocha.toml)
+    id: "catppuccin-mocha",
+    name: "Catppuccin Mocha",
+    dark: true,
+    theme: t("#1e1e2e", "#cdd6f4", "#f5e0dc", "#585b70", [
+      "#45475a", "#f38ba8", "#a6e3a1", "#f9e2af", "#89b4fa", "#f5c2e7", "#94e2d5", "#bac2de",
+      "#585b70", "#f38ba8", "#a6e3a1", "#f9e2af", "#89b4fa", "#f5c2e7", "#94e2d5", "#a6adc8",
+    ]),
+  },
+  {
+    // https://github.com/catppuccin/alacritty (catppuccin-latte.toml)
+    id: "catppuccin-latte",
+    name: "Catppuccin Latte",
+    dark: false,
+    theme: t("#eff1f5", "#4c4f69", "#dc8a78", "#acb0be", [
+      "#5c5f77", "#d20f39", "#40a02b", "#df8e1d", "#1e66f5", "#ea76cb", "#179299", "#acb0be",
+      "#6c6f85", "#d20f39", "#40a02b", "#df8e1d", "#1e66f5", "#ea76cb", "#179299", "#bcc0cc",
+    ]),
+  },
+  {
+    // https://github.com/alacritty/alacritty-theme (themes/monokai.toml), paleta clásica de monokai.nl
+    id: "monokai",
+    name: "Monokai",
+    dark: true,
+    theme: t("#272822", "#f8f8f2", "#f8f8f0", "#49483e", [
+      "#272822", "#f92672", "#a6e22e", "#f4bf75", "#66d9ef", "#ae81ff", "#a1efe4", "#f8f8f2",
+      "#75715e", "#f92672", "#a6e22e", "#f4bf75", "#66d9ef", "#ae81ff", "#a1efe4", "#f9f8f5",
+    ]),
+  },
+  {
+    // https://github.com/primer/github-vscode-theme (GitHub Dark Default, colores terminal.ansi*)
+    id: "github-dark",
+    name: "GitHub Dark",
+    dark: true,
+    theme: t("#0d1117", "#e6edf3", "#58a6ff", "rgba(56,139,253,0.40)", [
+      "#484f58", "#ff7b72", "#3fb950", "#d29922", "#58a6ff", "#bc8cff", "#39c5cf", "#b1bac4",
+      "#6e7681", "#ffa198", "#56d364", "#e3b341", "#79c0ff", "#d2a8ff", "#56d4dd", "#f0f6fc",
+    ]),
+  },
+  {
+    // https://github.com/rose-pine/alacritty (rose-pine.toml)
+    id: "rose-pine",
+    name: "Rosé Pine",
+    dark: true,
+    theme: t("#191724", "#e0def4", "#524f67", "#403d52", [
+      "#26233a", "#eb6f92", "#31748f", "#f6c177", "#9ccfd8", "#c4a7e7", "#ebbcba", "#e0def4",
+      "#6e6a86", "#eb6f92", "#31748f", "#f6c177", "#9ccfd8", "#c4a7e7", "#ebbcba", "#e0def4",
     ]),
   },
   {

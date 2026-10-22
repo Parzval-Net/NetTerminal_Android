@@ -7,6 +7,7 @@ import { StatusBar } from "./components/StatusBar";
 import { TerminalView, TermController } from "./components/TerminalView";
 import { CredChange, SessionModal } from "./components/SessionModal";
 import { CommandPalette } from "./components/CommandPalette";
+import { QuickConnectDialog } from "./components/QuickConnectDialog";
 import { ConfirmDialog } from "./components/ConfirmDialog";
 import { NotesPanel } from "./components/NotesPanel";
 import { CommandsPanel } from "./components/CommandsPanel";
@@ -122,8 +123,10 @@ function Workspace({
   const [tabs, setTabs] = useState<Tab[]>([]);
   const [states, setStates] = useState<Record<string, TabState>>({});
   const [activeId, setActiveId] = useState<string | null>(null);
-  const [modal, setModal] = useState<{ session?: Session; folder?: string } | null>(null);
+  /** `tabId`: la pestaña de conexión rápida que pasa a usar la sesión guardada. */
+  const [modal, setModal] = useState<{ session?: Session; folder?: string; tabId?: string } | null>(null);
   const [paletteOpen, setPaletteOpen] = useState(false);
+  const [quickOpen, setQuickOpen] = useState(false);
   const [importOpen, setImportOpen] = useState(false);
   const [sidebarOpen, setSidebarOpen] = useState(() => stored("sidebar", true));
   const controllers = useRef(new Map<string, TermController>());
@@ -178,6 +181,14 @@ function Workspace({
       un.then((f) => f());
     };
   }, []);
+
+  // Carpeta de logs elegida por el usuario: el backend la valida y la usa para los logs nuevos.
+  useEffect(() => {
+    invoke("logs_dir_set", { path: settings.logsDir || null }).catch((e) => {
+      toast(`Carpeta de logs: ${e}. Se usa la predeterminada.`, "error");
+      update({ logsDir: "" });
+    });
+  }, [settings.logsDir, toast, update]);
 
   useEffect(() => {
     invoke<Session[]>("list_sessions").then(setSessions).catch(console.error);
@@ -718,8 +729,11 @@ function Workspace({
       setSessions((prev) =>
         prev.some((s) => s.id === saved.id) ? prev.map((s) => (s.id === saved.id ? saved : s)) : [...prev, saved],
       );
+      // "Guardar como sesión…": la pestaña abierta pasa a ser la sesión guardada (sin reconectar).
+      const tabId = modal?.tabId;
+      if (tabId) setTabs((ts) => ts.map((t) => (t.id === tabId ? { ...t, session: saved } : t)));
       setModal(null);
-      if (connect) openTab(saved);
+      if (connect && !tabId) openTab(saved);
     } catch (err) {
       toast(`No se pudo guardar la sesión: ${err}`, "error");
     }
@@ -828,6 +842,11 @@ function Workspace({
     openMany: (list: Session[]) =>
       list.forEach((s, i) => (i < 5 ? openTab(s) : window.setTimeout(() => openTab(s), Math.floor(i / 5) * 1500))),
     newSession: (folder?: string) => setModal({ folder }),
+    openQuick: () => setQuickOpen(true),
+    saveTabAs: (id: string) => {
+      const t = tabs.find((x) => x.id === id);
+      if (t) setModal({ session: { ...t.session, name: t.title?.trim() || t.session.name }, tabId: id });
+    },
     editSession: (session: Session) => setModal({ session }),
     duplicateSession,
     deleteSession: (s: Session) => deleteSession(s.id),
@@ -950,6 +969,9 @@ function Workspace({
     onSelect: setActiveId,
     onClose: h.requestClose,
     onNew: newLocal,
+    onQuickConnect: h.openQuick,
+    onNewSession: h.newSession,
+    onSaveAs: h.saveTabAs,
     onToggleSidebar: h.toggleSidebar,
     toolsOpen,
     onOpenTools: openTools,
@@ -1086,7 +1108,7 @@ function Workspace({
             </Suspense>
           )}
           {tabs.length === 0 && activeId !== "tools" && (
-            <EmptyState onLocal={newLocal} onPalette={() => setPaletteOpen(true)} onNew={() => setModal({})} onTools={openTools} />
+            <EmptyState onLocal={newLocal} onPalette={() => setPaletteOpen(true)} onQuick={h.openQuick} onNew={() => setModal({})} onTools={openTools} />
           )}
         </div>
         {commandsOpen && (
@@ -1155,6 +1177,7 @@ function Workspace({
           commandsOpen={commandsOpen}
           onCommands={h.toggleCommands}
           onResend={h.sendToSession}
+          onSaveAs={activeTab ? () => h.saveTabAs(activeTab.id) : undefined}
         />
       </main>
 
@@ -1289,6 +1312,7 @@ function Workspace({
       {paletteOpen && (
         <CommandPalette sessions={sessions} onClose={() => setPaletteOpen(false)} onOpen={openTab} />
       )}
+      {quickOpen && <QuickConnectDialog onClose={() => setQuickOpen(false)} onOpen={openTab} />}
     </div>
   );
 }
@@ -1296,16 +1320,19 @@ function Workspace({
 function EmptyState({
   onLocal,
   onPalette,
+  onQuick,
   onNew,
   onTools,
 }: {
   onLocal: () => void;
   onPalette: () => void;
+  onQuick: () => void;
   onNew: () => void;
   onTools: () => void;
 }) {
   const items: [string, string, () => void][] = [
-    ["Conexión rápida o buscar sesión", `${modLabel}K`, onPalette],
+    ["Buscar sesión o conexión rápida por texto", `${modLabel}K`, onPalette],
+    ["Conexión rápida (SSH, Telnet, Serial) sin guardar", "", onQuick],
     ["Nueva sesión guardada", `${modLabel}N`, onNew],
     ["Terminal local", `${modLabel}T`, onLocal],
     ["Herramientas de red", `${modLabel}E`, onTools],

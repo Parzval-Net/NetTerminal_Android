@@ -83,6 +83,8 @@ export interface Settings {
   logRotateDaily: boolean;
   /** Reemplaza por **** contraseñas, secrets, communities y llaves en los logs. */
   logMask: boolean;
+  /** Carpeta de logs elegida por el usuario (ruta absoluta); vacío: `data/logs`. */
+  logsDir: string;
   alertRules: AlertRule[];
 }
 
@@ -147,6 +149,7 @@ export const defaultSettings: Settings = {
   logAppend: false,
   logRotateDaily: false,
   logMask: true,
+  logsDir: "",
   alertRules: exampleAlerts,
 };
 
