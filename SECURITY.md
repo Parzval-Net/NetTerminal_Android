@@ -27,3 +27,13 @@ Plazos de referencia: confirmación de recepción en 5 días hábiles y una eval
 - Las instalaciones en modo portable y por `.deb` no se actualizan solas.
 
 Si sospechas que la clave de firma o un Release fueron comprometidos, repórtalo de inmediato por el canal privado indicado arriba.
+
+## Limitaciones conocidas
+
+Estos puntos son conocidos y no se consideran vulnerabilidades. Evalúalos antes de distribuir la app en tu organización.
+
+- **macOS sin Developer ID:** el build de macOS tiene firma ad-hoc, sin Developer ID, sin notarización de Apple y sin hardened runtime. Gatekeeper pide abrirla con clic derecho › Abrir, y sin hardened runtime el sistema no aplica las protecciones contra inyección de bibliotecas ni la validación de firma en tiempo de ejecución. Las actualizaciones automáticas sí se verifican con la firma minisign (Ed25519) del proyecto antes de instalar.
+- **Windows y modo portable:** en Windows los datos dependen de los permisos (ACL) de `%APPDATA%`, que por defecto solo dan acceso al usuario, a SYSTEM y a los administradores. En modo portable sobre un pendrive FAT/exFAT no hay permisos de archivo: cualquiera con acceso al dispositivo puede copiar la carpeta `data`. Las contraseñas y las notas protegidas siguen cifradas, pero sesiones, notas normales y logs quedan en claro.
+- **Servidores integrados:** TFTP, HTTP, FTP y Syslog están apagados por defecto y, al iniciarlos, escuchan en todas las interfaces (0.0.0.0) para que los equipos de red lleguen al PC. TFTP y HTTP no tienen autenticación por diseño del protocolo: cualquier equipo que alcance el puerto puede leer la carpeta compartida mientras el servidor está activo. FTP usa credenciales nuevas en cada inicio, pero viajan en claro. Úsalos solo en redes de gestión y detenlos al terminar. El receptor de traps SNMP es la excepción: escucha en 127.0.0.1 salvo que elijas otra IP.
+- **SNMPv3 y localización de claves:** con USM (RFC 3414) la clave localizada se deriva de la contraseña y del engineID que informa el agente. Un agente falso que responda con un engineID elegido puede obtener material para atacar la contraseña fuera de línea. La app lo mitiga atando los secretos de cada perfil al host y puerto guardados: no se envían a un destino distinto. Usa contraseñas largas y únicas por dominio de gestión.
+- **Algoritmos SSH legacy:** la opción "Activar algoritmos legacy automáticamente" (apagada por defecto) acepta ssh-rsa, SHA1 y CBC cuando el equipo los exige. Son algoritmos débiles: actívala solo en redes de gestión confiables.

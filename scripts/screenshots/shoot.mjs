@@ -35,6 +35,7 @@ const SHOTS = [
   ["notas-protegidas", "secure-note", "light"],
   ["snmp", "snmp", "light"],
   ["transferencias", "transfer", "light"],
+  ["snmp-generador", "snmpgen", "light"],
   ["modo-oscuro", "terminal", "dark"],
   ["pestanas-verticales-oscuro", "vertical", "dark"],
   ["modo-oscuro-dividida", "split", "dark"],

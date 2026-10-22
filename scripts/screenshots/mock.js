@@ -159,6 +159,7 @@ const settings = {
 localStorage.clear();
 settings.appTheme = new URLSearchParams(location.search).get("theme") ?? "dark";
 if (location.search.includes("big=")) settings.confirmClose = false;
+if (location.search.includes("autolegacy=1")) settings.autoLegacySsh = true;
 if (location.search.includes("scene=vertical") || location.search.includes("layout=vertical")) settings.tabLayout = "vertical";
 // ?toast=1: una alerta por palabra clave activa que dispara un aviso (toast) y marca la primera pestaña.
 if (location.search.includes("toast=1")) {
@@ -639,6 +640,22 @@ const scenes = {
     await click("Protección de la nota");
   },
   snmp: async () => { await click("Herramientas: monitoreo, diagnóstico, TFTP, syslog, plugins"); await click("SNMP"); await click("IF-MIB (RFC 2863): ifXTable con contadores de 64 bits; ifTable si el agente no la tiene"); await wait(400); await click("Iniciar"); await wait(600); [...document.querySelectorAll("h3")].find((h) => h.textContent === "Conjuntos de OIDs")?.scrollIntoView(); },
+  // Generador de configuración SNMP: Cisco IOS-XE, v3 authPriv, secretos como marcadores.
+  snmpgen: async () => {
+    await click("Herramientas: monitoreo, diagnóstico, TFTP, syslog, plugins"); await click("SNMP"); await click("Generador de configuración"); await wait(300);
+    const at = (ph) => document.querySelector(`input[placeholder="${ph}"]`);
+    setVal(at("192.0.2.10, 198.51.100.0/24"), "192.0.2.10, 198.51.100.0/24");
+    setVal(at("192.0.2.20"), "192.0.2.20");
+    setVal(at("Loopback0"), "Loopback0");
+    setVal(at("Santiago DC1 Rack 12"), "Sitio Central Rack 12");
+    await wait(300);
+    const h = [...document.querySelectorAll("h3")].find((x) => x.textContent === "Configuración generada");
+    h?.scrollIntoView({ block: "center" });
+    // Deja visible la fila de plataforma y algoritmos sobre el texto generado.
+    let sc = h?.parentElement;
+    while (sc && sc.scrollHeight <= sc.clientHeight) sc = sc.parentElement;
+    if (sc) sc.scrollTop -= 90;
+  },
   transfer: async () => { await click("Herramientas: monitoreo, diagnóstico, TFTP, syslog, plugins"); await click("Transferencias"); await wait(400); [...document.querySelectorAll("h3")].find((h) => h.textContent === "Servidor TFTP")?.scrollIntoView(); },
   // ---- Escenas de QA visual del contenedor de la app ----
   empty: async () => {},

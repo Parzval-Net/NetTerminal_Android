@@ -10,25 +10,28 @@ Construido con [Tauri 2](https://tauri.app) (backend en Rust) y xterm.js. Usa el
 
 ## Capturas
 
-> Capturas en modo claro con datos ficticios (IPs de documentación RFC 5737 y nombres genéricos). La app también tiene modo oscuro y 10 temas de terminal.
+> Capturas en modo claro con datos ficticios (IPs de documentación RFC 5737 y nombres genéricos). La app también tiene modo oscuro y 17 temas de terminal.
 
 | | |
 | --- | --- |
 | **Notas y plantillas** con variables `{{vlan}}` que se envían a la sesión<br>![Notas](docs/screenshots/notas.png) | **Monitoreo** con gráfico de latencia, pérdida y alarma sonora<br>![Monitoreo](docs/screenshots/monitoreo.png) |
 | **Topología CDP/LLDP** con ruta resaltada y Port-channel<br>![Topología](docs/screenshots/topologia.png) | **Comparación con un snapshot**: enlaces y equipos nuevos o perdidos<br>![Cambios de topología](docs/screenshots/topologia-cambios.png) |
 | **Comandos de sistema operativo**: Windows, macOS y Linux por distribución<br>![Comandos de sistema](docs/screenshots/comandos-so.png) | **Packs de comandos**: 1.777 comandos, ampliables<br>![Packs](docs/screenshots/packs.png) |
-| **Modo oscuro**: la interfaz sigue al sistema o se fija en claro u oscuro<br>![Modo oscuro](docs/screenshots/modo-oscuro.png) | **10 temas de terminal** con vista previa (Dracula, Nord, Solarized, Gruvbox…)<br>![Temas](docs/screenshots/ajustes.png) |
+| **Modo oscuro**: la interfaz sigue al sistema o se fija en claro u oscuro<br>![Modo oscuro](docs/screenshots/modo-oscuro.png) | **17 temas de terminal** con vista previa (Ámbar, Dracula, Nord, Tokyo Night…)<br>![Temas](docs/screenshots/ajustes.png) |
 | **Pestañas verticales** opcionales, como en Edge o Firefox<br>![Pestañas verticales](docs/screenshots/pestanas-verticales.png) | **Contraseñas guardadas** en una bóveda cifrada, nunca visibles<br>![Credenciales](docs/screenshots/credenciales.png) |
 | **Velocidad**: speedtest e iperf3 cliente/servidor<br>![Velocidad](docs/screenshots/velocidad.png) | **Vista dividida en modo oscuro**<br>![Vista dividida oscura](docs/screenshots/modo-oscuro-dividida.png) |
 | **Vista dividida** 2x2 para seguir varios equipos a la vez<br>![Vista dividida](docs/screenshots/vista-dividida.png) | **Respaldos y comparación** de configuraciones con secretos enmascarados<br>![Respaldos](docs/screenshots/respaldos.png) |
 | **Enviar a varias sesiones** con lista de equipos y control de riesgo<br>![Difusión](docs/screenshots/difusion.png) | **Alertas por palabra clave** en la salida<br>![Alertas](docs/screenshots/alertas.png) |
 | **Importar sesiones** desde ssh_config, PuTTY, SecureCRT, MobaXterm o CSV<br>![Importar](docs/screenshots/importar.png) | **Calculadora de subredes** IPv4/IPv6 con división en subredes<br>![Subredes](docs/screenshots/subredes.png) |
+| **Cliente SNMP** v1/v2c/v3 con conjuntos de OIDs y receptor de traps<br>![SNMP](docs/screenshots/snmp.png) | **Generador de configuración SNMP** de solo lectura para 6 plataformas<br>![Generador SNMP](docs/screenshots/snmp-generador.png) |
+| **Transferencias**: TFTP, HTTP, FTP y SFTP con la carpeta compartida<br>![Transferencias](docs/screenshots/transferencias.png) | **Conexión rápida** sin guardar la sesión (ícono de rayo)<br>![Conexión rápida](docs/screenshots/conexion-rapida.png) |
+| **Notas protegidas** con contraseña y bloqueo por inactividad<br>![Notas protegidas](docs/screenshots/notas-protegidas.png) | **Acerca de** con versión y actualizaciones<br>![Acerca de](docs/screenshots/acerca.png) |
 
 ## Funciones
 
 | Área | Detalle |
 | --- | --- |
-| SSH | Usa el OpenSSH del sistema: respeta `~/.ssh/config`, agente, llaves y `known_hosts`. Jump host (ProxyJump), túneles locales, remotos y dinámicos por sesión (escucha en 127.0.0.1 por defecto) y opción de algoritmos legacy para equipos antiguos. |
+| SSH | Usa el OpenSSH del sistema: respeta `~/.ssh/config`, agente, llaves y `known_hosts`. Jump host (ProxyJump), túneles locales, remotos y dinámicos por sesión (escucha en 127.0.0.1 por defecto) y opción de algoritmos legacy para equipos antiguos. Opcional y apagado por defecto: Ajustes › Terminal › "Activar algoritmos legacy automáticamente" reconecta una vez en modo compatible si el equipo exige ssh-rsa, SHA1 o CBC y lo deja guardado en la sesión. Usa algoritmos débiles: actívalo solo en redes de gestión confiables. |
 | Telnet | Cliente nativo en Rust (negociación ECHO, SGA, tipo de terminal y tamaño de ventana). No requiere `telnet` instalado. |
 | TCP crudo | Conexión TCP directa sin negociación Telnet, para servidores de consola (puertos 2001+). |
 | Serial | Puertos detectados automáticamente, 1200 a 921600 baudios, 8N1/7E1, control de flujo, envío de Break. |
@@ -37,10 +40,12 @@ Construido con [Tauri 2](https://tauri.app) (backend en Rust) y xterm.js. Usa el
 | Alertas | Reglas por texto o expresión (globales o por carpeta) que avisan en pantalla, con sonido y marca en la pestaña. Máximo un aviso cada 10 s por regla y sesión; nunca envían comandos. Sin reglas no consumen nada. |
 | Respaldos | Respaldo de configuración (solo comandos de consulta, hasta 3 equipos a la vez) en `data/backups`, con secretos enmascarados, y comparación entre fechas o entre equipos. |
 | Importar | Sesiones desde `~/.ssh/config`, PuTTY (.reg), SecureCRT (XML), MobaXterm (.mobaconf/.mxtsessions) y CSV, con vista previa. Nunca importa contraseñas, comandos al conectar, proxies ni túneles. |
+| Conexión rápida | Formulario SSH, Telnet, TCP crudo o Serial sin guardar la sesión, desde la pantalla de inicio o el menú del "+" (ícono de rayo en la pestaña). "Guardar como sesión…" en el menú de la pestaña y en la barra de estado. |
 | Historial | Destinos recientes en la conexión rápida (⌘K) y últimos comandos enviados a cada equipo desde Notas, catálogo o botones (nunca lo tecleado). |
 | Notas | Panel lateral con notas en `.txt` (autoguardado, resaltado por fabricante), búsqueda en todas las notas y buscar/reemplazar. Envía la línea, la selección o todo a la sesión activa (con control de riesgo y pausa por línea opcional) y captura texto de la terminal. |
-| Logs | Grabación de la sesión a texto plano (sin códigos de color) en la carpeta `logs`: nombre por patrón (`{session}`, `{host}`, `{folder}`, `{date}`, `{time}`), anexar o archivo nuevo, rotación diaria, hora por línea y secretos enmascarados (activado por defecto). El log continúa en el mismo archivo al reconectar. |
-| Plantillas | Variables `{{nombre}}` en Notas: al enviar se piden los valores (se recuerdan los últimos). |
+| Notas protegidas | Una nota se puede proteger con contraseña: queda cifrada en disco (`.ntenc`, XChaCha20-Poly1305 con llave Argon2id por nota) y se bloquea a mano, por inactividad (5 min por defecto), al cambiar de nota o al cerrar el panel. No aparece en la búsqueda de contenido. |
+| Logs | Grabación de la sesión a texto plano (sin códigos de color) en la carpeta `logs` o en una carpeta que elijas (validada, archivos 600): nombre por patrón (`{session}`, `{host}`, `{folder}`, `{date}`, `{time}`), anexar o archivo nuevo, rotación diaria, hora por línea y secretos enmascarados (activado por defecto). El log continúa en el mismo archivo al reconectar. |
+| Plantillas | Variables `{{nombre}}` en Notas: al enviar se piden los valores (se recuerdan los últimos, salvo las que parecen contraseñas o claves, que se piden ocultas y no se guardan). |
 | Sesiones | Carpetas y subcarpetas ilimitadas, arrastrar y soltar, menú contextual (conectar todas, nueva sesión aquí, renombrar, duplicar), indicador de sesiones abiertas. |
 | Contraseñas | Opcional por sesión (SSH, Telnet, TCP y Serial): se guarda en una bóveda cifrada de la app (`credentials.vault`) y se completa sola en el primer pedido de contraseña al conectar; en Telnet/Serial también envía el usuario. Campo solo de escritura (nunca se muestra), llave en el llavero del sistema o contraseña maestra en modo portable (Ajustes › Credenciales). |
 | Botones y scripts | Barra de comandos rápidos (texto con `{{variables}}` o script). Scripts Python con API mínima `import netterminal as nt` (`run`, `send`, `wait_for`, `read`), similar a `crt.Screen` de SecureCRT. Incluye ejemplo de respaldo de configuración. |
@@ -49,12 +54,16 @@ Construido con [Tauri 2](https://tauri.app) (backend en Rust) y xterm.js. Usa el
 | Comandos (⌘L) | Catálogo de 1.777 comandos verificados con fuente oficial. Equipos de red: Cisco (IOS, IOS-XE, NX-OS, IOS-XR, ASA), Juniper (Junos, Evolved, EX sin ELS), Fortinet (FortiOS 6.4 a 7.6), Huawei (VRP5, VRP8, YunShan OS en AR5700/AR6700/AR8000), Check Point (R80.40 a R82, clish y expert) y WatchGuard (Fireware 12.x y 2025+). Sistemas operativos (consultas de red: interfaces, DNS, rutas, ARP, conexiones, tráfico, Wi-Fi, firewall): Windows 10/11/Server (PowerShell), macOS 12 a 27 y Linux (Debian, Ubuntu, RHEL/Rocky/Alma, Fedora, SUSE, Arch, Alpine). Sintaxis por plataforma detectada, nivel de riesgo, favoritos, comandos propios y packs importables. En la terminal local se abre el catálogo del sistema del PC. |
 | Opciones por sesión | Comandos al conectar, reconexión automática, Enter como CR/LF/CRLF, eco local y codificación (UTF-8, Latin-1, Windows-1252). |
 | Pestañas | Horizontales (por defecto) o verticales a la izquierda, con ancho ajustable y modo solo íconos. Renombrar, desconectar sin cerrar, copiar toda la salida, limpiar historial, reiniciar terminal e indicador de actividad en segundo plano. |
-| Herramientas (⌘E) | Monitoreo ICMP/TCP con gráfico y alarma sonora; ping, traceroute y puertos; topología; calculadora de subredes; speedtest (Cloudflare, respeta el proxy del sistema) e iperf3; respaldos; Syslog. Cada módulo se activa en Ajustes › Módulos. |
-| Gestor de archivos | Dos paneles PC ↔ equipo sobre la sesión abierta: lista el flash, envía o trae archivos por TFTP/HTTP y respalda la configuración (Cisco, NX-OS, Huawei, Junos). La app escribe el `copy`, responde las confirmaciones y muestra el progreso. También por SCP cifrado (pestaña donde escribes la contraseña), con verificación MD5 automática del firmware enviado y aviso de espacio insuficiente. |
+| Herramientas (⌘E) | Monitoreo ICMP/TCP con gráfico y alarma sonora; ping, traceroute y puertos; topología; calculadora de subredes; speedtest (Cloudflare, respeta el proxy del sistema) e iperf3; respaldos; transferencias (TFTP, HTTP, FTP y SFTP); Syslog; SNMP. Cada módulo se activa en Ajustes › Módulos. |
+| SNMP | Cliente de consulta v1, v2c y v3 (USM): GET, GETNEXT, WALK acotado y cancelable y GETBULK. Solo lectura, sin SET. v3 con SHA-256 + AES-128 por defecto (RFC 7860 y RFC 3826), AES-192/256 en variantes net-snmp y Cisco, MD5/DES solo como legado. Conjuntos de OIDs (identidad, interfaces con contadores de 64 bits y tasas, almacenamiento, CPU, procesos, carga y memoria) con exportación CSV. Receptor de traps apagado por defecto: v1, v2c, informs confirmados y traps v3 verificados con el usuario del perfil. Community y contraseñas v3 solo en la bóveda cifrada, atadas al host y puerto del perfil. |
+| Generador SNMP | Configuración de agente de solo lectura para Cisco IOS/IOS-XE, NX-OS, Huawei VRP, Junos, FortiOS y net-snmp (`snmpd.conf`): v3 authPriv por defecto, ACL por NMS, vista sin subárboles sensibles, traps o informs, interfaz de origen y sysContact/sysLocation. Nunca genera communities RW. Los secretos van como marcadores (`<AUTH_PASS>`) salvo que los escribas, y no se guardan. La sintaxis que depende de la versión del equipo queda marcada en un comentario para verificar. |
+| FTP y SFTP | Servidor FTP de la carpeta compartida (usuario y contraseña nuevos en cada inicio, solo lectura por defecto, sin FTP bounce) y cliente FTP/FTPS con TLS verificado por los certificados del sistema. SFTP con el OpenSSH del sistema: en el gestor de archivos y como pestaña `sftp` interactiva. FTP no cifra: la app lo advierte y sugiere SCP/SFTP o HTTP. |
+| Gestor de archivos | Dos paneles PC ↔ equipo sobre la sesión abierta: lista el flash, envía o trae archivos por TFTP/HTTP y respalda la configuración (Cisco, NX-OS, Huawei, Junos). La app escribe el `copy`, responde las confirmaciones y muestra el progreso. También por SCP cifrado o SFTP (pestaña donde escribes la contraseña), con verificación MD5 automática del firmware enviado y aviso de espacio insuficiente. |
 | Plugins | Carpeta con `plugin.json` + script Python. Instalación con revisión de permisos y código; se bloquean si sus archivos cambian. |
+| Ajustes | Agrupados en General, Sesiones y datos, Herramientas e Integraciones, con buscador. Actualizaciones y créditos ("Desarrollado en conjunto con Claude") en Acerca de. |
 | Actualizaciones | Aviso de versión nueva desde GitHub Releases y botón "Actualizar y reiniciar": descarga, verifica la firma del proyecto e instala. Nunca instala sin confirmación y avisa si hay sesiones abiertas. En modo portable y en `.deb` la actualización sigue siendo manual. |
 | Compartir | Exportar/importar sesiones y reglas de resaltado como JSON vía portapapeles. |
-| Apariencia | Interfaz en modo sistema, claro u oscuro. 10 temas de terminal (Dracula, Nord, Solarized, Gruvbox, One Dark, Clásico, Fósforo verde, etc.), fuente, tamaño, interlineado y cursor configurables. |
+| Apariencia | Interfaz en modo sistema, claro u oscuro, con contraste WCAG AA en textos (4,5:1) y controles (3:1). 17 temas de terminal (Ámbar, Fósforo verde, Clásico, Dracula, Nord, Solarized, Gruvbox, One Dark, Tokyo Night, Catppuccin Mocha y Latte, Monokai, GitHub Dark, Rosé Pine, etc.), fuente, tamaño, interlineado y cursor configurables. |
 | Resaltado | Coloreo de salida por regex para Cisco/Arista, Juniper, Huawei/H3C, Fortinet y reglas comunes (IPv4/IPv6, MAC, up/down, permit/deny, contadores de error > 0, syslog por severidad). Perfil por sesión, reglas propias con vista previa e importación/exportación JSON. |
 
 ## Atajos
@@ -78,7 +87,7 @@ Construido con [Tauri 2](https://tauri.app) (backend en Rust) y xterm.js. Usa el
 
 En Windows/Linux los atajos usan Ctrl+Shift para no interferir con Ctrl+C, Ctrl+W, etc. dentro de la terminal.
 
-Conexión rápida (⌘K): `ssh admin@10.0.0.1:2222`, `telnet 10.0.0.5 23`, `admin@router` o solo la IP.
+Conexión rápida (⌘K): `ssh admin@192.0.2.1:2222`, `telnet 192.0.2.5 23`, `admin@router` o solo la IP. Para Serial o TCP crudo usa el formulario del rayo en la pantalla de inicio.
 
 ## Resaltado de sintaxis
 
@@ -133,6 +142,7 @@ Auditoría del binario con REA (Ghidra y utilidades nativas de macOS) y revisió
 | Sin secretos ni conexiones salientes incrustadas, sin rutas locales (`--remap-path-prefix` en CI) | Verificado |
 | Dependencias: `npm audit` y `cargo audit` sin vulnerabilidades (bloquean el CI) | Verificado |
 | SSH: el host no puede inyectar opciones (`--` y validación); "argumentos extra" se valida con la misma semántica de getopt que ssh (flags agrupados incluidos) y bloquea ProxyCommand, LocalCommand, KnownHostsCommand, Match, Include, PKCS11Provider, SecurityKeyProvider, -F, -I, -E y argumentos sueltos; ni estos argumentos ni los comandos al conectar se importan desde JSON | Con tests |
+| Motor de riesgo: comandos encadenados (`;`, `&&`, `\|\|`, `&`, `$(...)` y comillas invertidas) se evalúan por partes, así `show clock ; reload` no pasa como consulta | Con tests |
 | Comandos ocultos: un `\r` o caracteres de control dentro de un comando (packs, MCP, pegado) se tratan como líneas separadas o se rechazan, así lo que se confirma es exactamente lo que llega al equipo; el pegado quita marcadores de "bracketed paste" | Con tests |
 | Plugins: se rechaza código que la revisión no puede mostrar (bytecode .pyc, binarios nativos, .pth, archivos que no son UTF-8 o que declaran otra codificación) | Con tests |
 | Host, jump host y usuario de SSH sin metacaracteres de shell (defensa ante CVE-2023-51385 en OpenSSH < 9.6, como el de Windows) | Con tests |
@@ -155,10 +165,17 @@ Auditoría del binario con REA (Ghidra y utilidades nativas de macOS) y revisió
 | Resaltado: regex propias o importadas con riesgo de ReDoS se rechazan; los scripts usan el motor `regex` de Rust (tiempo lineal) | Con tests |
 | Telnet: subnegociación acotada a 1 KB | Código |
 | Datos: carpeta 700 y archivos 600 en macOS/Linux | Verificado |
-| Contraseñas guardadas: bóveda XChaCha20-Poly1305 con cabecera autenticada; llave aleatoria de 256 bits en el llavero del sistema (Keychain, Administrador de credenciales, Secret Service) o, en modo portable o sin llavero, derivada con Argon2id (64 MiB, t=3) de una contraseña maestra con espera creciente ante intentos fallidos. Ningún comando devuelve una contraseña a la interfaz; se autocompleta una sola vez en 60 s, nunca tras "Permission denied"/"% Login invalid", en una passphrase de llave SSH, en la confirmación de llave de host ni en un segundo prompt, y solo si el destino coincide con la sesión guardada. No pasa por logs, historial, MCP, scripts ni exportaciones; los búferes se borran de memoria | Con tests |
+| Contraseñas guardadas: bóveda XChaCha20-Poly1305 con cabecera autenticada; llave aleatoria de 256 bits en el llavero del sistema (Keychain, Administrador de credenciales, Secret Service) o, en modo portable o sin llavero, derivada con Argon2id (64 MiB, t=3) de una contraseña maestra con espera creciente ante intentos fallidos. Ningún comando devuelve una contraseña a la interfaz; se autocompleta una sola vez en 60 s, nunca tras "Permission denied"/"% Login invalid", en una passphrase de llave SSH, en la confirmación de llave de host ni en un segundo prompt, y solo si el destino coincide con la sesión guardada, argumentos extra de ssh incluidos (un `-o HostName`, `-J` o `-p` distinto cancela el autocompletado). Con jump host solo se responde el prompt que nombra al equipo de destino, nunca el del bastión. No pasa por logs, historial, MCP, scripts ni exportaciones; los búferes se borran de memoria | Con tests |
 | Notas y scripts: nombres saneados, sin rutas fuera de su carpeta | Con tests |
+| Enlaces OSC 8 en la salida del equipo: solo `http(s)` y se abren en el navegador del sistema | Código |
+| Plantillas: variables con pinta de secreto (password, secret, key…) no se guardan, se piden en un campo oculto y se enmascaran en la vista previa | Código |
+| SNMP: secretos atados al host y puerto del perfil (la community o el HMAC v3 no viajan a otro equipo); BER propio con topes de tamaño, OIDs y varbinds, con fuzzing | Con tests |
+| Receptor de traps v3: solo se aceptan motores con firma válida, Ku precalculado y se descarta un noAuthNoPriv con un usuario que exige autenticación | Con tests |
+| Servidor FTP: 60 s para iniciar sesión, máx. 8 clientes y 3 intentos, rutas confinadas, datos solo con la IP que inició sesión (RFC 2577); cliente FTP con tope de 4 MB por listado | Con tests |
+| TFTP/HTTP: rutas sin `:` en Windows (unidades o flujos NTFS) ni enlaces simbólicos al crear carpetas, timeout acotado a 30 s; el servidor HTTP ya no se cierra con rutas UTF-8 mal formadas | Con tests |
+| Ping y diagnóstico: un host entre corchetes no inyecta opciones (`[-f]`) | Con tests |
 
-Pendiente para distribución corporativa: firmar con Developer ID + notarización (macOS) y certificado de firma de código (Windows). Sin firma, AppLocker o Intune pueden bloquear la app. Los scripts Python ejecutan código local por diseño: en una carpeta portable compartida, revisa los scripts antes de ejecutarlos.
+Pendiente para distribución corporativa: firmar con Developer ID + notarización (macOS) y certificado de firma de código (Windows). Las limitaciones conocidas están en [SECURITY.md](SECURITY.md#limitaciones-conocidas). Sin firma, AppLocker o Intune pueden bloquear la app. Los scripts Python ejecutan código local por diseño: en una carpeta portable compartida, revisa los scripts antes de ejecutarlos.
 
 ## Packs de comandos
 
@@ -206,7 +223,7 @@ Herramientas › Topología lee los vecinos del equipo conectado y dibuja el dia
 | Cisco | `show cdp neighbors detail`, `show lldp neighbors detail` | `show interfaces status` (o `show interfaces description`), `show etherchannel summary` (o `show port-channel summary` en NX-OS) |
 | Huawei | `display lldp neighbor` | `display interface brief`, `display interface description`, `display eth-trunk` |
 | Juniper | `show lldp neighbors` y, para la IP de gestión, `show lldp neighbors interface X` (máx. 32) | `show interfaces descriptions` |
-| Fortinet | `diagnose lldprx neighbor summary/details` (en 7.6.3+ `diagnose lldp rx neighbor …`, se prueba solo) | — |
+| Fortinet | `diagnose lldprx neighbor summary/details` (en 7.6.3+ `diagnose lldp rx neighbor …`, se prueba solo) | No disponible |
 
 - **Seguir la ruta**: selecciona un vecino y pulsa "Conectar". Si el equipo coincide (por IP o nombre) con una sesión guardada, se usa esa sesión con su puerto, usuario y jump host; si no, se abre SSH o Telnet con los datos de la sesión de origen. La contraseña la escribes tú; al volver pulsas "Descubrir vecinos".
 - **Ruta entre dos equipos**: "Desde aquí" y "Hasta aquí" resaltan el camino más corto y lo listan con los puertos de cada salto, listo para copiar en un ticket.
@@ -261,7 +278,7 @@ Para generar los binarios de los tres sistemas operativos, ejecuta el workflow `
 
 ### Regenerar las capturas
 
-Con `npx vite --port 1430` en marcha, ejecuta `node scripts/screenshots/shoot.mjs` (requiere Google Chrome). Usa un backend simulado (`scripts/screenshots/mock.js`) con datos ficticios, nunca tus sesiones reales.
+Con `npx vite --port 1430` en marcha, ejecuta `node scripts/screenshots/shoot.mjs` (requiere Google Chrome; acepta nombres de captura como argumentos y las variables `PORT`, `OUT`, `BASE` y `CDP_PORT`). Usa un backend simulado (`scripts/screenshots/mock.js`) con datos ficticios, nunca tus sesiones reales.
 
 ## Estructura
 
@@ -277,5 +294,8 @@ src-tauri/src/
   notes.rs                Notas en texto plano (con tests)
   monitor.rs, nettools.rs Sondas, traceroute, iperf3, puertos, speedtest
   servers.rs, filexfer.rs TFTP/HTTP/Syslog y comandos de archivos en equipos
+  ftpserver.rs, ftpclient.rs Servidor FTP de la carpeta compartida y cliente FTP/FTPS
+  snmp.rs                 Cliente SNMP v1/v2c/v3 y receptor de traps (con tests)
+  credentials.rs, seal.rs Bóveda cifrada y notas protegidas (XChaCha20-Poly1305, Argon2id)
   plugins.rs, updates.rs  Plugins con verificación SHA-256, aviso de versiones y actualización firmada
 ```
