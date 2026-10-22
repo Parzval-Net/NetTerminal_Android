@@ -26,6 +26,9 @@ const CONNECT: Duration = Duration::from_secs(15);
 const IO: Duration = Duration::from_secs(60);
 /// Entradas por listado: una carpeta enorme no debe bloquear la interfaz.
 const MAX_LIST: usize = 5000;
+/// Bytes por listado: `list()` de suppaftp acumula sin límite y un servidor hostil podría
+/// enviar un listado infinito hasta agotar la memoria.
+const MAX_LIST_BYTES: u64 = 4 * 1024 * 1024;
 
 #[derive(Deserialize)]
 pub struct FtpParams {
@@ -145,6 +148,28 @@ pub(crate) fn open(p: &FtpParams) -> Result<RustlsFtpStream, String> {
     Ok(ftp)
 }
 
+/// LIST con tope de bytes. Lo que exceda MAX_LIST_BYTES se descarta con ABOR.
+pub(crate) fn list_bounded(ftp: &mut RustlsFtpStream) -> Result<Vec<String>, String> {
+    use suppaftp::Status;
+    let (_, mut stream) = ftp.custom_data_command("LIST", &[Status::AboutToSend, Status::AlreadyOpen]).map_err(err_text)?;
+    let mut buf = Vec::new();
+    let read = (&mut stream).take(MAX_LIST_BYTES + 1).read_to_end(&mut buf);
+    if read.is_err() || buf.len() as u64 > MAX_LIST_BYTES {
+        let _ = ftp.abort(stream);
+        return Err(match read {
+            Err(e) => format!("Error de conexión: {e}"),
+            Ok(_) => "El listado del servidor es demasiado grande".into(),
+        });
+    }
+    stream.finish().map_err(err_text)?;
+    Ok(split_lines(&buf))
+}
+
+/// Líneas no vacías del listado, sin el CR final.
+fn split_lines(buf: &[u8]) -> Vec<String> {
+    String::from_utf8_lossy(buf).lines().map(|l| l.trim_end_matches('\r')).filter(|l| !l.is_empty()).map(str::to_owned).collect()
+}
+
 pub(crate) fn parse_entries(lines: &[String]) -> Vec<Entry> {
     lines
         .iter()
@@ -164,7 +189,7 @@ pub(crate) fn parse_entries(lines: &[String]) -> Vec<Entry> {
 pub fn ftp_list(params: FtpParams) -> Result<Listing, String> {
     let mut ftp = open(&params)?;
     let cwd = ftp.pwd().unwrap_or_default();
-    let mut entries = parse_entries(&ftp.list(None).map_err(err_text)?);
+    let mut entries = parse_entries(&list_bounded(&mut ftp)?);
     entries.sort_by(|a, b| b.dir.cmp(&a.dir).then(a.name.to_lowercase().cmp(&b.name.to_lowercase())));
     let _ = ftp.quit();
     Ok(Listing { cwd, entries, tls: params.tls })
@@ -327,5 +352,20 @@ mod tests {
         assert_eq!((e[0].name.as_str(), e[0].size, e[0].dir), ("c2960.bin", 33591768, false));
         assert!(e[1].dir);
         assert_eq!(e[2].name, "respaldo.cfg");
+    }
+
+    #[test]
+    fn fuzz_listing_parser_from_hostile_server() {
+        assert_eq!(split_lines(b"a\r\n\r\nb\n\xff"), vec!["a", "b", "\u{fffd}"]);
+        let mut rng = crate::snmp::tests::Rng(0x1357_9BDF_2468_ACE0);
+        let words = ["-rw-r--r--", "drwxr-xr-x", "lrwxrwxrwx", "1", "ftp", "99999999999999999999", "-1", "Feb", "31", "29", "1969", "99999", "25:61", "10-02-23", "09:14AM", "<DIR>", "->", "é", " ", "\t"];
+        for _ in 0..20_000 {
+            let n = rng.below(12);
+            let line: String = (0..n).map(|_| words[rng.below(words.len())]).collect::<Vec<_>>().join(" ");
+            let _ = parse_entries(&[line]);
+            let n = rng.below(64);
+            let raw = rng.bytes(n);
+            let _ = parse_entries(&split_lines(&raw));
+        }
     }
 }
