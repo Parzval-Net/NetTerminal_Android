@@ -7,7 +7,7 @@ import { join } from "node:path";
 import { fileURLToPath } from "node:url";
 
 const CHROME = process.env.CHROME ?? "/Applications/Google Chrome.app/Contents/MacOS/Google Chrome";
-const BASE = "http://localhost:1430/scripts/screenshots/demo.html";
+const BASE = process.env.BASE ?? "http://localhost:1430/scripts/screenshots/demo.html";
 const OUT = fileURLToPath(new URL("../../docs/screenshots/", import.meta.url));
 const SHOTS = [
   // Todas en modo claro para que sean uniformes; el modo oscuro y los temas van aparte.
@@ -29,6 +29,8 @@ const SHOTS = [
   ["importar", "import", "light"],
   ["pestanas-verticales", "vertical", "light"],
   ["credenciales", "credentials", "light"],
+  ["snmp", "snmp", "light"],
+  ["transferencias", "transfer", "light"],
   ["modo-oscuro", "terminal", "dark"],
   ["pestanas-verticales-oscuro", "vertical", "dark"],
   ["modo-oscuro-dividida", "split", "dark"],

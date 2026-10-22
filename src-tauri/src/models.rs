@@ -157,6 +157,10 @@ pub struct ScpSpec {
     pub local_paths: Vec<String>,
     #[serde(default)]
     pub local_dir: String,
+    /// "scp" (por defecto, protocolo SCP clásico), "sftp" (scp sobre el protocolo SFTP)
+    /// o "shell" (cliente sftp interactivo en la carpeta compartida).
+    #[serde(default)]
+    pub mode: Option<String>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]

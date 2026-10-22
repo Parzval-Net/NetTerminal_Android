@@ -860,15 +860,15 @@ function Workspace({
         ...s,
         id: `scp-${Date.now()}`,
         type: "local",
-        name: `SCP ${req.upload ? "→" : "←"} ${s.name}`,
+        name: req.mode === "shell" ? `SFTP ${s.name}` : `${req.mode === "sftp" ? "SFTP" : "SCP"} ${req.upload ? "→" : "←"} ${s.name}`,
         // Telnet/TCP usan su propio puerto: SCP siempre va por SSH.
         port: s.type === "ssh" ? s.port : 22,
         highlight: "off",
         on_connect: undefined,
         auto_reconnect: false,
-        scp: { upload: req.upload, files: req.files, remote_dir: req.remoteDir },
+        scp: { upload: req.upload, files: req.files, remote_dir: req.remoteDir, mode: req.mode ?? "scp" },
       });
-      toast("Pestaña SCP abierta: escribe la contraseña del equipo ahí");
+      toast(`Pestaña ${req.mode && req.mode !== "scp" ? "SFTP" : "SCP"} abierta: escribe la contraseña del equipo ahí`);
     },
     setVendor: (catalogVendor: string) => update({ catalogVendor }),
     setPlatform: (platform: string | null) => activeTab && setTabPlatform(activeTab.id, platform),

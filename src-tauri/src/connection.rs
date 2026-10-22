@@ -862,9 +862,6 @@ fn openssh_version() -> Option<(u32, u32)> {
 fn scp_command(s: &Session) -> Result<CommandBuilder, String> {
     let spec = s.scp.as_ref().ok_or("Falta la especificación SCP")?;
     let host = safe_target(s.host.as_deref().unwrap_or(""), "el host")?;
-    if spec.files.is_empty() {
-        return Err("No hay archivos para copiar".into());
-    }
     let remote_dir = spec.remote_dir.trim();
     if remote_dir.starts_with('-') || remote_dir.chars().any(|c| c.is_whitespace() || c.is_control()) {
         return Err("Carpeta remota inválida".into());
@@ -872,6 +869,13 @@ fn scp_command(s: &Session) -> Result<CommandBuilder, String> {
     let user = s.username.as_deref().map(str::trim).filter(|u| !u.is_empty());
     if user.is_some_and(|u| u.contains(['@', ':']) || safe_user(u).is_err()) {
         return Err("Usuario inválido".into());
+    }
+    let mode = spec.mode.as_deref().unwrap_or("scp");
+    if mode == "shell" {
+        return sftp_shell(s, &host, user, &spec.local_dir);
+    }
+    if spec.files.is_empty() {
+        return Err("No hay archivos para copiar".into());
     }
     let remote = |file: &str| -> Result<String, String> {
         if file.starts_with('-') || file.contains(['/', '\\', ' ']) {
@@ -884,9 +888,23 @@ fn scp_command(s: &Session) -> Result<CommandBuilder, String> {
     };
 
     let mut cmd = CommandBuilder::new(if cfg!(windows) { "scp.exe" } else { "scp" });
-    // OpenSSH >= 9 usa SFTP por defecto; el servidor SCP de Cisco IOS solo habla SCP clásico.
-    if openssh_version().is_some_and(|v| v >= (9, 0)) {
-        cmd.arg("-O");
+    let version = openssh_version();
+    match mode {
+        // OpenSSH >= 9 usa SFTP por defecto; el servidor SCP de Cisco IOS solo habla SCP clásico.
+        "scp" => {
+            if version.is_some_and(|v| v >= (9, 0)) {
+                cmd.arg("-O");
+            }
+        }
+        // SFTP: por defecto desde OpenSSH 9.0; entre 8.7 y 8.9 con -s.
+        "sftp" => match version {
+            Some(v) if v >= (9, 0) => {}
+            Some(v) if v >= (8, 7) => {
+                cmd.arg("-s");
+            }
+            _ => return Err("El OpenSSH de este PC no transfiere por SFTP con scp (requiere 8.7 o superior). Usa SFTP interactivo.".into()),
+        },
+        _ => return Err("Modo de transferencia inválido".into()),
     }
     cmd.args(["-o", "ConnectTimeout=15"]);
     if let Some(port) = s.port.filter(|p| *p != 22 && *p != 23) {
@@ -920,6 +938,37 @@ fn scp_command(s: &Session) -> Result<CommandBuilder, String> {
         }
         cmd.arg(&spec.local_dir);
     }
+    Ok(cmd)
+}
+
+/// Cliente sftp interactivo con las opciones SSH de la sesión, dentro de la carpeta
+/// compartida (get y put leen y escriben ahí). La contraseña se escribe en la pestaña y la
+/// llave de host se verifica contra known_hosts como en SSH.
+fn sftp_shell(s: &Session, host: &str, user: Option<&str>, local_dir: &str) -> Result<CommandBuilder, String> {
+    if local_dir.is_empty() {
+        return Err("Carpeta local no resuelta".into());
+    }
+    let mut cmd = CommandBuilder::new(if cfg!(windows) { "sftp.exe" } else { "sftp" });
+    cmd.cwd(local_dir);
+    cmd.args(["-o", "ConnectTimeout=15", "-o", "ServerAliveInterval=30"]);
+    if let Some(port) = s.port.filter(|p| *p != 22 && *p != 23) {
+        cmd.args(["-P", &port.to_string()]);
+    }
+    if let Some(key) = s.identity_file.as_deref().filter(|k| !k.is_empty()) {
+        cmd.args(["-i", key]);
+    }
+    if let Some(jump) = s.jump_host.as_deref().filter(|j| !j.trim().is_empty()) {
+        cmd.args(["-J".to_string(), safe_target(jump, "el jump host")?]);
+    }
+    if s.legacy_ssh.unwrap_or(false) {
+        for opt in legacy_options() {
+            cmd.args(["-o", opt]);
+        }
+    }
+    cmd.arg("--");
+    // sftp acepta IPv6 entre corchetes en el destino.
+    let host = if host.contains(':') { format!("[{host}]") } else { host.to_string() };
+    cmd.arg(format!("{}{host}", user.map(|u| format!("{u}@")).unwrap_or_default()));
     Ok(cmd)
 }
 
@@ -1219,8 +1268,20 @@ mod tests {
             remote_dir: "flash:".into(),
             local_paths: vec![],
             local_dir: "/tmp/tftp".into(),
+            mode: None,
         });
         assert!(super::scp_command(&s).is_ok());
+        // SFTP interactivo: sin archivos, en la carpeta compartida, host tras "--".
+        s.scp.as_mut().unwrap().mode = Some("shell".into());
+        s.scp.as_mut().unwrap().files = vec![];
+        let cmd = super::scp_command(&s).unwrap();
+        let argv: Vec<String> = cmd.get_argv().iter().map(|a| a.to_string_lossy().into_owned()).collect();
+        assert!(argv[0].starts_with("sftp"));
+        assert_eq!(&argv[argv.len() - 2..], ["--", "noc@10.0.0.1"]);
+        s.scp.as_mut().unwrap().mode = Some("rsync".into());
+        s.scp.as_mut().unwrap().files = vec!["ios.bin".into()];
+        assert!(super::scp_command(&s).is_err());
+        s.scp.as_mut().unwrap().mode = None;
         // Nombres que intentan inyectar opciones o rutas
         for bad in ["-oProxyCommand=x", "../etc/passwd", "a b"] {
             s.scp.as_mut().unwrap().files = vec![bad.into()];

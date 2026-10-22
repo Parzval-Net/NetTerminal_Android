@@ -33,7 +33,7 @@ export interface Session {
   /** Plataforma detectada para el catálogo (ej. "vrp5", "iosxe"). */
   platform?: string;
   /** Pestaña temporal de transferencia SCP. */
-  scp?: { upload: boolean; files: string[]; remote_dir: string };
+  scp?: { upload: boolean; files: string[]; remote_dir: string; mode?: "scp" | "sftp" | "shell" };
   /** Autocompletar la contraseña guardada en la bóveda cifrada (nunca viaja al frontend). */
   save_password?: boolean;
   created_at: string;
