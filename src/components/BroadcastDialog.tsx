@@ -186,7 +186,7 @@ export function BroadcastBar() {
         {run.running ? (
           <button
             onClick={stopBroadcast}
-            className="flex items-center gap-1.5 px-2.5 h-6 rounded-md bg-danger text-white font-medium hover:opacity-90"
+            className="flex items-center gap-1.5 px-2.5 h-6 rounded-md bg-danger text-danger-fg font-medium hover:opacity-90"
           >
             <Square size={10} fill="currentColor" /> Detener
           </button>
