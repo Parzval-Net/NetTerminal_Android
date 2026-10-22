@@ -78,12 +78,15 @@ impl Monitor {
 }
 
 /// Host seguro para pasarlo a comandos del sistema: sin espacios ni "-" inicial.
+/// Los corchetes solo se aceptan envolviendo el host completo (IPv6): ping los quita y
+/// "[-f]" llegaría como opción.
 pub fn validate_host(host: &str) -> Result<(), String> {
     let h = host.trim();
-    let ok = !h.is_empty()
+    let inner = h.strip_prefix('[').and_then(|x| x.strip_suffix(']')).unwrap_or(h);
+    let ok = !inner.is_empty()
         && h.len() <= 253
-        && !h.starts_with('-')
-        && h.chars().all(|c| c.is_ascii_alphanumeric() || ".-:_%[]".contains(c));
+        && !inner.starts_with('-')
+        && inner.chars().all(|c| c.is_ascii_alphanumeric() || ".-:_%".contains(c));
     if ok {
         Ok(())
     } else {
@@ -227,6 +230,11 @@ mod tests {
         assert!(validate_host("10.0.0.1; rm -rf /").is_err());
         assert!(validate_host("router-core.lab").is_ok());
         assert!(validate_host("2001:db8::1").is_ok());
+        assert!(validate_host("[2001:db8::1]").is_ok());
+        // ping recibe el host sin corchetes: "[-f]" no puede convertirse en opción.
+        for bad in ["[-f]", "[-c99]", "[]", "[[-f]]", "-[x]", "a]b", "[a"] {
+            assert!(validate_host(bad).is_err(), "{bad}");
+        }
     }
 
     #[test]

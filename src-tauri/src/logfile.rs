@@ -83,7 +83,12 @@ pub fn render(pattern: &str, vars: &LogVars, now: &chrono::DateTime<chrono::Loca
     let pattern = if pattern.trim().is_empty() { DEFAULT_PATTERN } else { pattern };
     let mut dirs: Vec<String> = Vec::new();
     let mut name = String::new();
-    let mut rest: &str = &pattern[..pattern.len().min(MAX_PATTERN)];
+    // Corte en un límite de carácter: cortar en medio de un carácter multibyte abortaría la app.
+    let mut cut = pattern.len().min(MAX_PATTERN);
+    while !pattern.is_char_boundary(cut) {
+        cut -= 1;
+    }
+    let mut rest: &str = &pattern[..cut];
     while let Some(c) = rest.chars().next() {
         if c == '{' {
             if let Some(end) = rest.find('}') {
@@ -456,6 +461,9 @@ mod tests {
         // Variables desconocidas y llaves sueltas quedan como texto saneado.
         assert_eq!(render("x{nope}{", &vars(), &now), PathBuf::from("x_nope__"));
         assert_eq!(render("", &vars(), &now), render(DEFAULT_PATTERN, &vars(), &now));
+        // Un patrón largo con caracteres multibyte se corta sin abortar.
+        let long = format!("a{}", "ñ".repeat(150));
+        assert!(!render(&long, &vars(), &now).as_os_str().is_empty());
     }
 
     #[test]
