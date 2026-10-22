@@ -2,7 +2,7 @@ import { memo, useCallback, useEffect, useRef, useState } from "react";
 import { PanelLeftClose, PanelLeftOpen, PanelTop, Plus, Wrench, X } from "lucide-react";
 import { tabTitle } from "../types";
 import { ContextMenu } from "./Sidebar";
-import { SessionIcon } from "./SessionIcon";
+import { SessionIcon, isQuickSession } from "./SessionIcon";
 import { TabBarProps, closeBtnClass, statusColor } from "./TabBar";
 import { MenuItem, layoutItem, newTabMenuItems, tabMenuItems } from "./tabMenu";
 import { modLabel } from "../lib/platform";
@@ -219,7 +219,7 @@ export const VerticalTabs = memo(function VerticalTabs(props: TabBarProps) {
               title={`${title}${t.title ? ` (${t.session.name})` : ""}\nDoble clic: renombrar · clic derecho: opciones · clic medio: cerrar`}
               className={`${rowBase} ${rowState(active)} ${focusable}`}
             >
-              <SessionIcon type={t.session.type} size={13} />
+              <SessionIcon type={t.session.type} size={13} quick={isQuickSession(t.session)} />
               {collapsed ? (
                 <>
                   <span

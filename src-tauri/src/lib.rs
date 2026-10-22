@@ -806,7 +806,7 @@ fn macos_menu(app: &tauri::AppHandle) -> tauri::Result<tauri::menu::Menu<tauri::
                         Some(tauri::menu::AboutMetadata {
                             name: Some("NetTerminal".into()),
                             version: Some(env!("CARGO_PKG_VERSION").into()),
-                            credits: Some("Creado por Nicolás Rivera\nVibecodeado con Claude Code".into()),
+                            credits: Some("Creado por Nicolás Rivera\nDesarrollado en conjunto con Claude".into()),
                             ..Default::default()
                         }),
                     )?,

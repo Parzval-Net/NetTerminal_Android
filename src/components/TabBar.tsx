@@ -6,7 +6,7 @@ import type { TabLayout } from "../lib/settings";
 import { MenuItem, layoutItem, splitMenuItems, tabMenuItems } from "./tabMenu";
 import { ConnStatus, Tab, TabState, tabTitle } from "../types";
 import { ContextMenu } from "./Sidebar";
-import { SessionIcon } from "./SessionIcon";
+import { SessionIcon, isQuickSession } from "./SessionIcon";
 import { modLabel } from "../lib/platform";
 
 export interface TabBarProps {
@@ -169,7 +169,7 @@ export const TabBar = memo(function TabBar(props: TabBarProps) {
                   : "text-muted hover:text-fg hover:bg-hover"
               }`}
             >
-              <SessionIcon type={t.session.type} size={13} />
+              <SessionIcon type={t.session.type} size={13} quick={isQuickSession(t.session)} />
               {editing === t.id ? (
                 <input
                   autoFocus

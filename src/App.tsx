@@ -27,7 +27,7 @@ import { ApprovalDialog, ApprovalRequest } from "./components/ApprovalDialog";
 import type { Section } from "./components/SettingsModal";
 import type { Macro, UpdateInfo } from "./lib/settings";
 import { openUrl } from "@tauri-apps/plugin-opener";
-import { Sparkles, X as XIcon } from "lucide-react";
+import { Sparkles, X as XIcon, Zap } from "lucide-react";
 import { listen } from "@tauri-apps/api/event";
 import { ConnStatus, Session, Tab, TabState, historyKey, tabTitle } from "./types";
 import { localOsVendor, modLabel, shortcutFor } from "./lib/platform";
@@ -1330,9 +1330,15 @@ function EmptyState({
   onNew: () => void;
   onTools: () => void;
 }) {
-  const items: [string, string, () => void][] = [
+  const items: [React.ReactNode, string, () => void][] = [
     ["Buscar sesión o conexión rápida por texto", `${modLabel}K`, onPalette],
-    ["Conexión rápida (SSH, Telnet, Serial) sin guardar", "", onQuick],
+    [
+      <span key="q" className="flex items-center gap-1.5">
+        <Zap size={14} className="text-warn" /> Conexión rápida (SSH, Telnet, Serial) sin guardar
+      </span>,
+      "",
+      onQuick,
+    ],
     ["Nueva sesión guardada", `${modLabel}N`, onNew],
     ["Terminal local", `${modLabel}T`, onLocal],
     ["Herramientas de red", `${modLabel}E`, onTools],
@@ -1344,9 +1350,9 @@ function EmptyState({
         <h1 className="text-[18px] font-semibold mb-1">NetTerminal</h1>
         <p className="text-muted mb-5">SSH, Telnet y Serial sin complicaciones.</p>
         <div className="space-y-1">
-          {items.map(([label, key, fn]) => (
+          {items.map(([label, key, fn], i) => (
             <button
-              key={label}
+              key={i}
               onClick={fn}
               className="w-full flex items-center justify-between px-3 h-9 rounded-lg hover:bg-hover text-left"
             >

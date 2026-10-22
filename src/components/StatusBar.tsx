@@ -1,5 +1,5 @@
 import { memo } from "react";
-import { ArrowLeftRight, BookOpen, KeyRound, Bot, Circle, CircleDot, NotebookPen, RotateCcw, Save, Search, Settings, Unplug, Zap } from "lucide-react";
+import { ArrowLeftRight, BookOpen, KeyRound, Bot, Circle, CircleDot, NotebookPen, RotateCcw, Search, Settings, Unplug, Zap } from "lucide-react";
 import { Tab, TabState, historyKey, sessionTarget, tunnelLabel } from "../types";
 import { HistoryMenu } from "./HistoryMenu";
 import { typeLabel } from "./SessionIcon";
@@ -99,7 +99,7 @@ export const StatusBar = memo(function StatusBar({
 
       {onSaveAs && !session.id && session.type !== "local" && !session.scp && (
         <BarBtn onClick={onSaveAs} title="Conexión rápida sin guardar: guardar como sesión">
-          <Save size={12} />
+          <Zap size={12} className="text-warn" />
           Guardar como sesión…
         </BarBtn>
       )}

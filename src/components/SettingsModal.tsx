@@ -652,7 +652,7 @@ function About({ settings, onChange }: { settings: Settings; onChange: (p: Parti
       <p className="text-[13px] mt-2">
         Creado por <span className="font-semibold">Nicolás Rivera</span>
       </p>
-      <p className="text-[12px] text-muted">Vibecodeado con Claude Code</p>
+      <p className="text-[12px] text-muted">Desarrollado en conjunto con Claude</p>
       <p className="text-[12px] text-muted max-w-sm mt-2">
         Cliente SSH, Telnet, Serial y terminal local para el trabajo diario con equipos de red. Tauri 2, Rust y xterm.js.
       </p>
