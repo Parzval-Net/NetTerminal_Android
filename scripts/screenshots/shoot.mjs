@@ -39,6 +39,7 @@ const SHOTS = [
   ["conexion-rapida", "quick", "light"],
   ["conexion-rapida-serial", "quickserial", "dark"],
   ["conexion-rapida-pestana", "quicktab", "light"],
+  ["conexion-rapida-pestana-oscuro", "quicktab", "dark"],
   ["ajustes-oscuro", "settings", "dark"],
   ["ajustes-logs", "logs", "light", { query: "&logsdir=1" }],
   ["acerca-oscuro", "about", "dark"],
