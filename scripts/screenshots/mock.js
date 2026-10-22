@@ -159,7 +159,16 @@ const settings = {
 localStorage.clear();
 settings.appTheme = new URLSearchParams(location.search).get("theme") ?? "dark";
 if (location.search.includes("big=")) settings.confirmClose = false;
-if (location.search.includes("scene=vertical")) settings.tabLayout = "vertical";
+if (location.search.includes("scene=vertical") || location.search.includes("layout=vertical")) settings.tabLayout = "vertical";
+// ?toast=1: una alerta por palabra clave activa que dispara un aviso (toast) y marca la primera pestaña.
+if (location.search.includes("toast=1")) {
+  settings.alertRules = [{ id: "qa-updown", name: "Interfaz cambió de estado", pattern: "%LINK-3-UPDOWN", regex: false, caseSensitive: true, enabled: true, folder: "", toast: true, sound: false, markTab: true, highlight: false }];
+  const fire = setInterval(() => {
+    if (channels.size < 2) return;
+    clearInterval(fire);
+    emit("alert-hit", { conn: [...channels.keys()][0], rule: "qa-updown", line: "%LINK-3-UPDOWN: Interface GigabitEthernet1/0/3, changed state to down" });
+  }, 300);
+}
 // ?term=<id>: tema de terminal preseleccionado (capturas de temas).
 settings.terminalTheme = new URLSearchParams(location.search).get("term") ?? "auto";
 // ?logsdir=1: carpeta de logs elegida por el usuario (modo portable, con su aviso).
@@ -248,6 +257,48 @@ function startMonitor(cfg) {
   }, 300);
   let i = 0;
   monitorTimers.set(cfg.id, setInterval(() => emit("monitor-sample", { id: cfg.id, ts: Date.now(), ok: true, rtt: rtt(cfg.id, i++), error: null }), 1000));
+}
+
+// SNMP simulado (Herramientas › SNMP): un switch con ifXTable y traps de ejemplo.
+settings.snmpProfiles = [
+  { id: "pcore", name: "core-sw01", host: "192.0.2.1", port: 161, version: "3", user: "monitoreo", level: "authPriv", authProto: "sha256", privProto: "aes", context: "", timeoutMs: 2000, retries: 1, saved: true },
+];
+const running = new Set();
+const IFNAMES = ["Gi1/0/1", "Gi1/0/2", "Gi1/0/3", "Gi1/0/4", "Te1/1/1", "Te1/1/2", "Vlan10", "Vlan20"];
+const IFDESC = ["UPLINK dist-sw01", "UPLINK dist-sw01", "Camara piso 2", "", "ISL core-sw02", "ISL core-sw02", "USUARIOS", "VOZ"];
+const counterBase = IFNAMES.map((_, i) => 9_000_000_000 + i * 1_234_567_890);
+const snmpStart = Date.now();
+function snmpColumn(oid) {
+  const col = (vals, type = "OCTET STRING") => vals.map((v, i) => ({ oid: `${oid}.${i + 1}`, type, value: String(v) }));
+  const t = (Date.now() - snmpStart) / 1000;
+  const map = {
+    "1.3.6.1.2.1.31.1.1.1.1": () => col(IFNAMES),
+    "1.3.6.1.2.1.31.1.1.1.18": () => col(IFDESC),
+    "1.3.6.1.2.1.2.2.1.7": () => col(IFNAMES.map((_, i) => (i === 3 ? 2 : 1)), "INTEGER"),
+    "1.3.6.1.2.1.2.2.1.8": () => col(IFNAMES.map((_, i) => (i === 3 || i === 2 ? 2 : 1)), "INTEGER"),
+    "1.3.6.1.2.1.31.1.1.1.15": () => col(IFNAMES.map((n) => (n.startsWith("Te") ? 10000 : n.startsWith("Vlan") ? 1000 : 1000)), "Gauge32"),
+    "1.3.6.1.2.1.31.1.1.1.6": () => col(counterBase.map((b, i) => Math.round(b + t * (i + 1) * 3_100_000)), "Counter64"),
+    "1.3.6.1.2.1.31.1.1.1.10": () => col(counterBase.map((b, i) => Math.round(b / 2 + t * (i + 1) * 1_250_000)), "Counter64"),
+    "1.3.6.1.2.1.25.3.3.1.2": () => col([12, 9], "INTEGER"),
+  };
+  return (map[oid] ?? (() => []))();
+}
+const SYS = {
+  "1.3.6.1.2.1.1.1.0": "Cisco IOS XE Software, Version 17.12.4, Catalyst L3 Switch Software (CAT9K_IOSXE)",
+  "1.3.6.1.2.1.1.2.0": "1.3.6.1.4.1.9.1.2494",
+  "1.3.6.1.2.1.1.3.0": "412345600 (47d 17h 30m 56.00s)",
+  "1.3.6.1.2.1.1.4.0": "noc@example.com",
+  "1.3.6.1.2.1.1.5.0": "core-sw01",
+  "1.3.6.1.2.1.1.6.0": "Sala de equipos, piso 3",
+};
+function emitTraps() {
+  const list = [
+    { trap_oid: "1.3.6.1.6.3.1.1.5.3", version: "v2c", kind: "trap", src: "192.0.2.21", vbs: [{ oid: "1.3.6.1.2.1.2.2.1.1.3", type: "INTEGER", value: "3" }, { oid: "1.3.6.1.2.1.2.2.1.2.3", type: "OCTET STRING", value: "GigabitEthernet1/0/3" }] },
+    { trap_oid: "1.3.6.1.6.3.1.1.5.4", version: "v3", kind: "trap", src: "192.0.2.21", user: "traps", note: "authPriv verificado · engine 800000090300aabbccddee", vbs: [{ oid: "1.3.6.1.2.1.2.2.1.1.3", type: "INTEGER", value: "3" }, { oid: "1.3.6.1.2.1.2.2.1.2.3", type: "OCTET STRING", value: "GigabitEthernet1/0/3" }] },
+    { trap_oid: "1.3.6.1.6.3.1.1.5.1", version: "v2c", kind: "inform", src: "198.51.100.1", vbs: [] },
+    { trap_oid: "1.3.6.1.6.3.1.1.5.3", version: "v1", kind: "v1", src: "192.0.2.22", vbs: [{ oid: "agent-addr", type: "IpAddress", value: "192.0.2.22" }, { oid: "1.3.6.1.2.1.2.2.1.1.24", type: "INTEGER", value: "24" }] },
+  ];
+  emit("snmp-trap", list.map((t, i) => ({ ts: Date.now() - (list.length - i) * 4000, uptime: "412345600 (47d 17h 30m 56.00s)", user: null, note: null, ...t })));
 }
 
 let recentTargets = ["ssh admin@192.0.2.50 22", "telnet 203.0.113.9 23"];
@@ -351,7 +402,31 @@ const handlers = {
   plugins_list: () => [],
   tftp_files: () => [["c9300-universalk9.17.12.04.SPA.bin", 1_163_845_632], ["AR6100-V300R022C10SPC100.cc", 168_820_736], ["FGT_200F-v7.4.5.out", 92_340_224]],
   local_ips: () => [{ name: "en0", ip: "192.0.2.250" }],
-  server_running: () => [],
+  server_running: () => [...running],
+  server_stop: ({ kind }) => (running.delete(kind), null),
+  snmp_request: ({ oids }) => oids.map((oid) => (SYS[oid] ? { oid, type: oid.endsWith(".2.0") ? "OID" : oid.endsWith(".3.0") ? "Timeticks" : "OCTET STRING", value: SYS[oid] } : { oid, type: "noSuchObject", value: "No existe el objeto en este agente" })),
+  snmp_walk_many: ({ oids }) => oids.map((oid) => ({ oid, rows: snmpColumn(oid), truncated: false, error: null })),
+  snmp_walk: ({ oid }) => {
+    const job = `job-${nextId++}`;
+    setTimeout(() => {
+      const rows = snmpColumn(oid);
+      emit("tool-job", { job, kind: "line", text: "", data: { rows } });
+      emit("tool-job", { job, kind: "result", text: "", data: { count: rows.length, truncated: false, cancelled: false, ms: 84 } });
+      emit("tool-job", { job, kind: "done", text: "" });
+    }, 300);
+    return job;
+  },
+  snmp_secret_set: () => null,
+  snmp_secret_has: () => true,
+  snmp_secret_delete: () => null,
+  snmp_trap_start: ({ port, bind }) => {
+    running.add("snmptrap");
+    setTimeout(emitTraps, 400);
+    return `Receptor de traps escuchando en ${bind}:${port} (UDP)`;
+  },
+  ftp_server_info: () => (running.has("ftp") ? { user: "nt", pass: "k7m2q9xh4p", port: 21, write: false } : null),
+  ftp_server_start: ({ port, allowWrite }) => (running.add("ftp"), { user: "nt", pass: "k7m2q9xh4p", port, write: allowWrite }),
+  ftp_list: () => ({ cwd: "/firmware", tls: true, entries: [{ name: "cisco", size: 0, dir: true, date: "2026-10-01 09:00" }, { name: "c9300-universalk9.17.12.04.SPA.bin", size: 1_163_845_632, dir: false, date: "2026-09-12 18:20" }, { name: "AR6100-V300R022C10SPC100.cc", size: 168_820_736, dir: false, date: "2026-08-30 11:02" }] }),
   monitor_start: ({ cfg }) => startMonitor(cfg),
   monitor_stop: ({ id }) => (clearInterval(monitorTimers.get(id)), monitorTimers.delete(id), null),
   list_serial_ports: () => [{ port_name: "/dev/tty.usbserial-0001", port_type: "USB" }],
@@ -510,6 +585,17 @@ async function svgNode(name) {
   await wait(250);
 }
 const open = (l) => act("dblclick", l);
+const key = (k) => window.dispatchEvent(new KeyboardEvent("keydown", { key: k, code: `Key${k.toUpperCase()}`, metaKey: true, bubbles: true, cancelable: true }));
+async function quickTo(host) {
+  await click("Conexión rápida (SSH, Telnet, Serial) sin guardar");
+  typeInto(document.querySelector('input[placeholder="10.0.0.1 o hostname"]'), host);
+  await click("Conectar");
+}
+function typeInto(el, value) {
+  if (!el) return console.warn("escena: campo no encontrado");
+  Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, "value").set.call(el, value);
+  el.dispatchEvent(new Event("input", { bubbles: true }));
+}
 
 const scenes = {
   terminal: async () => { await open("ar-wan01"); await open("core-sw01"); await click("Catálogo de comandos"); },
@@ -552,6 +638,60 @@ const scenes = {
     await wait(400);
     await click("Protección de la nota");
   },
+  snmp: async () => { await click("Herramientas: monitoreo, diagnóstico, TFTP, syslog, plugins"); await click("SNMP"); await click("IF-MIB (RFC 2863): ifXTable con contadores de 64 bits; ifTable si el agente no la tiene"); await wait(400); await click("Iniciar"); await wait(600); [...document.querySelectorAll("h3")].find((h) => h.textContent === "Conjuntos de OIDs")?.scrollIntoView(); },
+  transfer: async () => { await click("Herramientas: monitoreo, diagnóstico, TFTP, syslog, plugins"); await click("Transferencias"); await wait(400); [...document.querySelectorAll("h3")].find((h) => h.textContent === "Servidor TFTP")?.scrollIntoView(); },
+  // ---- Escenas de QA visual del contenedor de la app ----
+  empty: async () => {},
+  palette: async () => { await wait(300); key("k"); await wait(300); },
+  "palette-q": async () => { await wait(300); key("k"); await wait(300); typeInto(document.querySelector('[role="dialog"] input, .fixed input'), "core"); await wait(300); },
+  ctxmenu: async () => { await open("core-sw01"); const row = find("core-sw02"); row?.dispatchEvent(new MouseEvent("contextmenu", { bubbles: true, cancelable: true, clientX: 120, clientY: 160 })); await wait(300); },
+  filter: async () => { typeInto(document.querySelector('input[placeholder^="Filtrar"]'), "sw-acceso"); await wait(300); },
+  "filter-none": async () => { typeInto(document.querySelector('input[placeholder^="Filtrar"]'), "zzz"); await wait(300); },
+  // Pestañas con estados mezclados: rápida inactiva, alerta, actividad y cerrada.
+  quicktabs: async () => {
+    await quickTo("192.0.2.77");
+    await open("core-sw01");
+    await open("router-antiguo");
+    await open("ar-wan01");
+    await wait(500);
+  },
+  "quick-active": async () => {
+    await quickTo("192.0.2.77");
+    await open("core-sw01");
+    await wait(300);
+    document.querySelector('[title^="192.0.2.77"]')?.dispatchEvent(new MouseEvent("mousedown", { bubbles: true, button: 0 }));
+    await wait(500);
+  },
+  "lock-note": async () => {
+    await open("core-sw01");
+    await click("Notas");
+    await wait(400);
+    const sel = [...document.querySelectorAll("select")].find((x) => [...x.options].some((o) => o.value === "accesos-sitio-central"));
+    Object.getOwnPropertyDescriptor(HTMLSelectElement.prototype, "value").set.call(sel, "accesos-sitio-central");
+    sel.dispatchEvent(new Event("change", { bubbles: true }));
+    await wait(400);
+  },
+  find: async () => { await open("core-sw01"); await wait(400); key("f"); await wait(300); },
+  paste: async () => {
+    await open("core-sw01");
+    await wait(600);
+    const dt = new DataTransfer();
+    dt.setData("text/plain", "interface Gi1/0/5\n description PRUEBA\n shutdown\n");
+    document.querySelector(".xterm")?.dispatchEvent(new ClipboardEvent("paste", { clipboardData: dt, bubbles: true, cancelable: true }));
+    await wait(300);
+  },
+  toasts: async () => { await open("core-sw01"); await open("ar-wan01"); await wait(1200); },
+  // Barra de difusión en curso: se arranca un envío ficticio directo en el módulo.
+  bcastbar: async () => {
+    await open("core-sw01"); await open("core-sw02");
+    const m = await import("/src/lib/broadcast.ts");
+    const mk = (id, name, host) => ({ id, session: { id, name, host, type: "ssh" } });
+    m.runBroadcast([mk("a", "core-sw01", "192.0.2.1"), mk("b", "core-sw02", "192.0.2.2"), mk("c", "dist-sw01", "192.0.2.11")], [{ tab: mk("d", "Shell local"), reason: "Terminal local" }], "show clock", { lineDelayMs: 0, deviceDelayMs: 0 },
+      () => ({ isConnected: () => true, send: () => new Promise((r) => setTimeout(r, 600000)) }));
+    await wait(300);
+    await click("Ver detalle");
+  },
+  macros: async () => { await open("core-sw01"); await wait(300); },
   broadcast: async () => { await open("core-sw01"); await open("core-sw02"); await open("Shell local"); await click("Notas"); await click("Elegir a qué sesiones se envía"); },
 };
 // Escenas de QA visual (modales, ajustes y herramientas).

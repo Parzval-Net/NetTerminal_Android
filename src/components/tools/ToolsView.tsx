@@ -1,6 +1,6 @@
 import { Suspense, lazy, memo, useCallback, useEffect, useState } from "react";
 import { invoke } from "@tauri-apps/api/core";
-import { Activity, ArrowDownUp, Calculator, DatabaseBackup, Gauge, Network, Puzzle, Radar, ScrollText } from "lucide-react";
+import { Activity, ArrowDownUp, Calculator, DatabaseBackup, Gauge, Network, Puzzle, Radar, ScrollText, Waypoints } from "lucide-react";
 import { TopologyTool } from "./TopologyTool";
 import type { Session } from "../../types";
 import { ModuleId, Settings, SpeedResult } from "../../lib/settings";
@@ -16,6 +16,8 @@ import type { ScpRequest, TerminalRef } from "./FileManager";
 
 // Respaldos y diff: se cargan al abrir el módulo.
 const BackupTool = lazy(() => import("./BackupTool"));
+// SNMP: cliente, conjuntos de OIDs y receptor de traps, también bajo demanda.
+const SnmpTool = lazy(() => import("./SnmpTool"));
 
 const NAV: { id: ModuleId; label: string; Icon: typeof Activity }[] = [
   { id: "monitor", label: "Monitoreo", Icon: Activity },
@@ -23,8 +25,9 @@ const NAV: { id: ModuleId; label: string; Icon: typeof Activity }[] = [
   { id: "topology", label: "Topología", Icon: Network },
   { id: "subnet", label: "Subredes", Icon: Calculator },
   { id: "perf", label: "Velocidad", Icon: Gauge },
-  { id: "transfer", label: "TFTP / HTTP", Icon: ArrowDownUp },
+  { id: "transfer", label: "Transferencias", Icon: ArrowDownUp },
   { id: "syslog", label: "Syslog", Icon: ScrollText },
+  { id: "snmp", label: "SNMP", Icon: Waypoints },
   { id: "backup", label: "Respaldos", Icon: DatabaseBackup },
   { id: "plugins", label: "Plugins", Icon: Puzzle },
 ];
@@ -125,6 +128,12 @@ export const ToolsView = memo(function ToolsView({ active, settings, update, mon
         return <SyslogTool settings={settings} running={running} onChange={update} refreshRunning={refreshRunning} />;
       case "plugins":
         return <PluginsTool connId={connId} onConfirm={onConfirm} />;
+      case "snmp":
+        return (
+          <Suspense fallback={null}>
+            <SnmpTool settings={settings} running={running} onChange={update} refreshRunning={refreshRunning} onConfirm={onConfirm} />
+          </Suspense>
+        );
       case "backup":
         return (
           <Suspense fallback={null}>
@@ -147,7 +156,8 @@ export const ToolsView = memo(function ToolsView({ active, settings, update, mon
           >
             <Icon size={15} />
             {label}
-            {(id === "transfer" && (running.includes("tftp") || running.includes("http"))) ||
+            {(id === "transfer" && (running.includes("tftp") || running.includes("http") || running.includes("ftp"))) ||
+            (id === "snmp" && running.includes("snmptrap")) ||
             (id === "syslog" && running.includes("syslog")) ? (
               <span className="ml-auto w-1.5 h-1.5 rounded-full bg-ok" title="Servidor activo" />
             ) : null}

@@ -34,7 +34,13 @@ export interface ScpRequest {
   files: string[];
   remoteDir: string;
   session: Session;
+  /** "scp" (clásico), "sftp" (scp sobre SFTP) o "shell" (sftp interactivo). */
+  mode?: "scp" | "sftp" | "shell";
 }
+
+type Proto = "tftp" | "http" | "ftp" | "scp" | "sftp";
+/** Marca en el comando que se reemplaza por usuario:contraseña del servidor FTP al ejecutar. */
+const FTP_CRED = "{{ftp}}";
 
 interface Op {
   id: string;
@@ -72,7 +78,13 @@ export function FileManager({ terminals, settings: s, running, refreshRunning, o
   const profile = profiles.find((p) => p.id === profileId)!;
   const [fs, setFs] = useState(profile.fs);
   const [extra, setExtra] = useState("");
-  const [proto, setProto] = useState<"tftp" | "http" | "scp">("tftp");
+  const [proto, setProto] = useState<Proto>("tftp");
+  const ssh = proto === "scp" || proto === "sftp";
+  const canPull = ssh || (proto === "ftp" ? !!profile.ftp?.download : !!profile.download);
+  const canBackup = proto === "ftp" ? !!profile.ftp?.backup : !!profile.backup;
+  useEffect(() => {
+    if (proto === "ftp" && !profile.ftp) setProto("tftp");
+  }, [proto, profile]);
   const [verify, setVerify] = useState(true);
   const [ips, setIps] = useState<{ name: string; ip: string }[]>([]);
   const [ip, setIp] = useState("");
@@ -188,6 +200,28 @@ export function FileManager({ terminals, settings: s, running, refreshRunning, o
     refreshRunning();
   };
   const tempWrite = useRef(false);
+
+  // FTP: credenciales temporales del servidor de la app. La subida (equipo -> PC) se
+  // habilita solo mientras dura la operación, igual que en TFTP.
+  const tempFtpWrite = useRef(false);
+  const ensureFtp = async (write: boolean) => {
+    let info = await invoke<{ user: string; pass: string; write: boolean } | null>("ftp_server_info");
+    if (!info || (write && !info.write)) {
+      if (write) tempFtpWrite.current = true;
+      info = await invoke<{ user: string; pass: string; write: boolean }>("ftp_server_start", { port: s.ftpPort, allowWrite: write });
+      refreshRunning();
+    }
+    return info;
+  };
+  useEffect(() => {
+    if (!tempFtpWrite.current || ops.some((o) => o.status === "running" || o.status === "pending")) return;
+    tempFtpWrite.current = false;
+    invoke("ftp_server_start", { port: s.ftpPort, allowWrite: false })
+      .then(refreshRunning)
+      .catch(() => {});
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [ops]);
+
   useEffect(() => {
     if (!tempWrite.current || ops.some((o) => o.status === "running" || o.status === "pending")) return;
     tempWrite.current = false;
@@ -207,8 +241,12 @@ export function FileManager({ terminals, settings: s, running, refreshRunning, o
     (async () => {
       try {
         // La verificación MD5 no transfiere nada: no necesita servidor.
-        if (next.kind !== "verify") await ensureServer(next.kind === "send" && proto === "http" ? "http" : "tftp", next.kind !== "send");
-        const job = await invoke<string>("device_run", { conn: next.conn, command: next.command, timeoutSecs: TIMEOUT });
+        let command = next.command;
+        if (command.includes(FTP_CRED)) {
+          const info = await ensureFtp(next.kind !== "send");
+          command = command.split(FTP_CRED).join(`${info.user}:${info.pass}`);
+        } else if (next.kind !== "verify") await ensureServer(next.kind === "send" && proto === "http" ? "http" : "tftp", next.kind !== "send");
+        const job = await invoke<string>("device_run", { conn: next.conn, command, timeoutSecs: TIMEOUT });
         jobToOp.current.set(job, next.id);
       } catch (e) {
         setOps((l) => l.map((o) => (o.id === next.id ? { ...o, status: "error", error: String(e) } : o)));
@@ -259,9 +297,9 @@ export function FileManager({ terminals, settings: s, running, refreshRunning, o
 
   const enqueue = (kind: Op["kind"], files: string[]) => {
     if (!term) return setError("Conecta una sesión con el equipo primero");
-    if (proto === "scp" && (kind === "send" || kind === "pull")) {
-      if (!term.host) return setError("SCP requiere una sesión de red con host (no serial)");
-      const go = () => onScp({ upload: kind === "send", files, remoteDir: fs, session: term.session });
+    if (ssh && (kind === "send" || kind === "pull")) {
+      if (!term.host) return setError(`${proto.toUpperCase()} requiere una sesión de red con host (no serial)`);
+      const go = () => onScp({ upload: kind === "send", files, remoteDir: fs, session: term.session, mode: proto === "sftp" ? "sftp" : "scp" });
       const overwrite = kind === "send" ? files.filter((f) => remote?.files.some((r) => r.name === f)) : [];
       if (overwrite.length)
         onConfirm({ title: "¿Sobrescribir en el equipo?", message: overwrite.join(", "), label: "Sobrescribir", danger: true, action: go });
@@ -277,7 +315,18 @@ export function FileManager({ terminals, settings: s, running, refreshRunning, o
       kind,
       file,
       conn: term.connId,
-      command: kind === "send" ? profile.upload(vars(file), proto === "http" ? "http" : "tftp") : kind === "pull" ? profile.download!(vars(file)) : profile.backup!(vars(file)),
+      command:
+        proto === "ftp" && profile.ftp
+          ? kind === "send"
+            ? profile.ftp.upload(vars(file), FTP_CRED)
+            : kind === "pull"
+              ? profile.ftp.download!(vars(file), FTP_CRED)
+              : profile.ftp.backup!(vars(file), FTP_CRED)
+          : kind === "send"
+            ? profile.upload(vars(file), proto === "http" ? "http" : "tftp")
+            : kind === "pull"
+              ? profile.download!(vars(file))
+              : profile.backup!(vars(file)),
       status: "pending",
       lines: [],
     }));
@@ -365,12 +414,16 @@ export function FileManager({ terminals, settings: s, running, refreshRunning, o
           </select>
         </Label>
         <Label text="Protocolo">
-          <select className="field" value={proto} onChange={(e) => setProto(e.target.value as "tftp" | "http" | "scp")}>
+          <select className="field" value={proto} onChange={(e) => setProto(e.target.value as Proto)}>
             <option value="tftp">TFTP</option>
             <option value="http" disabled={profileId === "huawei"}>
               HTTP (solo envío, rápido)
             </option>
+            <option value="ftp" disabled={!profile.ftp}>
+              FTP (sin cifrar)
+            </option>
             <option value="scp">SCP (cifrado)</option>
+            <option value="sftp">SFTP (cifrado)</option>
           </select>
         </Label>
       </div>
@@ -380,6 +433,16 @@ export function FileManager({ terminals, settings: s, running, refreshRunning, o
             <input type="checkbox" className="accent-[var(--accent)]" checked={verify} onChange={(e) => setVerify(e.target.checked)} />
             Verificar MD5 después de enviar
           </label>
+        )}
+        {proto === "sftp" && (
+          <span>
+            SFTP abre una pestaña donde escribes la contraseña. Requiere servidor SFTP en el equipo (NX-OS: <code>feature sftp-server</code>; Junos y Linux lo traen con SSH).
+          </span>
+        )}
+        {proto === "ftp" && (
+          <span className="text-warn">
+            FTP no cifra: el usuario y la contraseña temporales del servidor de la app viajan en claro y quedan en el historial del equipo. Úsalo solo en redes de gestión.
+          </span>
         )}
         {proto === "scp" && (
           <span>
@@ -426,7 +489,7 @@ export function FileManager({ terminals, settings: s, running, refreshRunning, o
             onDrop: (e) => {
               setDrop(null);
               const names = e.dataTransfer.getData(DND_REMOTE).split("\n").filter(Boolean);
-              if (names.length && (profile.download || proto === "scp")) enqueue("pull", names);
+              if (names.length && canPull) enqueue("pull", names);
             },
           }}
           footer={`${local.length} archivos`}
@@ -462,9 +525,9 @@ export function FileManager({ terminals, settings: s, running, refreshRunning, o
             Enviar <ArrowRight size={14} />
           </Btn>
           <Btn
-            disabled={!selRemote.size || !term || (!profile.download && proto !== "scp")}
+            disabled={!selRemote.size || !term || !canPull}
             onClick={() => enqueue("pull", [...selRemote])}
-            title={profile.download || proto === "scp" ? "Trae los archivos seleccionados a este PC" : "No soportado por TFTP en este equipo: usa SCP"}
+            title={canPull ? "Trae los archivos seleccionados a este PC" : `No soportado por ${proto.toUpperCase()} en este equipo: usa SCP o SFTP`}
           >
             <ArrowLeft size={14} /> Traer
           </Btn>
@@ -478,7 +541,7 @@ export function FileManager({ terminals, settings: s, running, refreshRunning, o
           </Btn>
           <Btn
             kind="ghost"
-            disabled={!term || !profile.backup}
+            disabled={!term || !canBackup}
             onClick={() => enqueue("backup", [backupName])}
             title="copy running-config a este PC"
           >

@@ -111,7 +111,7 @@ export function CredentialSettings() {
                   setConfirmReset(false);
                   await run("vault_reset", {}, "Bóveda eliminada. Las sesiones piden la contraseña en la terminal.");
                 }}
-                className="px-3 h-7 rounded-md bg-danger text-accent-fg font-medium hover:opacity-90"
+                className="px-3 h-7 rounded-md bg-danger text-danger-fg font-medium hover:opacity-90"
               >
                 Borrar todo
               </button>

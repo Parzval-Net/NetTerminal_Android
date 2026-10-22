@@ -25,7 +25,7 @@ export function Btn({
   const styles = {
     default: "border border-line hover:bg-hover",
     primary: "bg-accent text-accent-fg font-medium hover:opacity-90",
-    danger: "bg-danger text-accent-fg font-medium hover:opacity-90",
+    danger: "bg-danger text-danger-fg font-medium hover:opacity-90",
     ghost: "text-muted hover:text-fg hover:bg-hover",
   }[kind];
   return (

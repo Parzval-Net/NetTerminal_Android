@@ -4,8 +4,9 @@ import type { HlRule } from "./highlight";
 import { type AlertRule, exampleAlerts } from "./alerts";
 import type { MonitorTarget } from "./monitors";
 import type { TopoSnapshot, Topology } from "./topology";
+import type { SnmpProfile } from "./snmp";
 
-export type ModuleId = "monitor" | "diag" | "topology" | "subnet" | "perf" | "transfer" | "syslog" | "plugins" | "backup";
+export type ModuleId = "monitor" | "diag" | "topology" | "subnet" | "perf" | "transfer" | "syslog" | "plugins" | "backup" | "snmp";
 
 export interface SpeedResult {
   ts: string;
@@ -86,6 +87,12 @@ export interface Settings {
   /** Carpeta de logs elegida por el usuario (ruta absoluta); vacío: `data/logs`. */
   logsDir: string;
   alertRules: AlertRule[];
+  /** SNMP: perfiles sin secretos (los secretos solo en la bóveda, si el usuario lo pide). */
+  snmpProfiles: SnmpProfile[];
+  snmpTrapPort: number;
+  /** IP local del receptor de traps ("" = 127.0.0.1). */
+  snmpTrapBind: string;
+  ftpPort: number;
 }
 
 export interface UpdateInfo {
@@ -131,7 +138,7 @@ export const defaultSettings: Settings = {
   mcpToken: "",
   mcpApproval: true,
   mcpReadOnly: false,
-  modules: { monitor: true, diag: true, topology: true, subnet: true, perf: true, transfer: true, syslog: true, plugins: true, backup: true },
+  modules: { monitor: true, diag: true, topology: true, subnet: true, perf: true, transfer: true, syslog: true, plugins: true, backup: true, snmp: true },
   monitors: [],
   tftpPort: 69,
   httpPort: 8080,
@@ -151,6 +158,10 @@ export const defaultSettings: Settings = {
   logMask: true,
   logsDir: "",
   alertRules: exampleAlerts,
+  snmpProfiles: [],
+  snmpTrapPort: 162,
+  snmpTrapBind: "",
+  ftpPort: 21,
 };
 
 /** Opciones de log que se pasan a set_logging. */

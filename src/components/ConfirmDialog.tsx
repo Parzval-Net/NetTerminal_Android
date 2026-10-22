@@ -44,7 +44,7 @@ export function ConfirmDialog({ title, message, confirmLabel, danger, onConfirm,
           <button
             autoFocus
             onClick={onConfirm}
-            className={`px-3.5 h-8 rounded-md text-accent-fg font-medium hover:opacity-90 ${danger ? "bg-danger" : "bg-accent"}`}
+            className={`px-3.5 h-8 rounded-md font-medium hover:opacity-90 ${danger ? "bg-danger text-danger-fg" : "bg-accent text-accent-fg"}`}
           >
             {confirmLabel}
           </button>

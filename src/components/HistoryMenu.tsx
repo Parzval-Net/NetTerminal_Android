@@ -57,7 +57,8 @@ export function HistoryMenu({ historyKey, connected, onResend }: Props) {
         className={`flex items-center gap-1 h-5 px-1.5 rounded hover:bg-hover hover:text-fg ${open ? "text-fg bg-hover" : ""}`}
       >
         <History size={12} />
-        Historial
+        {/* Como en StatusBar: solo el icono cuando la barra es angosta (el title queda). */}
+        <span className="hidden @[52rem]:inline">Historial</span>
       </button>
       {open && (
         <div className="absolute bottom-7 right-0 z-40 w-[420px] max-w-[80vw] bg-panel border border-line rounded-lg shadow-pop text-[12px] text-fg overflow-hidden">

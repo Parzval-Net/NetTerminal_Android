@@ -8,6 +8,7 @@ import { TerminalView, TermController } from "./components/TerminalView";
 import { CredChange, SessionModal } from "./components/SessionModal";
 import { CommandPalette } from "./components/CommandPalette";
 import { QuickConnectDialog } from "./components/QuickConnectDialog";
+import { QuickBolt } from "./components/SessionIcon";
 import { ConfirmDialog } from "./components/ConfirmDialog";
 import { NotesPanel } from "./components/NotesPanel";
 import { CommandsPanel } from "./components/CommandsPanel";
@@ -27,7 +28,7 @@ import { ApprovalDialog, ApprovalRequest } from "./components/ApprovalDialog";
 import type { Section } from "./components/SettingsModal";
 import type { Macro, UpdateInfo } from "./lib/settings";
 import { openUrl } from "@tauri-apps/plugin-opener";
-import { Sparkles, X as XIcon, Zap } from "lucide-react";
+import { Sparkles, X as XIcon } from "lucide-react";
 import { listen } from "@tauri-apps/api/event";
 import { ConnStatus, Session, Tab, TabState, historyKey, tabTitle } from "./types";
 import { localOsVendor, modLabel, shortcutFor } from "./lib/platform";
@@ -879,15 +880,15 @@ function Workspace({
         ...s,
         id: `scp-${Date.now()}`,
         type: "local",
-        name: `SCP ${req.upload ? "→" : "←"} ${s.name}`,
+        name: req.mode === "shell" ? `SFTP ${s.name}` : `${req.mode === "sftp" ? "SFTP" : "SCP"} ${req.upload ? "→" : "←"} ${s.name}`,
         // Telnet/TCP usan su propio puerto: SCP siempre va por SSH.
         port: s.type === "ssh" ? s.port : 22,
         highlight: "off",
         on_connect: undefined,
         auto_reconnect: false,
-        scp: { upload: req.upload, files: req.files, remote_dir: req.remoteDir },
+        scp: { upload: req.upload, files: req.files, remote_dir: req.remoteDir, mode: req.mode ?? "scp" },
       });
-      toast("Pestaña SCP abierta: escribe la contraseña del equipo ahí");
+      toast(`Pestaña ${req.mode && req.mode !== "scp" ? "SFTP" : "SCP"} abierta: escribe la contraseña del equipo ahí`);
     },
     setVendor: (catalogVendor: string) => update({ catalogVendor }),
     setPlatform: (platform: string | null) => activeTab && setTabPlatform(activeTab.id, platform),
@@ -1334,7 +1335,7 @@ function EmptyState({
     ["Buscar sesión o conexión rápida por texto", `${modLabel}K`, onPalette],
     [
       <span key="q" className="flex items-center gap-1.5">
-        <Zap size={14} className="text-warn" /> Conexión rápida (SSH, Telnet, Serial) sin guardar
+        <QuickBolt size={14} /> Conexión rápida (SSH, Telnet, Serial) sin guardar
       </span>,
       "",
       onQuick,

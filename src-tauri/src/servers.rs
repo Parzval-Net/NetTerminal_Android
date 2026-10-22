@@ -56,14 +56,14 @@ pub fn safe_path(root: &Path, requested: &str) -> Option<PathBuf> {
 }
 
 /// Verifica que la ruta real (tras resolver enlaces) siga dentro de `root`.
-fn inside_root(root: &Path, path: &Path) -> bool {
+pub(crate) fn inside_root(root: &Path, path: &Path) -> bool {
     let Ok(root) = root.canonicalize() else { return false };
     let target = if path.exists() { path.canonicalize() } else { path.parent().map(|p| p.canonicalize()).unwrap_or(Err(std::io::ErrorKind::NotFound.into())) };
     target.map(|t| t.starts_with(&root)).unwrap_or(false)
 }
 
 impl Servers {
-    fn flag(&self, name: &'static str) -> Arc<AtomicBool> {
+    pub(crate) fn flag(&self, name: &'static str) -> Arc<AtomicBool> {
         let f = Arc::new(AtomicBool::new(true));
         if let Some(old) = self.flags.lock().unwrap().insert(name, f.clone()) {
             old.store(false, Ordering::SeqCst);
@@ -185,6 +185,55 @@ impl Servers {
         });
         Ok(format!("Syslog escuchando en UDP {port}"))
     }
+
+    // ---------- Receptor de traps SNMP ----------
+
+    /// Muestra los traps e informs que llegan (v1, v2c y cabecera de v3). Responde los
+    /// informs v2c para que el equipo no los reintente. La community nunca se muestra.
+    pub fn start_snmptrap(&self, app: AppHandle, addr: SocketAddr, usm: Option<crate::snmp::V3Creds>) -> Result<String, String> {
+        self.stop("snmptrap");
+        let port = addr.port();
+        let mut sock = UdpSocket::bind(addr);
+        for _ in 0..10 {
+            match &sock {
+                Err(e) if e.kind() == std::io::ErrorKind::AddrInUse => {
+                    std::thread::sleep(Duration::from_millis(150));
+                    sock = UdpSocket::bind(addr);
+                }
+                _ => break,
+            }
+        }
+        let sock = sock.map_err(|e| bind_error("Traps SNMP", port, e))?;
+        sock.set_read_timeout(Some(Duration::from_millis(200))).ok();
+        let flag = self.flag("snmptrap");
+        let mut usm = usm.map(crate::snmp::TrapUsm::new);
+        std::thread::spawn(move || {
+            let mut buf = vec![0u8; 65535];
+            let mut batch: Vec<crate::snmp::Trap> = Vec::new();
+            let mut last_flush = Instant::now();
+            while flag.load(Ordering::SeqCst) {
+                if let Ok((n, peer)) = sock.recv_from(&mut buf) {
+                    // Tope por lote: una ráfaga no debe congelar la interfaz.
+                    if batch.len() < 500 {
+                        match crate::snmp::decode_trap(&buf[..n], peer, usm.as_mut()) {
+                            Ok((trap, reply)) => {
+                                if let Some(r) = reply {
+                                    let _ = sock.send_to(&r, peer);
+                                }
+                                batch.push(trap);
+                            }
+                            Err(e) => batch.push(crate::snmp::Trap::invalid(peer, e)),
+                        }
+                    }
+                }
+                if !batch.is_empty() && last_flush.elapsed() > Duration::from_millis(250) {
+                    let _ = app.emit("snmp-trap", std::mem::take(&mut batch));
+                    last_flush = Instant::now();
+                }
+            }
+        });
+        Ok(format!("Receptor de traps escuchando en {addr} (UDP)"))
+    }
 }
 
 /// Descargas HTTP simultáneas como máximo (un hilo por cliente).
@@ -232,7 +281,7 @@ fn bind_udp(port: u16) -> std::io::Result<UdpSocket> {
     Err(last.unwrap())
 }
 
-fn bind_error(what: &str, port: u16, e: std::io::Error) -> String {
+pub(crate) fn bind_error(what: &str, port: u16, e: std::io::Error) -> String {
     if e.kind() == std::io::ErrorKind::PermissionDenied && port < 1024 {
         format!("{what}: el puerto {port} requiere privilegios en este sistema. Usa un puerto mayor a 1024 (ej. {}).", port as u32 + 1000)
     } else if e.kind() == std::io::ErrorKind::AddrInUse {
@@ -285,7 +334,7 @@ fn tftp_error(sock: &UdpSocket, peer: SocketAddr, code: u16, msg: &str) {
 /// Sesiones TFTP simultáneas como máximo.
 const TFTP_MAX_SESSIONS: usize = 16;
 /// Tamaño máximo de un archivo recibido por TFTP (imágenes de firmware grandes incluidas).
-const TFTP_MAX_UPLOAD: u64 = 8 * 1024 * 1024 * 1024;
+pub(crate) const TFTP_MAX_UPLOAD: u64 = 8 * 1024 * 1024 * 1024;
 
 fn tftp_session(app: AppHandle, root: PathBuf, allow_write: bool, peer: SocketAddr, req: Vec<u8>, flag: Arc<AtomicBool>) {
     let Ok(sock) = UdpSocket::bind(("0.0.0.0", 0)) else { return };

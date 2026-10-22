@@ -41,6 +41,19 @@ tauri-plugin-updater = "2"
 chacha20poly1305 = { version = "0.10", default-features = false, features = ["alloc", "getrandom"] }
 argon2 = { version = "0.5", default-features = false, features = ["alloc", "zeroize"] }
 zeroize = { version = "1", features = ["derive"] }
+# SNMPv3 (USM): HMAC-MD5/SHA-1/SHA-2 y AES-128-CFB, de RustCrypto como el resto del cifrado.
+hmac = "0.12"
+sha1 = "0.10"
+aes = "0.8"
+cfb-mode = "0.8"
+# DES-CBC solo para equipos antiguos (opción "legado" en la interfaz).
+des = "0.8"
+cbc = "0.1"
+# Cliente FTP/FTPS (TLS explícito con el rustls + ring que ya usa la app).
+# "no-log" apaga en compilación las macros de `log` (global): suppaftp registraría el comando PASS
+# en nivel trace. La app no instala un logger, así que no se pierde salida.
+suppaftp = { version = "12.2", default-features = false, features = ["rustls-ring", "no-log"] }
+rustls-platform-verifier = "0.7"
 
 [target.'cfg(target_os = "macos")'.dependencies]
 keyring = { version = "3.6", default-features = false, features = ["apple-native"] }

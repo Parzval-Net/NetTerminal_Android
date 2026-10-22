@@ -9,9 +9,9 @@
   --field: #ffffff;
   --border: #e1e4e8;
   --text: #1f2328;
-  --muted: #636b78; /* ≥4.5:1 también sobre --chrome y --hover */
-  --accent: #2563eb;
-  /* Texto sobre rellenos de color (accent, danger, warn, ok). */
+  /* muted/accent/warn: texto >= 4,5:1 sobre chrome, hover y selected (WCAG 1.4.3). */
+  --muted: #5f6773;
+  --accent: #1d5be0;
   --accent-fg: #ffffff;
   /* Borde de controles de formulario y pistas de switches: ≥3:1 (WCAG 1.4.11). */
   --field-border: #858c97;
@@ -20,8 +20,13 @@
   --hover: rgba(15, 23, 42, 0.05);
   --selected: rgba(37, 99, 235, 0.1);
   --danger: #d1242f;
+  --danger-fg: #ffffff;
   --ok: #1a7f37;
-  --warn: #9a6512;
+  --warn: #8a5a00;
+  /* Rayo de conexión rápida: relleno amarillo con borde oscuro, legible sobre cualquier
+     fondo de pestaña (interfaz o tema de terminal, claro u oscuro). Igual en ambos modos. */
+  --bolt: #f5b83d;
+  --bolt-edge: #5c3b00;
   --shadow: 0 12px 40px rgba(15, 23, 42, 0.18);
   color-scheme: light;
 }
@@ -33,15 +38,16 @@
   --field: #12151a;
   --border: #272c35;
   --text: #e4e7eb;
-  --muted: #8a919c;
+  --muted: #99a0ab;
   --accent: #5b8def;
-  /* Texto oscuro: el blanco sobre los rellenos claros del modo oscuro no llega a 4.5:1. */
-  --accent-fg: #0e1116;
+  /* Texto oscuro sobre el azul: el blanco daba 3,2:1. */
+  --accent-fg: #0b1220;
   --field-border: #6b7280;
   --diff-tint: 14%;
   --hover: rgba(255, 255, 255, 0.05);
   --selected: rgba(91, 141, 239, 0.16);
   --danger: #f2606a;
+  --danger-fg: #0e1116;
   --ok: #4cc472;
   --warn: #e0aa45;
   --shadow: 0 16px 48px rgba(0, 0, 0, 0.55);
@@ -62,6 +68,9 @@
   --color-hover: var(--hover);
   --color-selected: var(--selected);
   --color-danger: var(--danger);
+  --color-danger-fg: var(--danger-fg);
+  --color-bolt: var(--bolt);
+  --color-bolt-edge: var(--bolt-edge);
   --color-term: var(--term-bg, var(--bg));
   --color-term-fg: var(--term-fg, var(--text));
   --color-ok: var(--ok);
@@ -117,8 +126,10 @@ button {
   outline: none;
 }
 
+/* El placeholder por defecto del navegador queda en ~3,2:1; se usa el gris del tema. */
 .field::placeholder {
   color: var(--muted);
+  opacity: 1;
 }
 
 .field:focus {

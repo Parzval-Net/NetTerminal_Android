@@ -142,8 +142,8 @@ export function BroadcastDialog({ text, resolved, declared, delayMs, onCancel, o
             autoFocus={!needsCount}
             disabled={!ok}
             onClick={() => onConfirm(delay)}
-            className={`px-3.5 h-8 rounded-md text-accent-fg font-medium hover:opacity-90 disabled:opacity-40 ${
-              risk === "disruptive" ? "bg-danger" : risk === "change" ? "bg-warn" : "bg-accent"
+            className={`px-3.5 h-8 rounded-md font-medium hover:opacity-90 disabled:opacity-40 ${
+              risk === "disruptive" ? "bg-danger text-danger-fg" : risk === "change" ? "bg-warn text-accent-fg" : "bg-accent text-accent-fg"
             }`}
           >
             Enviar a {n} {n === 1 ? "equipo" : "equipos"}
@@ -186,7 +186,7 @@ export function BroadcastBar() {
         {run.running ? (
           <button
             onClick={stopBroadcast}
-            className="flex items-center gap-1.5 px-2.5 h-6 rounded-md bg-danger text-accent-fg font-medium hover:opacity-90"
+            className="flex items-center gap-1.5 px-2.5 h-6 rounded-md bg-danger text-danger-fg font-medium hover:opacity-90"
           >
             <Square size={10} fill="currentColor" /> Detener
           </button>

@@ -38,7 +38,7 @@ pub struct IperfParams {
     pub server: Option<bool>,
 }
 
-fn emit(app: &AppHandle, job: &str, kind: &'static str, text: String, data: Option<Value>) {
+pub(crate) fn emit(app: &AppHandle, job: &str, kind: &'static str, text: String, data: Option<Value>) {
     let _ = app.emit("tool-job", JobEvent { job: job.into(), kind, text, data });
 }
 
@@ -153,6 +153,18 @@ impl Jobs {
             c.args(["-b", &bw]);
         }
         self.spawn(app, c, true)
+    }
+
+    /// Tarea propia cancelable con `tool_stop` (recorridos SNMP, transferencias FTP).
+    /// Devuelve el id, la marca de cancelación y la función que la da de baja al terminar.
+    pub fn cancelable(&self) -> (String, Arc<AtomicBool>, impl FnOnce() + Send + 'static) {
+        let job = uuid::Uuid::new_v4().to_string();
+        let cancel = Arc::new(AtomicBool::new(false));
+        self.cancels.lock().unwrap().insert(job.clone(), cancel.clone());
+        let (cancels, id) = (self.cancels.clone(), job.clone());
+        (job, cancel, move || {
+            cancels.lock().unwrap().remove(&id);
+        })
     }
 
     /// Speedtest con los endpoints públicos de speed.cloudflare.com.

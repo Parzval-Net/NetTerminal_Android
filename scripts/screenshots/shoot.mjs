@@ -10,7 +10,7 @@ import { join } from "node:path";
 import { fileURLToPath } from "node:url";
 
 const CHROME = process.env.CHROME ?? "/Applications/Google Chrome.app/Contents/MacOS/Google Chrome";
-const BASE = `http://localhost:${process.env.PORT ?? 1430}/scripts/screenshots/demo.html`;
+const BASE = process.env.BASE ?? `http://localhost:${process.env.PORT ?? 1430}/scripts/screenshots/demo.html`;
 const OUT = process.env.OUT ?? fileURLToPath(new URL("../../docs/screenshots/", import.meta.url));
 const SHOTS = [
   // Todas en modo claro para que sean uniformes; el modo oscuro y los temas van aparte.
@@ -33,12 +33,15 @@ const SHOTS = [
   ["pestanas-verticales", "vertical", "light"],
   ["credenciales", "credentials", "light"],
   ["notas-protegidas", "secure-note", "light"],
+  ["snmp", "snmp", "light"],
+  ["transferencias", "transfer", "light"],
   ["modo-oscuro", "terminal", "dark"],
   ["pestanas-verticales-oscuro", "vertical", "dark"],
   ["modo-oscuro-dividida", "split", "dark"],
   ["conexion-rapida", "quick", "light"],
   ["conexion-rapida-serial", "quickserial", "dark"],
   ["conexion-rapida-pestana", "quicktab", "light"],
+  ["conexion-rapida-pestana-oscuro", "quicktab", "dark"],
   ["ajustes-oscuro", "settings", "dark"],
   ["ajustes-logs", "logs", "light", { query: "&logsdir=1" }],
   ["acerca-oscuro", "about", "dark"],

@@ -1,8 +1,8 @@
 import { useEffect, useMemo, useState } from "react";
 import { invoke } from "@tauri-apps/api/core";
-import { History, Search, Zap } from "lucide-react";
+import { History, Search } from "lucide-react";
 import { Session, sessionTarget } from "../types";
-import { SessionIcon, typeLabel } from "./SessionIcon";
+import { QuickBolt, SessionIcon, typeLabel } from "./SessionIcon";
 
 interface Props {
   sessions: Session[];
@@ -96,8 +96,20 @@ export function CommandPalette({ sessions, onClose, onOpen }: Props) {
   return (
     <div className="fixed inset-0 z-50 flex justify-center pt-[12vh] bg-black/25" onMouseDown={onClose}>
       <div
+        role="dialog"
+        aria-modal="true"
+        aria-label="Buscar sesión o conexión rápida"
         className="w-[520px] max-w-[92vw] h-fit bg-panel border border-line rounded-xl shadow-pop overflow-hidden"
         onMouseDown={(e) => e.stopPropagation()}
+        onKeyDown={(e) => {
+          // Foco atrapado: Tab no debe salir a la barra lateral ni a la terminal de detrás.
+          if (e.key !== "Tab") return;
+          const f = Array.from(e.currentTarget.querySelectorAll<HTMLElement>("input, button"));
+          const i = f.indexOf(document.activeElement as HTMLElement);
+          const next = f[(i + (e.shiftKey ? -1 : 1) + f.length) % f.length];
+          e.preventDefault();
+          next?.focus();
+        }}
       >
         <div className="flex items-center gap-2.5 px-4 h-12 border-b border-line">
           <Search size={16} className="text-muted" />
@@ -140,7 +152,7 @@ export function CommandPalette({ sessions, onClose, onOpen }: Props) {
               {isRecent ? (
                 <History size={15} className="text-muted shrink-0" />
               ) : quick ? (
-                <Zap size={15} className="text-warn shrink-0" />
+                <QuickBolt size={15} />
               ) : (
                 <SessionIcon type={s.type} size={15} />
               )}

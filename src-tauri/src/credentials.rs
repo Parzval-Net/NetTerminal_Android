@@ -25,6 +25,10 @@ pub const MAX_PASSWORD: usize = 1024;
 const MIN_MASTER: usize = 8;
 const MAX_ID: usize = 128;
 
+/// Prefijo de entradas que no son de sesiones (secretos SNMP por perfil). La limpieza de
+/// entradas huérfanas al guardar la contraseña de una sesión no las toca.
+pub const NS_SNMP: &str = "snmp:";
+
 pub const LOCKED: &str = "La bóveda está bloqueada. Desbloquéala en Ajustes › Credenciales";
 
 #[derive(Clone, Copy, PartialEq, Debug)]
@@ -408,7 +412,8 @@ impl Credentials {
             if let Some(mut old) = e.0.insert(id.to_string(), password.to_string()) {
                 old.zeroize();
             }
-            let stale: Vec<String> = e.0.keys().filter(|k| *k != id && !valid.contains(k)).cloned().collect();
+            let stale: Vec<String> =
+                e.0.keys().filter(|k| *k != id && !k.starts_with(NS_SNMP) && !valid.contains(k)).cloned().collect();
             for k in stale {
                 if let Some(mut v) = e.0.remove(&k) {
                     v.zeroize();
@@ -512,9 +517,11 @@ mod tests {
         c.unlock("nueva-maestra").unwrap();
         assert_eq!(c.get("s1").as_deref().map(|s| s.as_str()), Some("Cl4ve$ecreta"));
 
-        // Entradas huérfanas se limpian al guardar otra.
+        // Entradas huérfanas se limpian al guardar otra; las de SNMP no son de sesiones.
+        c.set("snmp:core", "{\"community\":\"x\"}", &[]).unwrap();
         c.set("s2", "otra", &["s2".into()]).unwrap();
         assert!(!c.has("s1").unwrap());
+        assert!(c.has("snmp:core").unwrap());
         c.delete("s2").unwrap();
         assert!(!c.has("s2").unwrap());
         std::fs::remove_dir_all(&d).unwrap();
