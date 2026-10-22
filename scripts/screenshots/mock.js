@@ -321,8 +321,8 @@ const handlers = {
   },
   get_settings: () => settings,
   save_settings: () => null,
-  app_version: () => "0.8.0",
-  update_check: () => ({ current: "0.8.0", latest: "0.8.0", newer: false, url: "", notes: "", published: "", supported: true, reason: null }),
+  app_version: () => "0.9.0",
+  update_check: () => ({ current: "0.9.0", latest: "0.9.0", newer: false, url: "", notes: "", published: "", supported: true, reason: null }),
   app_repo: () => "Parzval-Net/Net_Terminal",
   cmdpacks_list: () => [],
   list_notes: () => [
