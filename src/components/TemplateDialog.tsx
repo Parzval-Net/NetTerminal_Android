@@ -13,6 +13,9 @@ export function fillTemplate(text: string, values: Record<string, string>): stri
 
 const STORE = "templateValues";
 
+/** Variables con secretos: no se guardan en el almacenamiento local ni se muestran. */
+const SECRET_VAR = /pass|pwd|secret|clave|contrase|key|token|psk|community|auth/i;
+
 function remembered(): Record<string, string> {
   try {
     return JSON.parse(localStorage.getItem(STORE) ?? "{}");
@@ -32,7 +35,7 @@ export function TemplateDialog({ text, onSubmit, onCancel }: Props) {
   const names = templateVars(text);
   const [values, setValues] = useState<Record<string, string>>(() => {
     const prev = remembered();
-    return Object.fromEntries(names.map((n) => [n, prev[n] ?? ""]));
+    return Object.fromEntries(names.map((n) => [n, SECRET_VAR.test(n) ? "" : (prev[n] ?? "")]));
   });
 
   useEffect(() => {
@@ -43,12 +46,15 @@ export function TemplateDialog({ text, onSubmit, onCancel }: Props) {
 
   const win = useDragResize<HTMLFormElement>("templateWindow");
   const missing = names.filter((n) => !values[n]?.trim());
-  const preview = fillTemplate(text, values).split("\n").slice(0, 6).join("\n");
+  const masked = Object.fromEntries(names.map((n) => [n, SECRET_VAR.test(n) && values[n] ? "••••••" : (values[n] ?? "")]));
+  const preview = fillTemplate(text, masked).split("\n").slice(0, 6).join("\n");
 
   const submit = () => {
     if (missing.length) return;
     try {
-      localStorage.setItem(STORE, JSON.stringify({ ...remembered(), ...values }));
+      // Se descartan además secretos guardados por versiones anteriores.
+      const keep = Object.entries({ ...remembered(), ...values }).filter(([n]) => !SECRET_VAR.test(n));
+      localStorage.setItem(STORE, JSON.stringify(Object.fromEntries(keep)));
     } catch {
       /* sin almacenamiento: no se recuerdan valores */
     }
@@ -68,7 +74,7 @@ export function TemplateDialog({ text, onSubmit, onCancel }: Props) {
       >
         <header {...win.handle} className="shrink-0 px-5 pt-4 pb-2 select-none">
           <h2 className="text-[14px] font-semibold">Completar plantilla</h2>
-          <p className="text-muted text-[12px]">Los valores se recuerdan para la próxima vez.</p>
+          <p className="text-muted text-[12px]">Los valores se recuerdan para la próxima vez, salvo contraseñas y claves.</p>
         </header>
         <div className="flex-1 min-h-0 px-5 py-2 space-y-2.5 overflow-y-auto">
           {names.map((n, i) => (
@@ -79,6 +85,8 @@ export function TemplateDialog({ text, onSubmit, onCancel }: Props) {
               <input
                 className="field"
                 autoFocus={i === 0}
+                type={SECRET_VAR.test(n) ? "password" : "text"}
+                autoComplete="off"
                 value={values[n] ?? ""}
                 onChange={(e) => setValues((v) => ({ ...v, [n]: e.target.value }))}
               />

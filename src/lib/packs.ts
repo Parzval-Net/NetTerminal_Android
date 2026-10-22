@@ -217,6 +217,43 @@ const ETHTOOL_SET = /^ethtool -s\b/;
 /** Dentro de un bloque de configuración, estas órdenes cortan servicio. */
 const DISRUPTIVE_IN_CONFIG = /^(shutdown|set status down|disable|no ip address|undo ip address|set .*admin-status down)\b/i;
 
+/**
+ * ";" "&&" "||" y "&" encadenan otro comando en la misma línea (shells, cmd y NX-OS): se
+ * separan para evaluar cada parte y que "cat x; reboot" no pase como consulta. No separan
+ * dentro de comillas ni de (), {} o [] (filtros de tcpdump, hashtables de PowerShell), ni en
+ * "2>&1" o "&>". Lo que queda agrupado no se reconoce como consulta y pide confirmación.
+ */
+function splitChain(line: string): string[] {
+  const parts: string[] = [];
+  let quote = "";
+  let depth = 0;
+  let start = 0;
+  for (let i = 0; i < line.length; i++) {
+    const c = line[i];
+    if (quote) {
+      if (c === quote) quote = "";
+      continue;
+    }
+    if (c === "'" || c === '"') quote = c;
+    else if ("({[".includes(c)) depth++;
+    else if (")}]".includes(c)) depth = Math.max(0, depth - 1);
+    else if (depth === 0) {
+      const two = line.slice(i, i + 2);
+      const sep =
+        c === ";" ? 1 : two === "&&" || two === "||" ? 2 : c === "&" && !/[<>&]/.test(line[i - 1] ?? "") && line[i + 1] !== ">" ? 1 : 0;
+      if (sep) {
+        parts.push(line.slice(start, i));
+        start = i + sep;
+        i += sep - 1;
+      }
+    }
+  }
+  // Comillas o paréntesis sin cerrar (un apóstrofo en una descripción) no esconden un separador.
+  if (quote || depth) return line.split(/;|&&|\|\||&/);
+  parts.push(line.slice(start));
+  return parts;
+}
+
 const riskCache = new Map<string, Risk>();
 
 /**
@@ -245,7 +282,10 @@ function evalRisk(cmd: string): Risk {
   const multi = lines.length > 1;
   // "config vdom / edit X" o "config global": solo cambia de contexto.
   if (lines.every((l) => FORTI_CONTEXT.test(l)) && /^config (global|vdom)$/i.test(lines[0]) && lines.length <= 2) return "read";
-  for (const raw of cmd.split("\n").map((l) => l.trim()).filter(Boolean)) {
+  // Una sustitución `...` o $(...) ejecuta un comando que no se analiza.
+  if (/`|\$\(/.test(cmd)) risk = "change";
+  const parts = cmd.split("\n").flatMap(splitChain);
+  for (const raw of parts.map((l) => l.trim()).filter(Boolean)) {
     // "sudo" no cambia la naturaleza del comando: se evalúa lo que ejecuta.
     const segments = raw
       .split("|")

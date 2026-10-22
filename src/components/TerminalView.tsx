@@ -128,6 +128,13 @@ export const TerminalView = memo(function TerminalView({ id, session, active, vi
       scrollback: settings.scrollback,
       allowProposedApi: true,
       macOptionIsMeta: true,
+      // Enlaces OSC 8 que escribe el equipo: sin esto xterm usa confirm() + window.open con
+      // cualquier esquema (file:, javascript:, propios del sistema). Solo http(s), en el navegador.
+      linkHandler: {
+        activate: (_e, uri) => {
+          if (/^https?:\/\//i.test(uri)) openUrl(uri).catch(() => {});
+        },
+      },
       theme,
     });
     const fit = new FitAddon();

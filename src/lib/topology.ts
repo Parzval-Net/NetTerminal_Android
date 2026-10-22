@@ -582,10 +582,12 @@ export function diffTopology(before: Topology, now: Topology): TopoDiff {
 
 /** Diagrama en Mermaid (Confluence, GitLab, GitHub, Obsidian). */
 export function toMermaid(t: Topology): string {
-  const safe = (s: string) => s.replace(/"/g, "'");
+  // Nombres y puertos vienen de los equipos: sin comillas, HTML ni saltos de línea que cierren
+  // la etiqueta y agreguen directivas (click, href) o marcado al renderizar el diagrama.
+  const safe = (s: string) => s.replace(/"/g, "'").replace(/</g, "#lt;").replace(/>/g, "#gt;").replace(/[\r\n]+/g, " ");
   const id = (s: string) => s.replace(/[^\w]/g, "_");
   const lines = ["graph TD"];
-  for (const n of t.nodes) lines.push(`  ${id(n.id)}["${safe(n.name)}${n.ip ? `<br/>${n.ip}` : ""}"]`);
+  for (const n of t.nodes) lines.push(`  ${id(n.id)}["${safe(n.name)}${n.ip ? `<br/>${safe(n.ip)}` : ""}"]`);
   for (const l of t.links) {
     const g = linkGroup(t, l);
     lines.push(`  ${id(l.a)} ---|"${safe(l.aPort)} ↔ ${safe(l.bPort)}${g ? ` (${safe(g)})` : ""}"| ${id(l.b)}`);
