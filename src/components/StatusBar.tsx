@@ -1,5 +1,5 @@
 import { memo } from "react";
-import { ArrowLeftRight, BookOpen, KeyRound, Bot, Circle, CircleDot, NotebookPen, RotateCcw, Search, Settings, Unplug, Zap } from "lucide-react";
+import { ArrowLeftRight, BookOpen, KeyRound, Bot, Circle, CircleDot, NotebookPen, RotateCcw, Save, Search, Settings, Unplug, Zap } from "lucide-react";
 import { Tab, TabState, historyKey, sessionTarget, tunnelLabel } from "../types";
 import { HistoryMenu } from "./HistoryMenu";
 import { typeLabel } from "./SessionIcon";
@@ -25,6 +25,8 @@ interface Props {
   onAi: () => void;
   /** Reenvía un comando del historial (opcional: sin él no se muestra el historial). */
   onResend?: (cmd: string) => void;
+  /** Guarda la conexión rápida de la pestaña como sesión. */
+  onSaveAs?: () => void;
 }
 
 export const StatusBar = memo(function StatusBar({
@@ -43,6 +45,7 @@ export const StatusBar = memo(function StatusBar({
   aiEnabled,
   onAi,
   onResend,
+  onSaveAs,
 }: Props) {
   const gear = (
     <>
@@ -92,6 +95,13 @@ export const StatusBar = memo(function StatusBar({
           <ArrowLeftRight size={11} />
           {session.tunnels.length === 1 ? tunnelLabel(session.tunnels[0]) : `${session.tunnels.length} túneles`}
         </span>
+      )}
+
+      {onSaveAs && !session.id && session.type !== "local" && !session.scp && (
+        <BarBtn onClick={onSaveAs} title="Conexión rápida sin guardar: guardar como sesión">
+          <Save size={12} />
+          Guardar como sesión…
+        </BarBtn>
       )}
 
       {session.save_password && session.type !== "local" && (

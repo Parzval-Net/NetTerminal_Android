@@ -1,4 +1,4 @@
-import { ClipboardCopy, Columns2, Copy, Eraser, LayoutGrid, PanelLeftDashed, PanelTop, Pencil, RefreshCcw, RotateCcw, Rows2, Square, Undo2, Unplug, X } from "lucide-react";
+import { ClipboardCopy, Columns2, Copy, Eraser, LayoutGrid, PanelLeftDashed, PanelTop, Pencil, Plus, RefreshCcw, RotateCcw, Rows2, Save, Square, SquareTerminal, Undo2, Unplug, X, Zap } from "lucide-react";
 import type { ReactNode } from "react";
 import { SplitLayout, layoutLabel } from "../lib/split";
 import type { TabLayout } from "../lib/settings";
@@ -16,8 +16,17 @@ export interface TabMenuHandlers {
   onResetTerminal: (id: string) => void;
   onCopyAll: (id: string) => void;
   onClose: (id: string) => void;
+  onSaveAs?: (id: string) => void;
   tabLayout?: TabLayout;
   onTabLayout?: (layout: TabLayout) => void;
+}
+
+/** Menú del botón "+": terminal local, conexión rápida sin guardar y nueva sesión guardada. */
+export function newTabMenuItems(p: { onNew: () => void; onQuickConnect?: () => void; onNewSession?: () => void }): MenuItem[] {
+  const items: MenuItem[] = [["Terminal local", <SquareTerminal size={13} />, p.onNew]];
+  if (p.onQuickConnect) items.push(["Conexión rápida…", <Zap size={13} />, p.onQuickConnect]);
+  if (p.onNewSession) items.push(["Nueva sesión guardada…", <Plus size={13} />, p.onNewSession]);
+  return items;
 }
 
 /** Ítem para alternar pestañas horizontales/verticales (vacío si no hay manejador). */
@@ -40,6 +49,10 @@ export function tabMenuItems(t: Tab, state: TabState | undefined, p: TabMenuHand
     ["Copiar toda la salida", <ClipboardCopy size={13} />, () => p.onCopyAll(t.id)],
     ["Limpiar historial", <Eraser size={13} />, () => p.onClearScrollback(t.id)],
     ["Reiniciar terminal", <RefreshCcw size={13} />, () => p.onResetTerminal(t.id)],
+    // Solo pestañas abiertas por conexión rápida (sesión sin id) que no sean locales ni SCP.
+    ...(p.onSaveAs && !t.session.id && t.session.type !== "local" && !t.session.scp
+      ? ([["Guardar como sesión…", <Save size={13} />, () => p.onSaveAs!(t.id)]] as MenuItem[])
+      : []),
     ["Cerrar", <X size={13} />, () => p.onClose(t.id)],
     ...layoutItem(p),
   ];

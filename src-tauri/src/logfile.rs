@@ -41,6 +41,31 @@ pub struct LogVars {
     pub folder: String,
 }
 
+/// Valida una carpeta de logs elegida por el usuario: ruta absoluta, carpeta existente
+/// (se resuelven enlaces simbólicos), no la raíz del disco y con permiso de escritura
+/// (se prueba creando y borrando un archivo).
+pub fn validate_dir(path: &str) -> Result<PathBuf, String> {
+    let p = Path::new(path);
+    if !p.is_absolute() {
+        return Err("La carpeta debe ser una ruta absoluta".into());
+    }
+    let dir = p.canonicalize().map_err(|_| "La carpeta no existe".to_string())?;
+    if !dir.is_dir() {
+        return Err("La ruta no es una carpeta".into());
+    }
+    if dir.parent().is_none() {
+        return Err("No se puede usar la raíz del disco como carpeta de logs".into());
+    }
+    let probe = dir.join(format!(".netterminal-{}.tmp", uuid::Uuid::new_v4()));
+    match OpenOptions::new().write(true).create_new(true).open(&probe) {
+        Ok(_) => {
+            let _ = std::fs::remove_file(&probe);
+            Ok(dir)
+        }
+        Err(e) => Err(format!("Sin permiso de escritura en la carpeta: {e}")),
+    }
+}
+
 /// Una parte saneada: letras, dígitos, "-", "_" y "."; sin "." inicial (ni "..").
 fn sanitize_part(s: &str) -> String {
     let out: String = s
@@ -125,6 +150,7 @@ fn open_log(dir: &Path, opts: &LogOptions, vars: &LogVars, now: &chrono::DateTim
     if opts.append {
         let path = with_ext("");
         let file = OpenOptions::new().create(true).append(true).open(&path).map_err(|e| e.to_string())?;
+        crate::session_store::restrict(&path);
         let had = file.metadata().map(|m| m.len() > 0).unwrap_or(false);
         return Ok((file, path, had));
     }
@@ -132,7 +158,11 @@ fn open_log(dir: &Path, opts: &LogOptions, vars: &LogVars, now: &chrono::DateTim
     for n in 1..1000 {
         let path = if n == 1 { with_ext("") } else { with_ext(&format!("-{n}")) };
         match OpenOptions::new().write(true).create_new(true).open(&path) {
-            Ok(file) => return Ok((file, path, false)),
+            Ok(file) => {
+                // Salida de equipos: solo el usuario actual (600), también fuera de data/.
+                crate::session_store::restrict(&path);
+                return Ok((file, path, false));
+            }
             Err(e) if e.kind() == std::io::ErrorKind::AlreadyExists => continue,
             Err(e) => return Err(e.to_string()),
         }
@@ -446,6 +476,31 @@ mod tests {
         let dir = tmp();
         let w = LogWriter::create(&dir, LogOptions { pattern: "{folder}{session}".into(), ..Default::default() }, v).unwrap();
         assert!(w.path().starts_with(&dir));
+        drop(w);
+        std::fs::remove_dir_all(&dir).unwrap();
+    }
+
+    #[test]
+    fn validate_dir_rejects_relative_missing_and_root() {
+        assert!(validate_dir("logs").is_err());
+        assert!(validate_dir("/").is_err());
+        let dir = tmp();
+        assert!(validate_dir(&dir.join("no-existe").to_string_lossy()).is_err());
+        let ok = validate_dir(&dir.to_string_lossy()).unwrap();
+        assert_eq!(ok, dir.canonicalize().unwrap());
+        // La prueba de escritura no deja rastro.
+        assert_eq!(std::fs::read_dir(&dir).unwrap().count(), 0);
+        std::fs::remove_dir_all(&dir).unwrap();
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn log_files_are_private() {
+        use std::os::unix::fs::PermissionsExt;
+        let dir = tmp();
+        let w = LogWriter::create(&dir, LogOptions { pattern: "p".into(), ..Default::default() }, vars()).unwrap();
+        let mode = std::fs::metadata(w.path()).unwrap().permissions().mode() & 0o777;
+        assert_eq!(mode, 0o600);
         drop(w);
         std::fs::remove_dir_all(&dir).unwrap();
     }

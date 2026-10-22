@@ -1,5 +1,6 @@
 import { memo, useCallback, useState } from "react";
 import { Columns2, LayoutGrid, PanelLeft, Plus, Rows2, Wrench, X } from "lucide-react";
+import { newTabMenuItems } from "./tabMenu";
 import { SplitLayout, layoutLabel } from "../lib/split";
 import type { TabLayout } from "../lib/settings";
 import { MenuItem, layoutItem, splitMenuItems, tabMenuItems } from "./tabMenu";
@@ -15,6 +16,11 @@ export interface TabBarProps {
   onSelect: (id: string) => void;
   onClose: (id: string) => void;
   onNew: () => void;
+  /** Conexión rápida sin guardar y nueva sesión guardada (menú del "+"). */
+  onQuickConnect?: () => void;
+  onNewSession?: () => void;
+  /** Guarda una pestaña abierta con conexión rápida como sesión. */
+  onSaveAs?: (id: string) => void;
   onToggleSidebar: () => void;
   toolsOpen: boolean;
   onOpenTools: () => void;
@@ -44,6 +50,16 @@ export const statusColor: Record<ConnStatus, string> = {
   connected: "var(--ok)",
   closed: "var(--muted)",
 };
+
+/**
+ * Botón "cerrar" de una pestaña. La pestaña activa usa el fondo del tema de terminal, así que
+ * el color va sobre --term-fg (no sobre --muted, que es de la interfaz: en modo oscuro con un
+ * tema claro, o al revés, no contrasta). Siempre visible al enfocar con el teclado.
+ */
+export const closeBtnClass = (active: boolean) =>
+  `hidden group-hover:grid focus-visible:grid w-5 h-5 shrink-0 place-items-center rounded outline-none focus-visible:ring-2 focus-visible:ring-accent ${
+    active ? "text-term-fg/70 hover:text-term-fg hover:bg-term-fg/15" : "text-muted hover:text-fg hover:bg-hover"
+  }`;
 
 export const TabBar = memo(function TabBar(props: TabBarProps) {
   const {
@@ -117,7 +133,8 @@ export const TabBar = memo(function TabBar(props: TabBarProps) {
             <button
               onMouseDown={(e) => e.stopPropagation()}
               onClick={() => onClose("tools")}
-              className="hidden group-hover:grid w-5 h-5 place-items-center rounded text-muted hover:text-fg hover:bg-hover"
+              aria-label="Cerrar Herramientas"
+              className={closeBtnClass(false)}
             >
               <X size={12} />
             </button>
@@ -187,7 +204,8 @@ export const TabBar = memo(function TabBar(props: TabBarProps) {
                 onMouseDown={(e) => e.stopPropagation()}
                 onClick={() => onClose(t.id)}
                 title={`Cerrar (${modLabel}W)`}
-                className="hidden group-hover:grid w-5 h-5 place-items-center rounded text-muted hover:text-fg hover:bg-hover"
+                aria-label={`Cerrar ${tabTitle(t)}`}
+                className={closeBtnClass(active)}
               >
                 <X size={12} />
               </button>
@@ -197,7 +215,11 @@ export const TabBar = memo(function TabBar(props: TabBarProps) {
         {menu && <ContextMenu menu={menu} onClose={closeMenu} />}
         {!vertical && <button
           onClick={onNew}
-          title={`Terminal local (${modLabel}T)`}
+          onContextMenu={(e) => {
+            e.preventDefault();
+            setMenu({ x: e.clientX, y: e.clientY, items: newTabMenuItems(props) });
+          }}
+          title={`Terminal local (${modLabel}T) · clic derecho: conexión rápida o nueva sesión`}
           className="mb-1.5 ml-1 w-7 h-7 shrink-0 grid place-items-center rounded-md text-muted hover:text-fg hover:bg-hover"
         >
           <Plus size={16} />

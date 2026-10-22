@@ -3,8 +3,8 @@ import { PanelLeftClose, PanelLeftOpen, PanelTop, Plus, Wrench, X } from "lucide
 import { tabTitle } from "../types";
 import { ContextMenu } from "./Sidebar";
 import { SessionIcon } from "./SessionIcon";
-import { TabBarProps, statusColor } from "./TabBar";
-import { MenuItem, layoutItem, tabMenuItems } from "./tabMenu";
+import { TabBarProps, closeBtnClass, statusColor } from "./TabBar";
+import { MenuItem, layoutItem, newTabMenuItems, tabMenuItems } from "./tabMenu";
 import { modLabel } from "../lib/platform";
 
 const MIN_W = 160;
@@ -184,7 +184,7 @@ export const VerticalTabs = memo(function VerticalTabs(props: TabBarProps) {
                   aria-label="Cerrar Herramientas"
                   onMouseDown={(e) => e.stopPropagation()}
                   onClick={() => onClose("tools")}
-                  className="hidden group-hover:grid w-5 h-5 shrink-0 place-items-center rounded text-muted hover:text-fg hover:bg-hover"
+                  className={closeBtnClass(activeId === "tools")}
                 >
                   <X size={12} />
                 </button>
@@ -273,7 +273,7 @@ export const VerticalTabs = memo(function VerticalTabs(props: TabBarProps) {
                     onMouseDown={(e) => e.stopPropagation()}
                     onClick={() => onClose(t.id)}
                     title={`Cerrar (${modLabel}W)`}
-                    className="hidden group-hover:grid w-5 h-5 shrink-0 place-items-center rounded text-muted hover:text-fg hover:bg-hover"
+                    className={closeBtnClass(active)}
                   >
                     <X size={12} />
                   </button>
@@ -284,7 +284,11 @@ export const VerticalTabs = memo(function VerticalTabs(props: TabBarProps) {
         })}
         <button
           onClick={onNew}
-          title={`Terminal local (${modLabel}T)`}
+          onContextMenu={(e) => {
+            e.preventDefault();
+            setMenu({ x: e.clientX, y: e.clientY, items: newTabMenuItems(props) });
+          }}
+          title={`Terminal local (${modLabel}T) · clic derecho: conexión rápida o nueva sesión`}
           aria-label="Nueva terminal local"
           className={
             collapsed
