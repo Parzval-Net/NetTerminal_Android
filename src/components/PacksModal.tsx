@@ -77,7 +77,7 @@ export function PacksModal({ packs, disabled, onToggle, onChanged, onClose }: Pr
       >
         <header {...win.handle} className="shrink-0 flex items-center justify-between px-5 h-12 border-b border-line select-none">
           <h2 className="text-[14px] font-semibold">Packs de comandos</h2>
-          <button onClick={onClose} className="w-7 h-7 grid place-items-center rounded-md text-muted hover:text-fg hover:bg-hover">
+          <button onClick={onClose} aria-label="Cerrar" className="w-7 h-7 grid place-items-center rounded-md text-muted hover:text-fg hover:bg-hover">
             <X size={16} />
           </button>
         </header>

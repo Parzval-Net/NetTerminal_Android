@@ -36,7 +36,7 @@ export function ConfirmDialog({ title, message, confirmLabel, danger, onConfirm,
         <h2 {...win.handle} className="text-[14px] font-semibold mb-1 select-none">
           {title}
         </h2>
-        <p className="text-muted mb-5 whitespace-pre-wrap break-words max-h-40 overflow-hidden font-[inherit]">{message}</p>
+        <p className="text-muted mb-5 whitespace-pre-wrap break-words max-h-40 overflow-y-auto font-[inherit]">{message}</p>
         <div className="flex justify-end gap-2">
           <button onClick={onCancel} className="px-3.5 h-8 rounded-md border border-line hover:bg-hover">
             Cancelar
@@ -44,7 +44,7 @@ export function ConfirmDialog({ title, message, confirmLabel, danger, onConfirm,
           <button
             autoFocus
             onClick={onConfirm}
-            className={`px-3.5 h-8 rounded-md text-white font-medium hover:opacity-90 ${danger ? "bg-danger" : "bg-accent"}`}
+            className={`px-3.5 h-8 rounded-md text-accent-fg font-medium hover:opacity-90 ${danger ? "bg-danger" : "bg-accent"}`}
           >
             {confirmLabel}
           </button>

@@ -9,14 +9,19 @@
   --field: #ffffff;
   --border: #e1e4e8;
   --text: #1f2328;
-  --muted: #6a7280;
+  --muted: #636b78; /* ≥4.5:1 también sobre --chrome y --hover */
   --accent: #2563eb;
+  /* Texto sobre rellenos de color (accent, danger, warn, ok). */
   --accent-fg: #ffffff;
+  /* Borde de controles de formulario y pistas de switches: ≥3:1 (WCAG 1.4.11). */
+  --field-border: #858c97;
+  /* Intensidad del fondo de líneas agregadas/quitadas en diffs (texto ≥4.5:1). */
+  --diff-tint: 8%;
   --hover: rgba(15, 23, 42, 0.05);
   --selected: rgba(37, 99, 235, 0.1);
   --danger: #d1242f;
   --ok: #1a7f37;
-  --warn: #b7791f;
+  --warn: #9a6512;
   --shadow: 0 12px 40px rgba(15, 23, 42, 0.18);
   color-scheme: light;
 }
@@ -30,7 +35,10 @@
   --text: #e4e7eb;
   --muted: #8a919c;
   --accent: #5b8def;
-  --accent-fg: #ffffff;
+  /* Texto oscuro: el blanco sobre los rellenos claros del modo oscuro no llega a 4.5:1. */
+  --accent-fg: #0e1116;
+  --field-border: #6b7280;
+  --diff-tint: 14%;
   --hover: rgba(255, 255, 255, 0.05);
   --selected: rgba(91, 141, 239, 0.16);
   --danger: #f2606a;
@@ -46,6 +54,7 @@
   --color-panel: var(--panel);
   --color-field: var(--field);
   --color-line: var(--border);
+  --color-field-line: var(--field-border);
   --color-fg: var(--text);
   --color-muted: var(--muted);
   --color-accent: var(--accent);
@@ -101,11 +110,15 @@ button {
   height: 30px;
   padding: 0 10px;
   border-radius: 6px;
-  border: 1px solid var(--border);
+  border: 1px solid var(--field-border);
   background: var(--field);
   color: var(--text);
   font-size: 13px;
   outline: none;
+}
+
+.field::placeholder {
+  color: var(--muted);
 }
 
 .field:focus {

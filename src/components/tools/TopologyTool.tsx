@@ -115,7 +115,7 @@ function toSvg(t: Topology): string {
       `<rect x="${n.x - W / 2}" y="${n.y - H / 2}" width="${W}" height="${H}" rx="10" fill="${n.explored ? "#eaf1ff" : "#f4f5f7"}" stroke="${n.explored ? "#2563eb" : "#c3c8d0"}" stroke-width="1.5"/>`,
       `<text x="${n.x}" y="${n.y - 4}" font-size="13" font-weight="600" fill="#1f2328" text-anchor="middle">${esc(n.name)}</text>`,
     );
-    if (n.ip) parts.push(`<text x="${n.x}" y="${n.y + 14}" font-size="11" fill="#6a7280" text-anchor="middle">${esc(n.ip)}</text>`);
+    if (n.ip) parts.push(`<text x="${n.x}" y="${n.y + 14}" font-size="11" fill="#636b78" text-anchor="middle">${esc(n.ip)}</text>`);
   }
   parts.push("</svg>");
   return parts.join("\n");
@@ -553,7 +553,7 @@ export function TopologyTool({
                   <g
                     key={n.id}
                     style={{ cursor: ghost ? "default" : "grab" }}
-                    opacity={ghost ? 0.85 : route && !onRoute ? 0.35 : 1}
+                    opacity={route && !onRoute && !ghost ? 0.35 : 1}
                     onPointerDown={(e) => {
                       if (ghost) return;
                       (e.currentTarget.ownerSVGElement as SVGSVGElement).setPointerCapture(e.pointerId);
@@ -571,7 +571,7 @@ export function TopologyTool({
                       rx={10}
                       fill={n.explored ? "var(--selected)" : "var(--chrome)"}
                       stroke={
-                        ghost ? "var(--danger)" : isNew ? "var(--ok)" : selected === n.id || onRoute ? "var(--accent)" : n.explored ? "var(--accent)" : "var(--border)"
+                        ghost ? "var(--danger)" : isNew ? "var(--ok)" : selected === n.id || onRoute ? "var(--accent)" : n.explored ? "var(--accent)" : "var(--field-border)"
                       }
                       strokeDasharray={ghost ? "5 4" : undefined}
                       strokeWidth={selected === n.id || onRoute || ghost || isNew ? 2.5 : 1.5}

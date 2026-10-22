@@ -119,7 +119,7 @@ export function ImportDialog({ folders, onImport, onClose }: Props) {
       >
         <header className="shrink-0 flex items-center justify-between px-5 h-12 border-b border-line">
           <h2 className="text-[14px] font-semibold">Importar sesiones desde otro cliente</h2>
-          <button onClick={onClose} className="w-7 h-7 grid place-items-center rounded-md text-muted hover:text-fg hover:bg-hover">
+          <button onClick={onClose} aria-label="Cerrar" className="w-7 h-7 grid place-items-center rounded-md text-muted hover:text-fg hover:bg-hover">
             <X size={16} />
           </button>
         </header>

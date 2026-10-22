@@ -169,7 +169,7 @@ export function SettingsModal({
           <div {...win.handle} className="hidden @[640px]:block px-2 pt-1.5 pb-2 text-[14px] font-semibold select-none">
             Ajustes
           </div>
-          <label className="hidden @[640px]:flex items-center gap-1.5 mx-1 mb-2 h-7 px-2 rounded-md border border-line bg-field">
+          <label className="hidden @[640px]:flex items-center gap-1.5 mx-1 mb-2 h-7 px-2 rounded-md border border-field-line bg-field focus-within:border-accent focus-within:ring-3 focus-within:ring-[var(--selected)]">
             <Search size={13} className="text-muted shrink-0" />
             <input
               className="flex-1 min-w-0 bg-transparent outline-none text-[12px] placeholder:text-muted"
@@ -207,6 +207,7 @@ export function SettingsModal({
             <h2 className="text-[14px] font-semibold">{sections.find((x) => x.id === section)?.label}</h2>
             <button
               onClick={onClose}
+              aria-label="Cerrar"
               className="w-7 h-7 grid place-items-center rounded-md text-muted hover:text-fg hover:bg-hover"
             >
               <X size={16} />
@@ -689,7 +690,7 @@ function Switch({ checked, onChange }: { checked: boolean; onChange: (v: boolean
       role="switch"
       aria-checked={checked}
       onClick={() => onChange(!checked)}
-      className={`relative w-9 h-5 rounded-full transition-colors ${checked ? "bg-accent" : "bg-line"}`}
+      className={`relative w-9 h-5 rounded-full transition-colors ${checked ? "bg-accent" : "bg-field-line"}`}
     >
       <span
         className={`absolute top-0.5 left-0.5 w-4 h-4 rounded-full bg-white shadow transition-transform ${

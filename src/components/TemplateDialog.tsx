@@ -85,7 +85,7 @@ export function TemplateDialog({ text, onSubmit, onCancel }: Props) {
             </label>
           ))}
         </div>
-        <pre className="mx-5 my-3 p-2.5 rounded-lg bg-hover text-[11.5px] font-mono whitespace-pre-wrap break-all max-h-32 overflow-hidden select-text">
+        <pre className="mx-5 my-3 p-2.5 rounded-lg bg-hover text-[11.5px] font-mono whitespace-pre-wrap break-all max-h-32 overflow-y-auto select-text">
           {preview}
         </pre>
         <footer className="flex justify-end gap-2 px-5 py-3 border-t border-line">

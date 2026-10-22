@@ -25,7 +25,7 @@ export function Btn({
   const styles = {
     default: "border border-line hover:bg-hover",
     primary: "bg-accent text-accent-fg font-medium hover:opacity-90",
-    danger: "bg-danger text-white font-medium hover:opacity-90",
+    danger: "bg-danger text-accent-fg font-medium hover:opacity-90",
     ghost: "text-muted hover:text-fg hover:bg-hover",
   }[kind];
   return (
@@ -53,7 +53,7 @@ export function Toggle({ checked, onChange, label }: { checked: boolean; onChang
         role="switch"
         aria-checked={checked}
         onClick={() => onChange(!checked)}
-        className={`relative w-8 h-[18px] rounded-full transition-colors ${checked ? "bg-accent" : "bg-line"}`}
+        className={`relative w-8 h-[18px] rounded-full transition-colors ${checked ? "bg-accent" : "bg-field-line"}`}
       >
         <span className={`absolute top-0.5 left-0.5 w-3.5 h-3.5 rounded-full bg-white shadow transition-transform ${checked ? "translate-x-3.5" : ""}`} />
       </button>

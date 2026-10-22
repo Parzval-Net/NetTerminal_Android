@@ -533,7 +533,7 @@ const scenes = {
   legacy: async () => { await open("router-antiguo"); },
   credentials: async () => { await click("Ajustes"); await click("Credenciales"); },
   alerts: async () => { await open("core-sw01"); await click("Ajustes"); await click("Alertas"); },
-  import: async () => { await click("Ajustes"); await click("Logs y datos"); await click("Desde archivo…"); await click("Leer ~/.ssh/config"); },
+  import: async () => { await click("Ajustes"); await click("Importar y exportar"); await click("Desde archivo…"); await click("Leer ~/.ssh/config"); },
   vertical: async () => { await open("core-sw01"); await open("ar-wan01"); await open("fw-perimetro"); await open("sw-acceso-norte"); },
   // Nota protegida: se elige, se desbloquea con la contraseña de demo y se abren sus opciones.
   "secure-note": async () => {
@@ -554,5 +554,75 @@ const scenes = {
   },
   broadcast: async () => { await open("core-sw01"); await open("core-sw02"); await open("Shell local"); await click("Notas"); await click("Elegir a qué sesiones se envía"); },
 };
+// Escenas de QA visual (modales, ajustes y herramientas).
+const setVal = (el, v) => {
+  const proto = el instanceof HTMLSelectElement ? HTMLSelectElement.prototype : el instanceof HTMLTextAreaElement ? HTMLTextAreaElement.prototype : HTMLInputElement.prototype;
+  Object.getOwnPropertyDescriptor(proto, "value").set.call(el, v);
+  el.dispatchEvent(new Event(el instanceof HTMLSelectElement ? "change" : "input", { bubbles: true }));
+};
+const TOOLS = "Herramientas: monitoreo, diagnóstico, TFTP, syslog, plugins";
+const settingsAt = (label) => async () => { await click("Ajustes"); await wait(300); await click(label); };
+const tool = (label) => async () => { await click(TOOLS); await click(label); };
+Object.assign(scenes, {
+  "s-appearance": settingsAt("Apariencia"),
+  "s-terminal": settingsAt("Terminal"),
+  "s-highlight": settingsAt("Resaltado"),
+  "s-logs": settingsAt("Logs"),
+  "s-credentials": settingsAt("Credenciales"),
+  "s-sessions": settingsAt("Importar y exportar"),
+  "s-modules": settingsAt("Módulos"),
+  "s-alerts": settingsAt("Alertas"),
+  "s-ai": settingsAt("Agentes IA"),
+  "s-about": settingsAt("Acerca de"),
+  "s-search": async () => { await click("Ajustes"); await wait(300); setVal(document.querySelector('input[aria-label="Buscar ajuste"]'), "contraseña"); },
+  "s-vault": async () => { await click("Ajustes"); await wait(300); await click("Credenciales"); },
+  "session-new": async () => { await click("Nueva sesión"); },
+  "session-edit": async () => { await wait(300); const row = [...document.querySelectorAll("[title]")].find((e) => e.title.startsWith("192.0.2.1")); row?.dispatchEvent(new MouseEvent("mouseover", { bubbles: true })); const ed = row?.querySelector('[title="Editar"]') ?? find("Editar"); ed?.dispatchEvent(new MouseEvent("click", { bubbles: true })); },
+  "quick-telnet": async () => { await click("Conexión rápida (SSH, Telnet, Serial) sin guardar"); await click("Telnet"); },
+  confirm: async () => { await open("core-sw01"); await open("ar-wan01"); await wait(300); window.dispatchEvent(new KeyboardEvent("keydown", { key: "w", metaKey: true, ctrlKey: true, bubbles: true })); },
+  approval: async () => { await wait(800); emit("mcp-approval", { id: "a1", tool: "run_command", target: "core-sw01 (192.0.2.1)", detail: "configure terminal\ninterface GigabitEthernet1/0/4\n no shutdown\nend" }); },
+  macro: async () => { await open("core-sw01"); await click("Nuevo botón"); },
+  "cmd-editor": async () => { await open("core-sw01"); await click("Catálogo de comandos"); await click("Agregar un comando propio"); },
+  // Nueva sesión con túneles, contraseña guardada y un error de validación visibles.
+  "session-full": async () => {
+    await click("Nueva sesión");
+    await wait(300);
+    const d = [...document.querySelectorAll("details")].find((x) => x.textContent.includes("Túneles SSH"));
+    if (d) d.open = true;
+    await click("Agregar túnel");
+    await click("Agregar túnel");
+    const pw = [...document.querySelectorAll("label")].find((l) => l.textContent.trim().startsWith("Guardar contraseña"))?.querySelector("input");
+    pw?.click();
+    await wait(200);
+    document.querySelector("form footer button[type=submit]")?.click();
+  },
+  // Alerta en edición con una expresión regular inválida (estado de error).
+  "s-alerts-edit": async () => {
+    await click("Ajustes"); await wait(300); await click("Alertas"); await click("Nueva alerta"); await wait(200);
+    const boxes = [...document.querySelectorAll("label")].find((l) => l.textContent.trim() === "Expresión regular")?.querySelector("input");
+    boxes?.click(); await wait(100);
+    setVal(document.querySelector('input[placeholder="BGP.*Down"]'), "BGP.*(Down");
+  },
+  // Diálogo de difusión: varias pestañas elegidas y "Enviar todo" desde Notas.
+  "bc-dialog": async () => {
+    await scenes.broadcast(); await wait(300);
+    document.querySelectorAll("input[name=bc-mode]")[1]?.click(); await wait(200);
+    for (const c of document.querySelectorAll("input[type=checkbox]")) if (!c.checked && c.closest("label")?.textContent.includes("core-sw0")) c.click();
+    await wait(200);
+    document.body.dispatchEvent(new MouseEvent("mousedown", { bubbles: true }));
+    [...document.querySelectorAll("button")].find((b) => /⇧Enter|Shift\+Enter/.test(b.title))?.click();
+  },
+  "t-monitor": tool("Monitoreo"),
+  "t-diag": tool("Diagnóstico"),
+  "t-topology": tool("Topología"),
+  "t-subnet": tool("Subredes"),
+  "t-perf": tool("Velocidad"),
+  "t-transfer": tool("TFTP / HTTP"),
+  "t-syslog": tool("Syslog"),
+  "t-backup": scenes.backup,
+  "t-plugins": tool("Plugins"),
+});
+// Acceso para el script de QA (CDP): pasos adicionales sobre una escena.
+window.__demo = { click, open, wait, svgNode, emit, find, setVal };
 const scene = new URLSearchParams(location.search).get("scene");
 if (scene && scenes[scene]) window.addEventListener("load", () => wait(600).then(scenes[scene]));

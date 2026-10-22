@@ -128,6 +128,7 @@ export function SessionModal({ initial, defaultFolder, folders, onClose, onSave 
           <button
             type="button"
             onClick={onClose}
+            aria-label="Cerrar"
             className="w-7 h-7 grid place-items-center rounded-md text-muted hover:text-fg hover:bg-hover"
           >
             <X size={16} />
@@ -457,33 +458,33 @@ export function SessionModal({ initial, defaultFolder, folders, onClose, onSave 
               </div>
             </details>
           )}
+
+          {s.type !== "local" && (
+            <div>
+              <label className="flex items-center justify-between gap-4">
+                <span>
+                  Resaltado de sintaxis
+                  <span className="block text-[11.5px] text-muted">Colorea interfaces, IPs, estados y configuración</span>
+                </span>
+                <select
+                  className="field !w-48"
+                  value={s.highlight ?? "default"}
+                  onChange={(e) => set("highlight", e.target.value === "default" ? undefined : e.target.value)}
+                >
+                  <option value="default">Según ajustes</option>
+                  {vendorSchemes.map((v) => (
+                    <option key={v.id} value={v.id}>
+                      {v.name}
+                    </option>
+                  ))}
+                  <option value="off">Sin resaltado</option>
+                </select>
+              </label>
+            </div>
+          )}
         </div>
 
-        {s.type !== "local" && (
-          <div className="px-5 pb-4 -mt-1">
-            <label className="flex items-center justify-between gap-4">
-              <span>
-                Resaltado de sintaxis
-                <span className="block text-[11.5px] text-muted">Colorea interfaces, IPs, estados y configuración</span>
-              </span>
-              <select
-                className="field !w-48"
-                value={s.highlight ?? "default"}
-                onChange={(e) => set("highlight", e.target.value === "default" ? undefined : e.target.value)}
-              >
-                <option value="default">Según ajustes</option>
-                {vendorSchemes.map((v) => (
-                  <option key={v.id} value={v.id}>
-                    {v.name}
-                  </option>
-                ))}
-                <option value="off">Sin resaltado</option>
-              </select>
-            </label>
-          </div>
-        )}
-
-        <footer className="flex items-center justify-end gap-2 px-5 py-3 border-t border-line">
+        <footer className="shrink-0 flex items-center justify-end gap-2 px-5 py-3 border-t border-line">
           {error && <span className="mr-auto text-[11.5px] text-danger truncate">{error}</span>}
           <button
             type="button"
@@ -664,14 +665,14 @@ function TunnelsEditor({ tunnels, onChange }: { tunnels: Tunnel[]; onChange: (t:
               <option value="dynamic">-D</option>
             </select>
             <input
-              className="field !h-7 !w-[84px] !text-[12px] font-mono"
+              className="field !h-7 !px-1.5 !w-[80px] !text-[12px] font-mono"
               placeholder="127.0.0.1"
               title="Dirección de escucha"
               value={t.bind ?? ""}
               onChange={(e) => upd(i, { bind: e.target.value || undefined })}
             />
             <input
-              className="field !h-7 !w-[54px] !text-[12px] font-mono"
+              className="field !h-7 !px-1.5 !w-[50px] !text-[12px] font-mono"
               inputMode="numeric"
               placeholder="1080"
               title="Puerto de escucha"
@@ -682,14 +683,14 @@ function TunnelsEditor({ tunnels, onChange }: { tunnels: Tunnel[]; onChange: (t:
               <>
                 <span className="text-muted">→</span>
                 <input
-                  className="field !h-7 flex-1 min-w-0 !text-[12px] font-mono"
+                  className="field !h-7 !px-1.5 flex-1 min-w-0 !text-[12px] font-mono"
                   placeholder="192.0.2.10"
                   title="Host de destino"
                   value={t.dest_host ?? ""}
                   onChange={(e) => upd(i, { dest_host: e.target.value || undefined })}
                 />
                 <input
-                  className="field !h-7 !w-[54px] !text-[12px] font-mono"
+                  className="field !h-7 !px-1.5 !w-[50px] !text-[12px] font-mono"
                   inputMode="numeric"
                   placeholder="443"
                   title="Puerto de destino"

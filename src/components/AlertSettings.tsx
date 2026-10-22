@@ -132,7 +132,7 @@ export function AlertSettings({ settings: s, folders, onChange }: Props) {
               ] as const
             ).map(([key, label]) => (
               <label key={key} className="flex items-center gap-1.5">
-                <input type="checkbox" checked={draft[key]} onChange={(e) => setDraft({ ...draft, [key]: e.target.checked })} />
+                <input type="checkbox" className="accent-[var(--accent)]" checked={draft[key]} onChange={(e) => setDraft({ ...draft, [key]: e.target.checked })} />
                 {label}
               </label>
             ))}
@@ -159,7 +159,7 @@ export function AlertSettings({ settings: s, folders, onChange }: Props) {
             <button
               onClick={commit}
               disabled={!!error}
-              className="px-3 h-7 rounded-md bg-accent text-white disabled:opacity-40"
+              className="px-3 h-7 rounded-md bg-accent text-accent-fg font-medium hover:opacity-90 disabled:opacity-40"
             >
               Guardar
             </button>

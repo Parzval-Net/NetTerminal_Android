@@ -4,7 +4,7 @@ import { DiffRow, foldBlocks } from "../../lib/diff";
 /** Filas que se dibujan por tanda: 10k líneas de diff no se pintan de una vez. */
 const CHUNK = 1500;
 
-const rowClass = ["", "bg-[color-mix(in_srgb,var(--danger)_14%,transparent)]", "bg-[color-mix(in_srgb,var(--ok)_14%,transparent)]"];
+const rowClass = ["", "bg-[color-mix(in_srgb,var(--danger)_var(--diff-tint),transparent)]", "bg-[color-mix(in_srgb,var(--ok)_var(--diff-tint),transparent)]"];
 const sign = [" ", "-", "+"];
 
 /** Diff unificado con números de línea de ambos lados y tramos sin cambios plegados. */
