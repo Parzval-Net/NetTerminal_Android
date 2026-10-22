@@ -1,4 +1,4 @@
-import { memo, useCallback, useState } from "react";
+import { memo, useCallback, useEffect, useRef, useState } from "react";
 import { Columns2, LayoutGrid, PanelLeft, Plus, Rows2, Wrench, X } from "lucide-react";
 import { newTabMenuItems } from "./tabMenu";
 import { SplitLayout, layoutLabel } from "../lib/split";
@@ -52,6 +52,14 @@ export const statusColor: Record<ConnStatus, string> = {
 };
 
 /**
+ * Color del punto de estado. En la pestaña activa el fondo es el del tema de terminal, que
+ * puede ser claro con la interfaz oscura (o al revés): se mezcla con --term-fg para que el
+ * punto mantenga >= 3:1 contra ese fondo (WCAG 1.4.11).
+ */
+export const dotColor = (status: ConnStatus, active: boolean) =>
+  active ? `color-mix(in oklab, ${statusColor[status]} 60%, var(--term-fg))` : statusColor[status];
+
+/**
  * Botón "cerrar" de una pestaña. La pestaña activa usa el fondo del tema de terminal, así que
  * el color va sobre --term-fg (no sobre --muted, que es de la interfaz: en modo oscuro con un
  * tema claro, o al revés, no contrasta). Siempre visible al enfocar con el teclado.
@@ -84,6 +92,13 @@ export const TabBar = memo(function TabBar(props: TabBarProps) {
   const [editing, setEditing] = useState<string | null>(null);
   const [menu, setMenu] = useState<{ x: number; y: number; items: MenuItem[] } | null>(null);
   const closeMenu = useCallback(() => setMenu(null), []);
+  // La pestaña activa siempre visible: con muchas pestañas o la ventana angosta quedaba fuera
+  // de la franja (que se desplaza sin barra visible).
+  const stripRef = useRef<HTMLDivElement>(null);
+  useEffect(() => {
+    const el = stripRef.current?.querySelector<HTMLElement>(`[data-tab="${activeId}"]`);
+    el?.scrollIntoView({ block: "nearest", inline: "nearest" });
+  }, [activeId, tabs.length]);
 
   const commit = (id: string, value: string) => {
     setEditing(null);
@@ -103,6 +118,7 @@ export const TabBar = memo(function TabBar(props: TabBarProps) {
         <PanelLeft size={16} />
       </button>
       <div
+        ref={stripRef}
         className="flex-1 min-w-0 self-stretch flex items-end gap-0.5 overflow-x-auto [scrollbar-width:none]"
         onContextMenu={(e) => {
           // Clic derecho en el espacio libre de la barra: alternar horizontal/vertical.
@@ -126,7 +142,7 @@ export const TabBar = memo(function TabBar(props: TabBarProps) {
             <Wrench size={13} />
             Herramientas
             {alerts > 0 && (
-              <span className="px-1.5 rounded-full bg-danger text-white text-[10.5px] font-semibold" title={`${alerts} sondas caídas`}>
+              <span className="px-1.5 rounded-full bg-danger text-danger-fg text-[10.5px] font-semibold" title={`${alerts} sondas caídas`}>
                 ✕ {alerts}
               </span>
             )}
@@ -146,6 +162,7 @@ export const TabBar = memo(function TabBar(props: TabBarProps) {
           return (
             <div
               key={t.id}
+              data-tab={t.id}
               onMouseDown={(e) => {
                 if (e.button === 1) {
                   e.preventDefault();
@@ -198,7 +215,7 @@ export const TabBar = memo(function TabBar(props: TabBarProps) {
               )}
               <span
                 className="w-1.5 h-1.5 rounded-full shrink-0 group-hover:hidden"
-                style={{ background: statusColor[status] }}
+                style={{ background: dotColor(status, active) }}
               />
               <button
                 onMouseDown={(e) => e.stopPropagation()}

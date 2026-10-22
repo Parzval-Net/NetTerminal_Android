@@ -159,7 +159,16 @@ const settings = {
 localStorage.clear();
 settings.appTheme = new URLSearchParams(location.search).get("theme") ?? "dark";
 if (location.search.includes("big=")) settings.confirmClose = false;
-if (location.search.includes("scene=vertical")) settings.tabLayout = "vertical";
+if (location.search.includes("scene=vertical") || location.search.includes("layout=vertical")) settings.tabLayout = "vertical";
+// ?toast=1: una alerta por palabra clave activa que dispara un aviso (toast) y marca la primera pestaña.
+if (location.search.includes("toast=1")) {
+  settings.alertRules = [{ id: "qa-updown", name: "Interfaz cambió de estado", pattern: "%LINK-3-UPDOWN", regex: false, caseSensitive: true, enabled: true, folder: "", toast: true, sound: false, markTab: true, highlight: false }];
+  const fire = setInterval(() => {
+    if (channels.size < 2) return;
+    clearInterval(fire);
+    emit("alert-hit", { conn: [...channels.keys()][0], rule: "qa-updown", line: "%LINK-3-UPDOWN: Interface GigabitEthernet1/0/3, changed state to down" });
+  }, 300);
+}
 // ?term=<id>: tema de terminal preseleccionado (capturas de temas).
 settings.terminalTheme = new URLSearchParams(location.search).get("term") ?? "auto";
 // ?logsdir=1: carpeta de logs elegida por el usuario (modo portable, con su aviso).
@@ -576,6 +585,17 @@ async function svgNode(name) {
   await wait(250);
 }
 const open = (l) => act("dblclick", l);
+const key = (k) => window.dispatchEvent(new KeyboardEvent("keydown", { key: k, code: `Key${k.toUpperCase()}`, metaKey: true, bubbles: true, cancelable: true }));
+async function quickTo(host) {
+  await click("Conexión rápida (SSH, Telnet, Serial) sin guardar");
+  typeInto(document.querySelector('input[placeholder="10.0.0.1 o hostname"]'), host);
+  await click("Conectar");
+}
+function typeInto(el, value) {
+  if (!el) return console.warn("escena: campo no encontrado");
+  Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, "value").set.call(el, value);
+  el.dispatchEvent(new Event("input", { bubbles: true }));
+}
 
 const scenes = {
   terminal: async () => { await open("ar-wan01"); await open("core-sw01"); await click("Catálogo de comandos"); },
@@ -620,6 +640,58 @@ const scenes = {
   },
   snmp: async () => { await click("Herramientas: monitoreo, diagnóstico, TFTP, syslog, plugins"); await click("SNMP"); await click("IF-MIB (RFC 2863): ifXTable con contadores de 64 bits; ifTable si el agente no la tiene"); await wait(400); await click("Iniciar"); await wait(600); [...document.querySelectorAll("h3")].find((h) => h.textContent === "Conjuntos de OIDs")?.scrollIntoView(); },
   transfer: async () => { await click("Herramientas: monitoreo, diagnóstico, TFTP, syslog, plugins"); await click("Transferencias"); await wait(400); [...document.querySelectorAll("h3")].find((h) => h.textContent === "Servidor TFTP")?.scrollIntoView(); },
+  // ---- Escenas de QA visual del contenedor de la app ----
+  empty: async () => {},
+  palette: async () => { await wait(300); key("k"); await wait(300); },
+  "palette-q": async () => { await wait(300); key("k"); await wait(300); typeInto(document.querySelector('[role="dialog"] input, .fixed input'), "core"); await wait(300); },
+  ctxmenu: async () => { await open("core-sw01"); const row = find("core-sw02"); row?.dispatchEvent(new MouseEvent("contextmenu", { bubbles: true, cancelable: true, clientX: 120, clientY: 160 })); await wait(300); },
+  filter: async () => { typeInto(document.querySelector('input[placeholder^="Filtrar"]'), "sw-acceso"); await wait(300); },
+  "filter-none": async () => { typeInto(document.querySelector('input[placeholder^="Filtrar"]'), "zzz"); await wait(300); },
+  // Pestañas con estados mezclados: rápida inactiva, alerta, actividad y cerrada.
+  quicktabs: async () => {
+    await quickTo("192.0.2.77");
+    await open("core-sw01");
+    await open("router-antiguo");
+    await open("ar-wan01");
+    await wait(500);
+  },
+  "quick-active": async () => {
+    await quickTo("192.0.2.77");
+    await open("core-sw01");
+    await wait(300);
+    document.querySelector('[title^="192.0.2.77"]')?.dispatchEvent(new MouseEvent("mousedown", { bubbles: true, button: 0 }));
+    await wait(500);
+  },
+  "lock-note": async () => {
+    await open("core-sw01");
+    await click("Notas");
+    await wait(400);
+    const sel = [...document.querySelectorAll("select")].find((x) => [...x.options].some((o) => o.value === "accesos-sitio-central"));
+    Object.getOwnPropertyDescriptor(HTMLSelectElement.prototype, "value").set.call(sel, "accesos-sitio-central");
+    sel.dispatchEvent(new Event("change", { bubbles: true }));
+    await wait(400);
+  },
+  find: async () => { await open("core-sw01"); await wait(400); key("f"); await wait(300); },
+  paste: async () => {
+    await open("core-sw01");
+    await wait(600);
+    const dt = new DataTransfer();
+    dt.setData("text/plain", "interface Gi1/0/5\n description PRUEBA\n shutdown\n");
+    document.querySelector(".xterm")?.dispatchEvent(new ClipboardEvent("paste", { clipboardData: dt, bubbles: true, cancelable: true }));
+    await wait(300);
+  },
+  toasts: async () => { await open("core-sw01"); await open("ar-wan01"); await wait(1200); },
+  // Barra de difusión en curso: se arranca un envío ficticio directo en el módulo.
+  bcastbar: async () => {
+    await open("core-sw01"); await open("core-sw02");
+    const m = await import("/src/lib/broadcast.ts");
+    const mk = (id, name, host) => ({ id, session: { id, name, host, type: "ssh" } });
+    m.runBroadcast([mk("a", "core-sw01", "192.0.2.1"), mk("b", "core-sw02", "192.0.2.2"), mk("c", "dist-sw01", "192.0.2.11")], [{ tab: mk("d", "Shell local"), reason: "Terminal local" }], "show clock", { lineDelayMs: 0, deviceDelayMs: 0 },
+      () => ({ isConnected: () => true, send: () => new Promise((r) => setTimeout(r, 600000)) }));
+    await wait(300);
+    await click("Ver detalle");
+  },
+  macros: async () => { await open("core-sw01"); await wait(300); },
   broadcast: async () => { await open("core-sw01"); await open("core-sw02"); await open("Shell local"); await click("Notas"); await click("Elegir a qué sesiones se envía"); },
 };
 const scene = new URLSearchParams(location.search).get("scene");

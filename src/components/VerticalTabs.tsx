@@ -3,7 +3,7 @@ import { PanelLeftClose, PanelLeftOpen, PanelTop, Plus, Wrench, X } from "lucide
 import { tabTitle } from "../types";
 import { ContextMenu } from "./Sidebar";
 import { SessionIcon, isQuickSession } from "./SessionIcon";
-import { TabBarProps, closeBtnClass, statusColor } from "./TabBar";
+import { TabBarProps, closeBtnClass, dotColor } from "./TabBar";
 import { MenuItem, layoutItem, newTabMenuItems, tabMenuItems } from "./tabMenu";
 import { modLabel } from "../lib/platform";
 
@@ -175,7 +175,7 @@ export const VerticalTabs = memo(function VerticalTabs(props: TabBarProps) {
               <>
                 <span className="truncate flex-1">Herramientas</span>
                 {alerts > 0 && (
-                  <span className="px-1.5 rounded-full bg-danger text-white text-[10.5px] font-semibold shrink-0" title={`${alerts} sondas caídas`}>
+                  <span className="px-1.5 rounded-full bg-danger text-danger-fg text-[10.5px] font-semibold shrink-0" title={`${alerts} sondas caídas`}>
                     ✕ {alerts}
                   </span>
                 )}
@@ -222,9 +222,10 @@ export const VerticalTabs = memo(function VerticalTabs(props: TabBarProps) {
               <SessionIcon type={t.session.type} size={13} quick={isQuickSession(t.session)} />
               {collapsed ? (
                 <>
+                  {/* Abajo a la izquierda: abajo a la derecha tapaba el rayo de conexión rápida. */}
                   <span
-                    className="absolute bottom-0.5 right-0.5 w-1.5 h-1.5 rounded-full ring-1 ring-[var(--chrome)]"
-                    style={{ background: statusColor[status] }}
+                    className={`absolute bottom-0.5 left-0.5 w-1.5 h-1.5 rounded-full ring-1 ${active ? "ring-term" : "ring-[var(--chrome)]"}`}
+                    style={{ background: dotColor(status, active) }}
                   />
                   {marker && (
                     <span
@@ -264,7 +265,7 @@ export const VerticalTabs = memo(function VerticalTabs(props: TabBarProps) {
                   ) : null}
                   <span
                     className="w-1.5 h-1.5 rounded-full shrink-0 group-hover:hidden"
-                    style={{ background: statusColor[status] }}
+                    style={{ background: dotColor(status, active) }}
                     aria-label={status === "connected" ? "Conectada" : status === "connecting" ? "Conectando" : "Cerrada"}
                   />
                   <button
