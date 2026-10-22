@@ -115,7 +115,7 @@ function SnmpClient({ settings: s, running, onChange, refreshRunning, onConfirm 
     setMsg("");
     try {
       if (saveVault) {
-        await invoke("snmp_secret_set", { profile: p.id, community: secrets.community || null, authPass: secrets.authPass || null, privPass: secrets.privPass || null });
+        await invoke("snmp_secret_set", { profile: p.id, host: p.host.trim(), port: p.port, community: secrets.community || null, authPass: secrets.authPass || null, privPass: secrets.privPass || null });
         p.saved = true;
         setSecrets(EMPTY);
         setSaveVault(false);

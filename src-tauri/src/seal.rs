@@ -88,7 +88,13 @@ pub fn write_atomic(path: &Path, data: &[u8]) -> Result<(), String> {
         let mut f = opts.open(&tmp).map_err(|e| e.to_string())?;
         f.write_all(data).and_then(|_| f.sync_all()).map_err(|e| e.to_string())?;
         drop(f);
-        std::fs::rename(&tmp, path).map_err(|e| e.to_string())
+        std::fs::rename(&tmp, path).map_err(|e| e.to_string())?;
+        // El rename queda en disco solo cuando se sincroniza la carpeta (ext4/APFS ante un corte).
+        #[cfg(unix)]
+        if let Some(dir) = path.parent().filter(|d| !d.as_os_str().is_empty()) {
+            let _ = std::fs::File::open(dir).and_then(|d| d.sync_all());
+        }
+        Ok(())
     })();
     if result.is_err() {
         let _ = std::fs::remove_file(&tmp);

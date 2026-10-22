@@ -13,9 +13,14 @@ export function fillTemplate(text: string, values: Record<string, string>): stri
 
 const STORE = "templateValues";
 
+/** Variables con pinta de secreto: no se recuerdan (localStorage es texto plano) y se ocultan. */
+export const isSecretVar = (name: string) => /pass|secret|community|key|token|psk|clave|contrase/i.test(name);
+
+const withoutSecrets = (v: Record<string, string>) => Object.fromEntries(Object.entries(v).filter(([k]) => !isSecretVar(k)));
+
 function remembered(): Record<string, string> {
   try {
-    return JSON.parse(localStorage.getItem(STORE) ?? "{}");
+    return withoutSecrets(JSON.parse(localStorage.getItem(STORE) ?? "{}"));
   } catch {
     return {};
   }
@@ -48,7 +53,7 @@ export function TemplateDialog({ text, onSubmit, onCancel }: Props) {
   const submit = () => {
     if (missing.length) return;
     try {
-      localStorage.setItem(STORE, JSON.stringify({ ...remembered(), ...values }));
+      localStorage.setItem(STORE, JSON.stringify(withoutSecrets({ ...remembered(), ...values })));
     } catch {
       /* sin almacenamiento: no se recuerdan valores */
     }
@@ -79,6 +84,8 @@ export function TemplateDialog({ text, onSubmit, onCancel }: Props) {
               <input
                 className="field"
                 autoFocus={i === 0}
+                type={isSecretVar(n) ? "password" : "text"}
+                autoComplete="off"
                 value={values[n] ?? ""}
                 onChange={(e) => setValues((v) => ({ ...v, [n]: e.target.value }))}
               />

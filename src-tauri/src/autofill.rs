@@ -36,11 +36,22 @@ pub struct AutoFill {
     line: String,
     user_sent: bool,
     done: bool,
+    /// Con salto por un bastión (ProxyJump), host de destino que debe nombrar el prompt.
+    /// El bastión pide su propia contraseña antes ("noc@bastion's password:") y no debe
+    /// recibir la del equipo.
+    only_host: Option<String>,
 }
 
 impl AutoFill {
     pub fn new(secret: Zeroizing<String>, user: Option<String>, newline: &'static str, started: Instant) -> Self {
-        AutoFill { secret, user, newline, started, line: String::new(), user_sent: false, done: false }
+        AutoFill { secret, user, newline, started, line: String::new(), user_sent: false, done: false, only_host: None }
+    }
+
+    /// Responde solo prompts de OpenSSH que nombran este host ("u@host's password:" o
+    /// "(u@host) Password:"). Uno de otro host se deja al operador sin cancelar.
+    pub fn only_host(mut self, host: Option<String>) -> Self {
+        self.only_host = host.map(|h| h.trim().to_lowercase()).filter(|h| !h.is_empty());
+        self
     }
 
     pub fn done(&self) -> bool {
@@ -93,6 +104,11 @@ impl AutoFill {
                 self.stop();
                 return None;
             }
+            if let Some(host) = self.only_host.as_deref() {
+                if !names_host(line, host) {
+                    return None;
+                }
+            }
             let mut out = Zeroizing::new(Vec::with_capacity(self.secret.len() + 2));
             out.extend_from_slice(self.secret.as_bytes());
             out.extend_from_slice(self.newline.as_bytes());
@@ -114,6 +130,13 @@ impl AutoFill {
         }
         None
     }
+}
+
+/// El prompt de contraseña es de OpenSSH para `host` (ya en minúsculas).
+fn names_host(line: &str, host: &str) -> bool {
+    let line = line.trim_start();
+    line.ends_with(&format!("@{host}'s password:"))
+        || (line.starts_with('(') && line.ends_with("password:") && line.contains(&format!("@{host}) ")))
 }
 
 fn aborts(line: &str) -> bool {
@@ -179,6 +202,23 @@ mod tests {
         let (mut a, t) = af(None);
         assert_eq!(sent(a.feed("(current) UNIX password: ", t)), None);
         assert!(a.done());
+    }
+
+    #[test]
+    fn jump_host_prompt_is_not_answered() {
+        let t = Instant::now();
+        let mut a = AutoFill::new(Zeroizing::new("S3cret".into()), None, "\r", t).only_host(Some("10.0.0.1".into()));
+        // El bastión pide su contraseña primero: no recibe la del equipo y no se cancela.
+        assert_eq!(sent(a.feed("noc@bastion.example's password: ", t)), None);
+        assert_eq!(sent(a.feed("\n(noc@bastion.example) Password: ", t)), None);
+        assert!(!a.done());
+        // Un "Password:" sin host (o de otro) tampoco.
+        assert_eq!(sent(a.feed("\nPassword: ", t)), None);
+        assert_eq!(sent(a.feed("\nnoc@10.0.0.10's password: ", t)), None);
+        assert_eq!(sent(a.feed("\nnoc@10.0.0.1's password: ", t)).as_deref(), Some("S3cret\r"));
+        // Keyboard-interactive de OpenSSH con prefijo (usuario@host).
+        let mut a = AutoFill::new(Zeroizing::new("S3cret".into()), None, "\r", t).only_host(Some("Router1".into()));
+        assert_eq!(sent(a.feed("(noc@router1) Password: ", t)).as_deref(), Some("S3cret\r"));
     }
 
     #[test]

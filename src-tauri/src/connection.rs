@@ -404,6 +404,8 @@ impl Connection {
 pub struct FillSpec {
     pub secret: Zeroizing<String>,
     pub user: Option<String>,
+    /// Con bastión: solo se responde el prompt que nombra este host (ver `AutoFill::only_host`).
+    pub only_host: Option<String>,
 }
 
 #[derive(Default)]
@@ -454,7 +456,7 @@ impl ConnectionManager {
             let mut m = lock(&sink.mirror);
             // Lo que ya llegó antes de instalarlo (Telnet rápido) también cuenta.
             let seen = m.tail(1024).to_string();
-            m.autofill = Some((AutoFill::new(f.secret, f.user, newline, Instant::now()), input.clone()));
+            m.autofill = Some((AutoFill::new(f.secret, f.user, newline, Instant::now()).only_host(f.only_host), input.clone()));
             m.run_autofill(&seen);
         }
 
@@ -1761,7 +1763,7 @@ mod tests {
         .unwrap();
         let data = tauri::ipc::Channel::new(|_| Ok(()));
         let mgr = super::ConnectionManager::default();
-        let fill = super::FillSpec { secret: zeroize::Zeroizing::new("Sup3r-S3cret".into()), user: Some("noc".into()) };
+        let fill = super::FillSpec { secret: zeroize::Zeroizing::new("Sup3r-S3cret".into()), user: Some("noc".into()), only_host: None };
         mgr.connect("c1".into(), &session, 80, 24, data, Some(fill)).unwrap();
         let dir = std::env::temp_dir().join(format!("nt-af-{}", uuid::Uuid::new_v4()));
         let opts = crate::logfile::LogOptions { mask: false, ..Default::default() };

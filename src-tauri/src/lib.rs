@@ -158,16 +158,37 @@ fn fill_for(session: &Session, state: &AppState) -> Option<connection::FillSpec>
         && saved.port == session.port
         && saved.serial_port == session.serial_port
         && saved.username == session.username
-        && saved.jump_host == session.jump_host;
+        && saved.jump_host == session.jump_host
+        // Los argumentos extra también fijan el destino (-o HostName=, -o ProxyJump=, -J, -p, -l).
+        && saved.ssh_args == session.ssh_args;
     if !same {
         return None;
     }
     let secret = state.creds.get(&saved.id)?;
+    let only_host = (saved.session_type == Ssh && uses_jump(&saved)).then(|| prompt_host(saved.host.as_deref().unwrap_or("")));
     let user = match saved.session_type {
         Telnet | Raw | Serial => saved.username.filter(|u| !u.trim().is_empty()),
         _ => None,
     };
-    Some(connection::FillSpec { secret, user })
+    Some(connection::FillSpec { secret, user, only_host })
+}
+
+/// La sesión SSH pasa por un bastión (campo jump host, -J o -o ProxyJump/ProxyCommand en
+/// los argumentos extra). Conservador: ante la duda se exige que el prompt nombre al host.
+fn uses_jump(s: &Session) -> bool {
+    let jump = s.jump_host.as_deref().is_some_and(|j| !j.trim().is_empty());
+    let args = s.ssh_args.as_deref().unwrap_or("");
+    let lower = args.to_ascii_lowercase();
+    jump || lower.contains("proxyjump")
+        || lower.contains("proxycommand")
+        || args.split_whitespace().any(|a| a.starts_with('-') && !a.starts_with("--") && a.contains('J'))
+}
+
+/// Host tal como lo muestra el prompt de OpenSSH: sin usuario ni corchetes de IPv6.
+fn prompt_host(host: &str) -> String {
+    let h = host.trim();
+    let h = h.rsplit_once('@').map_or(h, |(_, x)| x);
+    h.trim_start_matches('[').trim_end_matches(']').to_lowercase()
 }
 
 #[tauri::command(async)]
@@ -996,4 +1017,28 @@ pub fn run() {
                 }
             }
         });
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn ssh(jump: Option<&str>, args: Option<&str>) -> Session {
+        serde_json::from_value(serde_json::json!({
+            "name": "t", "type": "ssh", "host": "noc@[2001:DB8::1]", "jump_host": jump, "ssh_args": args
+        }))
+        .unwrap()
+    }
+
+    #[test]
+    fn detects_jump_and_prompt_host() {
+        assert!(!uses_jump(&ssh(None, None)));
+        assert!(!uses_jump(&ssh(Some("  "), Some("-L 8080:localhost:80 -A"))));
+        assert!(uses_jump(&ssh(Some("bastion"), None)));
+        assert!(uses_jump(&ssh(None, Some("-J bastion"))));
+        assert!(uses_jump(&ssh(None, Some("-AJ bastion"))));
+        assert!(uses_jump(&ssh(None, Some("-o ProxyJump=bastion"))));
+        assert_eq!(prompt_host("noc@[2001:DB8::1]"), "2001:db8::1");
+        assert_eq!(prompt_host(" Router1 "), "router1");
+    }
 }
