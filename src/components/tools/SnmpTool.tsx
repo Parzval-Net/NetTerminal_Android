@@ -33,6 +33,7 @@ import {
   trapSummary,
 } from "../../lib/snmp";
 import { Btn, Label, Section, StatusPill, Toggle } from "./ui";
+import SnmpConfigGen from "./SnmpConfigGen";
 
 type Op = "get" | "getnext" | "walk" | "getbulk";
 const OPS: { id: Op; label: string }[] = [
@@ -62,7 +63,38 @@ async function exportCsv(name: string, content: string, setMsg: (m: string) => v
     .catch((e) => setMsg(String(e)));
 }
 
-export default function SnmpTool({ settings: s, running, onChange, refreshRunning, onConfirm }: Props) {
+const TABS = [
+  { id: "client", label: "Cliente" },
+  { id: "config", label: "Generador de configuración" },
+] as const;
+
+export default function SnmpTool(props: Props) {
+  const [tab, setTab] = useState<(typeof TABS)[number]["id"]>("client");
+  return (
+    <div className="space-y-4">
+      <div className="inline-flex rounded-md border border-line p-0.5" role="tablist">
+        {TABS.map((t) => (
+          <button
+            key={t.id}
+            role="tab"
+            aria-selected={tab === t.id}
+            onClick={() => setTab(t.id)}
+            className={`px-2.5 h-7 rounded text-[12px] ${tab === t.id ? "bg-selected text-fg font-medium" : "text-muted hover:text-fg"}`}
+          >
+            {t.label}
+          </button>
+        ))}
+      </div>
+      {/* El cliente queda montado al cambiar de pestaña para no cortar consultas ni el receptor de traps. */}
+      <div hidden={tab !== "client"}>
+        <SnmpClient {...props} />
+      </div>
+      {tab === "config" && <SnmpConfigGen />}
+    </div>
+  );
+}
+
+function SnmpClient({ settings: s, running, onChange, refreshRunning, onConfirm }: Props) {
   const [cur, setCur] = useState<SnmpProfile>(() => s.snmpProfiles[0] ?? newProfile());
   const [secrets, setSecrets] = useState<Secrets>(EMPTY);
   const [legacy, setLegacy] = useState(false);
