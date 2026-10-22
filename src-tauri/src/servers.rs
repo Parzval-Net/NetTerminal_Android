@@ -47,6 +47,9 @@ pub fn safe_path(root: &Path, requested: &str) -> Option<PathBuf> {
     let mut out = root.to_path_buf();
     for comp in Path::new(req.trim_start_matches('/')).components() {
         match comp {
+            // En Windows un ":" en medio ("a/C:/x") es una unidad que reemplaza toda la ruta
+            // al hacer push, o un flujo alternativo NTFS ("ios.bin:oculto").
+            Component::Normal(c) if cfg!(windows) && c.to_string_lossy().contains(':') => return None,
             Component::Normal(c) => out.push(c),
             Component::CurDir => {}
             _ => return None, // ParentDir, RootDir, Prefix (C:\)
@@ -333,6 +336,8 @@ fn tftp_error(sock: &UdpSocket, peer: SocketAddr, code: u16, msg: &str) {
 
 /// Sesiones TFTP simultáneas como máximo.
 const TFTP_MAX_SESSIONS: usize = 16;
+/// Timeout máximo (s) que se acepta en la opción "timeout" de un cliente TFTP.
+const TFTP_MAX_TIMEOUT: u64 = 30;
 /// Tamaño máximo de un archivo recibido por TFTP (imágenes de firmware grandes incluidas).
 pub(crate) const TFTP_MAX_UPLOAD: u64 = 8 * 1024 * 1024 * 1024;
 
@@ -361,7 +366,9 @@ fn tftp_session(app: AppHandle, root: PathBuf, allow_write: bool, peer: SocketAd
         return tftp_error(&sock, peer, 2, "Ruta no permitida");
     };
     let blksize = opts.get("blksize").and_then(|v| v.parse::<usize>().ok()).map(|b| b.clamp(8, 65464));
-    let timeout = opts.get("timeout").and_then(|v| v.parse::<u64>().ok()).map(|t| t.clamp(1, 255));
+    // RFC 2349 permite hasta 255 s, pero con 5 reintentos un pedido falso retendría una de
+    // las 16 sesiones por ~21 min. Fuera de 1..=30 la opción se ignora (sin OACK) y rige 3 s.
+    let timeout = opts.get("timeout").and_then(|v| v.parse::<u64>().ok()).filter(|t| (1..=TFTP_MAX_TIMEOUT).contains(t));
     sock.set_read_timeout(Some(Duration::from_secs(timeout.unwrap_or(3)))).ok();
     let block = blksize.unwrap_or(512);
 
@@ -429,6 +436,12 @@ fn tftp_session(app: AppHandle, root: PathBuf, allow_write: bool, peer: SocketAd
                 return tftp_error(&sock, peer, 2, "Escritura deshabilitada en el servidor");
             }
             if let Some(parent) = path.parent() {
+                // Antes de crear carpetas: un enlace simbólico dentro de la carpeta no debe
+                // permitir crearlas fuera de ella.
+                let existing = parent.ancestors().find(|a| a.exists()).unwrap_or(&root);
+                if !inside_root(&root, existing) {
+                    return tftp_error(&sock, peer, 2, "Ruta no permitida");
+                }
                 let _ = fs::create_dir_all(parent);
             }
             if !inside_root(&root, &path) {
@@ -472,7 +485,16 @@ fn tftp_session(app: AppHandle, root: PathBuf, allow_write: bool, peer: SocketAd
             let mut buf = vec![0u8; block + 4];
             let mut last_report = Instant::now();
             let mut retries = 0;
+            // Datagramas basura o bloques repetidos no cuentan como avance: sin este tope, un
+            // tercero que conozca el puerto mantendría la sesión abierta para siempre.
+            let stall = Duration::from_secs(timeout.unwrap_or(3) * (RETRIES as u64 + 1));
+            let mut last_progress = Instant::now();
             loop {
+                if last_progress.elapsed() > stall {
+                    let _ = fs::remove_file(&tmp);
+                    report(got, total, true, Some("Transferencia interrumpida".into()), "put");
+                    return tftp_error(&sock, peer, 0, "Tiempo agotado");
+                }
                 match sock.recv_from(&mut buf) {
                     Ok((n, from)) if from == peer && n >= 4 && u16::from_be_bytes([buf[0], buf[1]]) == OP_DATA => {
                         let bno = u16::from_be_bytes([buf[2], buf[3]]);
@@ -489,6 +511,7 @@ fn tftp_session(app: AppHandle, root: PathBuf, allow_write: bool, peer: SocketAd
                             }
                             expected = expected.wrapping_add(1);
                             retries = 0;
+                            last_progress = Instant::now();
                         }
                         let mut ack = vec![0, OP_ACK as u8];
                         ack.extend(bno.to_be_bytes());
@@ -639,10 +662,13 @@ fn percent_decode(s: &str) -> String {
     let bytes = s.as_bytes();
     let mut out = Vec::with_capacity(bytes.len());
     let mut i = 0;
+    // Se decodifica sobre bytes: cortar `s` en i + 1..i + 3 puede caer en medio de un
+    // carácter UTF-8 ("%aé") y ese pánico cerraría la app entera (panic = "abort").
+    let hex = |b: u8| (b as char).to_digit(16).map(|d| d as u8);
     while i < bytes.len() {
-        if bytes[i] == b'%' && i + 2 < bytes.len() {
-            if let Ok(b) = u8::from_str_radix(&s[i + 1..i + 3], 16) {
-                out.push(b);
+        if bytes[i] == b'%' {
+            if let (Some(h), Some(l)) = (bytes.get(i + 1).copied().and_then(hex), bytes.get(i + 2).copied().and_then(hex)) {
+                out.push((h << 4) | l);
                 i += 3;
                 continue;
             }
@@ -675,6 +701,68 @@ mod tests {
         assert_eq!(safe_path(root, "a/../../x"), None);
         assert_eq!(safe_path(root, "..\\..\\windows\\win.ini"), None);
         assert_eq!(safe_path(root, ""), None);
+    }
+
+    #[test]
+    fn percent_decode_handles_hostile_input() {
+        assert_eq!(percent_decode("/a%20b"), "/a b");
+        assert_eq!(percent_decode("%41"), "A");
+        assert_eq!(percent_decode("%2e%2E/x"), "../x");
+        // Antes: pánico al cortar el &str en medio de "é" (cierre de la app).
+        assert_eq!(percent_decode("%aé"), "%aé");
+        for raw in ["%", "%4", "%zz", "%+1", "%%41", "€%", "%€"] {
+            let _ = percent_decode(raw);
+        }
+        assert_eq!(percent_decode("%+1"), "%+1");
+        let mut rng = crate::snmp::tests::Rng(0xDEAD_BEEF_1234_5678);
+        let alphabet = ['%', 'a', 'F', '0', '9', 'é', '/', '.', '\\', '€', 'z', '\u{0}'];
+        for _ in 0..20_000 {
+            let s: String = (0..rng.below(16)).map(|_| alphabet[rng.below(alphabet.len())]).collect();
+            let _ = percent_decode(&s);
+        }
+    }
+
+    #[test]
+    fn fuzz_safe_path_stays_inside_root() {
+        let root = Path::new("/srv/tftp");
+        let pieces = ["..", ".", "a", "fw.bin", "/", "\\", "C:", "c:\\", "%2e%2e", "", "...", "//", "~", ":", "\\\\?\\", "NUL"];
+        let mut rng = crate::snmp::tests::Rng(0x0123_4567_89AB_CDEF);
+        for _ in 0..20_000 {
+            let raw: String = (0..1 + rng.below(8)).map(|_| pieces[rng.below(pieces.len())]).collect();
+            // Igual que el servidor HTTP: primero se decodifica y luego se valida.
+            for req in [raw.clone(), percent_decode(&raw)] {
+                if let Some(p) = safe_path(root, &req) {
+                    assert!(p.starts_with(root) && p != root, "{req:?} -> {p:?}");
+                    assert!(p.components().all(|c| !matches!(c, Component::ParentDir | Component::Prefix(_))), "{req:?}");
+                }
+            }
+        }
+        assert_eq!(safe_path(root, "%2e%2e/x"), Some(root.join("%2e%2e/x")));
+        assert_eq!(safe_path(root, &percent_decode("%2e%2e/x")), None);
+        assert_eq!(safe_path(root, "/../x"), None);
+        assert_eq!(safe_path(root, "\\..\\x"), None);
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn symlink_inside_root_does_not_escape() {
+        let base = std::env::temp_dir().join(format!("nt-root-{}", uuid::Uuid::new_v4()));
+        let (root, outside) = (base.join("root"), base.join("fuera"));
+        fs::create_dir_all(&root).unwrap();
+        fs::create_dir_all(&outside).unwrap();
+        fs::write(outside.join("secreto.txt"), b"x").unwrap();
+        std::os::unix::fs::symlink(&outside, root.join("enlace")).unwrap();
+        // Lectura: la ruta léxica es válida, pero la real sale de la carpeta.
+        let p = safe_path(&root, "enlace/secreto.txt").unwrap();
+        assert!(p.is_file() && !inside_root(&root, &p));
+        // Escritura (WRQ): el ancestro existente más cercano se valida antes de crear carpetas.
+        let p = safe_path(&root, "enlace/nueva/x.bin").unwrap();
+        let existing = p.parent().unwrap().ancestors().find(|a| a.exists()).unwrap();
+        assert!(!inside_root(&root, existing));
+        let p = safe_path(&root, "propia/x.bin").unwrap();
+        let existing = p.parent().unwrap().ancestors().find(|a| a.exists()).unwrap();
+        assert!(inside_root(&root, existing));
+        fs::remove_dir_all(base).unwrap();
     }
 
     #[test]

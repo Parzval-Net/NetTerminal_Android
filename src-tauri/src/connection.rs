@@ -726,13 +726,18 @@ fn check_extra_args(args: &[String]) -> Result<(), String> {
                 } else {
                     rest
                 };
-                if c == 'o' {
-                    let name = value.trim().split(['=', ' ', '\t']).next().unwrap_or("").to_ascii_lowercase();
-                    if BLOCKED_SSH_OPTIONS.contains(&name.as_str()) {
-                        return Err(format!(
-                            "Opción no permitida en argumentos extra: {name}. Configúrala en ~/.ssh/config si la necesitas."
-                        ));
-                    }
+                let name = if c == 'o' { value.trim().split(['=', ' ', '\t']).next().unwrap_or("").to_ascii_lowercase() } else { String::new() };
+                if BLOCKED_SSH_OPTIONS.contains(&name.as_str()) {
+                    return Err(format!(
+                        "Opción no permitida en argumentos extra: {name}. Configúrala en ~/.ssh/config si la necesitas."
+                    ));
+                }
+                // Jump host, host y usuario terminan en el ProxyCommand que OpenSSH < 9.6 pasa
+                // por `sh -c` (CVE-2023-51385): misma regla que los campos de la sesión.
+                if (matches!(c, 'J' | 'l') || matches!(name.as_str(), "proxyjump" | "hostname" | "user"))
+                    && value.chars().any(|ch| ch.is_control() || (SHELL_META.contains(&ch) && !(c == 'l' && ch == '\\')))
+                {
+                    return Err(format!("Valor no permitido en argumentos extra: {value}"));
                 }
                 break;
             }
@@ -1389,6 +1394,14 @@ mod tests {
         assert!(bad("-- otro-host"));
         assert!(bad("-L"));
         assert!(!bad("-vvv -C -o ServerAliveCountMax=3 -J bastion"));
+        // Jump host, host y usuario con metacaracteres (ProxyJump pasa por sh -c en OpenSSH < 9.6).
+        assert!(bad("-J 'x;id'"));
+        assert!(bad("-vJx$(id)"));
+        assert!(bad("-o ProxyJump=a`id`"));
+        assert!(bad("-o 'Hostname x;id'"));
+        assert!(bad("-o User=a|b"));
+        assert!(bad("-l a;b"));
+        assert!(!bad("-l DOMINIO\\\\usuario -o ProxyJump=noc@bastion:22 -o IdentityFile=~/.ssh/id_lab"));
     }
 
     #[test]

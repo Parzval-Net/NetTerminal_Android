@@ -28,6 +28,8 @@ const APPROVAL_TIMEOUT: Duration = Duration::from_secs(120);
 const MAX_PENDING_APPROVALS: usize = 3;
 /// Peticiones atendidas a la vez; el resto recibe 503.
 const MAX_CONCURRENT: usize = 16;
+/// Largo mínimo del token bearer.
+const MIN_TOKEN: usize = 24;
 
 #[derive(Clone, Default, PartialEq)]
 pub struct McpConfig {
@@ -64,6 +66,11 @@ struct Activity {
 impl McpServer {
     /// Aplica la configuración: arranca, reinicia o detiene el servidor.
     pub fn configure(&self, app: AppHandle, cfg: McpConfig) -> Result<String, String> {
+        // Se valida antes de aplicar: con el servidor ya en marcha y el mismo puerto no hay
+        // reinicio, y un token vacío dejaría el servidor sin autenticación.
+        if cfg.enabled && cfg.token.len() < MIN_TOKEN {
+            return Err("Token demasiado corto".into());
+        }
         let mut current = self.config.lock().unwrap();
         let running = self.server.lock().unwrap().is_some();
         let restart = cfg.port != current.port || cfg.enabled != current.enabled || !running;
@@ -78,9 +85,6 @@ impl McpServer {
         }
         if !cfg.enabled {
             return Ok("Servidor MCP detenido".into());
-        }
-        if cfg.token.len() < 24 {
-            return Err("Token demasiado corto".into());
         }
         let server = Arc::new(
             Server::http(("127.0.0.1", cfg.port)).map_err(|e| format!("No se pudo abrir el puerto {}: {e}", cfg.port))?,
@@ -178,7 +182,7 @@ fn serve(app: AppHandle, mut req: tiny_http::Request) {
         return reply(req, 403, None);
     }
     let auth = header(&req, "Authorization").unwrap_or("");
-    if !token_matches(auth.strip_prefix("Bearer ").unwrap_or(""), &cfg.token) {
+    if cfg.token.len() < MIN_TOKEN || !token_matches(auth.strip_prefix("Bearer ").unwrap_or(""), &cfg.token) {
         return reply(req, 401, Some(json!({"error": "token inválido"})));
     }
     if *req.method() != Method::Post {

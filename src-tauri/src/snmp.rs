@@ -612,6 +612,20 @@ impl AuthProto {
     /// Clave localizada (RFC 3414 A.2): Ku = H(1 MB de la contraseña repetida) y
     /// Kul = H(Ku || engineID || Ku).
     pub fn localize(self, password: &[u8], engine_id: &[u8]) -> Zeroizing<Vec<u8>> {
+        self.localize_ku(&self.password_key(password), engine_id)
+    }
+
+    /// Kul a partir de Ku: barato, a diferencia de `password_key`.
+    fn localize_ku(self, ku: &[u8], engine_id: &[u8]) -> Zeroizing<Vec<u8>> {
+        self.hash(&[ku, engine_id, ku])
+    }
+
+    /// Ku (RFC 3414 A.2.1): el paso costoso (1 MB de hash), independiente del motor.
+    fn password_key(self, password: &[u8]) -> Zeroizing<Vec<u8>> {
+        if password.is_empty() {
+            // Evita la división por cero de abajo; check_secret ya exige un largo mínimo.
+            return Zeroizing::new(vec![]);
+        }
         macro_rules! ku {
             ($d:ty) => {{
                 let mut d = <$d>::new();
@@ -627,15 +641,14 @@ impl AuthProto {
                 Zeroizing::new(d.finalize().to_vec())
             }};
         }
-        let ku = match self {
+        match self {
             AuthProto::Md5 => ku!(md5::Md5),
             AuthProto::Sha => ku!(sha1::Sha1),
             AuthProto::Sha224 => ku!(sha2::Sha224),
             AuthProto::Sha256 => ku!(sha2::Sha256),
             AuthProto::Sha384 => ku!(sha2::Sha384),
             AuthProto::Sha512 => ku!(sha2::Sha512),
-        };
-        self.hash(&[&ku, engine_id, &ku])
+        }
     }
 }
 
@@ -670,7 +683,12 @@ impl PrivProto {
 
     /// Clave de privacidad localizada y extendida al largo del cifrado.
     pub fn key(self, auth: AuthProto, password: &[u8], engine_id: &[u8]) -> Zeroizing<Vec<u8>> {
-        let mut key = auth.localize(password, engine_id);
+        self.key_from_ku(auth, &auth.password_key(password), engine_id)
+    }
+
+    /// Igual que `key`, con el Ku de la contraseña ya calculado.
+    fn key_from_ku(self, auth: AuthProto, ku: &[u8], engine_id: &[u8]) -> Zeroizing<Vec<u8>> {
+        let mut key = auth.localize_ku(ku, engine_id);
         while key.len() < self.key_len() {
             let more = match self {
                 // Blumenthal: Kul || H(Kul), luego || H(todo lo anterior).
@@ -1441,6 +1459,12 @@ pub fn decode_trap(buf: &[u8], src: SocketAddr, usm: Option<&mut TrapUsm>) -> Re
         Message::V3(m) => {
             let user = Some(String::from_utf8_lossy(&m.user).chars().take(64).collect::<String>());
             if m.flags & FLAG_AUTH == 0 && !m.encrypted {
+                // Degradación: si el receptor verifica a este usuario con autenticación, un
+                // trap noAuthNoPriv con su nombre es falsificable por cualquiera y no se
+                // muestra como si viniera de él.
+                if usm.as_ref().is_some_and(|u| u.creds.auth.is_some() && u.creds.user.as_bytes() == m.user.as_slice()) {
+                    return Err("Trap v3 sin autenticación de un usuario que la exige: descartado".into());
+                }
                 if let Ok((_, _, Body::Pdu(p))) = dec_scoped(&m.data) {
                     if p.kind == PDU_TRAP_V2 || p.kind == PDU_INFORM {
                         let mut t = trap_from_pdu(p, &src, "v3");
@@ -1493,43 +1517,56 @@ type EngineKeys = (Zeroizing<Vec<u8>>, Zeroizing<Vec<u8>>, u32, u32, Instant);
 pub struct TrapUsm {
     pub creds: V3Creds,
     engines: std::collections::HashMap<Vec<u8>, EngineKeys>,
+    /// Ku de las contraseñas (RFC 3414 A.2.1), calculado una vez: así un trap con un
+    /// engineID inventado solo cuesta un hash corto y un HMAC, no 1 MB de hash.
+    ku_auth: Zeroizing<Vec<u8>>,
+    ku_priv: Zeroizing<Vec<u8>>,
 }
 
 impl TrapUsm {
     pub fn new(creds: V3Creds) -> Self {
-        TrapUsm { creds, engines: Default::default() }
+        let (ku_auth, ku_priv) = match (&creds.auth, &creds.privacy) {
+            (Some((a, pass)), privacy) => (a.password_key(pass.as_bytes()), privacy.as_ref().map(|(_, pp)| a.password_key(pp.as_bytes())).unwrap_or_default()),
+            _ => Default::default(),
+        };
+        TrapUsm { creds, engines: Default::default(), ku_auth, ku_priv }
     }
 
     fn open(&mut self, m: &V3Msg) -> Result<Pdu, String> {
-        let Some((auth, pass)) = &self.creds.auth else {
+        let Some((auth, _)) = &self.creds.auth else {
             return Err("el usuario del receptor no tiene autenticación".into());
         };
+        let auth = *auth;
         if m.flags & FLAG_AUTH == 0 || m.auth_params.len() != auth.mac_len() {
             return Err("sin autenticación o parámetros inválidos".into());
         }
         if m.engine_id.len() < 5 || m.engine_id.len() > 32 {
             return Err("engine ID inválido".into());
         }
+        let ak = match self.engines.get(&m.engine_id) {
+            Some(e) => e.0.clone(),
+            None => auth.localize_ku(&self.ku_auth, &m.engine_id),
+        };
+        let mut copy = Vec::new();
+        copy.extend_from_slice(&m.raw);
+        copy[m.auth_off..m.auth_off + auth.mac_len()].fill(0);
+        let mac = auth.hmac(&ak, &copy);
+        if !ct_eq(&mac[..auth.mac_len()], &m.auth_params) {
+            return Err("firma inválida (contraseña o protocolo de autenticación)".into());
+        }
+        // Solo un emisor auténtico entra en la caché: un tercero sin la clave no puede
+        // vaciarla (lo que borraría la protección contra repeticiones) ni hacerla crecer.
         if !self.engines.contains_key(&m.engine_id) {
-            // Tope de equipos en caché: una ráfaga con engineID inventados no agota memoria.
             if self.engines.len() >= 256 {
                 self.engines.clear();
             }
-            let ak = auth.localize(pass.as_bytes(), &m.engine_id);
             let pk = match &self.creds.privacy {
-                Some((p, pp)) => p.key(*auth, pp.as_bytes(), &m.engine_id),
+                Some((p, _)) => p.key_from_ku(auth, &self.ku_priv, &m.engine_id),
                 None => Zeroizing::new(vec![]),
             };
             self.engines.insert(m.engine_id.clone(), (ak, pk, 0, 0, Instant::now()));
         }
         let entry = self.engines.get_mut(&m.engine_id).ok_or("engine")?;
-        let mut copy = Vec::new();
-        copy.extend_from_slice(&m.raw);
-        copy[m.auth_off..m.auth_off + auth.mac_len()].fill(0);
-        let mac = auth.hmac(&entry.0, &copy);
-        if !ct_eq(&mac[..auth.mac_len()], &m.auth_params) {
-            return Err("firma inválida (contraseña o protocolo de autenticación)".into());
-        }
         // Ventana de 150 s respecto del último mensaje auténtico de ese motor.
         let (boots, time, at) = (entry.2, entry.3, entry.4);
         let expected = time as u64 + at.elapsed().as_secs();
@@ -1893,7 +1930,7 @@ pub fn snmp_secret_delete(profile: String, state: tauri::State<'_, crate::AppSta
 }
 
 #[cfg(test)]
-mod tests {
+pub(crate) mod tests {
     use super::*;
 
     fn hexs(s: &str) -> Vec<u8> {
@@ -2145,6 +2182,185 @@ mod tests {
         // RFC 2202 caso 2 (HMAC-SHA1).
         assert_eq!(AuthProto::Sha.hmac(b"Jefe", b"what do ya want for nothing?"), hexs("effcdf6ae5eb2fa2d27416d5f184df9c259a7c79"));
         assert!(ct_eq(b"abc", b"abc") && !ct_eq(b"abc", b"abd") && !ct_eq(b"ab", b"abc"));
+    }
+
+    /// Generador pseudoaleatorio determinista (xorshift64) para las pruebas de fuzzing.
+    pub(crate) struct Rng(pub(crate) u64);
+
+    impl Rng {
+        pub(crate) fn next(&mut self) -> u64 {
+            let mut x = self.0;
+            x ^= x << 13;
+            x ^= x >> 7;
+            x ^= x << 17;
+            self.0 = x;
+            x
+        }
+        pub(crate) fn below(&mut self, n: usize) -> usize {
+            (self.next() % n.max(1) as u64) as usize
+        }
+        pub(crate) fn bytes(&mut self, n: usize) -> Vec<u8> {
+            (0..n).map(|_| self.next() as u8).collect()
+        }
+    }
+
+    fn trap_creds(privacy: Option<PrivProto>) -> V3Creds {
+        V3Creds {
+            user: "traps".into(),
+            auth: Some((AuthProto::Sha256, Zeroizing::new("authpass123".into()))),
+            privacy: privacy.map(|p| (p, Zeroizing::new("privpass123".into()))),
+            context: String::new(),
+        }
+    }
+
+    /// Todos los decodificadores sobre la misma entrada: ninguno puede entrar en pánico
+    /// (con panic = "abort" un datagrama hostil cerraría la app).
+    fn decode_all(buf: &[u8], usm: &mut TrapUsm) {
+        let src: SocketAddr = "192.0.2.9:162".parse().unwrap();
+        let _ = decode(buf);
+        let _ = decode_trap(buf, src, None);
+        let _ = decode_trap(buf, src, Some(usm));
+        let _ = dec_scoped(buf);
+        let _ = dec_vbs(buf);
+        let _ = dec_oid(buf);
+        for tag in [T_INT, T_OCTETS, T_OID, T_IP, T_COUNTER32, T_TICKS, T_COUNTER64, PDU_TRAP_V1, PDU_GET, PDU_REPORT] {
+            let _ = dec_value(tag, buf);
+            let _ = dec_body(tag, buf);
+        }
+    }
+
+    #[test]
+    fn fuzz_ber_decoder_never_panics() {
+        let mut rng = Rng(0x9E37_79B9_7F4A_7C15);
+        let mut usm = TrapUsm::new(trap_creds(Some(PrivProto::Aes)));
+        // 1) Bytes aleatorios, con y sin cabecera SEQUENCE plausible.
+        for i in 0..20_000 {
+            let n = rng.below(256);
+            let mut b = rng.bytes(n);
+            if i % 2 == 0 && b.len() > 2 {
+                b[0] = T_SEQ;
+                b[1] = (b.len() - 2).min(0x7F) as u8;
+            }
+            decode_all(&b, &mut usm);
+        }
+        // 2) Mensajes válidos truncados en cada largo y con bytes mutados o insertados.
+        let pdu = Pdu {
+            kind: PDU_INFORM,
+            req_id: 7,
+            err_status: 0,
+            err_index: 0,
+            vbs: vec![
+                (SYS_UPTIME.to_vec(), Value::Ticks(100)),
+                (SNMP_TRAP_OID.to_vec(), Value::Oid(vec![1, 3, 6, 1, 6, 3, 1, 1, 5, 4])),
+                (vec![1, 3, 6, 1, 2, 1, 1, 5, 0], Value::Str(b"sw1".to_vec())),
+                (vec![1, 3, 6, 1, 2, 1, 4, 20], Value::Ip([10, 0, 0, 1])),
+                (vec![1, 3, 6, 1, 2, 1, 31, 1, 1, 1, 6, 1], Value::Counter64(u64::MAX)),
+            ],
+        };
+        let mut v1 = enc_oid(&[1, 3, 6, 1, 4, 1, 9]).unwrap();
+        v1.extend(tlv(T_IP, &[192, 0, 2, 9]));
+        v1.extend(enc_int(6));
+        v1.extend(enc_int(1));
+        v1.extend(enc_uint(T_TICKS, 4200));
+        v1.extend(enc_vbs(&pdu.vbs).unwrap());
+        let mut v1msg = enc_int(0);
+        v1msg.extend(tlv(T_OCTETS, b"public"));
+        v1msg.extend(tlv(PDU_TRAP_V1, &v1));
+        let seeds = [
+            enc_community(1, b"public", &pdu).unwrap(),
+            tlv(T_SEQ, &v1msg),
+            v3_trap("traps", AuthProto::Sha256, Some(PrivProto::Aes), 3, 1000),
+            v3_trap("traps", AuthProto::Sha256, None, 3, 1000),
+            v3_trap("otro", AuthProto::Md5, Some(PrivProto::Des), 1, 1),
+        ];
+        for seed in &seeds {
+            for n in 0..=seed.len() {
+                decode_all(&seed[..n], &mut usm);
+            }
+            for _ in 0..3000 {
+                let mut m = seed.clone();
+                for _ in 0..1 + rng.below(4) {
+                    let i = rng.below(m.len());
+                    match rng.below(4) {
+                        0 => m[i] = rng.next() as u8,
+                        1 => m[i] ^= 1 << rng.below(8),
+                        2 => m.insert(i, rng.next() as u8),
+                        _ => {
+                            m.remove(i);
+                        }
+                    }
+                }
+                decode_all(&m, &mut usm);
+            }
+        }
+    }
+
+    #[test]
+    fn ber_hostile_lengths_oids_and_nesting() {
+        // Largos declarados mayores que el búfer, de más de 3 bytes o indefinidos.
+        assert!(decode(&[0x30, 0x83, 0xFF, 0xFF, 0xFF, 0x02, 0x01, 0x01]).is_err());
+        assert!(decode(&[0x30, 0x84, 0xFF, 0xFF, 0xFF, 0xFF]).is_err());
+        assert!(decode(&[0x30, 0x80, 0x00, 0x00]).is_err());
+        assert!(decode(&[0x30]).is_err() && decode(&[]).is_err());
+        assert!(decode(&vec![0u8; MAX_MSG + 1]).is_err());
+        // Anidamiento profundo: el lector es iterativo, no hay recursión que desborde la pila.
+        let mut nested = Vec::new();
+        for _ in 0..10_000 {
+            nested = tlv(T_SEQ, &nested);
+        }
+        assert!(decode(&nested).is_err());
+        // OID: arco mayor que u32, 129 subidentificadores, relleno 0x80 y último byte abierto.
+        assert!(dec_oid(&[0x2B, 0x90, 0x80, 0x80, 0x80, 0x00]).is_err());
+        assert!(dec_oid(&[0x2B; 129]).is_err());
+        assert!(dec_oid(&[0x2B, 0x80, 0x01]).is_err());
+        assert!(dec_oid(&[0x2B, 0x81]).is_err());
+        assert!(dec_oid(&[0xFF; 64]).is_err());
+        assert_eq!(dec_oid(&[0x2B, 0x8F, 0xFF, 0xFF, 0xFF, 0x7F]).unwrap()[2], u32::MAX);
+        // Tope de varbinds por mensaje.
+        let mut one = enc_oid(&[1, 3]).unwrap();
+        one.extend(tlv(T_NULL, &[]));
+        let one = tlv(T_SEQ, &one);
+        assert_eq!(dec_vbs(&one.repeat(10)).unwrap().len(), 10);
+        assert!(dec_vbs(&one.repeat(MAX_VARBINDS + 1)).is_err());
+        // Enteros fuera de rango.
+        assert!(dec_int(&[0; 9]).is_err() && dec_int(&[]).is_err());
+        assert!(dec_uint(&[1, 0, 0, 0, 0], 4).is_err());
+        assert!(dec_value(T_IP, &[1, 2, 3]).is_err());
+        // Contraseña vacía: sin división por cero al derivar la clave.
+        assert!(AuthProto::Sha.password_key(b"").is_empty());
+    }
+
+    #[test]
+    fn trap_receiver_rejects_downgrade_and_forged_engines() {
+        let src: SocketAddr = "192.0.2.9:50000".parse().unwrap();
+        let mut usm = TrapUsm::new(trap_creds(None));
+        let engine = hexs("800000090300aabbccddeeff");
+        let pdu = Pdu { kind: PDU_TRAP_V2, req_id: 1, err_status: 0, err_index: 0, vbs: vec![(SYS_UPTIME.to_vec(), Value::Ticks(1))] };
+        let scoped = enc_scoped(&engine, b"", &pdu).unwrap();
+        let noauth = |user: &[u8]| {
+            let h = V3Header { msg_id: 1, flags: 0, engine_id: &engine, boots: 1, time: 1, user, auth_len: 0, priv_params: &[] };
+            enc_v3(&h, &scoped).0
+        };
+        // noAuthNoPriv con el nombre del usuario que exige autenticación: descartado.
+        assert!(decode_trap(&noauth(b"traps"), src, Some(&mut usm)).unwrap_err().contains("descartado"));
+        // Otro usuario sin autenticación: se muestra, marcado como tal.
+        let (t, _) = decode_trap(&noauth(b"otro"), src, Some(&mut usm)).unwrap();
+        assert!(t.note.unwrap().contains("noAuthNoPriv"));
+        // Ráfaga de engineID inventados sin la clave: no entran en la caché.
+        for i in 0..300u32 {
+            let mut e = engine.clone();
+            e.extend(i.to_be_bytes());
+            let h = V3Header { msg_id: 1, flags: FLAG_AUTH, engine_id: &e, boots: 1, time: 1, user: b"traps", auth_len: 24, priv_params: &[] };
+            let (t, _) = decode_trap(&enc_v3(&h, &scoped).0, src, Some(&mut usm)).unwrap();
+            assert!(t.note.unwrap().contains("firma"));
+        }
+        assert!(usm.engines.is_empty());
+        // Uno auténtico sí entra y la protección contra repeticiones sigue vigente.
+        let (t, _) = decode_trap(&v3_trap("traps", AuthProto::Sha256, None, 5, 100), src, Some(&mut usm)).unwrap();
+        assert!(t.note.unwrap().contains("verificado"));
+        assert_eq!(usm.engines.len(), 1);
+        let (t, _) = decode_trap(&v3_trap("traps", AuthProto::Sha256, None, 4, 100), src, Some(&mut usm)).unwrap();
+        assert!(t.note.unwrap().contains("ventana"));
     }
 
     #[test]

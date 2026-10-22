@@ -27,6 +27,9 @@ const IDLE: Duration = Duration::from_secs(300);
 /// Espera de la conexión de datos (PASV) o del connect (PORT).
 const DATA_WAIT: Duration = Duration::from_secs(20);
 const MAX_LINE: usize = 1024;
+/// Plazo para iniciar sesión. Sin él, 8 conexiones sin credenciales enviando NOOP
+/// ocuparían todos los cupos indefinidamente.
+const LOGIN_WAIT: Duration = Duration::from_secs(if cfg!(test) { 4 } else { 60 });
 
 #[derive(Serialize, Clone)]
 pub struct FtpInfo {
@@ -352,11 +355,11 @@ impl Session {
 }
 
 /// Lee una línea de control acotada. None: conexión cerrada, inactiva o línea excesiva.
-fn read_line(r: &mut BufReader<TcpStream>, flag: &AtomicBool) -> Option<String> {
+fn read_line(r: &mut BufReader<TcpStream>, flag: &AtomicBool, idle: Duration) -> Option<String> {
     let mut line = Vec::new();
     let start = Instant::now();
     loop {
-        if !flag.load(Ordering::SeqCst) || start.elapsed() > IDLE {
+        if !flag.load(Ordering::SeqCst) || start.elapsed() > idle {
             return None;
         }
         let buf = match r.fill_buf() {
@@ -414,7 +417,15 @@ fn session(ctrl: TcpStream, peer: SocketAddr, cfg: Arc<Config>) {
     if s.reply(220, "NetTerminal FTP").is_err() {
         return;
     }
-    while let Some(line) = read_line(&mut reader, &cfg.flag) {
+    let started = Instant::now();
+    loop {
+        let idle = if authed { IDLE } else { LOGIN_WAIT.saturating_sub(started.elapsed()) };
+        let Some(line) = read_line(&mut reader, &cfg.flag, idle) else {
+            if !authed {
+                let _ = s.reply(421, "Tiempo de inicio de sesión agotado");
+            }
+            break;
+        };
         let (cmd, arg) = line.split_once(' ').map(|(c, a)| (c.to_ascii_uppercase(), a.to_string())).unwrap_or((line.to_ascii_uppercase(), String::new()));
         let r = match cmd.as_str() {
             "USER" => {
@@ -675,7 +686,7 @@ mod tests {
             path: Some("/".into()),
         };
         let mut ftp = open(&params("clave", false)).unwrap();
-        let list = parse_entries(&ftp.list(None).unwrap());
+        let list = parse_entries(&crate::ftpclient::list_bounded(&mut ftp).unwrap());
         assert!(list.iter().any(|e| e.name == "fw.bin" && e.size == 200_000));
         let mut s = ftp.retr_as_stream("fw.bin").unwrap();
         let mut got = Vec::new();
@@ -712,6 +723,94 @@ mod tests {
     }
 
     #[test]
+    fn ftp_rejects_hostile_paths_and_input() {
+        let (addr, root, flag, _) = server(true);
+        let mut f = Ftp::connect(addr);
+        f.cmd("USER nt");
+        assert!(f.cmd("PASS clave").starts_with("230"));
+        for p in [
+            "../../../../etc/passwd",
+            "/../../etc/passwd",
+            "..\\..\\etc\\passwd",
+            "sub/../../fw.bin",
+            "/etc/passwd",
+            "C:/Windows/win.ini",
+            "fw.bin\0x",
+            "./././../fw.bin",
+        ] {
+            assert!(f.cmd(&format!("SIZE {p}")).starts_with("550"), "{p}");
+            assert!(f.cmd(&format!("CWD {p}")).starts_with("550"), "{p}");
+            assert!(f.cmd(&format!("MDTM {p}")).starts_with("550"), "{p}");
+        }
+        assert!(f.cmd("STOR ../../fuera.cfg").starts_with("553"));
+        assert!(f.cmd("STOR /../fuera.cfg").starts_with("553"));
+        // Un enlace simbólico dentro de la carpeta no da acceso a lo que está fuera.
+        #[cfg(unix)]
+        {
+            let outside = root.with_extension("fuera");
+            fs::create_dir_all(&outside).unwrap();
+            fs::write(outside.join("secreto.txt"), b"x").unwrap();
+            std::os::unix::fs::symlink(&outside, root.join("enlace")).unwrap();
+            assert!(f.cmd("SIZE enlace/secreto.txt").starts_with("550"));
+            assert!(f.cmd("RETR enlace/secreto.txt").starts_with("550"));
+            assert!(f.cmd("CWD enlace").starts_with("550"));
+            assert!(f.cmd("STOR enlace/nuevo.cfg").starts_with("553"));
+            assert!(!outside.join("nuevo.cfg").exists());
+            fs::remove_dir_all(&outside).unwrap();
+        }
+        // Basura aleatoria en el canal de control: el servidor sigue respondiendo.
+        let mut rng = crate::snmp::tests::Rng(0x5EED_F00D_CAFE_0001);
+        let mut junk = Vec::new();
+        for _ in 0..300 {
+            let n = rng.below(80);
+            let line: Vec<u8> = (0..n).map(|_| (rng.next() as u8).max(0x20)).filter(|b| *b != b'\r' && *b != b'\n' && *b != 0x7F).collect();
+            // Sin QUIT ni PASS (cerraría o contaría intentos fallidos).
+            if !line.to_ascii_uppercase().starts_with(b"QUI") && !line.to_ascii_uppercase().starts_with(b"PAS") {
+                junk.extend(line);
+                junk.extend(b"\r\n");
+            }
+        }
+        f.ctrl.write_all(&junk).unwrap();
+        f.ctrl.write_all(b"NOOP\r\nSYST\r\n").unwrap();
+        let mut alive = false;
+        for _ in 0..2000 {
+            if f.line().starts_with("215 ") {
+                alive = true;
+                break;
+            }
+        }
+        assert!(alive);
+        // Línea de control excesiva: se corta la conexión.
+        let _ = f.ctrl.write_all(&vec![b'A'; 20_000]);
+        let _ = f.ctrl.write_all(b"\r\n");
+        let mut rest = Vec::new();
+        let _ = f.r.read_to_end(&mut rest);
+        flag.store(false, Ordering::SeqCst);
+        fs::remove_dir_all(root).unwrap();
+    }
+
+    #[test]
+    fn ftp_closes_idle_unauthenticated_clients() {
+        let (addr, root, flag, _) = server(false);
+        let mut f = Ftp::connect(addr);
+        let t = Instant::now();
+        // Sin credenciales, ni siquiera NOOP mantiene la conexión más allá de LOGIN_WAIT.
+        while t.elapsed() < LOGIN_WAIT + Duration::from_secs(3) {
+            if f.ctrl.write_all(b"NOOP\r\n").is_err() {
+                break;
+            }
+            let mut l = String::new();
+            if f.r.read_line(&mut l).is_err() || l.is_empty() || l.starts_with("421") {
+                break;
+            }
+            std::thread::sleep(Duration::from_millis(500));
+        }
+        assert!(t.elapsed() < LOGIN_WAIT + Duration::from_secs(3));
+        flag.store(false, Ordering::SeqCst);
+        fs::remove_dir_all(root).unwrap();
+    }
+
+    #[test]
     fn parses_port_commands() {
         assert_eq!(parse_port("192,0,2,1,4,1"), Some((IpAddr::from([192, 0, 2, 1]), 1025)));
         assert_eq!(parse_port("192,0,2,1,4"), None);
@@ -719,6 +818,12 @@ mod tests {
         assert_eq!(parse_eprt("|1|192.0.2.1|6275|"), Some((IpAddr::from([192, 0, 2, 1]), 6275)));
         assert_eq!(parse_eprt("|2|::1|6275|"), Some(("::1".parse().unwrap(), 6275)));
         assert_eq!(parse_eprt("|3|x|1|"), None);
+        let mut rng = crate::snmp::tests::Rng(0xABCD_EF01_2345_6789);
+        let alphabet = ['|', ',', '1', '9', '2', '5', ':', '.', 'é', ' ', '-', '0'];
+        for _ in 0..20_000 {
+            let s: String = (0..rng.below(24)).map(|_| alphabet[rng.below(alphabet.len())]).collect();
+            let _ = (parse_port(&s), parse_eprt(&s));
+        }
         let pass = random_text(10);
         assert_eq!(pass.len(), 10);
         assert!(pass.chars().all(|c| c.is_ascii_alphanumeric() && !"lo01".contains(c)));
