@@ -55,7 +55,7 @@ const MODULES: [ModuleId, string, string][] = [
  */
 const sections: { id: Section; label: string; Icon: typeof Palette; group: string; keywords: string }[] = [
   { id: "appearance", label: "Apariencia", Icon: Palette, group: "General", keywords: "interfaz claro oscuro sistema pestañas verticales horizontales tema de terminal fuente tamaño interlineado cursor parpadeante colores" },
-  { id: "terminal", label: "Terminal", Icon: SquareTerminal, group: "General", keywords: "historial scrollback copiar al seleccionar pegar clic derecho confirmar al cerrar confirmar envío varias líneas barra de botones pausa entre líneas notas" },
+  { id: "terminal", label: "Terminal", Icon: SquareTerminal, group: "General", keywords: "historial scrollback copiar al seleccionar pegar clic derecho confirmar al cerrar legacy ssh algoritmos antiguos ssh-rsa compatibilidad confirmar envío varias líneas barra de botones pausa entre líneas notas" },
   { id: "highlight", label: "Resaltado", Icon: Highlighter, group: "General", keywords: "resaltado sintaxis reglas regex esquemas fabricante cisco juniper huawei fortinet colores exportar importar" },
   { id: "data", label: "Logs", Icon: ScrollText, group: "Sesiones y datos", keywords: "logs grabar automáticamente hora en cada línea nombre del archivo patrón anexar rotación diaria ocultar secretos carpeta de logs" },
   { id: "credentials", label: "Credenciales", Icon: KeyRound, group: "Sesiones y datos", keywords: "contraseñas guardadas bóveda llavero contraseña maestra portable credenciales" },
@@ -369,6 +369,12 @@ export function SettingsModal({
                 </Item>
                 <Item label="Confirmar al cerrar" hint="Pide confirmación antes de cortar una sesión remota activa">
                   <Switch checked={s.confirmClose} onChange={(v) => onChange({ confirmClose: v })} />
+                </Item>
+                <Item
+                  label="Activar algoritmos legacy automáticamente"
+                  hint="Si un equipo SSH exige ssh-rsa, SHA1 o CBC, reconecta una vez en modo compatible y lo deja guardado en la sesión. Usa algoritmos débiles: actívalo solo en redes de gestión confiables"
+                >
+                  <Switch checked={s.autoLegacySsh} onChange={(v) => onChange({ autoLegacySsh: v })} />
                 </Item>
                 <div className="pt-2 text-[12px] font-medium text-muted">Notas</div>
                 <Item label="Confirmar envío de varias líneas" hint="Muestra un resumen antes de enviar o pegar un bloque en un equipo remoto">

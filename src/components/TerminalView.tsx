@@ -175,6 +175,15 @@ export const TerminalView = memo(function TerminalView({ id, session, active, vi
     let lastDataAt = 0;
     /** Tras un error de negociación SSH, "L" activa los algoritmos legacy y reconecta. */
     let legacyOffer = false;
+    /** Activa legacy en la pestaña (y en la sesión guardada) y reconecta. */
+    function enableLegacy(note: string) {
+      legacyOffer = false;
+      sessionRef.current = { ...sessionRef.current, legacy_ssh: true };
+      onEnableLegacy?.(id);
+      term.write(`\r\n${dim(note)}\r\n`);
+      retries = 0;
+      void connect();
+    }
     /** Final de la salida reciente (sin ANSI), para reconocer el prompt. */
     let tail = "";
     /** El operador eligió conectar sin autocompletar: no se vuelve a preguntar en reconexiones. */
@@ -263,6 +272,10 @@ export const TerminalView = memo(function TerminalView({ id, session, active, vi
             term.write(
               `\r\n${dim("── El equipo solo ofrece claves ssh-dss (DSA), que OpenSSH 10 ya no soporta ni en modo legacy. Genera una clave RSA/ECDSA en el equipo o usa Telnet/consola ──")}\r\n`,
             );
+          } else if (!sessionRef.current.legacy_ssh && settingsRef.current.autoLegacySsh && !manualClose) {
+            // Un solo reintento: con legacy_ssh activo, un nuevo fallo cae en la rama de abajo.
+            enableLegacy("── El equipo usa algoritmos antiguos: compatibilidad activada automáticamente (Ajustes › Terminal) ──");
+            return;
           } else if (!sessionRef.current.legacy_ssh) {
             legacyOffer = true;
             term.write(
@@ -360,12 +373,7 @@ export const TerminalView = memo(function TerminalView({ id, session, active, vi
       if (statusRef.current === "closed") {
         if (sessionRef.current.scp) return;
         if (legacyOffer && (data === "l" || data === "L")) {
-          legacyOffer = false;
-          sessionRef.current = { ...sessionRef.current, legacy_ssh: true };
-          onEnableLegacy?.(id);
-          term.write(`${dim("── Compatibilidad con equipos antiguos activada ──")}\r\n`);
-          retries = 0;
-          connect();
+          enableLegacy("── Compatibilidad con equipos antiguos activada ──");
           return;
         }
         if (data === "\r") {
