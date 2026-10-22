@@ -1622,9 +1622,15 @@ pub struct TargetParams {
     pub profile: Option<String>,
 }
 
-/// Secretos de un perfil guardados en la bóveda (JSON cifrado dentro de ella).
+/// Secretos de un perfil guardados en la bóveda (JSON cifrado dentro de ella), atados al
+/// destino con que se guardaron: un frontend comprometido (o un host editado en el perfil)
+/// no puede mandar la community en claro, ni un HMAC v3 atacable offline, a otro equipo.
 #[derive(Serialize, Deserialize, Default)]
 struct Saved {
+    #[serde(default)]
+    host: String,
+    #[serde(default)]
+    port: u16,
     #[serde(default)]
     community: String,
     #[serde(default)]
@@ -1668,6 +1674,7 @@ impl TargetParams {
         let mut auth_pass = take(self.auth_pass);
         let mut priv_pass = take(self.priv_pass);
         let host = check_host(&self.host)?;
+        let port = self.port.filter(|p| *p != 0).unwrap_or(161);
         let level = self.level.as_deref().unwrap_or("authPriv");
         let v3 = self.version == "3";
         let needs = if v3 {
@@ -1679,6 +1686,10 @@ impl TargetParams {
             if let Some(profile) = self.profile.as_deref().filter(|p| !p.is_empty()) {
                 if let Some(json) = saved(profile)? {
                     let s: Saved = serde_json::from_str(&json).unwrap_or_default();
+                    // Sin destino guardado (o con otro) no se usan: nunca viajan a otro equipo.
+                    if s.host.is_empty() || !s.host.eq_ignore_ascii_case(&host) || s.port != port {
+                        return Err(SAVED_OTHER_TARGET.into());
+                    }
                     if community.is_empty() {
                         community = Zeroizing::new(s.community.clone());
                     }
@@ -1725,7 +1736,7 @@ impl TargetParams {
         };
         Ok(Target {
             host,
-            port: self.port.filter(|p| *p != 0).unwrap_or(161),
+            port,
             timeout: Duration::from_millis(self.timeout_ms.unwrap_or(2000).clamp(200, 30_000)),
             retries: self.retries.unwrap_or(1).min(5),
             sec,
@@ -1733,9 +1744,20 @@ impl TargetParams {
     }
 }
 
-/// Serializa los secretos de un perfil para guardarlos en la bóveda.
-pub fn saved_json(community: Option<String>, auth_pass: Option<String>, priv_pass: Option<String>) -> Result<Zeroizing<String>, String> {
+const SAVED_OTHER_TARGET: &str =
+    "Los secretos guardados de este perfil son de otro host o puerto. Ingrésalos de nuevo y guarda el perfil";
+
+/// Serializa los secretos de un perfil, con su destino, para guardarlos en la bóveda.
+pub fn saved_json(
+    host: &str,
+    port: Option<u16>,
+    community: Option<String>,
+    auth_pass: Option<String>,
+    priv_pass: Option<String>,
+) -> Result<Zeroizing<String>, String> {
     let s = Saved {
+        host: check_host(host)?,
+        port: port.filter(|p| *p != 0).unwrap_or(161),
         community: community.unwrap_or_default(),
         auth_pass: auth_pass.unwrap_or_default(),
         priv_pass: priv_pass.unwrap_or_default(),
@@ -1748,7 +1770,11 @@ pub fn saved_json(community: Option<String>, auth_pass: Option<String>, priv_pas
     if s.community.is_empty() && s.auth_pass.is_empty() && s.priv_pass.is_empty() {
         return Err("No hay secretos para guardar".into());
     }
-    Ok(Zeroizing::new(serde_json::to_string(&s).map_err(|e| e.to_string())?))
+    // Búfer con capacidad de sobra: sin realocaciones que dejen copias sin borrar.
+    let cap = 64 + s.host.len() + 6 * (s.community.len() + s.auth_pass.len() + s.priv_pass.len());
+    let mut out = Zeroizing::new(Vec::with_capacity(cap));
+    serde_json::to_writer(&mut *out, &s).map_err(|e| e.to_string())?;
+    Ok(Zeroizing::new(String::from_utf8(std::mem::take(&mut *out)).map_err(|e| e.to_string())?))
 }
 
 pub fn check_profile(id: &str) -> Result<String, String> {
@@ -1909,13 +1935,15 @@ pub fn snmp_walk(
 #[tauri::command(async)]
 pub fn snmp_secret_set(
     profile: String,
+    host: String,
+    port: Option<u16>,
     community: Option<String>,
     auth_pass: Option<String>,
     priv_pass: Option<String>,
     state: tauri::State<'_, crate::AppState>,
 ) -> Result<(), String> {
     let key = check_profile(&profile)?;
-    let json = saved_json(community, auth_pass, priv_pass)?;
+    let json = saved_json(&host, port, community, auth_pass, priv_pass)?;
     state.creds.set(&key, &json, &state.store.ids())
 }
 
@@ -2433,7 +2461,7 @@ pub(crate) mod tests {
         let v3 = || TargetParams { version: "3".into(), user: Some("mon".into()), auth_pass: Some("corta".into()), priv_pass: Some("12345678".into()), ..base() };
         assert!(v3().into_target(|_| Ok(None)).err().unwrap().contains("8"));
         // Secretos desde la bóveda cuando los campos vienen vacíos.
-        let saved = saved_json(None, Some("authpass123".into()), Some("privpass123".into())).unwrap();
+        let saved = saved_json("192.0.2.1", None, None, Some("authpass123".into()), Some("privpass123".into())).unwrap();
         let t = TargetParams { auth_pass: None, priv_pass: None, profile: Some("p1".into()), ..v3() }
             .into_target(|p| {
                 assert_eq!(p, "p1");
@@ -2443,10 +2471,26 @@ pub(crate) mod tests {
         let Security::V3(c) = t.sec else { panic!() };
         assert_eq!(c.auth.unwrap().1.as_str(), "authpass123");
         assert_eq!(c.privacy.unwrap().1.as_str(), "privpass123");
+        // Atados al destino: otro host, otro puerto o una entrada sin destino se rechazan.
+        let other = |host: &str, port: Option<u16>, json: Zeroizing<String>| {
+            TargetParams { host: host.into(), port, auth_pass: None, priv_pass: None, profile: Some("p1".into()), ..v3() }
+                .into_target(|_| Ok(Some(json)))
+                .err()
+                .unwrap_or_default()
+        };
+        assert_eq!(other("198.51.100.7", None, saved.clone()), SAVED_OTHER_TARGET);
+        assert_eq!(other("192.0.2.1", Some(1161), saved.clone()), SAVED_OTHER_TARGET);
+        let legacy = Zeroizing::new(r#"{"auth_pass":"authpass123","priv_pass":"privpass123"}"#.to_string());
+        assert_eq!(other("192.0.2.1", None, legacy), SAVED_OTHER_TARGET);
+        // Secretos tecleados: no se consulta la bóveda y el host es libre.
+        assert!(TargetParams { host: "198.51.100.7".into(), auth_pass: Some("authpass123".into()), ..v3() }
+            .into_target(|_| panic!("no debe leer la bóveda"))
+            .is_ok());
+        assert!(saved_json("-x", None, Some("c".into()), None, None).is_err());
         assert_eq!(check_profile("abc-1").unwrap(), "snmp:abc-1");
         assert!(check_profile("../x").is_err());
-        assert!(saved_json(None, None, None).is_err());
-        assert!(saved_json(Some("a\nb".into()), None, None).is_err());
+        assert!(saved_json("192.0.2.1", None, None, None, None).is_err());
+        assert!(saved_json("192.0.2.1", None, Some("a\nb".into()), None, None).is_err());
     }
 
     /// Contra un snmpd real (net-snmp): `NT_SNMP_LAB=127.0.0.1:16161 cargo test -- --ignored snmp_lab`.

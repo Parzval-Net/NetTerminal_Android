@@ -250,7 +250,11 @@ impl Credentials {
 
     fn encrypt_write(&self, key: &[u8; 32], mode: Mode, kdf: Kdf, salt: [u8; 16], entries: &Entries) -> Result<(), String> {
         let header = Header { mode, kdf, salt, nonce: random() }.encode();
-        let plain = Zeroizing::new(serde_json::to_vec(&entries.0).map_err(|e| e.to_string())?);
+        // Capacidad de sobra (el peor escape JSON es \uXXXX, 6 bytes por byte): `to_vec`
+        // realocaría y dejaría copias del texto en claro sin borrar en memoria liberada.
+        let cap = 2 + entries.0.iter().map(|(k, v)| 6 * (k.len() + v.len()) + 6).sum::<usize>();
+        let mut plain = Zeroizing::new(Vec::with_capacity(cap));
+        serde_json::to_writer(&mut *plain, &entries.0).map_err(|e| e.to_string())?;
         let mut nonce = [0u8; 24];
         nonce.copy_from_slice(&header[37..61]);
         let ct = seal::encrypt(key, &nonce, &plain, &header).map_err(|_| "No se pudo cifrar la bóveda".to_string())?;
@@ -601,6 +605,17 @@ mod tests {
         assert!(c.set("s1", "x", &[]).is_err());
         c.create("maestra-larga").unwrap();
         c.set("s1", "x", &[]).unwrap();
+        std::fs::remove_dir_all(&d).unwrap();
+    }
+
+    #[test]
+    fn roundtrips_passwords_that_need_json_escapes() {
+        let d = dir();
+        let c = Credentials::with(&d, true, Box::new(MemKeys::default()), FAST);
+        c.create("maestra-larga").unwrap();
+        let pw = "a\"b\\c\u{1}ñ€\t";
+        c.set("s1", pw, &[]).unwrap();
+        assert_eq!(c.get("s1").as_deref().map(|s| s.as_str()), Some(pw));
         std::fs::remove_dir_all(&d).unwrap();
     }
 
