@@ -25,6 +25,16 @@ export interface Profile {
   /** El equipo sube a este PC (requiere TFTP con escritura). */
   download: ((v: Vars) => string) | null;
   backup: ((v: Vars) => string) | null;
+  /**
+   * FTP con el servidor de la app. `cred` es "usuario:contraseña" (temporales, cambian en
+   * cada inicio del servidor). Solo fabricantes que aceptan la contraseña en la URL: los
+   * que la piden por teclado (NX-OS, VRP) no se automatizan.
+   */
+  ftp?: {
+    upload: (v: Vars, cred: string) => string;
+    download?: (v: Vars, cred: string) => string;
+    backup?: (v: Vars, cred: string) => string;
+  };
   /** Comando que muestra el MD5 de un archivo en el equipo (verificación de firmware). */
   md5: ((v: Vars) => string) | null;
   note?: string;
@@ -52,6 +62,13 @@ export const profiles: Profile[] = [
     download: (v) => `copy ${join(v.fs, v.file)} tftp://${v.ip}/${v.file}${sfx(v.extra)}`,
     backup: (v) => `copy running-config tftp://${v.ip}/${v.file}${sfx(v.extra)}`,
     md5: (v) => `verify /md5 ${join(v.fs, v.file)}`,
+    // Cisco IOS/IOS-XE: copy ftp://usuario:contraseña@host/archivo (Cisco IOS Configuration
+    // Fundamentals, "Using the Cisco IOS File System").
+    ftp: {
+      upload: (v, c) => `copy ftp://${c}@${v.ip}/${v.file} ${join(v.fs, v.file)}${sfx(v.extra)}`,
+      download: (v, c) => `copy ${join(v.fs, v.file)} ftp://${c}@${v.ip}/${v.file}${sfx(v.extra)}`,
+      backup: (v, c) => `copy running-config ftp://${c}@${v.ip}/${v.file}${sfx(v.extra)}`,
+    },
   },
   {
     id: "nxos",
@@ -86,6 +103,11 @@ export const profiles: Profile[] = [
     download: null,
     backup: null,
     md5: (v) => `file checksum md5 ${v.fs}${v.file}`,
+    // Junos: file copy ftp://usuario:contraseña@host/archivo destino (Junos CLI, "file copy").
+    ftp: {
+      upload: (v, c) => `file copy ftp://${c}@${v.ip}/${v.file} ${v.fs}`,
+      download: (v, c) => `file copy ${v.fs}${v.file} ftp://${c}@${v.ip}/${v.file}`,
+    },
     note: "Junos no sube archivos por TFTP; para extraer usa SCP (cifrado).",
   },
 ];

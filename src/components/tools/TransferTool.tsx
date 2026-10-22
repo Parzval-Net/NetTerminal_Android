@@ -6,6 +6,7 @@ import { FilePlus, FolderOpen, RefreshCw } from "lucide-react";
 import { Settings } from "../../lib/settings";
 import { Btn, CopyText, Label, Section, StatusPill, Toggle, fmtBytes } from "./ui";
 import { FileManager, ScpRequest, TerminalRef } from "./FileManager";
+import { FtpClientSection, FtpServerSection, SftpSection } from "./FtpPanels";
 
 interface Transfer {
   id: string;
@@ -157,6 +158,13 @@ export function TransferTool({
           </div>
         </Section>
       </div>
+
+      <div className="grid gap-4 [grid-template-columns:repeat(auto-fit,minmax(340px,1fr))]">
+        <FtpServerSection settings={s} running={running} onChange={onChange} refreshRunning={refreshRunning} ip={ip} file={file} />
+        <SftpSection terminals={terminals} onScp={onScp} />
+      </div>
+
+      <FtpClientSection files={files} onLocalChange={loadFiles} />
 
       <Section
         title="Archivos compartidos"

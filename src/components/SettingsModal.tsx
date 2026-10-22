@@ -40,8 +40,9 @@ const MODULES: [ModuleId, string, string][] = [
   ["topology", "Topología", "Diagrama de vecinos CDP/LLDP y seguimiento de rutas"],
   ["subnet", "Subredes", "Calculadora IPv4/IPv6 y división de redes"],
   ["perf", "Velocidad", "Speedtest (Cloudflare) e iperf3"],
-  ["transfer", "TFTP / HTTP", "Servir firmware y recibir respaldos desde equipos"],
+  ["transfer", "Transferencias", "TFTP, HTTP, FTP y SFTP: servir firmware y recibir respaldos desde equipos"],
   ["syslog", "Syslog", "Recibir logs de equipos en vivo"],
+  ["snmp", "SNMP", "Consultas v1/v2c/v3, conjuntos de OIDs y receptor de traps"],
   ["plugins", "Plugins", "Extensiones instalables en Python"],
   ["backup", "Respaldos", "Respaldo de configuración por fabricante y comparación de versiones"],
 ];

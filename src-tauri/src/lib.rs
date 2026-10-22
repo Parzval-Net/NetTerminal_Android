@@ -5,6 +5,8 @@ mod connection;
 mod credentials;
 mod expect;
 mod filexfer;
+mod ftpclient;
+mod ftpserver;
 mod history;
 mod importers;
 mod logfile;
@@ -14,6 +16,7 @@ mod monitor;
 mod nettools;
 mod plugins;
 mod servers;
+mod snmp;
 mod scripts;
 mod seal;
 mod models;
@@ -968,7 +971,19 @@ pub fn run() {
             vault_unlock,
             vault_lock,
             vault_change,
-            vault_reset
+            vault_reset,
+            snmp::snmp_request,
+            snmp::snmp_walk,
+            snmp::snmp_walk_many,
+            snmp::snmp_trap_start,
+            snmp::snmp_secret_set,
+            snmp::snmp_secret_has,
+            snmp::snmp_secret_delete,
+            ftpserver::ftp_server_start,
+            ftpserver::ftp_server_info,
+            ftpclient::ftp_list,
+            ftpclient::ftp_get,
+            ftpclient::ftp_put
         ])
         .build(tauri::generate_context!())
         .expect("error al iniciar NetTerminal")
