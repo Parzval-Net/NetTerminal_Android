@@ -1,8 +1,9 @@
 // Genera las capturas del README con datos ficticios, controlando Chrome por DevTools Protocol.
 // Uso: `npx vite --port 1430` en otra terminal y luego `node scripts/screenshots/shoot.mjs`.
 // Variables opcionales: PORT (puerto de vite), OUT (carpeta de salida), CHROME (binario).
-// Cada captura: [archivo, escena, tema, { query?, hover? }]; `hover` es un selector CSS sobre el
-// que se deja el mouse antes de capturar (estados hover, p. ej. la X de una pestaña).
+// Cada captura: [archivo, escena, tema, { query?, hover?, type?, keys? }]; `hover` es un selector CSS
+// sobre el que se deja el mouse antes de capturar (estados hover, p. ej. la X de una pestaña);
+// `type` se escribe tecla por tecla en la terminal y `keys` son teclas especiales ("ctrl+space").
 import { spawn } from "node:child_process";
 import { mkdtempSync, mkdirSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
@@ -52,7 +53,10 @@ const SHOTS = [
   ["pestanas-x-oscuro", "terminal", "dark", { hover: '[title^="core-sw01"]' }],
   ["pestanas-x-oscuro-tema-claro", "terminal", "dark", { query: "&term=nt-light", hover: '[title^="core-sw01"]' }],
   ["pestanas-verticales-x-oscuro", "vertical", "dark", { hover: '[role="tab"][data-id="t3"]' }],
+  ["sugerencias-comandos", "suggest", "light", { query: "&video=1", type: "show ip int" }],
 ];
+/** Teclas especiales para `keys`: [key, code, keyCode, modificadores CDP (2 = Ctrl)]. */
+const KEYS = { "ctrl+space": [" ", "Space", 32, 2], right: ["ArrowRight", "ArrowRight", 39, 0], down: ["ArrowDown", "ArrowDown", 40, 0] };
 const only = process.argv.slice(2);
 
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
@@ -78,6 +82,8 @@ try {
   const send = (method, params = {}) => new Promise((r) => { const id = ++seq; pending.set(id, r); ws.send(JSON.stringify({ id, method, params })); });
 
   await send("Page.enable");
+  // Sin foco real la terminal no recibe teclas en headless.
+  await send("Emulation.setFocusEmulationEnabled", { enabled: true });
   await send("Runtime.enable");
   ws.addEventListener("message", (ev) => {
     const m = JSON.parse(ev.data);
@@ -100,6 +106,18 @@ try {
       else console.warn(`${name}: no se encontró ${extra.hover}`);
       await sleep(400);
     }
+    for (const ch of extra.type ?? "") {
+      await send("Input.dispatchKeyEvent", { type: "keyDown", key: ch, text: ch, unmodifiedText: ch });
+      await send("Input.dispatchKeyEvent", { type: "keyUp", key: ch });
+      await sleep(80);
+    }
+    for (const k of extra.keys ?? []) {
+      const [key, code, vk, modifiers] = KEYS[k];
+      await send("Input.dispatchKeyEvent", { type: "rawKeyDown", key, code, windowsVirtualKeyCode: vk, modifiers });
+      await send("Input.dispatchKeyEvent", { type: "keyUp", key, code, windowsVirtualKeyCode: vk, modifiers });
+      await sleep(150);
+    }
+    if (extra.type || extra.keys) await sleep(600);
     const { result } = await send("Page.captureScreenshot", { format: "png" });
     writeFileSync(join(OUT, `${name}.png`), Buffer.from(result.data, "base64"));
     console.log(`${name}.png`);

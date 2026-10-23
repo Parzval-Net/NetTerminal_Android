@@ -1088,6 +1088,7 @@ function Workspace({
               onActivity={markActivity}
               onEnableLegacy={h.enableLegacy}
               register={register}
+              catalog={catalog}
             />
             );
           })}

@@ -34,6 +34,7 @@ Construido con [Tauri 2](https://tauri.app) (backend en Rust) y xterm.js. Usa el
 | Área | Detalle |
 | --- | --- |
 | SSH | Usa el OpenSSH del sistema: respeta `~/.ssh/config`, agente, llaves y `known_hosts`. Jump host (ProxyJump), túneles locales, remotos y dinámicos por sesión (escucha en 127.0.0.1 por defecto) y opción de algoritmos legacy para equipos antiguos. Opcional y apagado por defecto: Ajustes › Terminal › "Activar algoritmos legacy automáticamente" reconecta una vez en modo compatible si el equipo exige ssh-rsa, SHA1 o CBC y lo deja guardado en la sesión. Usa algoritmos débiles: actívalo solo en redes de gestión confiables. |
+| Sugerencias de comandos (beta) | Apagado por defecto (Ajustes › Terminal). En sesiones SSH, Telnet, Serial y TCP con la plataforma detectada o fijada en el catálogo, muestra en gris el resto de un comando de consulta mientras escribes: Flecha derecha lo acepta y Ctrl+Espacio abre una lista de hasta 8 comandos (↑↓, Enter inserta, Esc cierra). Tab sigue yendo al equipo, nunca se envía Enter y los comandos con variables se insertan hasta la variable. No funciona en la terminal local ni con plataforma desconocida.<br>![Sugerencias de comandos](docs/screenshots/sugerencias-comandos.png) |
 | Telnet | Cliente nativo en Rust (negociación ECHO, SGA, tipo de terminal y tamaño de ventana). No requiere `telnet` instalado. |
 | TCP crudo | Conexión TCP directa sin negociación Telnet, para servidores de consola (puertos 2001+). |
 | Serial | Puertos detectados automáticamente, 1200 a 921600 baudios, 8N1/7E1, control de flujo, envío de Break. |
@@ -87,6 +88,7 @@ Construido con [Tauri 2](https://tauri.app) (backend en Rust) y xterm.js. Usa el
 | Cambiar de pestaña | Ctrl+Tab · ⌘1…9 | Ctrl+Tab |
 | Zoom | ⌘+ ⌘- ⌘0 | Ctrl+Shift++ Ctrl+Shift+- Ctrl+Shift+0 |
 | Copiar / pegar | ⌘C / ⌘V | Ctrl+Shift+C / Ctrl+Shift+V |
+| Sugerencias (beta): aceptar el texto gris / abrir la lista | → / Ctrl+Espacio | → / Ctrl+Espacio |
 
 En Windows/Linux los atajos usan Ctrl+Shift para no interferir con Ctrl+C, Ctrl+W, etc. dentro de la terminal.
 
@@ -179,6 +181,7 @@ Auditoría del binario con REA (Ghidra y utilidades nativas de macOS) y revisió
 | Ping y diagnóstico: un host entre corchetes no inyecta opciones (`[-f]`) | Con tests |
 | Topología: la salida del equipo se trata como no confiable (sin contaminación de prototipo, expresiones sin retroceso catastrófico, tope de 2.000 vecinos, sin caracteres de control ni bidi, nombres de interfaz validados antes de armar comandos); fuentes opcionales apagadas no envían comandos y todos los comandos son de consulta; "seguir la ruta" valida la IP y no copia comandos al conectar ni túneles | Con tests |
 | Comandos de transferencia: tope de 16 MB de salida por comando | Código |
+| Sugerencias de comandos (beta, apagadas por defecto): solo las consultas aparecen en gris; lo que cambia configuración o puede cortar servicio va con distintivo rojo en la lista y pide confirmación; nunca envían Enter ni caracteres de control; no siguen lo tecleado en pedidos de contraseña o passphrase, y lo tecleado no se guarda ni se registra | Con tests |
 
 Pendiente para distribución corporativa: firmar con Developer ID + notarización (macOS) y certificado de firma de código (Windows). Las limitaciones conocidas están en [SECURITY.md](SECURITY.md#limitaciones-conocidas). Sin firma, AppLocker o Intune pueden bloquear la app. Los scripts Python ejecutan código local por diseño: en una carpeta portable compartida, revisa los scripts antes de ejecutarlos.
 

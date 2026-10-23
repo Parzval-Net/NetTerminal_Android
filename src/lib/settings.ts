@@ -44,6 +44,8 @@ export interface Settings {
   confirmClose: boolean;
   /** Reintenta solo con algoritmos legacy si el equipo SSH los exige (apagado por defecto: abre la puerta a un downgrade). */
   autoLegacySsh: boolean;
+  /** Sugerencias de comandos del catálogo al escribir (beta, apagado por defecto). */
+  commandSuggest: boolean;
   autoLog: boolean;
   highlightEnabled: boolean;
   /** Esquemas activos por defecto (las sesiones pueden fijar su fabricante). */
@@ -125,6 +127,7 @@ export const defaultSettings: Settings = {
   rightClickPaste: true,
   confirmClose: true,
   autoLegacySsh: false,
+  commandSuggest: false,
   autoLog: false,
   highlightEnabled: true,
   highlightSchemes: ["cisco", "common"],
