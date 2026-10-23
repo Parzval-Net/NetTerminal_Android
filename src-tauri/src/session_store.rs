@@ -8,6 +8,9 @@ use uuid::Uuid;
 pub struct SessionStore {
     file_path: PathBuf,
     sessions: Mutex<Vec<Session>>,
+    /// sessions.json existe pero no se pudo leer (permisos, error de disco): no se escribe
+    /// encima para no reemplazar las sesiones del usuario por las de ejemplo.
+    load_error: Option<String>,
 }
 
 /// Carpeta "visible" donde vive la app, para el modo portable:
@@ -80,9 +83,29 @@ impl SessionStore {
             }
         }
 
-        let sessions = match fs::read_to_string(&file_path) {
-            Err(_) => Self::default_sessions(),
-            Ok(content) => {
+        let mut load_error = None;
+        // Al abrir solo se escribe si hace falta (archivo nuevo o entradas descartadas): un
+        // archivo sano queda tal cual, también los campos que agregue una versión más nueva.
+        let mut rewrite = false;
+        let sessions = match fs::read(&file_path) {
+            Err(e) if e.kind() == std::io::ErrorKind::NotFound => {
+                rewrite = true;
+                Self::default_sessions()
+            }
+            Err(e) => {
+                backup_corrupt(&file_path);
+                load_error = Some(format!(
+                    "No se pudo leer {}: {e}. Revisa sus permisos y reinicia la app; mientras tanto no se guardan cambios de sesiones.",
+                    file_path.display()
+                ));
+                Self::default_sessions()
+            }
+            Ok(bytes) => {
+                // Bytes que no son UTF-8 (archivo editado con otra codificación): se recupera lo
+                // legible y se respalda el original, en vez de descartar todas las sesiones.
+                let utf8 = String::from_utf8(bytes).map_err(|e| String::from_utf8_lossy(e.as_bytes()).into_owned());
+                let lossy = utf8.is_err();
+                let content = utf8.unwrap_or_else(|s| s);
                 // Se descartan solo las entradas inválidas (puerto fuera de rango, tipo
                 // desconocido tras volver a una versión anterior, edición manual), nunca todo.
                 let parsed = serde_json::from_str::<Vec<serde_json::Value>>(&content);
@@ -90,7 +113,8 @@ impl SessionStore {
                     .as_ref()
                     .map(|items| items.iter().filter_map(|v| serde_json::from_value(v.clone()).ok()).collect())
                     .unwrap_or_default();
-                let lost = parsed.as_ref().map(|items| items.len() != valid.len()).unwrap_or(true);
+                let lost = lossy || parsed.as_ref().map(|items| items.len() != valid.len()).unwrap_or(true);
+                rewrite = lost;
                 if lost {
                     // Respaldo del archivo original antes de reescribirlo.
                     backup_corrupt(&file_path);
@@ -106,8 +130,11 @@ impl SessionStore {
         let store = Self {
             file_path,
             sessions: Mutex::new(sessions),
+            load_error,
         };
-        let _ = store.persist(&store.sessions.lock().unwrap());
+        if rewrite {
+            let _ = store.persist(&store.sessions.lock().unwrap());
+        }
         store
     }
 
@@ -206,6 +233,9 @@ impl SessionStore {
 
     /// Escritura atómica: archivo temporal + rename, para no corromper el JSON.
     fn persist(&self, list: &[Session]) -> Result<(), String> {
+        if let Some(e) = &self.load_error {
+            return Err(e.clone());
+        }
         let json = serde_json::to_string_pretty(list).map_err(|e| e.to_string())?;
         let tmp = self.file_path.with_extension("json.tmp");
         fs::write(&tmp, json).map_err(|e| e.to_string())?;
@@ -263,6 +293,119 @@ mod tests {
             .filter(|e| e.file_name().to_string_lossy().starts_with("sessions.corrupt-"))
             .count();
         assert!(backups >= 1);
+        std::fs::remove_dir_all(&dir).unwrap();
+    }
+
+    fn temp_dir() -> PathBuf {
+        std::env::temp_dir().join(format!("nt-store-{}", uuid::Uuid::new_v4()))
+    }
+
+    fn corrupt_backups(dir: &Path) -> usize {
+        std::fs::read_dir(dir)
+            .unwrap()
+            .flatten()
+            .filter(|e| e.file_name().to_string_lossy().starts_with("sessions.corrupt-"))
+            .count()
+    }
+
+    /// Primer arranque: crea la carpeta de datos (también anidada) y la sesión local.
+    #[test]
+    fn missing_data_dir_and_file_start_with_defaults() {
+        let root = temp_dir();
+        let dir = root.join("a").join("data");
+        let store = super::SessionStore::new(&dir);
+        assert_eq!(store.list().len(), 1);
+        assert!(dir.join("sessions.json").is_file());
+        assert_eq!(corrupt_backups(&dir), 0);
+        // El segundo arranque lee la misma sesión local (mismo id).
+        let id = store.list()[0].id.clone();
+        assert_eq!(super::SessionStore::new(&dir).list()[0].id, id);
+        std::fs::remove_dir_all(&root).unwrap();
+    }
+
+    /// Un archivo sano no se reescribe al abrir: conserva campos de una versión más nueva.
+    #[test]
+    fn healthy_file_is_not_rewritten_on_startup() {
+        let dir = temp_dir();
+        std::fs::create_dir_all(&dir).unwrap();
+        let file = dir.join("sessions.json");
+        let content = r#"[{"id":"a","name":"core","type":"ssh","host":"192.0.2.1","created_at":"","campo_futuro":1}]"#;
+        std::fs::write(&file, content).unwrap();
+        let store = super::SessionStore::new(&dir);
+        assert_eq!(store.list()[0].name, "core");
+        assert_eq!(std::fs::read_to_string(&file).unwrap(), content);
+        std::fs::remove_dir_all(&dir).unwrap();
+    }
+
+    /// Bytes que no son UTF-8 (editado con otra codificación): se recuperan las sesiones y se
+    /// respalda el original, en vez de reemplazarlo por la sesión de ejemplo.
+    #[test]
+    fn non_utf8_file_keeps_sessions_and_backs_up() {
+        let dir = temp_dir();
+        std::fs::create_dir_all(&dir).unwrap();
+        let file = dir.join("sessions.json");
+        let mut bytes = br#"[{"id":"a","name":"Sucursal "#.to_vec();
+        bytes.push(0xd1); // "Ñ" en Latin-1
+        bytes.extend_from_slice(br#"u","type":"ssh","host":"192.0.2.1","created_at":""}]"#);
+        std::fs::write(&file, &bytes).unwrap();
+        let store = super::SessionStore::new(&dir);
+        let list = store.list();
+        assert_eq!(list.len(), 1);
+        assert_eq!(list[0].id, "a");
+        assert!(list[0].name.starts_with("Sucursal "));
+        assert_eq!(corrupt_backups(&dir), 1);
+        std::fs::remove_dir_all(&dir).unwrap();
+    }
+
+    /// sessions.json sin permiso de lectura: no se sobrescribe ni al abrir ni al guardar.
+    #[cfg(unix)]
+    #[test]
+    fn unreadable_file_is_never_overwritten() {
+        use std::os::unix::fs::PermissionsExt;
+        let dir = temp_dir();
+        std::fs::create_dir_all(&dir).unwrap();
+        let file = dir.join("sessions.json");
+        let content = r#"[{"id":"a","name":"core","type":"ssh","host":"192.0.2.1","created_at":""}]"#;
+        std::fs::write(&file, content).unwrap();
+        std::fs::set_permissions(&file, std::fs::Permissions::from_mode(0o000)).unwrap();
+        if std::fs::read(&file).is_ok() {
+            // Corriendo como root los permisos no aplican: no hay nada que probar.
+            std::fs::remove_dir_all(&dir).unwrap();
+            return;
+        }
+        let store = super::SessionStore::new(&dir);
+        assert_eq!(store.list().len(), 1, "arranca con la sesión local en memoria");
+        let mut s = store.list()[0].clone();
+        s.id = String::new();
+        assert!(store.save(s).unwrap_err().contains("No se pudo leer"));
+        std::fs::set_permissions(&file, std::fs::Permissions::from_mode(0o600)).unwrap();
+        assert_eq!(std::fs::read_to_string(&file).unwrap(), content);
+        std::fs::remove_dir_all(&dir).unwrap();
+    }
+
+    /// Carpeta portable de solo lectura (pendrive bloqueado): la app abre igual, sin pánico,
+    /// y guardar devuelve un error que la interfaz muestra.
+    #[cfg(unix)]
+    #[test]
+    fn read_only_data_dir_does_not_panic() {
+        use std::os::unix::fs::PermissionsExt;
+        let dir = temp_dir();
+        std::fs::create_dir_all(&dir).unwrap();
+        std::fs::set_permissions(&dir, std::fs::Permissions::from_mode(0o500)).unwrap();
+        if std::fs::write(dir.join("prueba"), b"x").is_ok() {
+            std::fs::set_permissions(&dir, std::fs::Permissions::from_mode(0o700)).unwrap();
+            std::fs::remove_dir_all(&dir).unwrap();
+            return;
+        }
+        let store = super::SessionStore::new(&dir);
+        assert_eq!(store.list().len(), 1);
+        // `new` deja la carpeta en 0700 (restrict) cuando puede; en un volumen de solo lectura
+        // no puede, así que se vuelve a quitar la escritura para simularlo.
+        std::fs::set_permissions(&dir, std::fs::Permissions::from_mode(0o500)).unwrap();
+        let mut s = store.list()[0].clone();
+        s.id = String::new();
+        assert!(store.save(s).is_err());
+        std::fs::set_permissions(&dir, std::fs::Permissions::from_mode(0o700)).unwrap();
         std::fs::remove_dir_all(&dir).unwrap();
     }
 

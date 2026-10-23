@@ -10,6 +10,8 @@ export function isMod(e: KeyboardEvent): boolean {
 
 export const modLabel = isMac ? "⌘" : "Ctrl+Shift+";
 export const zoomLabel = isMac ? "⌘" : "Ctrl+Shift+";
+/** Atajo de "Cerrar todas las pestañas" para mostrar en la interfaz. */
+export const closeAllLabel = isMac ? "⌘⇧W" : "Ctrl+Shift+Alt+W";
 
 export type AppAction =
   | "settings"
@@ -20,6 +22,7 @@ export type AppAction =
   | "palette"
   | "newTab"
   | "closeTab"
+  | "closeAll"
   | "newSession"
   | "quickConnect"
   | "toggleSidebar"
@@ -48,6 +51,13 @@ export function shortcutFor(e: KeyboardEvent): AppAction | null {
 
   if (isMac && e.metaKey && /^[1-9]$/.test(key)) return { tab: Number(key) - 1 };
   if ((isMac ? e.metaKey : e.ctrlKey) && key === ",") return "settings";
+
+  // Cerrar todas las pestañas: ⌘⇧W en macOS. En Windows/Linux Ctrl+Shift+W ya es "cerrar
+  // pestaña" (el modificador incluye Shift), así que se usa Ctrl+Shift+Alt+W. Va antes del
+  // switch porque isMod no distingue el Shift ni el Alt extra.
+  const w = key === "w" || e.code === "KeyW";
+  if (w && (isMac ? e.metaKey && e.shiftKey && !e.ctrlKey && !e.altKey : e.ctrlKey && e.shiftKey && e.altKey && !e.metaKey))
+    return "closeAll";
 
   if (!isMod(e)) return null;
   switch (key) {

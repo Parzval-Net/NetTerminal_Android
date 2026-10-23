@@ -1,8 +1,9 @@
-import { ClipboardCopy, Columns2, Copy, Eraser, LayoutGrid, PanelLeftDashed, PanelTop, Pencil, Plus, RefreshCcw, RotateCcw, Rows2, Save, Square, SquareTerminal, Undo2, Unplug, X, Zap } from "lucide-react";
+import { ArrowDownToLine, ArrowRightToLine, ClipboardCopy, Columns2, Copy, CopyX, Eraser, LayoutGrid, ListX, PanelLeftDashed, PanelTop, Pencil, Plus, RefreshCcw, RotateCcw, Rows2, Save, Square, SquareTerminal, Undo2, Unplug, X, Zap } from "lucide-react";
 import type { ReactNode } from "react";
 import { SplitLayout, layoutLabel } from "../lib/split";
 import type { TabLayout } from "../lib/settings";
 import type { Tab, TabState } from "../types";
+import type { CloseScope } from "../lib/closeAll";
 
 /** [etiqueta, icono, acción, deshabilitado/marcado] — formato de ContextMenu. */
 export type MenuItem = [string, ReactNode, () => void, boolean?];
@@ -17,6 +18,10 @@ export interface TabMenuHandlers {
   onCopyAll: (id: string) => void;
   onClose: (id: string) => void;
   onSaveAs?: (id: string) => void;
+  /** Cierra varias pestañas (con un solo aviso): todas, las demás o las que siguen a `id`. */
+  onCloseMany?: (scope: CloseScope, id: string) => void;
+  /** Pestañas abiertas, para saber si hay otras o alguna después de esta. */
+  tabs?: Tab[];
   tabLayout?: TabLayout;
   onTabLayout?: (layout: TabLayout) => void;
 }
@@ -54,7 +59,26 @@ export function tabMenuItems(t: Tab, state: TabState | undefined, p: TabMenuHand
       ? ([["Guardar como sesión…", <Save size={13} />, () => p.onSaveAs!(t.id)]] as MenuItem[])
       : []),
     ["Cerrar", <X size={13} />, () => p.onClose(t.id)],
+    ...closeManyItems(t, p),
     ...layoutItem(p),
+  ];
+}
+
+/** Cerrar varias: "a la derecha" en la barra horizontal y "abajo" en la columna vertical. */
+function closeManyItems(t: Tab, p: TabMenuHandlers): MenuItem[] {
+  const { onCloseMany, tabs = [] } = p;
+  if (!onCloseMany) return [];
+  const idx = tabs.findIndex((x) => x.id === t.id);
+  const vertical = p.tabLayout === "vertical";
+  return [
+    ["Cerrar las demás", <CopyX size={13} />, () => onCloseMany("others", t.id), tabs.length <= 1],
+    [
+      vertical ? "Cerrar las de abajo" : "Cerrar las de la derecha",
+      vertical ? <ArrowDownToLine size={13} /> : <ArrowRightToLine size={13} />,
+      () => onCloseMany("after", t.id),
+      idx < 0 || idx >= tabs.length - 1,
+    ],
+    ["Cerrar todas las pestañas", <ListX size={13} />, () => onCloseMany("all", t.id)],
   ];
 }
 

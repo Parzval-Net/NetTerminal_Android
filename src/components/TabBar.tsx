@@ -8,6 +8,7 @@ import { ConnStatus, Tab, TabState, tabTitle } from "../types";
 import { ContextMenu } from "./Sidebar";
 import { SessionIcon, isQuickSession } from "./SessionIcon";
 import { modLabel } from "../lib/platform";
+import type { CloseScope } from "../lib/closeAll";
 
 export interface TabBarProps {
   tabs: Tab[];
@@ -21,6 +22,8 @@ export interface TabBarProps {
   onNewSession?: () => void;
   /** Guarda una pestaña abierta con conexión rápida como sesión. */
   onSaveAs?: (id: string) => void;
+  /** Cerrar varias pestañas desde el menú contextual (con un solo aviso). */
+  onCloseMany?: (scope: CloseScope, id: string) => void;
   onToggleSidebar: () => void;
   toolsOpen: boolean;
   onOpenTools: () => void;
