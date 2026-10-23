@@ -6,7 +6,7 @@
       "id": "r8040",
       "label": "R80.40",
       "detect": "R80\\.40",
-      "note": "End of Support. CPPCAP integrado; sin Dynamic Balancing ni HyperFlow."
+      "note": "End of Support. CPPCAP integrado (sk141412). Usa dynamic_split en lugar de dynamic_balancing; sin HyperFlow."
     },
     {
       "id": "r81",
@@ -24,7 +24,7 @@
       "id": "r8120",
       "label": "R81.20",
       "detect": "R81\\.20",
-      "note": "Agrega HyperFlow (connection_pipelining). fw ctl conntab -proto usa número."
+      "note": "Agrega HyperFlow (connection_pipelining). fw ctl conntab -proto usa número desde R81.10."
     },
     {
       "id": "r82",
@@ -96,7 +96,7 @@
       "desc": "Herramienta interactiva de monitoreo en tiempo real: CPU, memoria, tráfico, conexiones, CoreXL, SecureXL y blades. Se sale con q.",
       "cat": "Sistema",
       "risk": "read",
-      "note": "Modo: clish y expert (comando extendido de Gaia). Navegación con flechas. En R81.20+ incluye la vista CPU > Advanced > Hyperflow.",
+      "note": "Modo: clish y expert (comando extendido de Gaia). Navegación con flechas. Si HyperFlow está habilitado (R81.20 en adelante) aparece la vista CPU > Advanced > Hyperflow.",
       "source": "https://support.checkpoint.com/results/sk/sk101878"
     },
     {
@@ -104,7 +104,7 @@
       "desc": "Abre CPView en modo histórico para revisar métricas pasadas guardadas en la base local de CPView.",
       "cat": "Sistema",
       "risk": "read",
-      "note": "Modo: clish y expert (comando extendido de Gaia). Requiere que el servicio histórico de CPView esté activo (por defecto lo está).",
+      "note": "Modo: clish y expert (comando extendido de Gaia). Sintaxis cpview -t [fecha] (modo historial, solo en gateways). Desde R81.10 acepta fecha parcial, por ejemplo Jan 02. Requiere el servicio de historial de CPView activo.",
       "source": "https://support.checkpoint.com/results/sk/sk101878"
     },
     {
@@ -129,7 +129,7 @@
       "cat": "Sistema",
       "risk": "read",
       "note": "Modo: expert.",
-      "source": "https://sc1.checkpoint.com/documents/R81.20/WebAdminGuides/EN/CP_R81.20_Gaia_AdminGuide/CP_R81.20_Gaia_AdminGuide.pdf"
+      "source": "https://man7.org/linux/man-pages/man1/uptime.1.html"
     },
     {
       "cmd": "show clock",
@@ -141,10 +141,10 @@
     },
     {
       "cmd": "show ntp current",
-      "desc": "Muestra el servidor NTP con el que el equipo está sincronizado actualmente.",
+      "desc": "Muestra el servidor o pool NTP que Gaia usa en este momento.",
       "cat": "Sistema",
       "risk": "read",
-      "note": "Modo: clish. Verificar en tu versión.",
+      "note": "Modo: clish. Documentado en R80.40 a R82.",
       "source": "https://sc1.checkpoint.com/documents/R81.20/WebAdminGuides/EN/CP_R81.20_Gaia_AdminGuide/CP_R81.20_Gaia_AdminGuide.pdf"
     },
     {
@@ -153,7 +153,7 @@
       "cat": "Sistema",
       "risk": "read",
       "note": "Modo: expert.",
-      "source": "https://support.checkpoint.com/results/sk/sk98348"
+      "source": "https://man7.org/linux/man-pages/man1/free.1.html"
     },
     {
       "cmd": "df -h",
@@ -161,11 +161,11 @@
       "cat": "Sistema",
       "risk": "read",
       "note": "Modo: expert.",
-      "source": "https://support.checkpoint.com/results/sk/sk98348"
+      "source": "https://man7.org/linux/man-pages/man1/df.1.html"
     },
     {
       "cmd": "cpstat mg",
-      "desc": "Muestra el estado del servidor de gestión: status, clientes conectados y licencia.",
+      "desc": "Muestra el estado del servidor de gestión (flavor por defecto del flag mg). Otros flavors: log_server e indexer.",
       "cat": "Sistema",
       "risk": "read",
       "note": "Modo: clish y expert (comando extendido de Gaia). Ejecutar en el servidor de gestión, no en el gateway.",
@@ -200,11 +200,11 @@
       "desc": "Muestra el estado de los procesos del Multi-Domain Server y de cada Domain Management Server (fwm, fwd, cpd, cpca).",
       "cat": "Sistema",
       "risk": "read",
-      "note": "Modo: expert. Solo Multi-Domain Server.",
+      "note": "Modo: expert; en R80.40 a R81.20 también como comando extendido en clish. Solo Multi-Domain Server. Opciones: -m (solo el MDS) o nombre o IP de un Domain Management Server.",
       "source": "https://sc1.checkpoint.com/documents/R81.20/WebAdminGuides/EN/CP_R81.20_CLI_ReferenceGuide/Content/Topics-CLIG/MDSG/mdsstat.htm"
     },
     {
-      "cmd": "mdsenv {{dominio}}",
+      "cmd": "mdsenv {{dms}}",
       "desc": "Cambia el contexto de la shell al Domain Management Server indicado. Sin argumento vuelve al contexto MDS.",
       "cat": "Sistema",
       "risk": "read",
@@ -224,7 +224,7 @@
       "desc": "Detiene todos los procesos del Multi-Domain Server y de sus dominios. Corta la gestión de todos los gateways.",
       "cat": "Sistema",
       "risk": "disruptive",
-      "note": "Modo: expert. Solo Multi-Domain Server. Usar en ventana de mantenimiento.",
+      "note": "Modo: expert; en R80.40 a R81.20 también como comando extendido en clish. Solo Multi-Domain Server. Detiene el MDS y todos los Domain Management Servers. Usar en ventana de mantenimiento.",
       "source": "https://sc1.checkpoint.com/documents/R81.20/WebAdminGuides/EN/CP_R81.20_CLI_ReferenceGuide/Content/Topics-CLIG/MDSG/mdsstop.htm"
     },
     {
@@ -240,7 +240,7 @@
       "desc": "Muestra sensores del appliance: temperatura, ventiladores, voltajes y fuentes de poder.",
       "cat": "Hardware",
       "risk": "read",
-      "note": "Modo: clish. Solo appliances con sensores soportados. Verificar en tu versión.",
+      "note": "Modo: clish. Solo appliances con sensores soportados. Documentado en R80.40 a R82.",
       "source": "https://sc1.checkpoint.com/documents/R81.20/WebAdminGuides/EN/CP_R81.20_Gaia_AdminGuide/CP_R81.20_Gaia_AdminGuide.pdf"
     },
     {
@@ -273,7 +273,7 @@
       "cat": "Hardware",
       "risk": "read",
       "note": "Modo: expert.",
-      "source": "https://support.checkpoint.com/results/sk/sk98348"
+      "source": "https://www.nongnu.org/dmidecode/"
     },
     {
       "cmd": "ethtool -i {{interfaz}}",
@@ -304,7 +304,7 @@
       "desc": "Muestra IP, MAC, MTU y contadores de errores, drops y overruns de la interfaz.",
       "cat": "Interfaces",
       "risk": "read",
-      "note": "Modo: clish y expert (comando extendido de Gaia). En clish sólo para consulta.",
+      "note": "Modo: clish y expert (comando extendido de Gaia). Gaia lo marca como obsoleto: usar show interface o set interface. En clish solo consulta.",
       "source": "https://sc1.checkpoint.com/documents/R82/WebAdminGuides/EN/CP_R82_Gaia_AdminGuide/Content/Topics-GAG/Roles-Extended-Commands.htm"
     },
     {
@@ -344,7 +344,7 @@
       "desc": "Muestra los grupos de bonding configurados, sus esclavos y el modo.",
       "cat": "Interfaces",
       "risk": "read",
-      "note": "Modo: clish. Verificar en tu versión.",
+      "note": "Modo: clish. Muestra los grupos de bonding; show bonding group <ID> detalla uno.",
       "source": "https://sc1.checkpoint.com/documents/R81.20/WebAdminGuides/EN/CP_R81.20_Gaia_AdminGuide/CP_R81.20_Gaia_AdminGuide.pdf"
     },
     {
@@ -353,7 +353,7 @@
       "cat": "Interfaces",
       "risk": "read",
       "note": "Modo: expert.",
-      "source": "https://support.checkpoint.com/results/sk/sk98348"
+      "source": "https://sc1.checkpoint.com/documents/R81.20/WebAdminGuides/EN/CP_R81.20_Gaia_AdminGuide/CP_R81.20_Gaia_AdminGuide.pdf"
     },
     {
       "cmd": "set interface {{interfaz}} state on",
@@ -372,11 +372,11 @@
       "source": "https://sc1.checkpoint.com/documents/R81.20/WebAdminGuides/EN/CP_R81.20_Gaia_AdminGuide/CP_R81.20_Gaia_AdminGuide.pdf"
     },
     {
-      "cmd": "set interface {{interfaz}} ipv4-address {{ip}} mask-length {{mascara}}",
+      "cmd": "set interface {{interfaz}} ipv4-address {{ip}} mask-length {{largo_mascara}}",
       "desc": "Asigna dirección IPv4 y máscara a una interfaz.",
       "cat": "Interfaces",
       "risk": "change",
-      "note": "Modo: clish. En cluster, la topología también debe actualizarse en SmartConsole. Persistir con save config.",
+      "note": "Modo: clish. También admite subnet-mask <máscara> en lugar de mask-length. En cluster, la topología también debe actualizarse en SmartConsole. Persistir con save config.",
       "source": "https://sc1.checkpoint.com/documents/R81.20/WebAdminGuides/EN/CP_R81.20_Gaia_AdminGuide/CP_R81.20_Gaia_AdminGuide.pdf"
     },
     {
@@ -409,14 +409,14 @@
       "cat": "Capa 2",
       "risk": "read",
       "note": "Modo: expert.",
-      "source": "https://support.checkpoint.com/results/sk/sk98348"
+      "source": "https://man7.org/linux/man-pages/man8/ip-neighbour.8.html"
     },
     {
       "cmd": "fw ctl arp",
-      "desc": "Muestra la tabla de Proxy ARP del firewall, usada en NAT estático y Hide NAT con ARP manual.",
+      "desc": "Muestra las entradas de Proxy ARP definidas en $FWDIR/conf/local.arp, usadas en NAT manual.",
       "cat": "Capa 2",
       "risk": "read",
-      "note": "Modo: clish y expert (comando extendido de Gaia).",
+      "note": "Modo: clish y expert (comando extendido de Gaia). La opción -n evita resolver nombres. Más información del Proxy ARP en sk30197.",
       "source": "https://sc1.checkpoint.com/documents/R81.20/WebAdminGuides/EN/CP_R81.20_CLI_ReferenceGuide/Content/Topics-CLIG/FWG/fw-ctl-arp.htm"
     },
     {
@@ -424,15 +424,15 @@
       "desc": "Captura tráfico ARP con direcciones MAC en una interfaz. Detener con Ctrl+C.",
       "cat": "Capa 2",
       "risk": "read",
-      "note": "Modo: expert. Acotar siempre el filtro. tcpdump no ve el tráfico acelerado por SecureXL de la misma forma que cppcap.",
-      "source": "https://support.checkpoint.com/results/sk/sk141412"
+      "note": "Modo: expert. Acotar siempre el filtro: tcpdump eleva la carga de CPU en gateways con tráfico; cppcap es la alternativa de Check Point (sk141412).",
+      "source": "https://www.tcpdump.org/manpages/tcpdump.1.html"
     },
     {
       "cmd": "add arp proxy ipv4-address {{ip}} interface {{interfaz}}",
       "desc": "Agrega una entrada de Proxy ARP en Gaia para que el gateway responda ARP por una IP NATeada.",
       "cat": "Capa 2",
       "risk": "change",
-      "note": "Modo: clish. Requiere además la opción de merge de proxy ARP en la política. Verificar en tu versión. Persistir con save config.",
+      "note": "Modo: clish. Sintaxis no confirmada en documentación oficial para R80.40 a R82; verificar. Referencias de la comunidad agregan el parámetro de IP real (real ipv4-address). El proxy ARP para NAT manual también puede definirse en $FWDIR/conf/local.arp (sk30197). Persistir con save config.",
       "source": "https://sc1.checkpoint.com/documents/R81.20/WebAdminGuides/EN/CP_R81.20_Gaia_AdminGuide/CP_R81.20_Gaia_AdminGuide.pdf"
     },
     {
@@ -448,7 +448,7 @@
       "desc": "Muestra el total de rutas por protocolo. Útil para validar convergencia.",
       "cat": "Enrutamiento",
       "risk": "read",
-      "note": "Modo: clish.",
+      "note": "Modo: clish. Sintaxis no confirmada en documentación oficial para R80.40 a R82; verificar. Comprobar con show route ?.",
       "source": "https://sc1.checkpoint.com/documents/R81.20/WebAdminGuides/EN/CP_R81.20_Gaia_AdminGuide/CP_R81.20_Gaia_AdminGuide.pdf"
     },
     {
@@ -480,16 +480,16 @@
       "desc": "Muestra los vecinos BGP con su estado y tiempo de sesión.",
       "cat": "Enrutamiento",
       "risk": "read",
-      "note": "Modo: clish.",
-      "source": "https://sc1.checkpoint.com/documents/R81.20/WebAdminGuides/EN/CP_R81.20_Gaia_AdminGuide/CP_R81.20_Gaia_AdminGuide.pdf"
+      "note": "Modo: clish. Sintaxis no confirmada en documentación oficial para R80.40 a R82; verificar. Listar subcomandos con show bgp seguido de ESC ESC.",
+      "source": "https://sc1.checkpoint.com/documents/R81.20/WebAdminGuides/EN/CP_R81.20_Gaia_Advanced_Routing_AdminGuide/CP_R81.20_Gaia_Advanced_Routing_AdminGuide.pdf"
     },
     {
       "cmd": "show bgp summary",
       "desc": "Resumen del proceso BGP: AS local, router ID y cantidad de peers.",
       "cat": "Enrutamiento",
       "risk": "read",
-      "note": "Modo: clish.",
-      "source": "https://sc1.checkpoint.com/documents/R81.20/WebAdminGuides/EN/CP_R81.20_Gaia_AdminGuide/CP_R81.20_Gaia_AdminGuide.pdf"
+      "note": "Modo: clish. Sintaxis no confirmada en documentación oficial para R80.40 a R82; verificar. Listar subcomandos con show bgp seguido de ESC ESC.",
+      "source": "https://sc1.checkpoint.com/documents/R81.20/WebAdminGuides/EN/CP_R81.20_Gaia_Advanced_Routing_AdminGuide/CP_R81.20_Gaia_Advanced_Routing_AdminGuide.pdf"
     },
     {
       "cmd": "show ospf neighbors",
@@ -497,7 +497,7 @@
       "cat": "Enrutamiento",
       "risk": "read",
       "note": "Modo: clish.",
-      "source": "https://sc1.checkpoint.com/documents/R81.20/WebAdminGuides/EN/CP_R81.20_Gaia_AdminGuide/CP_R81.20_Gaia_AdminGuide.pdf"
+      "source": "https://sc1.checkpoint.com/documents/R81.20/WebAdminGuides/EN/CP_R81.20_Gaia_Advanced_Routing_AdminGuide/CP_R81.20_Gaia_Advanced_Routing_AdminGuide.pdf"
     },
     {
       "cmd": "show ospf interfaces",
@@ -505,7 +505,7 @@
       "cat": "Enrutamiento",
       "risk": "read",
       "note": "Modo: clish.",
-      "source": "https://sc1.checkpoint.com/documents/R81.20/WebAdminGuides/EN/CP_R81.20_Gaia_AdminGuide/CP_R81.20_Gaia_AdminGuide.pdf"
+      "source": "https://sc1.checkpoint.com/documents/R81.20/WebAdminGuides/EN/CP_R81.20_Gaia_Advanced_Routing_AdminGuide/CP_R81.20_Gaia_Advanced_Routing_AdminGuide.pdf"
     },
     {
       "cmd": "set static-route {{red}} nexthop gateway address {{ip}} on",
@@ -543,8 +543,8 @@
       "cmd": "vpn tu",
       "desc": "Abre el menú interactivo TunnelUtil para listar y borrar SAs IKE/IPsec por peer o usuario.",
       "cat": "MPLS / VPN",
-      "risk": "read",
-      "note": "Modo: clish y expert (comando extendido de Gaia). Las opciones de borrado del menú cortan túneles: usar con cuidado.",
+      "risk": "change",
+      "note": "Modo: clish y expert (comando extendido de Gaia). El menú incluye opciones de borrado de SAs que cortan túneles: por eso se clasifica como cambio y no como consulta.",
       "source": "https://sc1.checkpoint.com/documents/R81.20/WebAdminGuides/EN/CP_R81.20_CLI_ReferenceGuide/Content/Topics-CLIG/VPNSG/vpn-tu.htm"
     },
     {
@@ -621,18 +621,18 @@
     },
     {
       "cmd": "vpn debug trunc",
-      "desc": "Trunca y reinicia los archivos de debug VPN (ike.elg, vpnd.elg) y activa el debug. Base para capturar una negociación limpia.",
+      "desc": "Rota vpnd.elg e inicia el debug del demonio vpnd. En R80.40 y R81 también reinicia el debug IKE (ike.elg).",
       "cat": "MPLS / VPN",
       "risk": "change",
-      "note": "Modo: clish y expert (comando extendido de Gaia). Detener con vpn debug off y vpn debug ikeoff. Archivos en $FWDIR/log.",
+      "note": "Modo: clish y expert (comando extendido de Gaia). Práctica recomendada por Check Point: vpn debug trunc ALL=5. En R81.20 también activa el debug de iked y cccd (sk180488). Detener con vpn debug truncoff o vpn debug off. Archivos en $FWDIR/log.",
       "source": "https://sc1.checkpoint.com/documents/R81.20/WebAdminGuides/EN/CP_R81.20_CLI_ReferenceGuide/Content/Topics-CLIG/VPNSG/vpn-debug.htm"
     },
     {
       "cmd": "vpn debug ikeon",
-      "desc": "Activa el debug de IKE, escribiendo la negociación en $FWDIR/log/ike.elg (IKEv1) o ikev2.xmll.",
+      "desc": "Activa la traza de IKE. Desde R81.10 aplica solo si el demonio iked está deshabilitado (modo legacy); con iked activo se usa ike debug.",
       "cat": "MPLS / VPN",
       "risk": "change",
-      "note": "Modo: clish y expert (comando extendido de Gaia). Detener con vpn debug ikeoff. Impacto en disco si queda activo.",
+      "note": "Modo: clish y expert (comando extendido de Gaia). Archivos: ike.elg (R80.40 y R81), legacy_ike.elg (R81.10), iked<N>.ikev1trace e ikev2trace (R81.20 en adelante, modo legacy). Detener con vpn debug ikeoff. Impacto en disco si queda activo.",
       "source": "https://sc1.checkpoint.com/documents/R81.20/WebAdminGuides/EN/CP_R81.20_CLI_ReferenceGuide/Content/Topics-CLIG/VPNSG/vpn-debug.htm"
     },
     {
@@ -640,7 +640,7 @@
       "desc": "Activa el debug detallado del daemon vpnd en $FWDIR/log/vpnd.elg.",
       "cat": "MPLS / VPN",
       "risk": "change",
-      "note": "Modo: clish y expert (comando extendido de Gaia). Detener con vpn debug off. Alto volumen de escritura.",
+      "note": "Modo: clish y expert (comando extendido de Gaia). Escribe en $FWDIR/log/vpnd.elg. Detener con vpn debug off. Alto volumen de escritura: usar en ventana acotada.",
       "source": "https://sc1.checkpoint.com/documents/R81.20/WebAdminGuides/EN/CP_R81.20_CLI_ReferenceGuide/Content/Topics-CLIG/VPNSG/vpn-debug.htm"
     },
     {
@@ -672,7 +672,7 @@
       "desc": "Muestra la política instalada, la fecha de instalación y las interfaces donde se aplica.",
       "cat": "Seguridad",
       "risk": "read",
-      "note": "Modo: clish y expert (comando extendido de Gaia).",
+      "note": "Modo: clish y expert (comando extendido de Gaia). La CLI Reference lo marca como obsoleto: usar cpstat fw -f policy.",
       "source": "https://sc1.checkpoint.com/documents/R81.20/WebAdminGuides/EN/CP_R81.20_CLI_ReferenceGuide/Content/Topics-CLIG/FWG/fw-stat.htm"
     },
     {
@@ -742,10 +742,10 @@
             "r8040",
             "r81"
           ],
-          "cmd": "fw ctl conntab -dport={{puerto}} -proto=tcp"
+          "cmd": "fw ctl conntab -dport={{puerto}} -proto=TCP"
         }
       ],
-      "note": "Modo: clish y expert (comando extendido de Gaia).",
+      "note": "Modo: clish y expert (comando extendido de Gaia). En R80.40 y R81 -proto recibe el nombre (TCP, UDP, ICMP); desde R81.10 recibe el número de protocolo y R81.20 también acepta el nombre.",
       "source": "https://sc1.checkpoint.com/documents/R81.20/WebAdminGuides/EN/CP_R81.20_CLI_ReferenceGuide/Content/Topics-CLIG/FWG/fw-ctl-conntab.htm"
     },
     {
@@ -753,7 +753,7 @@
       "desc": "Elimina de la tabla las conexiones que coinciden con el filtro. Pide confirmación salvo que se agregue -y.",
       "cat": "Seguridad",
       "risk": "disruptive",
-      "note": "Modo: clish y expert (comando extendido de Gaia). Corta las sesiones afectadas.",
+      "note": "Modo: clish y expert (comando extendido de Gaia). Corta las sesiones afectadas; sin filtros borra todas las conexiones.",
       "source": "https://sc1.checkpoint.com/documents/R81.20/WebAdminGuides/EN/CP_R81.20_CLI_ReferenceGuide/Content/Topics-CLIG/FWG/fw-ctl-conntab.htm"
     },
     {
@@ -769,7 +769,7 @@
       "desc": "Simula offline qué regla de Access Control y NAT haría match para el tráfico indicado.",
       "cat": "Seguridad",
       "risk": "read",
-      "note": "Modo: clish y expert (comando extendido de Gaia). ipp es obligatorio. No soporta VPN, DCE-RPC ni Content Awareness. Contrastar con logs.",
+      "note": "Modo: clish y expert (comando extendido de Gaia). ipp (número de protocolo IANA) es obligatorio y dport también en TCP y UDP. No soporta reglas implícitas, VPN, DCE-RPC ni Content Awareness. Contrastar con logs.",
       "source": "https://sc1.checkpoint.com/documents/R81.20/WebAdminGuides/EN/CP_R81.20_CLI_ReferenceGuide/Content/Topics-CLIG/FWG/fw-up_execute.htm"
     },
     {
@@ -777,15 +777,15 @@
       "desc": "Descarga e instala la política desde el servidor de gestión indicado.",
       "cat": "Seguridad",
       "risk": "change",
-      "note": "Modo: clish y expert (comando extendido de Gaia).",
+      "note": "Modo: clish y expert (comando extendido de Gaia). Instala la política en el kernel. Con fw fetch -f usa los servidores de $FWDIR/conf/masters.",
       "source": "https://sc1.checkpoint.com/documents/R81.20/WebAdminGuides/EN/CP_R81.20_CLI_ReferenceGuide/Content/Topics-CLIG/FWG/fw-fetch.htm"
     },
     {
       "cmd": "fw unloadlocal",
-      "desc": "Desinstala la política del gateway, dejándolo sin reglas de seguridad.",
+      "desc": "Desinstala todas las políticas del gateway: bloquea el tráfico de tránsito (desactiva IP Forwarding) y deja al equipo aceptando conexiones entrantes sin filtrado.",
       "cat": "Seguridad",
       "risk": "disruptive",
-      "note": "Modo: clish y expert (comando extendido de Gaia). El gateway queda abierto o sin filtrado según configuración. Solo para emergencias; reinstalar política de inmediato.",
+      "note": "Modo: clish y expert (comando extendido de Gaia). Solo para emergencias. Para quitar la política manteniendo protección, la documentación indica comp_init_policy. Reinstalar con fw fetch o cpstart.",
       "source": "https://sc1.checkpoint.com/documents/R81.20/WebAdminGuides/EN/CP_R81.20_CLI_ReferenceGuide/Content/Topics-CLIG/FWG/fw-unloadlocal.htm"
     },
     {
@@ -801,31 +801,37 @@
       "desc": "Muestra la tabla de reglas fast_accel, que aceleran tráfico confiable saltándose inspección profunda.",
       "cat": "Seguridad",
       "risk": "read",
-      "note": "Modo: clish y expert (comando extendido de Gaia). Verificar en tu versión.",
-      "source": "https://support.checkpoint.com/results/sk/sk98348"
+      "platforms": [
+        "r81",
+        "r8110",
+        "r8120",
+        "r82"
+      ],
+      "note": "Modo: clish y expert (comando extendido de Gaia). Fast acceleration según sk156672 (el detalle exige autenticación). Sintaxis no confirmada en documentación oficial para R81 a R82; verificar.",
+      "source": "https://support.checkpoint.com/results/sk/sk156672"
     },
     {
       "cmd": "ips stat",
-      "desc": "Muestra el estado de la blade IPS y la versión del paquete de protecciones.",
+      "desc": "Muestra el estado de IPS, la versión de actualización, Global Detect y Bypass Under Load.",
       "cat": "Seguridad",
       "risk": "read",
-      "note": "Modo: clish y expert (comando extendido de Gaia). Verificar en tu versión.",
-      "source": "https://sc1.checkpoint.com/documents/R82/WebAdminGuides/EN/CP_R82_Gaia_AdminGuide/Content/Topics-GAG/Roles-Extended-Commands.htm"
+      "note": "Modo: clish y expert (comando extendido de Gaia).",
+      "source": "https://sc1.checkpoint.com/documents/R81.20/WebAdminGuides/EN/CP_R81.20_CLI_ReferenceGuide/CP_R81.20_CLI_ReferenceGuide.pdf"
     },
     {
       "cmd": "mgmt_cli install-policy policy-package {{paquete}} targets {{gateway}} -r true",
       "desc": "Instala un paquete de políticas en el gateway indicado desde el servidor de gestión vía API.",
       "cat": "Seguridad",
       "risk": "change",
-      "note": "Modo: expert. Servidor de gestión. -r true autentica como root local; no requiere credenciales en el comando.",
-      "source": "https://sc1.checkpoint.com/documents/latest/APIs/index.html"
+      "note": "Modo: expert. Servidor de gestión. -r true autentica como usuario local; no requiere credenciales en el comando. Sintaxis no confirmada en documentación oficial para R81.20; verificar. Revisar targets en la Management API Reference.",
+      "source": "https://sc1.checkpoint.com/documents/R81.20/WebAdminGuides/EN/CP_R81.20_CLI_ReferenceGuide/Content/Topics-CLIG/MDSG/mgmt_cli.htm"
     },
     {
       "cmd": "mgmt_cli show gateways-and-servers -r true",
       "desc": "Lista los gateways y servidores definidos en el servidor de gestión.",
       "cat": "Seguridad",
       "risk": "read",
-      "note": "Modo: expert. Servidor de gestión.",
+      "note": "Modo: expert. Servidor de gestión. Sintaxis no confirmada en documentación oficial para R81.20; verificar. Detalle en la Management API Reference.",
       "source": "https://sc1.checkpoint.com/documents/R81.20/WebAdminGuides/EN/CP_R81.20_CLI_ReferenceGuide/Content/Topics-CLIG/MDSG/mgmt_cli.htm"
     },
     {
@@ -934,10 +940,10 @@
     },
     {
       "cmd": "cphastop",
-      "desc": "Detiene ClusterXL en el miembro local, sacándolo del cluster.",
+      "desc": "Detiene el software de cluster en el miembro local: deja de pasar tráfico y de sincronizar estado.",
       "cat": "Alta disponibilidad",
       "risk": "disruptive",
-      "note": "Modo: clish y expert (comando extendido de Gaia). Provoca failover si el miembro está activo.",
+      "note": "Modo: clish y expert (comando extendido de Gaia). Check Point recomienda cpstop para detener un miembro. Reiniciar el cluster con cphastart.",
       "source": "https://sc1.checkpoint.com/documents/R81.20/WebAdminGuides/EN/CP_R81.20_CLI_ReferenceGuide/Content/Topics-CLIG/CXLG/cphastop.htm"
     },
     {
@@ -945,7 +951,7 @@
       "desc": "Cambia el contexto de la shell al Virtual System indicado por ID en un gateway VSX.",
       "cat": "Alta disponibilidad",
       "risk": "read",
-      "note": "Modo: expert. Solo VSX. En clish usar set virtual-system {{vs}}.",
+      "note": "Modo: expert. Solo VSX. Sin argumento vuelve al Virtual System 0. En clish usar set virtual-system {{vs}}.",
       "source": "https://sc1.checkpoint.com/documents/R81.20/WebAdminGuides/EN/CP_R81.20_CLI_ReferenceGuide/Content/Topics-CLIG/VSXG/vsenv.htm"
     },
     {
@@ -962,10 +968,12 @@
       "cat": "Alta disponibilidad",
       "risk": "read",
       "platforms": [
+        "r81",
+        "r8110",
         "r8120",
         "r82"
       ],
-      "note": "Modo: gclish y expert. En R82 aplica también a ElasticXL.",
+      "note": "Modo: gclish y expert. Maestro (R80.20SP a R82), Scalable Chassis y ElasticXL (R82).",
       "source": "https://sc1.checkpoint.com/documents/R82/WebAdminGuides/EN/CP_R82_ScalablePlatforms_AdminGuide/Content/Topics-SPG/CLI/asg-stat.htm"
     },
     {
@@ -974,28 +982,31 @@
       "cat": "Alta disponibilidad",
       "risk": "read",
       "platforms": [
+        "r81",
+        "r8110",
+        "r8120",
         "r82"
       ],
-      "note": "Modo: gclish y expert. Salir con Ctrl+C.",
+      "note": "Modo: gclish y expert. Intervalo configurable (por defecto 10 s). Salir con Ctrl+C.",
       "source": "https://sc1.checkpoint.com/documents/R82/WebAdminGuides/EN/CP_R82_ScalablePlatforms_AdminGuide/Content/Topics-SPG/CLI/asg-monitor.htm"
     },
     {
-      "cmd": "show cluster",
-      "desc": "Muestra la configuración del cluster ElasticXL o Maestro Security Group.",
+      "cmd": "show cluster info overview",
+      "desc": "Muestra el resumen de estado del cluster ElasticXL o del Security Group (Maestro y Scalable Chassis).",
       "cat": "Alta disponibilidad",
       "risk": "read",
       "platforms": [
         "r82"
       ],
-      "note": "Modo: gclish. Solo ElasticXL, Maestro y Scalable Chassis.",
-      "source": "https://sc1.checkpoint.com/documents/R82/WebAdminGuides/EN/CP_R82_ScalablePlatforms_AdminGuide/Content/Topics-SPG/CLI/show-cluster.htm"
+      "note": "Modo: gclish. R82. show cluster solo agrupa subcomandos (info, configuration, alert_threshold); agregar live para refresco continuo.",
+      "source": "https://sc1.checkpoint.com/documents/R82/WebAdminGuides/EN/CP_R82_ScalablePlatforms_AdminGuide/Content/Topics-SPG/CLI/show-cluster-info.htm"
     },
     {
       "cmd": "fgate stat",
       "desc": "Muestra el estado de la blade QoS y la política QoS instalada, con límites y tasas por interfaz.",
       "cat": "QoS",
       "risk": "read",
-      "note": "Modo: clish y expert (comando extendido de Gaia). Solo si la blade QoS está habilitada.",
+      "note": "Modo: clish y expert (comando extendido de Gaia). Comando heredado: la documentación indica usar cpstat fg. En el servidor de gestión requiere el nombre del gateway. Solo si la blade QoS está habilitada.",
       "source": "https://sc1.checkpoint.com/documents/R81/WebAdminGuides/EN/CP_R81_CLI_ReferenceGuide/Topics-CLIG/QoSG/fgate.htm"
     },
     {
@@ -1019,7 +1030,7 @@
       "desc": "Muestra el estado de SecureXL, el modo (KPPAK o UPPAK), interfaces aceleradas y features habilitadas.",
       "cat": "Diagnóstico",
       "risk": "read",
-      "note": "Modo: clish y expert (comando extendido de Gaia).",
+      "note": "Modo: clish y expert (comando extendido de Gaia). UPPAK (modo usuario) existe solo desde R81.20.",
       "source": "https://sc1.checkpoint.com/documents/R81.20/WebAdminGuides/EN/CP_R81.20_PerformanceTuning_AdminGuide/Content/Topics-PTG/CLI/fwaccel-stat.htm"
     },
     {
@@ -1051,7 +1062,7 @@
       "desc": "Deshabilita SecureXL temporalmente. Todo el tráfico pasa a inspección en CoreXL.",
       "cat": "Diagnóstico",
       "risk": "disruptive",
-      "note": "Modo: clish y expert (comando extendido de Gaia). Alto impacto de CPU; puede degradar el servicio. No sobrevive reinicio. Volver con fwaccel on.",
+      "note": "Modo: clish y expert (comando extendido de Gaia). Solo bajo indicación de Soporte. Aplica a conexiones nuevas, no sobrevive reinicio y se revierte con fwaccel on.",
       "source": "https://sc1.checkpoint.com/documents/R81.20/WebAdminGuides/EN/CP_R81.20_PerformanceTuning_AdminGuide/Content/Topics-PTG/CLI/fwaccel-off.htm"
     },
     {
@@ -1089,7 +1100,7 @@
         "r8120",
         "r82"
       ],
-      "note": "Modo: expert. R81 sólo en appliances soportados y con JHF; desde R81.10 de forma general. Logs en $FWDIR/log/dsd.elg.",
+      "note": "Modo: expert (en clish: show dynamic-balancing state). R81 solo en appliances soportados y con JHF; desde R81.10 de forma general. En R80.40 el equivalente es dynamic_split. Logs en $FWDIR/log/dsd.elg.",
       "source": "https://sc1.checkpoint.com/documents/R81.20/WebAdminGuides/EN/CP_R81.20_PerformanceTuning_AdminGuide/Content/Topics-PTG/CoreXL-Dynamic-Balancing.htm"
     },
     {
@@ -1101,7 +1112,7 @@
         "r8120",
         "r82"
       ],
-      "note": "Modo: expert. En Maestro usar g_connection_pipelining. Requiere Dynamic Balancing activo.",
+      "note": "Modo: expert. En Maestro usar g_connection_pipelining. HyperFlow requiere appliance con al menos 8 núcleos lógicos, Firewall en modo usuario (USFW) y Dynamic Balancing activo.",
       "source": "https://sc1.checkpoint.com/documents/R81.20/WebAdminGuides/EN/CP_R81.20_PerformanceTuning_AdminGuide/Content/Topics-PTG/HyperFlow.htm"
     },
     {
@@ -1142,34 +1153,34 @@
     },
     {
       "cmd": "fw ctl zdebug + drop",
-      "desc": "Muestra en tiempo real los paquetes descartados por el kernel con la razón del drop. Detener con Ctrl+C.",
+      "desc": "Muestra en tiempo real los paquetes descartados por el kernel con la razón del drop, sin filtros. Detener con Ctrl+C.",
       "cat": "Diagnóstico",
-      "risk": "change",
-      "note": "Modo: clish y expert (comando extendido de Gaia). Macro no documentada oficialmente con buffer pequeño; alto impacto de CPU en gateways cargados. Preferir fw ctl debug con buffer explícito. Verificar en tu versión.",
-      "source": "https://community.checkpoint.com/t5/Firewall-and-Security-Management/quot-fw-ctl-zdebug-quot-Helpful-Command-Combinations/td-p/40680"
+      "risk": "disruptive",
+      "note": "Modo: clish y expert (comando extendido de Gaia). Activa debug del kernel sin filtros: alto impacto de CPU en gateways con tráfico; usar en ventana acotada y cerrar con fw ctl debug 0. Documentado solo como g_fw ctl zdebug + drop (guía Scalable Platforms); en gateways estándar es práctica de TAC y comunidad.",
+      "source": "https://sc1.checkpoint.com/documents/R82/WebAdminGuides/EN/CP_R82_ScalablePlatforms_AdminGuide/CP_R82_ScalablePlatforms_AdminGuide.pdf"
     },
     {
       "cmd": "fw ctl zdebug + drop | grep {{ip}}",
       "desc": "Filtra los drops del kernel por una IP específica. Detener con Ctrl+C.",
       "cat": "Diagnóstico",
-      "risk": "change",
-      "note": "Modo: expert. Mismo impacto de CPU que zdebug. Usar en ventanas acotadas.",
-      "source": "https://community.checkpoint.com/t5/Firewall-and-Security-Management/quot-fw-ctl-zdebug-quot-Helpful-Command-Combinations/td-p/40680"
+      "risk": "disruptive",
+      "note": "Modo: expert. Mismo impacto de CPU que fw ctl zdebug + drop: el grep filtra solo la salida, no el debug del kernel. Usar en ventanas acotadas y cerrar con fw ctl debug 0.",
+      "source": "https://sc1.checkpoint.com/documents/R82/WebAdminGuides/EN/CP_R82_ScalablePlatforms_AdminGuide/CP_R82_ScalablePlatforms_AdminGuide.pdf"
     },
     {
       "cmd": "fw ctl debug 0",
       "desc": "Restablece los flags de debug del kernel a sus valores por defecto. Paso obligatorio al terminar un debug.",
       "cat": "Diagnóstico",
       "risk": "change",
-      "note": "Modo: clish y expert (comando extendido de Gaia). No usar fw ctl debug -x: desactiva también los flags default.",
+      "note": "Modo: clish y expert (comando extendido de Gaia). Detiene la carga de CPU del debug. Para quitar filtros usar fw ctl set int simple_debug_filter_off 1. No usar fw ctl debug -x: desactiva también los flags default.",
       "source": "https://sc1.checkpoint.com/documents/R81.20/WebAdminGuides/EN/CP_R81.20_SecurityGateway_Guide/Content/Topics-FWG/Kernel-Debug/Kernel-Debug-Syntax.htm"
     },
     {
       "cmd": "fw ctl debug -buf 8200\nfw ctl debug -m fw + drop\nfw ctl kdebug -T -f > /var/log/kernel_debug.txt",
       "desc": "Secuencia oficial de kernel debug de drops con timestamps hacia archivo. Detener con Ctrl+C y luego fw ctl debug 0.",
       "cat": "Diagnóstico",
-      "risk": "change",
-      "note": "Modo: expert. Alto impacto de CPU y disco; acotar el tiempo de ejecución.",
+      "risk": "disruptive",
+      "note": "Modo: expert. Procedimiento oficial de Kernel Debug. Sin filtros previos (fw ctl set str simple_debug_filter_saddr_1 ...) el impacto en CPU y disco es alto: acotar IP y tiempo. Detener con Ctrl+C y luego fw ctl debug 0.",
       "source": "https://sc1.checkpoint.com/documents/R81.20/WebAdminGuides/EN/CP_R81.20_SecurityGateway_Guide/Content/Topics-FWG/Kernel-Debug/Kernel-Debug-Procedure.htm"
     },
     {
@@ -1181,11 +1192,11 @@
       "source": "https://sc1.checkpoint.com/documents/R81.20/WebAdminGuides/EN/CP_R81.20_SecurityGateway_Guide/Content/Topics-FWG/Kernel-Debug/Kernel-Debug-Syntax.htm"
     },
     {
-      "cmd": "fw monitor -e \"accept host({{ip}});\"",
+      "cmd": "fw monitor -e \"host({{ip}}), accept;\"",
       "desc": "Captura paquetes de la IP indicada en los puntos de inspección del kernel (i, I, o, O). Detener con Ctrl+C.",
       "cat": "Diagnóstico",
       "risk": "read",
-      "note": "Modo: clish y expert (comando extendido de Gaia). Desde R80.20 captura también tráfico acelerado por SecureXL.",
+      "note": "Modo: clish y expert (comando extendido de Gaia). Captura también tráfico acelerado por SecureXL, pero los filtros -e no se aplican a ese tráfico: usar -F. Solo una instancia a la vez; -ci y -co limitan los paquetes. Sin filtro carga la CPU en gateways con tráfico.",
       "source": "https://sc1.checkpoint.com/documents/R81.20/WebAdminGuides/EN/CP_R81.20_CLI_ReferenceGuide/Content/Topics-CLIG/FWG/fw-monitor.htm"
     },
     {
@@ -1193,15 +1204,15 @@
       "desc": "Captura con filtro simple en kernel (origen, puerto, destino, puerto, protocolo). 0 equivale a cualquiera.",
       "cat": "Diagnóstico",
       "risk": "read",
-      "note": "Modo: clish y expert (comando extendido de Gaia). Detener con Ctrl+C. Admite hasta 5 filtros -F.",
+      "note": "Modo: clish y expert (comando extendido de Gaia). Detener con Ctrl+C. Admite hasta 5 filtros -F (se combinan con OR). El filtro -F aplica a tráfico acelerado y no acelerado.",
       "source": "https://sc1.checkpoint.com/documents/R81.20/WebAdminGuides/EN/CP_R81.20_CLI_ReferenceGuide/Content/Topics-CLIG/FWG/fw-monitor.htm"
     },
     {
-      "cmd": "fw monitor -e \"accept host({{ip}});\" -o /var/log/{{archivo}}.cap",
+      "cmd": "fw monitor -e \"host({{ip}}), accept;\" -o /var/log/{{archivo}}.cap",
       "desc": "Guarda la captura de fw monitor en un archivo para análisis en Wireshark.",
       "cat": "Diagnóstico",
-      "risk": "read",
-      "note": "Modo: expert. Vigilar el espacio en /var/log.",
+      "risk": "change",
+      "note": "Modo: expert. Guarda en formato snoop (RFC 1761), legible en Wireshark. Escribe un archivo que crece rápido: usar /var/log y vigilar espacio. Mismas precauciones de CPU que fw monitor.",
       "source": "https://sc1.checkpoint.com/documents/R81.20/WebAdminGuides/EN/CP_R81.20_CLI_ReferenceGuide/Content/Topics-CLIG/FWG/fw-monitor.htm"
     },
     {
@@ -1210,22 +1221,22 @@
       "cat": "Diagnóstico",
       "risk": "read",
       "note": "Modo: expert. Acotar el filtro para no cargar la CPU.",
-      "source": "https://support.checkpoint.com/results/sk/sk141412"
+      "source": "https://www.tcpdump.org/manpages/tcpdump.1.html"
     },
     {
       "cmd": "cppcap -i {{interfaz}} -f \"host {{ip}}\"",
       "desc": "Captura con la herramienta propia de Check Point, con menor impacto de CPU que tcpdump.",
       "cat": "Diagnóstico",
       "risk": "read",
-      "note": "Modo: expert. Integrado desde R80.40 (sk141412). Solo Gaia 64 bits.",
+      "note": "Modo: expert. Integrado desde R80.40 (sk141412). Captura también tráfico acelerado por SecureXL. Por defecto captura 96 bytes por trama (-c 0 sin límite).",
       "source": "https://sc1.checkpoint.com/documents/R82/WebAdminGuides/EN/CP_R82_CLI_ReferenceGuide/Content/Topics-CLIG/FWG/cppcap.htm"
     },
     {
       "cmd": "cppcap -i {{interfaz}} -f \"host {{ip}}\" -o /var/log/{{archivo}}.pcap -p {{cantidad}}",
       "desc": "Captura con cppcap a archivo, limitado a una cantidad máxima de frames.",
       "cat": "Diagnóstico",
-      "risk": "read",
-      "note": "Modo: expert.",
+      "risk": "change",
+      "note": "Modo: expert. -p limita la cantidad de tramas y -o escribe un archivo (vigilar espacio en /var/log).",
       "source": "https://sc1.checkpoint.com/documents/R82/WebAdminGuides/EN/CP_R82_CLI_ReferenceGuide/Content/Topics-CLIG/FWG/cppcap.htm"
     },
     {
@@ -1233,7 +1244,7 @@
       "desc": "Genera el archivo CPInfo comprimido con el diagnóstico completo para TAC.",
       "cat": "Diagnóstico",
       "risk": "change",
-      "note": "Modo: expert. Toma varios minutos y consume CPU y disco.",
+      "note": "Modo: expert. Toma varios minutos y consume CPU y disco: no ejecutar con un núcleo sobre 70% de uso (sk92739). -z comprime y -o define el archivo.",
       "source": "https://support.checkpoint.com/results/sk/sk92739"
     },
     {
@@ -1242,7 +1253,7 @@
       "cat": "Diagnóstico",
       "risk": "read",
       "note": "Modo: expert. Detener con Ctrl+C.",
-      "source": "https://support.checkpoint.com/results/sk/sk98348"
+      "source": "https://man7.org/linux/man-pages/man1/tail.1.html"
     },
     {
       "cmd": "fw log -f -n",
@@ -1282,14 +1293,14 @@
       "cat": "Logs",
       "risk": "read",
       "note": "Modo: expert. Detener con Ctrl+C.",
-      "source": "https://sc1.checkpoint.com/documents/R81.20/WebAdminGuides/EN/CP_R81.20_CLI_ReferenceGuide/Content/Topics-CLIG/FWG/cpwd_admin.htm"
+      "source": "https://sc1.checkpoint.com/documents/R81.20/WebAdminGuides/EN/CP_R81.20_CLI_ReferenceGuide/CP_R81.20_CLI_ReferenceGuide.pdf"
     },
     {
       "cmd": "tail -f $FWDIR/log/cpm.elg",
       "desc": "Sigue el log del proceso cpm del servidor de gestión (API, SmartConsole, publicaciones).",
       "cat": "Logs",
       "risk": "read",
-      "note": "Modo: expert. Servidor de gestión.",
+      "note": "Modo: expert. Servidor de gestión. Detener con Ctrl+C. Sintaxis no confirmada en documentación oficial para R80.40 a R82; verificar.",
       "source": "https://sc1.checkpoint.com/documents/R81.20/WebAdminGuides/EN/CP_R81.20_CLI_ReferenceGuide/Content/Topics-CLIG/MDSG/Managing-Security-through-API.htm"
     },
     {
@@ -1297,7 +1308,7 @@
       "desc": "Muestra la configuración de exportación de logs hacia SIEM o syslog externo.",
       "cat": "Logs",
       "risk": "read",
-      "note": "Modo: expert. Servidor de gestión o Log Server.",
+      "note": "Modo: expert (la CLI Reference indica que solo corre en Expert). Servidor de gestión o Log Server.",
       "source": "https://sc1.checkpoint.com/documents/R81.20/WebAdminGuides/EN/CP_R81.20_CLI_ReferenceGuide/Content/Topics-CLIG/MDSG/cp_log_export.htm"
     },
     {
@@ -1312,16 +1323,16 @@
       "cmd": "save config",
       "desc": "Guarda la configuración de Gaia para que persista tras reinicio.",
       "cat": "Configuración",
-      "risk": "change",
-      "note": "Modo: clish. Sin save config los cambios de clish se pierden al reiniciar.",
+      "risk": "disruptive",
+      "note": "Modo: clish. Persiste toda la configuración pendiente de la sesión: revisar antes con show configuration. Sin save config los cambios de clish se pierden al reiniciar.",
       "source": "https://sc1.checkpoint.com/documents/R81.20/WebAdminGuides/EN/CP_R81.20_Gaia_AdminGuide/CP_R81.20_Gaia_AdminGuide.pdf"
     },
     {
       "cmd": "save configuration {{archivo}}",
-      "desc": "Exporta la configuración de Gaia a un archivo en el home del usuario.",
+      "desc": "Guarda la configuración de Gaia como script de comandos CLI en el archivo indicado.",
       "cat": "Configuración",
       "risk": "change",
-      "note": "Modo: clish.",
+      "note": "Modo: clish. Se restaura con load configuration.",
       "source": "https://sc1.checkpoint.com/documents/R81.20/WebAdminGuides/EN/CP_R81.20_Gaia_AdminGuide/CP_R81.20_Gaia_AdminGuide.pdf"
     },
     {
@@ -1353,15 +1364,23 @@
       "desc": "Crea un backup de Gaia y de Check Point en el disco local.",
       "cat": "Configuración",
       "risk": "change",
-      "note": "Modo: clish. Consume disco en /var/log/CPbackup.",
+      "note": "Modo: clish. Guarda el .tgz en /var/log/CPbackup/backups/ y consume disco; revisar con show backups.",
       "source": "https://sc1.checkpoint.com/documents/R81.20/WebAdminGuides/EN/CP_R81.20_Gaia_AdminGuide/CP_R81.20_Gaia_AdminGuide.pdf"
     },
     {
-      "cmd": "add snapshot {{nombre}} desc {{texto}}",
+      "cmd": "add snapshot-onetime name {{nombre}} description \"{{texto}}\"",
       "desc": "Crea un snapshot completo del sistema antes de un cambio mayor o upgrade.",
       "cat": "Configuración",
       "risk": "change",
-      "note": "Modo: clish. Requiere espacio libre suficiente en el volumen. Verificar en tu versión.",
+      "variants": [
+        {
+          "platforms": [
+            "r8040"
+          ],
+          "cmd": "add snapshot {{nombre}} desc \"{{texto}}\""
+        }
+      ],
+      "note": "Modo: clish. R80.40 usa add snapshot <nombre> desc; desde R81 se usa add snapshot-onetime. Requiere espacio libre suficiente en el volumen; la creación consume I/O y tiempo.",
       "source": "https://sc1.checkpoint.com/documents/R81.20/WebAdminGuides/EN/CP_R81.20_Gaia_AdminGuide/CP_R81.20_Gaia_AdminGuide.pdf"
     },
     {
@@ -1386,7 +1405,7 @@
       "cat": "Configuración",
       "risk": "read",
       "note": "Modo: clish. Solo VSX.",
-      "source": "https://sc1.checkpoint.com/documents/R81.20/WebAdminGuides/EN/CP_R81.20_CLI_ReferenceGuide/Content/Topics-CLIG/CXLG/Viewing-Cluster-State.htm"
+      "source": "https://sc1.checkpoint.com/documents/R81.20/WebAdminGuides/EN/CP_R81.20_Gaia_AdminGuide/CP_R81.20_Gaia_AdminGuide.pdf"
     },
     {
       "cmd": "cpstop",
@@ -1400,8 +1419,8 @@
       "cmd": "cpstart",
       "desc": "Inicia todos los procesos de Check Point.",
       "cat": "Configuración",
-      "risk": "change",
-      "note": "Modo: clish y expert (comando extendido de Gaia).",
+      "risk": "disruptive",
+      "note": "Modo: clish y expert (comando extendido de Gaia). Inicia todos los procesos y carga la política: puede interrumpir tráfico y gatillar cambios de estado en un cluster.",
       "source": "https://sc1.checkpoint.com/documents/R81.20/WebAdminGuides/EN/CP_R81.20_CLI_ReferenceGuide/Content/Topics-CLIG/FWG/cpstart.htm"
     },
     {
@@ -1409,8 +1428,8 @@
       "desc": "Reinicia todos los procesos de Check Point (cpstop + cpstart).",
       "cat": "Configuración",
       "risk": "disruptive",
-      "note": "Modo: expert. Corte de servicio durante el reinicio. En cluster gatilla failover.",
-      "source": "https://sc1.checkpoint.com/documents/R81/WebAdminGuides/EN/CP_R81_SecurityManagement_AdminGuide/Topics-SECMG/CLI/cprinstall-cprestart.htm"
+      "note": "Modo: expert. Sintaxis no confirmada en documentación oficial para R80.40 a R82; verificar. La CLI Reference solo documenta cprinstall cprestart (remoto); el equivalente documentado es cpstop seguido de cpstart. Corte de servicio; en cluster gatilla failover.",
+      "source": "https://sc1.checkpoint.com/documents/R81.20/WebAdminGuides/EN/CP_R81.20_CLI_ReferenceGuide/Content/Topics-CLIG/FWG/cpstop.htm"
     },
     {
       "cmd": "reboot",
