@@ -1,8 +1,29 @@
-import { useEffect, useMemo, useRef, useState } from "react";
+import { useEffect, useId, useMemo, useRef, useState } from "react";
 import { invoke } from "@tauri-apps/api/core";
 import { save } from "@tauri-apps/plugin-dialog";
 import { writeText } from "@tauri-apps/plugin-clipboard-manager";
-import { Camera, Check, Copy, Download, FileCode2, GitCompare, Network, Pencil, Plus, Radar, Route, Trash2, X, ZoomIn, ZoomOut } from "lucide-react";
+import {
+  Camera,
+  Check,
+  ChevronUp,
+  Copy,
+  Download,
+  FileCode2,
+  GitCompare,
+  Lightbulb,
+  Maximize2,
+  Network,
+  PanelRight,
+  PanelRightClose,
+  Pencil,
+  Plus,
+  Radar,
+  Route,
+  Trash2,
+  X,
+  ZoomIn,
+  ZoomOut,
+} from "lucide-react";
 import { runOnDevice } from "../../lib/deviceRun";
 import {
   ADDRESS_COMMANDS,
@@ -73,7 +94,7 @@ import {
 import { vendorFor } from "../../lib/commands";
 import type { Session } from "../../types";
 import type { TerminalRef } from "./FileManager";
-import { Btn, Label, Section, Toggle } from "./ui";
+import { Btn, Collapsible, CountBadge, Label, Toggle } from "./ui";
 
 const W = 170;
 const H = 54;
@@ -93,6 +114,35 @@ const CONFIDENCE_COLOR = { alta: "var(--ok)", media: "var(--warn)", baja: "var(-
 type ManualForm =
   | { kind: "node"; editId?: string; name: string; ip: string; platform: string }
   | { kind: "link"; edit?: TopoLink; a: string; aPort: string; b: string; bPort: string };
+
+/** Secciones del panel lateral. */
+type PanelSection = "fuentes" | "sugerencias" | "detalle" | "ruta" | "manual" | "snapshots" | "leyenda";
+/** Estado visual de la herramienta (panel y secciones). Es comodidad de interfaz: no va a Ajustes. */
+interface TopoUi {
+  panel: boolean;
+  sec: Partial<Record<PanelSection, boolean>>;
+}
+const UI_KEY = "topoUi";
+const UI_DEFAULT: TopoUi = { panel: true, sec: { fuentes: false, sugerencias: false, detalle: true, ruta: true, manual: false, snapshots: false, leyenda: false } };
+
+function loadUi(): TopoUi {
+  try {
+    const v = JSON.parse(localStorage.getItem(UI_KEY) ?? "null") as Partial<TopoUi> | null;
+    if (!v || typeof v !== "object") return UI_DEFAULT;
+    const sec = v.sec && typeof v.sec === "object" ? v.sec : {};
+    return { panel: v.panel !== false, sec: { ...UI_DEFAULT.sec, ...sec } };
+  } catch {
+    return UI_DEFAULT;
+  }
+}
+
+function saveUi(ui: TopoUi) {
+  try {
+    localStorage.setItem(UI_KEY, JSON.stringify(ui));
+  } catch {
+    // Almacenamiento bloqueado o lleno: la herramienta sigue funcionando sin recordar el estado.
+  }
+}
 
 /** Topología guardada por versiones anteriores en el almacenamiento del navegador. */
 function legacyTopo(): Topology | null {
@@ -150,6 +200,17 @@ export function TopologyTool({
   const [formErr, setFormErr] = useState("");
   const [dismissed, setDismissed] = useState<Set<string>>(() => new Set());
   const drag = useRef<{ id: string; sx: number; sy: number; x: number; y: number } | null>(null);
+  const [ui, setUi] = useState<TopoUi>(loadUi);
+  const scroller = useRef<HTMLDivElement>(null);
+  const suggestionsRef = useRef<HTMLDivElement>(null);
+  const manualRef = useRef<HTMLDivElement>(null);
+  const panelId = useId();
+  const legendId = useId();
+  const isOpen = (s: PanelSection) => !!ui.sec[s];
+  const setOpen = (s: PanelSection, open: boolean) => setUi((u) => ({ ...u, sec: { ...u.sec, [s]: open } }));
+  const setPanel = (panel: boolean) => setUi((u) => ({ ...u, panel }));
+
+  useEffect(() => saveUi(ui), [ui]);
 
   // Migra el diagrama de versiones anteriores (antes vivía en el navegador, fuera de la carpeta de datos).
   useEffect(() => {
@@ -437,14 +498,66 @@ export function TopologyTool({
               ? "explorado"
               : "sin IP de gestión";
 
+
+  // Detalle a demanda: al seleccionar un equipo se abre su sección.
+  useEffect(() => {
+    if (selected) setOpen("detalle", true);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [selected]);
+
+  const formKey = form ? (form.kind === "node" ? `n:${form.editId ?? ""}` : `l:${form.edit ? linkKey(form.edit) : ""}`) : "";
+  // Un formulario manual (nuevo o editar desde Detalle) abre su sección y la deja a la vista.
+  useEffect(() => {
+    if (!form) return;
+    setOpen("manual", true);
+    requestAnimationFrame(() => manualRef.current?.scrollIntoView({ block: "nearest" }));
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [formKey]);
+
+  // La primera vez que aparecen sugerencias (de 0 a más de 0) la sección se despliega sola.
+  const autoOpened = useRef(false);
+  const prevCount = useRef(0);
+  useEffect(() => {
+    if (!autoOpened.current && prevCount.current === 0 && suggestions.length > 0) {
+      autoOpened.current = true;
+      setOpen("sugerencias", true);
+    }
+    prevCount.current = suggestions.length;
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [suggestions.length]);
+
+  const showSuggestions = () => {
+    setUi((u) => ({ panel: true, sec: { ...u.sec, sugerencias: true } }));
+    requestAnimationFrame(() => suggestionsRef.current?.scrollIntoView({ block: "start", behavior: "smooth" }));
+  };
+
+  const fit = () => {
+    setZoom(1);
+    scroller.current?.scrollTo({ left: 0, top: 0 });
+  };
+
+  // Leyenda solo con lo que hay en la vista y solo si hay algo más que CDP/LLDP.
+  const legendKinds = LINK_LEGEND.filter(([, s]) => linkDash(s) && view.links.some((l) => linkDash(l) === linkDash(s)));
+  const hasPhysical = view.links.some((l) => !linkDash(l));
+  const hasTentative = view.nodes.some((n) => n.manual || n.addrOnly);
+  const showLegend = legendKinds.length > 0 || hasTentative;
+
+  const activeSources = TOPO_SOURCES.filter((s) => sourceOn(sources, s.id)).length;
+  const diffCount = diff ? diff.addedLinks.length + diff.removedLinks.length + diff.addedNodes.length + diff.removedNodes.length : 0;
+  const hint = "Descubre los vecinos del equipo conectado y sigue la ruta salto a salto: clic en un vecino y 'Conectar'. Solo usa comandos de consulta.";
+
   return (
-    <div className="space-y-4">
-      <Section
-        title="Topología"
-        hint="Descubre los vecinos del equipo conectado y sigue la ruta salto a salto: clic en un vecino y 'Conectar'. Solo usa comandos de consulta."
-      >
+    <div className="@container h-full min-h-[480px] flex flex-col gap-3">
+      <section className="rounded-xl border border-line bg-panel px-4 pt-3 pb-3">
+        {/* En anchos chicos se oculta: el menú lateral ya dice Topología y el texto queda en el botón. */}
+        <header className="flex items-baseline gap-2 min-w-0 mb-2 @max-[860px]:hidden">
+          <h2 className="text-[13px] font-semibold shrink-0">Topología</h2>
+          <p className="text-[11.5px] text-muted truncate" title={hint}>
+            {hint}
+          </p>
+        </header>
         <div className="flex flex-wrap items-end gap-2">
-          <Label text="Equipo (sesión conectada)" className="flex-1 min-w-48">
+          <Label text="Equipo (sesión conectada)" className="flex-1 min-w-40">
             <select className="field" value={connId} onChange={(e) => setConnId(e.target.value)}>
               {!terminals.length && <option value="">Sin sesiones conectadas</option>}
               {terminals.map((t) => (
@@ -468,21 +581,24 @@ export function TopologyTool({
             <input type="checkbox" className="accent-[var(--accent)]" checked={readPorts} onChange={(e) => setReadPorts(e.target.checked)} />
             Estado de puertos
           </label>
-          <Btn kind="primary" disabled={!term || busy} onClick={discover}>
+          <Btn kind="primary" disabled={!term || busy} onClick={discover} title={hint}>
             <Radar size={14} className={busy ? "animate-pulse" : ""} /> {busy ? "Leyendo…" : "Descubrir vecinos"}
           </Btn>
         </div>
-        <div className="flex flex-wrap items-center gap-1 mt-3">
+        <div className="flex flex-wrap items-center gap-1 mt-2.5 @max-[860px]:[&_button]:px-2" role="toolbar" aria-label="Diagrama">
           <Btn kind="ghost" title="Acercar" onClick={() => setZoom((z) => Math.min(2.5, z + 0.2))}>
             <ZoomIn size={14} />
           </Btn>
           <Btn kind="ghost" title="Alejar" onClick={() => setZoom((z) => Math.max(0.4, z - 0.2))}>
             <ZoomOut size={14} />
           </Btn>
+          <Btn kind="ghost" title="Ajustar a la vista" aria-label="Ajustar a la vista" onClick={fit}>
+            <Maximize2 size={14} />
+          </Btn>
           <Btn kind="ghost" title="Reordenar automáticamente" onClick={() => onTopo((t) => layout({ ...t, nodes: t.nodes.map((n) => ({ ...n, x: 0, y: 0 })) }))}>
             <Network size={14} />
           </Btn>
-          <span className="w-px h-5 bg-[var(--border)] mx-1" />
+          <span className="w-px h-5 bg-[var(--border)] mx-1 @max-[860px]:hidden" aria-hidden />
           <Btn kind="ghost" title="Exportar imagen SVG" disabled={!topo.nodes.length} onClick={() => exportFile("svg", toSvg(topo, W, H))}>
             <Download size={14} /> SVG
           </Btn>
@@ -500,243 +616,251 @@ export function TopologyTool({
           >
             <FileCode2 size={14} /> Mermaid
           </Btn>
-          <span className="w-px h-5 bg-[var(--border)] mx-1" />
-          {snapName === null ? (
-            <Btn kind="ghost" title="Guardar una copia para comparar más adelante" disabled={!topo.nodes.length} onClick={() => setSnapName("")}>
-              <Camera size={14} /> Snapshot
-            </Btn>
-          ) : (
-            <form
-              className="flex items-center gap-1"
-              onSubmit={(e) => {
-                e.preventDefault();
-                saveSnapshot();
-              }}
+          <div className="ml-auto flex items-center gap-1">
+            {suggestions.length > 0 && (
+              <Btn
+                title="Ver sugerencias en el panel"
+                aria-label={`Ver ${suggestions.length} sugerencias`}
+                onClick={showSuggestions}
+              >
+                <Lightbulb size={14} className="text-warn" aria-hidden /> <span className="@max-[860px]:sr-only">Sugerencias</span> <CountBadge n={suggestions.length} />
+              </Btn>
+            )}
+      <Btn
+        kind="ghost"
+        className="hover:!text-danger"
+        title="Borrar diagrama"
+        disabled={!topo.nodes.length}
+        onClick={() => {
+          onTopo({ nodes: [], links: [] });
+          setSelected(null);
+          setPath({});
+        }}
+      >
+        <Trash2 size={14} />
+      </Btn>
+            <Btn
+              aria-expanded={ui.panel}
+              aria-controls={panelId}
+              title={ui.panel ? "Ocultar panel lateral" : "Mostrar panel lateral"}
+              onClick={() => setPanel(!ui.panel)}
             >
-              <input
-                autoFocus
-                className="field !h-7 w-48 !text-[12px]"
-                placeholder="Nombre (ej: antes del cambio)"
-                value={snapName}
-                onChange={(e) => setSnapName(e.target.value)}
-                onKeyDown={(e) => e.key === "Escape" && setSnapName(null)}
-              />
-              <Btn kind="primary" type="submit" className="!h-7">
-                Guardar
-              </Btn>
-            </form>
-          )}
-          <label className="flex items-center gap-1 text-[12px]" title="Compara el diagrama actual con un snapshot">
-            <GitCompare size={14} className="text-muted" />
-            <select className="field !h-7 !w-52 !text-[12px]" value={compareId} onChange={(e) => setCompareId(e.target.value)} disabled={!snapshots.length}>
-              <option value="">{snapshots.length ? "Comparar con…" : "Sin snapshots"}</option>
-              {snapshots.map((s) => (
-                <option key={s.id} value={s.id}>
-                  {s.name}
-                </option>
-              ))}
-            </select>
-          </label>
-          {snapshot && (
-            <>
-              <Btn
-                kind="ghost"
-                title="Reemplazar el diagrama actual por este snapshot"
-                onClick={() => {
-                  onTopo(snapshot.topo);
-                  setCompareId("");
-                  setMsg(`Snapshot "${snapshot.name}" abierto`);
-                }}
-              >
-                Abrir
-              </Btn>
-              <Btn
-                kind="ghost"
-                className="hover:!text-danger"
-                title="Eliminar snapshot"
-                onClick={() => {
-                  onSnapshots(snapshots.filter((s) => s.id !== snapshot.id));
-                  setCompareId("");
-                }}
-              >
-                <X size={14} />
-              </Btn>
-            </>
-          )}
-          <Btn
-            kind="ghost"
-            className="hover:!text-danger ml-auto"
-            title="Borrar diagrama"
-            disabled={!topo.nodes.length}
-            onClick={() => {
-              onTopo({ nodes: [], links: [] });
-              setSelected(null);
-              setPath({});
-            }}
-          >
-            <Trash2 size={14} />
-          </Btn>
+              {ui.panel ? <PanelRightClose size={14} aria-hidden /> : <PanelRight size={14} aria-hidden />} <span className="@max-[860px]:sr-only">Panel</span>
+            </Btn>
+          </div>
         </div>
         {msg && <p className="mt-2 text-[12px] text-accent">{msg}</p>}
-      </Section>
+      </section>
 
-      <div className="grid gap-4 [grid-template-columns:1fr_280px]">
-        <div className="space-y-2 min-w-0">
-          <div className="rounded-xl border border-line bg-panel overflow-auto" style={{ height: 520 }}>
-            {!view.nodes.length ? (
-              <div className="h-full grid place-items-center text-[12.5px] text-muted p-6 text-center">
-                Conecta una sesión con un equipo y pulsa "Descubrir vecinos", o agrega equipos y enlaces a mano.
-              </div>
-            ) : (
-              <svg
-                viewBox={`${box.x} ${box.y} ${box.w} ${box.h}`}
-                style={{ width: `${zoom * 100}%`, height: `${zoom * 100}%` }}
-                onPointerMove={onPointerMove}
-                onPointerUp={() => (drag.current = null)}
-                onPointerLeave={() => (drag.current = null)}
-              >
-                {geometry.map((g, i) => {
-                  const k = linkKey(g.l);
-                  const isRoute = routeKeys.has(k);
-                  const state = removed.has(k) ? "removed" : added.has(k) ? "added" : null;
-                  const hot = isRoute || selected === g.l.a || selected === g.l.b;
-                  const color = state === "removed" ? "var(--danger)" : state === "added" ? "var(--ok)" : hot ? "var(--accent)" : "var(--muted)";
-                  const dim = route && !isRoute;
-                  const tip = [
-                    `${node(g.l.a)?.name ?? g.l.a} ${g.l.aPort || "?"} ↔ ${g.l.bPort || "?"} ${node(g.l.b)?.name ?? g.l.b} (${protoLabel(g.l)})`,
-                    portLine(node(g.l.a), g.l.aPort) && `${g.l.aPort}: ${portLine(node(g.l.a), g.l.aPort)}`,
-                    portLine(node(g.l.b), g.l.bPort) && `${g.l.bPort}: ${portLine(node(g.l.b), g.l.bPort)}`,
-                    g.l.logical ? "Sesión lógica: no es un enlace físico" : "",
-                    state === "removed" ? "Ya no aparece (respecto del snapshot)" : state === "added" ? "Nuevo (respecto del snapshot)" : "",
-                  ]
-                    .filter(Boolean)
-                    .join("\n");
-                  const grp = linkGroup(view, g.l);
-                  const showGroup = grp && g.pair.length > 1 && g.pair.indexOf(g.l) === 0;
-                  const dash = state === "removed" ? "6 5" : linkDash(g.l);
-                  return (
-                    <g key={i} opacity={dim ? 0.25 : 1}>
-                      <title>{tip}</title>
-                      <path
-                        d={g.d}
-                        fill="none"
-                        stroke={color}
-                        strokeWidth={isRoute ? 3.5 : hot || state ? 2.5 : g.l.logical ? 1.25 : 1.5}
-                        strokeDasharray={dash}
-                        strokeLinecap={dash ? "round" : undefined}
-                      />
-                      {/* Área de clic más ancha que la línea. */}
-                      <path d={g.d} fill="none" stroke="transparent" strokeWidth={12} />
-                      {[
-                        [g.pa, g.l.aPort],
-                        [g.pb, g.l.bPort],
-                      ]
-                        .filter(([, label]) => label)
-                        .map(([pt, label], j) => (
-                          <text
-                            key={j}
-                            x={(pt as Pt).x}
-                            y={(pt as Pt).y}
-                            fontSize={11}
-                            textAnchor="middle"
-                            fill="var(--text)"
-                            stroke="var(--panel)"
-                            strokeWidth={4}
-                            paintOrder="stroke"
-                          >
-                            {label as string}
-                          </text>
-                        ))}
-                      {showGroup ? (
-                        <text x={g.mid.x} y={g.mid.y + 4} fontSize={11} fontWeight={600} textAnchor="middle" fill="var(--accent)" stroke="var(--panel)" strokeWidth={4} paintOrder="stroke">
-                          {grp} ×{g.pair.length}
-                        </text>
-                      ) : (
-                        (isRoutingProto(g.l.proto) || g.l.proto === "MAC/OUI") && (
-                          <text x={g.mid.x} y={g.mid.y + 4} fontSize={10} fontWeight={600} textAnchor="middle" fill="var(--muted)" stroke="var(--panel)" strokeWidth={4} paintOrder="stroke">
-                            {protoLabel(g.l)}
-                          </text>
-                        )
-                      )}
-                    </g>
-                  );
-                })}
-                {view.nodes.map((n) => {
-                  const ghost = ghostIds.has(n.id);
-                  const isNew = newIds.has(n.id);
-                  const onRoute = routeNodes.has(n.id);
-                  const tentative = n.manual || n.addrOnly;
-                  return (
-                    <g
-                      key={n.id}
-                      style={{ cursor: ghost ? "default" : "grab" }}
-                      opacity={route && !onRoute && !ghost ? 0.35 : 1}
-                      onPointerDown={(e) => {
-                        if (ghost) return;
-                        (e.currentTarget.ownerSVGElement as SVGSVGElement).setPointerCapture(e.pointerId);
-                        drag.current = { id: n.id, sx: e.clientX, sy: e.clientY, x: n.x, y: n.y };
-                        setSelected(n.id);
-                      }}
+      <div className="relative flex-1 min-h-[240px] flex gap-3">
+        <div className="relative flex-1 min-w-0 rounded-xl border border-line bg-panel overflow-hidden">
+          <div ref={scroller} className="absolute inset-0 overflow-auto">
+      {!view.nodes.length ? (
+        <div className="h-full grid place-items-center text-[12.5px] text-muted p-6 text-center">
+          Conecta una sesión con un equipo y pulsa "Descubrir vecinos", o agrega equipos y enlaces a mano.
+        </div>
+      ) : (
+        <svg
+          viewBox={`${box.x} ${box.y} ${box.w} ${box.h}`}
+          style={{ width: `${zoom * 100}%`, height: `${zoom * 100}%` }}
+          onPointerMove={onPointerMove}
+          onPointerUp={() => (drag.current = null)}
+          onPointerLeave={() => (drag.current = null)}
+        >
+          {geometry.map((g, i) => {
+            const k = linkKey(g.l);
+            const isRoute = routeKeys.has(k);
+            const state = removed.has(k) ? "removed" : added.has(k) ? "added" : null;
+            const hot = isRoute || selected === g.l.a || selected === g.l.b;
+            const color = state === "removed" ? "var(--danger)" : state === "added" ? "var(--ok)" : hot ? "var(--accent)" : "var(--muted)";
+            const dim = route && !isRoute;
+            const tip = [
+              `${node(g.l.a)?.name ?? g.l.a} ${g.l.aPort || "?"} ↔ ${g.l.bPort || "?"} ${node(g.l.b)?.name ?? g.l.b} (${protoLabel(g.l)})`,
+              portLine(node(g.l.a), g.l.aPort) && `${g.l.aPort}: ${portLine(node(g.l.a), g.l.aPort)}`,
+              portLine(node(g.l.b), g.l.bPort) && `${g.l.bPort}: ${portLine(node(g.l.b), g.l.bPort)}`,
+              g.l.logical ? "Sesión lógica: no es un enlace físico" : "",
+              state === "removed" ? "Ya no aparece (respecto del snapshot)" : state === "added" ? "Nuevo (respecto del snapshot)" : "",
+            ]
+              .filter(Boolean)
+              .join("\n");
+            const grp = linkGroup(view, g.l);
+            const showGroup = grp && g.pair.length > 1 && g.pair.indexOf(g.l) === 0;
+            const dash = state === "removed" ? "6 5" : linkDash(g.l);
+            return (
+              <g key={i} opacity={dim ? 0.25 : 1}>
+                <title>{tip}</title>
+                <path
+                  d={g.d}
+                  fill="none"
+                  stroke={color}
+                  strokeWidth={isRoute ? 3.5 : hot || state ? 2.5 : g.l.logical ? 1.25 : 1.5}
+                  strokeDasharray={dash}
+                  strokeLinecap={dash ? "round" : undefined}
+                />
+                {/* Área de clic más ancha que la línea. */}
+                <path d={g.d} fill="none" stroke="transparent" strokeWidth={12} />
+                {[
+                  [g.pa, g.l.aPort],
+                  [g.pb, g.l.bPort],
+                ]
+                  .filter(([, label]) => label)
+                  .map(([pt, label], j) => (
+                    <text
+                      key={j}
+                      x={(pt as Pt).x}
+                      y={(pt as Pt).y}
+                      fontSize={11}
+                      textAnchor="middle"
+                      fill="var(--text)"
+                      stroke="var(--panel)"
+                      strokeWidth={4}
+                      paintOrder="stroke"
                     >
-                      {/* Fondo opaco: el relleno de los explorados es translúcido y dejaba ver los enlaces. */}
-                      <rect x={n.x - W / 2} y={n.y - H / 2} width={W} height={H} rx={10} fill="var(--panel)" />
-                      <rect
-                        x={n.x - W / 2}
-                        y={n.y - H / 2}
-                        width={W}
-                        height={H}
-                        rx={10}
-                        fill={n.explored ? "var(--selected)" : "var(--chrome)"}
-                        stroke={
-                          ghost ? "var(--danger)" : isNew ? "var(--ok)" : selected === n.id || onRoute ? "var(--accent)" : n.explored ? "var(--accent)" : "var(--field-border)"
-                        }
-                        strokeDasharray={ghost ? "5 4" : tentative ? "4 3" : undefined}
-                        strokeWidth={selected === n.id || onRoute || ghost || isNew ? 2.5 : 1.5}
-                      />
-                      <text x={n.x} y={n.y - 4} fontSize={13} fontWeight={600} textAnchor="middle" fill="var(--text)">
-                        {n.name.length > 22 ? `${n.name.slice(0, 21)}…` : n.name}
-                      </text>
-                      <text x={n.x} y={n.y + 14} fontSize={11} textAnchor="middle" fill="var(--muted)">
-                        {nodeSub(n, ghost)}
-                      </text>
-                    </g>
-                  );
-                })}
-              </svg>
-            )}
+                      {label as string}
+                    </text>
+                  ))}
+                {showGroup ? (
+                  <text x={g.mid.x} y={g.mid.y + 4} fontSize={11} fontWeight={600} textAnchor="middle" fill="var(--accent)" stroke="var(--panel)" strokeWidth={4} paintOrder="stroke">
+                    {grp} ×{g.pair.length}
+                  </text>
+                ) : (
+                  (isRoutingProto(g.l.proto) || g.l.proto === "MAC/OUI") && (
+                    <text x={g.mid.x} y={g.mid.y + 4} fontSize={10} fontWeight={600} textAnchor="middle" fill="var(--muted)" stroke="var(--panel)" strokeWidth={4} paintOrder="stroke">
+                      {protoLabel(g.l)}
+                    </text>
+                  )
+                )}
+              </g>
+            );
+          })}
+          {view.nodes.map((n) => {
+            const ghost = ghostIds.has(n.id);
+            const isNew = newIds.has(n.id);
+            const onRoute = routeNodes.has(n.id);
+            const tentative = n.manual || n.addrOnly;
+            return (
+              <g
+                key={n.id}
+                style={{ cursor: ghost ? "default" : "grab" }}
+                opacity={route && !onRoute && !ghost ? 0.35 : 1}
+                onPointerDown={(e) => {
+                  if (ghost) return;
+                  (e.currentTarget.ownerSVGElement as SVGSVGElement).setPointerCapture(e.pointerId);
+                  drag.current = { id: n.id, sx: e.clientX, sy: e.clientY, x: n.x, y: n.y };
+                  setSelected(n.id);
+                }}
+              >
+                {/* Fondo opaco: el relleno de los explorados es translúcido y dejaba ver los enlaces. */}
+                <rect x={n.x - W / 2} y={n.y - H / 2} width={W} height={H} rx={10} fill="var(--panel)" />
+                <rect
+                  x={n.x - W / 2}
+                  y={n.y - H / 2}
+                  width={W}
+                  height={H}
+                  rx={10}
+                  fill={n.explored ? "var(--selected)" : "var(--chrome)"}
+                  stroke={
+                    ghost ? "var(--danger)" : isNew ? "var(--ok)" : selected === n.id || onRoute ? "var(--accent)" : n.explored ? "var(--accent)" : "var(--field-border)"
+                  }
+                  strokeDasharray={ghost ? "5 4" : tentative ? "4 3" : undefined}
+                  strokeWidth={selected === n.id || onRoute || ghost || isNew ? 2.5 : 1.5}
+                />
+                <text x={n.x} y={n.y - 4} fontSize={13} fontWeight={600} textAnchor="middle" fill="var(--text)">
+                  {n.name.length > 22 ? `${n.name.slice(0, 21)}…` : n.name}
+                </text>
+                <text x={n.x} y={n.y + 14} fontSize={11} textAnchor="middle" fill="var(--muted)">
+                  {nodeSub(n, ghost)}
+                </text>
+              </g>
+            );
+          })}
+        </svg>
+      )}
           </div>
-          {!!view.nodes.length && (
-            <div className="flex flex-wrap items-center gap-x-4 gap-y-1 px-1 text-[11.5px] text-muted" aria-label="Leyenda de enlaces">
-              {LINK_LEGEND.map(([text, s]) => (
-                <span key={text} className="inline-flex items-center gap-1.5">
-                  <LegendLine dash={linkDash(s)} />
-                  {text}
-                </span>
-              ))}
-              <span className="inline-flex items-center gap-1.5">
-                <svg width="22" height="12" aria-hidden className="shrink-0">
-                  <rect x="1" y="1" width="20" height="10" rx="3" fill="var(--chrome)" stroke="var(--field-border)" strokeDasharray="4 3" />
-                </svg>
-                Equipo manual o visto solo por ruteo
-              </span>
+          {!ui.panel && sel && (
+            <div className="absolute top-2 left-2 flex items-center gap-2 max-w-[calc(100%-1rem)] rounded-lg border border-line bg-panel shadow-pop pl-3 pr-1 py-1 text-[12px]">
+              <span className="font-medium truncate">{sel.name}</span>
+              <Btn kind="ghost" className="!h-6 !px-2 !text-[11.5px] !text-accent" onClick={() => setUi((u) => ({ panel: true, sec: { ...u.sec, detalle: true } }))}>
+                Ver detalle
+              </Btn>
+            </div>
+          )}
+          {showLegend && (
+            <div className="absolute bottom-2 left-2 flex flex-col items-start gap-1.5 max-w-[calc(100%-1rem)]">
+              {isOpen("leyenda") && (
+                <div
+                  id={legendId}
+                  className="flex flex-col gap-1 rounded-lg border border-line bg-panel shadow-pop px-3 py-2 text-[11.5px] text-muted"
+                  aria-label="Leyenda de enlaces"
+                  role="group"
+                >
+                  {hasPhysical && (
+                    <span className="inline-flex items-center gap-1.5">
+                      <LegendLine />
+                      CDP / LLDP
+                    </span>
+                  )}
+                  {legendKinds.map(([text, s]) => (
+                    <span key={text} className="inline-flex items-center gap-1.5">
+                      <LegendLine dash={linkDash(s)} />
+                      {text}
+                    </span>
+                  ))}
+                  {hasTentative && (
+                    <span className="inline-flex items-center gap-1.5">
+                      <svg width="34" height="12" aria-hidden className="shrink-0">
+                        <rect x="7" y="1" width="20" height="10" rx="3" fill="var(--chrome)" stroke="var(--field-border)" strokeDasharray="4 3" />
+                      </svg>
+                      Equipo manual o visto solo por ruteo
+                    </span>
+                  )}
+                </div>
+              )}
+              <button
+                type="button"
+                aria-expanded={isOpen("leyenda")}
+                aria-controls={legendId}
+                onClick={() => setOpen("leyenda", !isOpen("leyenda"))}
+                className="inline-flex items-center gap-1 h-7 px-2.5 rounded-md border border-line bg-panel text-[11.5px] text-muted hover:text-fg hover:bg-hover"
+              >
+                <ChevronUp size={13} aria-hidden className={`transition-transform ${isOpen("leyenda") ? "" : "rotate-180"}`} />
+                Leyenda
+              </button>
             </div>
           )}
         </div>
 
-        <div className="space-y-4 min-w-0">
-          <Section title="Fuentes de descubrimiento" hint="CDP/LLDP y lo manual, siempre activos">
-            <div className="space-y-2.5">
-              {TOPO_SOURCES.map((s) => (
-                <div key={s.id}>
-                  <Toggle checked={sourceOn(sources, s.id)} onChange={(v) => onSources({ ...sources, [s.id]: v })} label={s.label} />
-                  <p className="mt-0.5 pl-10 text-[11px] text-muted leading-snug">{s.hint}</p>
-                </div>
-              ))}
+        {ui.panel && (
+          <aside
+            id={panelId}
+            aria-label="Panel de topología"
+            className="w-[320px] shrink-0 min-h-0 overflow-y-auto space-y-3 @max-[860px]:absolute @max-[860px]:top-0 @max-[860px]:right-0 @max-[860px]:bottom-0 @max-[860px]:z-10 @max-[860px]:max-w-[calc(100%-2rem)] @max-[860px]:rounded-xl @max-[860px]:bg-bg @max-[860px]:shadow-pop @max-[860px]:p-2"
+          >
+            <Collapsible
+              title="Fuentes de descubrimiento"
+              summary={`${activeSources} de ${TOPO_SOURCES.length} activas · CDP/LLDP y lo manual, siempre`}
+              open={isOpen("fuentes")}
+              onToggle={(v) => setOpen("fuentes", v)}
+            >
+        <div className="space-y-2.5">
+          {TOPO_SOURCES.map((s) => (
+            <div key={s.id}>
+              <Toggle checked={sourceOn(sources, s.id)} onChange={(v) => onSources({ ...sources, [s.id]: v })} label={s.label} />
+              <p className="mt-0.5 pl-10 text-[11px] text-muted leading-snug">{s.hint}</p>
             </div>
-          </Section>
+          ))}
+        </div>
+            </Collapsible>
 
-          {suggestionSources.length > 0 && (
-            <Section title="Sugerencias" hint={suggestions.length ? "Confirma cada una antes de dibujarla" : "Sin sugerencias por ahora"}>
+            {suggestionSources.length > 0 && (
+              <div ref={suggestionsRef} className="scroll-mt-2">
+                <Collapsible
+                  title="Sugerencias"
+                  badge={suggestions.length}
+                  summary={suggestions.length ? "Confirma cada una antes de dibujarla" : "Sin sugerencias por ahora"}
+                  open={isOpen("sugerencias")}
+                  onToggle={(v) => setOpen("sugerencias", v)}
+                >
               {suggestions.length ? (
                 <ul className="space-y-2 max-h-56 overflow-y-auto">
                   {suggestions.map((s) => (
@@ -780,170 +904,13 @@ export function TopologyTool({
                   ))}
                 </div>
               )}
-            </Section>
-          )}
-
-          <Section
-            title="Manual"
-            right={
-              !form && (
-                <div className="flex gap-1">
-                  <Btn kind="ghost" className="!px-1.5 !text-[11.5px]" title="Agregar equipo" onClick={() => (setFormErr(""), setForm({ kind: "node", name: "", ip: "", platform: "" }))}>
-                    <Plus size={13} /> Equipo
-                  </Btn>
-                  <Btn
-                    kind="ghost"
-                    className="!px-1.5 !text-[11.5px]"
-                    title="Agregar enlace"
-                    disabled={topo.nodes.length < 2}
-                    onClick={() => (setFormErr(""), setForm({ kind: "link", a: selected ?? "", aPort: "", b: "", bPort: "" }))}
-                  >
-                    <Plus size={13} /> Enlace
-                  </Btn>
-                </div>
-              )
-            }
-          >
-            {form?.kind === "node" && (
-              <form
-                className="space-y-2"
-                onSubmit={(e) => {
-                  e.preventDefault();
-                  submitForm();
-                }}
-              >
-                <Label text="Nombre">
-                  <input autoFocus className="field" maxLength={LIMITS.name} value={form.name} placeholder="ej: sw-bodega-01" onChange={(e) => setForm({ ...form, name: e.target.value })} />
-                </Label>
-                <Label text="IP de gestión (opcional)">
-                  <input className="field font-mono" maxLength={45} value={form.ip} placeholder="192.0.2.10" onChange={(e) => setForm({ ...form, ip: e.target.value })} />
-                </Label>
-                <Label text="Plataforma (opcional)">
-                  <input className="field" maxLength={LIMITS.platform} value={form.platform} placeholder="ej: C9200L-24P" onChange={(e) => setForm({ ...form, platform: e.target.value })} />
-                </Label>
-                {formErr && <p className="text-[11.5px] text-danger">{formErr}</p>}
-                <div className="flex gap-1.5">
-                  <Btn kind="primary" type="submit" className="flex-1">
-                    {form.editId ? "Guardar" : "Agregar equipo"}
-                  </Btn>
-                  <Btn type="button" onClick={() => setForm(null)}>
-                    Cancelar
-                  </Btn>
-                </div>
-              </form>
+                </Collapsible>
+              </div>
             )}
-            {form?.kind === "link" && (
-              <form
-                className="space-y-2"
-                onSubmit={(e) => {
-                  e.preventDefault();
-                  submitForm();
-                }}
-              >
-                {(["a", "b"] as const).map((side) => (
-                  <div key={side} className="grid grid-cols-[1fr_92px] gap-1.5">
-                    <Label text={`Equipo ${side.toUpperCase()}`}>
-                      <select className="field" value={form[side]} onChange={(e) => setForm({ ...form, [side]: e.target.value })}>
-                        <option value="">Elegir…</option>
-                        {nodesByName.map((n) => (
-                          <option key={n.id} value={n.id}>
-                            {n.name}
-                          </option>
-                        ))}
-                      </select>
-                    </Label>
-                    <Label text="Interfaz">
-                      <input
-                        className="field font-mono"
-                        maxLength={LIMITS.port}
-                        value={side === "a" ? form.aPort : form.bPort}
-                        placeholder="Gi1/0/1"
-                        onChange={(e) => setForm({ ...form, [side === "a" ? "aPort" : "bPort"]: e.target.value })}
-                      />
-                    </Label>
-                  </div>
-                ))}
-                {formErr && <p className="text-[11.5px] text-danger">{formErr}</p>}
-                <div className="flex gap-1.5">
-                  <Btn kind="primary" type="submit" className="flex-1">
-                    {form.edit ? "Guardar" : "Agregar enlace"}
-                  </Btn>
-                  <Btn type="button" onClick={() => setForm(null)}>
-                    Cancelar
-                  </Btn>
-                </div>
-              </form>
-            )}
-            {!form && <p className="text-[12px] text-muted">Se guardan con el diagrama, entran en snapshots, rutas y exportaciones.</p>}
-          </Section>
 
-          {diff && snapshot && (
-            <Section title="Cambios" hint={`Respecto de "${snapshot.name}"`}>
-              {!diff.addedLinks.length && !diff.removedLinks.length && !diff.addedNodes.length && !diff.removedNodes.length ? (
-                <p className="text-[12px] text-muted">Sin diferencias.</p>
-              ) : (
-                <ul className="space-y-1 text-[11.5px] font-mono">
-                  {diff.removedNodes.map((n) => (
-                    <li key={`rn${n.id}`} className="text-danger">
-                      − {n.name}
-                    </li>
-                  ))}
-                  {diff.addedNodes.map((id) => (
-                    <li key={`an${id}`} className="text-ok">
-                      + {node(id)?.name ?? id}
-                    </li>
-                  ))}
-                  {diff.removedLinks.map((l, i) => (
-                    <li key={`rl${i}`} className="text-danger">
-                      − {l.a} {l.aPort} ↔ {l.bPort} {l.b}
-                    </li>
-                  ))}
-                  {diff.addedLinks.map((l, i) => (
-                    <li key={`al${i}`} className="text-ok">
-                      + {l.a} {l.aPort} ↔ {l.bPort} {l.b}
-                    </li>
-                  ))}
-                </ul>
-              )}
-            </Section>
-          )}
-
-          {(path.from || path.to) && (
-            <Section
-              title="Ruta"
-              hint={`${path.from ? (node(path.from)?.name ?? path.from) : "?"} → ${path.to ? (node(path.to)?.name ?? path.to) : "elige destino"}`}
-              right={
-                <div className="flex gap-1">
-                  {route && (
-                    <Btn kind="ghost" className="!px-1.5" title="Copiar ruta" onClick={() => writeText(pathText).then(() => setMsg("Ruta copiada"))}>
-                      <Copy size={13} />
-                    </Btn>
-                  )}
-                  <Btn kind="ghost" className="!px-1.5" title="Quitar ruta" onClick={() => setPath({})}>
-                    <X size={13} />
-                  </Btn>
-                </div>
-              }
-            >
-              {path.from && path.to ? (
-                route ? (
-                  <pre className="text-[11.5px] font-mono whitespace-pre-wrap leading-relaxed">
-                    {pathText}
-                    {"\n"}
-                    <span className="text-muted">{route.links.length} saltos</span>
-                  </pre>
-                ) : (
-                  <p className="text-[12px] text-danger">No hay camino conocido entre ambos equipos.</p>
-                )
-              ) : (
-                <p className="text-[12px] text-muted">Selecciona otro equipo y pulsa "Hasta aquí".</p>
-              )}
-            </Section>
-          )}
-
-          <Section
-            title={sel ? sel.name : "Detalle"}
-            hint={sel ? (sel.manual ? "Agregado a mano" : sel.addrOnly ? "Visto por ruteo, aún sin nombre" : sel.explored ? "Vecinos ya leídos" : "Aún no explorado") : "Selecciona un equipo"}
+            <Collapsible
+              title={sel ? sel.name : "Detalle"}
+            summary={sel ? (sel.manual ? "Agregado a mano" : sel.addrOnly ? "Visto por ruteo, aún sin nombre" : sel.explored ? "Vecinos ya leídos" : "Aún no explorado") : "Selecciona un equipo"}
             right={
               sel?.manual && (
                 <div className="flex gap-1">
@@ -966,7 +933,9 @@ export function TopologyTool({
                 </div>
               )
             }
-          >
+              open={isOpen("detalle")}
+              onToggle={(v) => setOpen("detalle", v)}
+            >
             {sel && (
               <div className="space-y-2 text-[12px]">
                 {sel.ip && (
@@ -1090,8 +1059,251 @@ export function TopologyTool({
                 )}
               </div>
             )}
-          </Section>
-        </div>
+            </Collapsible>
+
+            {(path.from || path.to) && (
+              <Collapsible
+                title="Ruta"
+                summary={`${path.from ? (node(path.from)?.name ?? path.from) : "?"} → ${path.to ? (node(path.to)?.name ?? path.to) : "elige destino"}`}
+              right={
+                <div className="flex gap-1">
+                  {route && (
+                    <Btn kind="ghost" className="!px-1.5" title="Copiar ruta" onClick={() => writeText(pathText).then(() => setMsg("Ruta copiada"))}>
+                      <Copy size={13} />
+                    </Btn>
+                  )}
+                  <Btn kind="ghost" className="!px-1.5" title="Quitar ruta" onClick={() => setPath({})}>
+                    <X size={13} />
+                  </Btn>
+                </div>
+              }
+                open={isOpen("ruta")}
+                onToggle={(v) => setOpen("ruta", v)}
+              >
+              {path.from && path.to ? (
+                route ? (
+                  <pre className="text-[11.5px] font-mono whitespace-pre-wrap leading-relaxed">
+                    {pathText}
+                    {"\n"}
+                    <span className="text-muted">{route.links.length} saltos</span>
+                  </pre>
+                ) : (
+                  <p className="text-[12px] text-danger">No hay camino conocido entre ambos equipos.</p>
+                )
+              ) : (
+                <p className="text-[12px] text-muted">Selecciona otro equipo y pulsa "Hasta aquí".</p>
+              )}
+              </Collapsible>
+            )}
+
+            <div ref={manualRef} className="scroll-mt-2">
+              <Collapsible
+                title="Manual"
+                summary={form ? (form.kind === "node" ? "Equipo" : "Enlace") : "Equipos y enlaces agregados a mano"}
+                open={isOpen("manual")}
+                onToggle={(v) => setOpen("manual", v)}
+            right={
+              !form && (
+                <div className="flex gap-1">
+                  <Btn kind="ghost" className="!px-1.5 !text-[11.5px]" title="Agregar equipo" onClick={() => (setFormErr(""), setForm({ kind: "node", name: "", ip: "", platform: "" }))}>
+                    <Plus size={13} /> Equipo
+                  </Btn>
+                  <Btn
+                    kind="ghost"
+                    className="!px-1.5 !text-[11.5px]"
+                    title="Agregar enlace"
+                    disabled={topo.nodes.length < 2}
+                    onClick={() => (setFormErr(""), setForm({ kind: "link", a: selected ?? "", aPort: "", b: "", bPort: "" }))}
+                  >
+                    <Plus size={13} /> Enlace
+                  </Btn>
+                </div>
+              )
+            }
+              >
+            {form?.kind === "node" && (
+              <form
+                className="space-y-2"
+                onSubmit={(e) => {
+                  e.preventDefault();
+                  submitForm();
+                }}
+              >
+                <Label text="Nombre">
+                  <input autoFocus className="field" maxLength={LIMITS.name} value={form.name} placeholder="ej: sw-bodega-01" onChange={(e) => setForm({ ...form, name: e.target.value })} />
+                </Label>
+                <Label text="IP de gestión (opcional)">
+                  <input className="field font-mono" maxLength={45} value={form.ip} placeholder="192.0.2.10" onChange={(e) => setForm({ ...form, ip: e.target.value })} />
+                </Label>
+                <Label text="Plataforma (opcional)">
+                  <input className="field" maxLength={LIMITS.platform} value={form.platform} placeholder="ej: C9200L-24P" onChange={(e) => setForm({ ...form, platform: e.target.value })} />
+                </Label>
+                {formErr && <p className="text-[11.5px] text-danger">{formErr}</p>}
+                <div className="flex gap-1.5">
+                  <Btn kind="primary" type="submit" className="flex-1">
+                    {form.editId ? "Guardar" : "Agregar equipo"}
+                  </Btn>
+                  <Btn type="button" onClick={() => setForm(null)}>
+                    Cancelar
+                  </Btn>
+                </div>
+              </form>
+            )}
+            {form?.kind === "link" && (
+              <form
+                className="space-y-2"
+                onSubmit={(e) => {
+                  e.preventDefault();
+                  submitForm();
+                }}
+              >
+                {(["a", "b"] as const).map((side) => (
+                  <div key={side} className="grid grid-cols-[1fr_92px] gap-1.5">
+                    <Label text={`Equipo ${side.toUpperCase()}`}>
+                      <select className="field" value={form[side]} onChange={(e) => setForm({ ...form, [side]: e.target.value })}>
+                        <option value="">Elegir…</option>
+                        {nodesByName.map((n) => (
+                          <option key={n.id} value={n.id}>
+                            {n.name}
+                          </option>
+                        ))}
+                      </select>
+                    </Label>
+                    <Label text="Interfaz">
+                      <input
+                        className="field font-mono"
+                        maxLength={LIMITS.port}
+                        value={side === "a" ? form.aPort : form.bPort}
+                        placeholder="Gi1/0/1"
+                        onChange={(e) => setForm({ ...form, [side === "a" ? "aPort" : "bPort"]: e.target.value })}
+                      />
+                    </Label>
+                  </div>
+                ))}
+                {formErr && <p className="text-[11.5px] text-danger">{formErr}</p>}
+                <div className="flex gap-1.5">
+                  <Btn kind="primary" type="submit" className="flex-1">
+                    {form.edit ? "Guardar" : "Agregar enlace"}
+                  </Btn>
+                  <Btn type="button" onClick={() => setForm(null)}>
+                    Cancelar
+                  </Btn>
+                </div>
+              </form>
+            )}
+            {!form && <p className="text-[12px] text-muted">Se guardan con el diagrama, entran en snapshots, rutas y exportaciones.</p>}
+              </Collapsible>
+            </div>
+
+            <Collapsible
+              title="Snapshots y cambios"
+              badge={diffCount || undefined}
+              summary={snapshot ? `Comparando con "${snapshot.name}"` : snapshots.length ? `${snapshots.length} guardados` : "Guarda una copia para comparar después"}
+              open={isOpen("snapshots")}
+              onToggle={(v) => setOpen("snapshots", v)}
+            >
+              <div className="space-y-2.5">
+                <div className="flex flex-wrap items-center gap-1">
+          {snapName === null ? (
+            <Btn kind="ghost" title="Guardar una copia para comparar más adelante" disabled={!topo.nodes.length} onClick={() => setSnapName("")}>
+              <Camera size={14} /> Snapshot
+            </Btn>
+          ) : (
+            <form
+              className="flex items-center gap-1"
+              onSubmit={(e) => {
+                e.preventDefault();
+                saveSnapshot();
+              }}
+            >
+              <input
+                autoFocus
+                className="field !h-7 w-48 !text-[12px]"
+                placeholder="Nombre (ej: antes del cambio)"
+                value={snapName}
+                onChange={(e) => setSnapName(e.target.value)}
+                onKeyDown={(e) => e.key === "Escape" && setSnapName(null)}
+              />
+              <Btn kind="primary" type="submit" className="!h-7">
+                Guardar
+              </Btn>
+            </form>
+          )}
+                </div>
+                <div className="flex items-center gap-1">
+          <label className="flex flex-1 min-w-0 items-center gap-1 text-[12px]" title="Compara el diagrama actual con un snapshot">
+            <GitCompare size={14} className="text-muted" />
+            <select className="field !h-7 !w-full flex-1 min-w-0 !text-[12px]" value={compareId} onChange={(e) => setCompareId(e.target.value)} disabled={!snapshots.length}>
+              <option value="">{snapshots.length ? "Comparar con…" : "Sin snapshots"}</option>
+              {snapshots.map((s) => (
+                <option key={s.id} value={s.id}>
+                  {s.name}
+                </option>
+              ))}
+            </select>
+          </label>
+          {snapshot && (
+            <>
+              <Btn
+                kind="ghost"
+                title="Reemplazar el diagrama actual por este snapshot"
+                onClick={() => {
+                  onTopo(snapshot.topo);
+                  setCompareId("");
+                  setMsg(`Snapshot "${snapshot.name}" abierto`);
+                }}
+              >
+                Abrir
+              </Btn>
+              <Btn
+                kind="ghost"
+                className="hover:!text-danger"
+                title="Eliminar snapshot"
+                onClick={() => {
+                  onSnapshots(snapshots.filter((s) => s.id !== snapshot.id));
+                  setCompareId("");
+                }}
+              >
+                <X size={14} />
+              </Btn>
+            </>
+          )}
+                </div>
+                {diff && snapshot && (
+                  <div>
+                    <p className="mb-1 text-[11.5px] font-medium text-muted">Cambios respecto de "{snapshot.name}"</p>
+              {!diff.addedLinks.length && !diff.removedLinks.length && !diff.addedNodes.length && !diff.removedNodes.length ? (
+                <p className="text-[12px] text-muted">Sin diferencias.</p>
+              ) : (
+                <ul className="space-y-1 text-[11.5px] font-mono">
+                  {diff.removedNodes.map((n) => (
+                    <li key={`rn${n.id}`} className="text-danger">
+                      − {n.name}
+                    </li>
+                  ))}
+                  {diff.addedNodes.map((id) => (
+                    <li key={`an${id}`} className="text-ok">
+                      + {node(id)?.name ?? id}
+                    </li>
+                  ))}
+                  {diff.removedLinks.map((l, i) => (
+                    <li key={`rl${i}`} className="text-danger">
+                      − {l.a} {l.aPort} ↔ {l.bPort} {l.b}
+                    </li>
+                  ))}
+                  {diff.addedLinks.map((l, i) => (
+                    <li key={`al${i}`} className="text-ok">
+                      + {l.a} {l.aPort} ↔ {l.bPort} {l.b}
+                    </li>
+                  ))}
+                </ul>
+              )}
+                  </div>
+                )}
+              </div>
+            </Collapsible>
+          </aside>
+        )}
       </div>
     </div>
   );
