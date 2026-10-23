@@ -118,7 +118,7 @@
    "desc": "Actualiza Fireware OS desde un archivo .sysa-dl en un servidor FTP o TFTP. Reinicia el equipo.",
    "cat": "Sistema",
    "risk": "disruptive",
-   "note": "Modo: main, requiere Device Administrator (WG#). Agregar 'yes' omite la confirmación. Instalar una versión inferior hace downgrade y obliga a restaurar backup o volver a fábrica. En FireCluster actualiza ambos miembros, uno a la vez.",
+   "note": "Modo: main, requiere Device Administrator (WG#). Agregar 'yes' omite la confirmación. Instalar una versión inferior hace downgrade y obliga a restaurar backup o volver a fábrica. En FireCluster actualiza ambos miembros, uno a la vez. Si la URL lleva usuario y clave (ftp://usuario:clave@host/ruta), quedan en el historial de la sesión.",
    "source": "https://www.watchguard.com/help/docs/fireware/12/en-US/CLI/CLI_Reference_v12_12.pdf"
   },
   {
@@ -134,7 +134,7 @@
    "desc": "Muestra temperatura de CPU, velocidad del ventilador y voltajes.",
    "cat": "Hardware",
    "risk": "read",
-   "note": "Modo: main (WG# o WG>). No soportado en XTM 2/3, ni en Firebox T10 a T55 (incluye variantes -W). No disponible en XTMv/FireboxV.",
+   "note": "Modo: main (WG# o WG>). No soportado en T15, T20, T25, T40 y T45 (incluye variantes -W, -PoE y -CW) ni en XTMv. Pide confirmación: agregar 'yes' la omite.",
    "source": "https://www.watchguard.com/help/docs/fireware/12/en-US/CLI/CLI_Reference_v12_12.pdf"
   },
   {
@@ -313,7 +313,7 @@
    "desc": "Crea una VLAN en zona trusted con su IP y la asocia a una interfaz física como tagged.",
    "cat": "Capa 2",
    "risk": "change",
-   "note": "Modo: configure (WG(config)#), se entra con 'configure'. Submodo vlan (WG(config/vlan-<nombre>)#). VLAN ID 1-4094; en T115-W/T125/T145 con v2026.2+ el 4094 está reservado. Verificar en tu versión el orden exacto de parámetros con '?'.",
+   "note": "Modo: configure (WG(config)#), submodo vlan (WG(config/vlan-<nombre>)#). Sintaxis de la guía: vlan-id <id> security-zone (external|trusted|optional) <dirección> member (<n>|name <if>) (tagged|untagged). En trusted y optional la IP es red/prefijo de /8 a /30. VLAN ID 1-4094; en T115-W, T125 y T145 con v2026.2 o superior el 4094 está reservado.",
    "source": "https://www.watchguard.com/help/docs/fireware/12/en-US/CLI/CLI_Reference_v12_12.pdf"
   },
   {
@@ -369,7 +369,7 @@
    "desc": "Consulta la tabla de rutas del motor de routing dinámico (vtysh de Quagga).",
    "cat": "Enrutamiento",
    "risk": "read",
-   "note": "Modo: main (WG# o WG>). El comando vtysh va entre comillas. No usar comandos vtysh que modifiquen la tabla.",
+   "note": "Modo: main (WG# o WG>). La guía lo documenta para Fireware v12.8.x o inferior; desde v12.9 usar show ip route dynamic o show ip route. El comando vtysh va entre comillas y no deben usarse comandos vtysh que modifiquen la tabla.",
    "source": "https://www.watchguard.com/help/docs/fireware/12/en-US/CLI/CLI_Reference_v12_12.pdf"
   },
   {
@@ -377,7 +377,7 @@
    "desc": "Muestra el estado de OSPF desde el motor de routing dinámico.",
    "cat": "Enrutamiento",
    "risk": "read",
-   "note": "Modo: main (WG# o WG>).",
+   "note": "Modo: main (WG# o WG>). Documentado para Fireware v12.8.x o inferior; desde v12.9 usar show ip dynamic-routing ospf.",
    "source": "https://www.watchguard.com/help/docs/fireware/12/en-US/CLI/CLI_Reference_v12_12.pdf"
   },
   {
@@ -385,7 +385,7 @@
    "desc": "Muestra el resumen de vecinos BGP y prefijos recibidos.",
    "cat": "Enrutamiento",
    "risk": "read",
-   "note": "Modo: main (WG# o WG>). La guía indica soporte de la mayoría de comandos vtysh de Quagga, pero este en particular no aparece como ejemplo: verificar en tu versión.",
+   "note": "Modo: main (WG# o WG>). Documentado para Fireware v12.8.x o inferior; desde v12.9 usar show ip dynamic-routing bgp. La guía soporta la mayoría de comandos vtysh de Quagga, pero este no figura como ejemplo: verificar en tu versión.",
    "source": "https://www.watchguard.com/help/docs/fireware/12/en-US/CLI/CLI_Reference_v12_12.pdf"
   },
   {
@@ -393,7 +393,7 @@
    "desc": "Crea una ruta estática IPv4.",
    "cat": "Enrutamiento",
    "risk": "change",
-   "note": "Modo: configure (WG(config)#), se entra con 'configure'. Opcional 'metric {{metrica}}'. Eliminar con 'no ip route {{red_cidr}}'.",
+   "note": "Modo: configure (WG(config)#), se entra con 'configure'. Opcional 'distance <valor>' (1 a 255) desde v12.9; en v12.8.x o inferior el parámetro es 'metric'. Eliminar con 'no ip route {{red_cidr}}'.",
    "source": "https://www.watchguard.com/help/docs/fireware/12/en-US/CLI/CLI_Reference_v12_12.pdf"
   },
   {
@@ -401,7 +401,7 @@
    "desc": "Importa la configuración del protocolo dinámico (formato Quagga) desde FTP o TFTP.",
    "cat": "Enrutamiento",
    "risk": "change",
-   "note": "Modo: main, requiere Device Administrator (WG#). Protocolos: bgp, rip, ripng, ospf, ospfv3. Usar 'from console' para pegarla en la CLI.",
+   "note": "Modo: main, requiere Device Administrator (WG#). Protocolos: bgp, rip, ripng, ospf, ospfv3. Usar 'from console' para pegarla en la CLI. Si la URL lleva usuario y clave (ftp://usuario:clave@host/ruta), quedan en el historial de la sesión.",
    "source": "https://www.watchguard.com/help/docs/fireware/12/en-US/CLI/CLI_Reference_v12_12.pdf"
   },
   {
@@ -649,7 +649,7 @@
    "desc": "Prueba la conexión con un servidor AD o LDAP, busca al usuario y obtiene sus grupos.",
    "cat": "Seguridad",
    "risk": "read",
-   "note": "Modo: main (WG# o WG>). Usar 'ldap' como servidor para LDAP. No incluir contraseñas reales en historiales compartidos.",
+   "note": "Modo: main (WG# o WG>). Usar 'ldap' como servidor para LDAP. Admite un tercer parámetro con la contraseña del usuario: no usarlo, queda en el historial.",
    "source": "https://www.watchguard.com/help/docs/fireware/12/en-US/CLI/CLI_Reference_v12_12.pdf"
   },
   {
@@ -817,7 +817,7 @@
    "desc": "Captura tráfico en una interfaz filtrando por host y limitando la cantidad de paquetes.",
    "cat": "Diagnóstico",
    "risk": "read",
-   "note": "Modo: main, requiere Device Administrator (WG#). Usar siempre -c para no saturar la sesión. Interfaz con nombre interno (eth0, vlan10, bond0).",
+   "note": "Modo: main. La guía indica que algunos comandos no están disponibles con rol Device Monitor (WG>). Usar siempre -c para no saturar la sesión. Interfaz con nombre interno (eth0, vlan10, bond0).",
    "source": "https://www.watchguard.com/help/docs/fireware/12/en-US/CLI/CLI_Reference_v12_12.pdf"
   },
   {
@@ -841,7 +841,7 @@
    "desc": "Exporta el support snapshot a un servidor FTP o TFTP para soporte técnico.",
    "cat": "Diagnóstico",
    "risk": "change",
-   "note": "Modo: main (WG# o WG>). También 'export support to usb {{archivo}}'. Contiene configuración: tratar como información sensible. Envía información sensible fuera del equipo: usa solo destinos autorizados.",
+   "note": "Modo: main (WG# o WG>). También 'export support to usb {{archivo}}'. Contiene configuración: tratar como información sensible y usar solo destinos autorizados. Si la URL lleva usuario y clave (ftp://usuario:clave@host/ruta), quedan en el historial de la sesión.",
    "source": "https://www.watchguard.com/help/docs/fireware/12/en-US/CLI/CLI_Reference_v12_12.pdf"
   },
   {
@@ -921,15 +921,15 @@
    "desc": "Exporta la configuración en XML (Policy Manager) a un servidor FTP o TFTP.",
    "cat": "Configuración",
    "risk": "change",
-   "note": "Modo: main, requiere Device Administrator (WG#). Agregar 'html' para el reporte legible. El archivo contiene datos sensibles. Envía información sensible fuera del equipo: usa solo destinos autorizados.",
+   "note": "Modo: main, requiere Device Administrator (WG#). Agregar 'html' para el reporte legible. El archivo contiene datos sensibles: usar solo destinos autorizados. Si la URL lleva usuario y clave (ftp://usuario:clave@host/ruta), quedan en el historial de la sesión.",
    "source": "https://www.watchguard.com/help/docs/fireware/12/en-US/CLI/CLI_Reference_v12_12.pdf"
   },
   {
    "cmd": "configure\npolicy\napply\nexit\nexit",
    "desc": "Guarda y aplica los cambios hechos en el modo policy.",
    "cat": "Configuración",
-   "risk": "change",
-   "note": "Modo: policy (WG(config/policy)#), dentro de configure; requiere 'apply'.",
+   "risk": "disruptive",
+   "note": "Modo: policy (WG(config/policy)#), dentro de configure; requiere 'apply'. Aplica de inmediato todos los cambios pendientes del modo policy, lo que puede reiniciar túneles VPN o cambiar el filtrado.",
    "source": "https://www.watchguard.com/help/docs/fireware/12/en-US/CLI/CLI_Reference_v12_12.pdf"
   },
   {
@@ -937,7 +937,7 @@
    "desc": "Importa un archivo de configuración desde FTP o TFTP y reemplaza la configuración actual.",
    "cat": "Configuración",
    "risk": "disruptive",
-   "note": "Modo: main, requiere Device Administrator (WG#).",
+   "note": "Modo: main, requiere Device Administrator (WG#). Reemplaza la configuración actual. Si la URL lleva usuario y clave (ftp://usuario:clave@host/ruta), quedan en el historial de la sesión.",
    "source": "https://www.watchguard.com/help/docs/fireware/12/en-US/CLI/CLI_Reference_v12_12.pdf"
   },
   {
