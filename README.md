@@ -241,7 +241,7 @@ mi-plugin/
   main.py       import netterminal as nt; os.environ["NT_ACTION"] indica la acción
 ```
 
-Permisos: `session` (leer y enviar comandos a la sesión), `network`, `files`. Son declarativos y se muestran al instalar. Ejemplo completo en [plugins/ejemplo-inventario](plugins/ejemplo-inventario).
+Permisos: `session` (leer y enviar comandos a la sesión), `network`, `files`. Son declarativos y se muestran al instalar. Ejemplo completo en [plugins/ejemplo-inventario](plugins/ejemplo-inventario). En [docs/ejemplos](docs/ejemplos) hay un script, un plugin y un pack de solo lectura, validados con `node scripts/video/plugins/probar-ejemplos.mjs`.
 
 ## Publicar una versión
 
