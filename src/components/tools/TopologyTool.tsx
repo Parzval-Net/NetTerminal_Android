@@ -11,12 +11,15 @@ import {
   LIMITS,
   LINK_LEGEND,
   LinkSuggestion,
+  MAC_COMMANDS,
+  MacPort,
   NEIGHBOR_COMMANDS,
   Neighbor,
   PortInfo,
   PORT_COMMANDS,
   Pt,
   ROUTING_COMMANDS,
+  SUGGESTERS,
   TOPO_SOURCES,
   TopoLink,
   TopoNode,
@@ -28,6 +31,7 @@ import {
   acceptSuggestion,
   addManualLink,
   addManualNode,
+  buildMacPorts,
   collectSuggestions,
   deleteManualLink,
   deleteManualNode,
@@ -43,6 +47,8 @@ import {
   linkGeometry,
   linkGroup,
   linkKey,
+  macPortLinked,
+  macVendors,
   mergeNeighbors,
   nodeId,
   parseNeighbors,
@@ -174,6 +180,7 @@ export function TopologyTool({
   };
 
   const routingOn = sourceOn(sources, "routing");
+  const macOn = sourceOn(sources, "mac");
 
   const discover = async () => {
     if (!term) return;
@@ -216,13 +223,24 @@ export function TopologyTool({
         ports = parsePortInfo(portOuts);
         outputs.push(...portOuts);
       }
+      // Tablas MAC y ARP: solo con la fuente MAC/OUI activa (apagada no se envía ningún comando).
+      // Los datos OUI se cargan recién aquí, en un módulo aparte, para no pesar en el arranque.
+      let macs: Record<string, MacPort> | undefined;
+      if (macOn && MAC_COMMANDS[vendor].length) {
+        const results: CommandOutput[] = [];
+        for (const cmd of MAC_COMMANDS[vendor]) results.push({ cmd, out: await run(cmd) });
+        const { lookupOui } = await import("../../lib/oui");
+        macs = buildMacPorts(results, lookupOui);
+        outputs.push(...results.map((x) => x.out));
+      }
       const last = [...outputs].reverse().find((o) => o.trim()) ?? "";
       const name = promptName(last) ?? term.name;
-      onTopo((t) => mergeNeighbors(t, { name, ip: term.host, ports, addrs }, [...neighbors, ...routing]));
+      onTopo((t) => mergeNeighbors(t, { name, ip: term.host, ports, addrs, macs }, [...neighbors, ...routing]));
       setSelected(nodeId(name));
       const parts = [
         `${neighbors.length} vecinos CDP/LLDP`,
         routingOn && ROUTING_COMMANDS[vendor].length ? `${routing.length} de ruteo` : "",
+        macs ? `${Object.keys(macs).length} puertos con MAC` : "",
       ].filter(Boolean);
       const l2Hint =
         vendor === "fortinet"
@@ -276,7 +294,17 @@ export function TopologyTool({
 
   // Sugerencias: se calculan del diagrama ya leído, sin comandos, y solo con su fuente activa.
   const suggestions = useMemo(() => collectSuggestions(topo, sources, dismissed), [topo, sources, dismissed]);
-  const suggestionSources = TOPO_SOURCES.filter((s) => s.kind === "suggestions" && sourceOn(sources, s.id));
+  const suggestionSources = TOPO_SOURCES.filter((s) => SUGGESTERS[s.id] && sourceOn(sources, s.id));
+  const emptyHints = [
+    sourceOn(sources, "descriptions") &&
+      (topo.nodes.some((n) => n.ports && Object.keys(n.ports).length)
+        ? "Ninguna descripción menciona un equipo sin enlace."
+        : 'Descubre con "Estado de puertos" para leer las descripciones.'),
+    macOn &&
+      (topo.nodes.some((n) => n.macs && Object.keys(n.macs).length)
+        ? "Ningún puerto sin enlace tiene HSRP/VRRP, MAC de equipo de red o varias MAC."
+        : 'Pulsa "Descubrir vecinos" para leer las tablas MAC y ARP.'),
+  ].filter((x): x is string => !!x);
 
   const box = useMemo(() => {
     if (!view.nodes.length) return { x: 0, y: 0, w: 800, h: 400 };
@@ -609,7 +637,7 @@ export function TopologyTool({
                           {grp} ×{g.pair.length}
                         </text>
                       ) : (
-                        isRoutingProto(g.l.proto) && (
+                        (isRoutingProto(g.l.proto) || g.l.proto === "MAC/OUI") && (
                           <text x={g.mid.x} y={g.mid.y + 4} fontSize={10} fontWeight={600} textAnchor="middle" fill="var(--muted)" stroke="var(--panel)" strokeWidth={4} paintOrder="stroke">
                             {protoLabel(g.l)}
                           </text>
@@ -712,8 +740,13 @@ export function TopologyTool({
                         </span>
                       </div>
                       <p className="text-muted truncate" title={s.reason}>
-                        {TOPO_SOURCES.find((x) => x.id === s.source)?.short ?? s.source}: "{s.reason}"
+                        {TOPO_SOURCES.find((x) => x.id === s.source)?.short ?? s.source}: {s.source === "descriptions" ? `"${s.reason}"` : s.reason}
                       </p>
+                      {s.detail && (
+                        <p className="text-muted truncate" title={s.detail.vendors.join(", ")}>
+                          {s.detail.vendors.join(", ")} · {s.detail.macs} MAC{s.detail.ip && <span className="font-mono"> · {s.detail.ip}</span>}
+                        </p>
+                      )}
                       <div className="flex gap-1 mt-1">
                         <Btn kind="primary" className="!h-6 !px-2 !text-[11px]" onClick={() => accept(s)}>
                           <Check size={12} /> Confirmar
@@ -726,11 +759,11 @@ export function TopologyTool({
                   ))}
                 </ul>
               ) : (
-                <p className="text-[12px] text-muted">
-                  {topo.nodes.some((n) => n.ports && Object.keys(n.ports).length)
-                    ? "Ninguna descripción menciona un equipo sin enlace."
-                    : 'Descubre con "Estado de puertos" para leer las descripciones.'}
-                </p>
+                <div className="space-y-1 text-[12px] text-muted">
+                  {emptyHints.map((h) => (
+                    <p key={h}>{h}</p>
+                  ))}
+                </div>
               )}
             </Section>
           )}
@@ -973,6 +1006,29 @@ export function TopologyTool({
                       );
                     })}
                 </div>
+                {sel.macs && Object.keys(sel.macs).length > 0 && (
+                  <details className="rounded-md border border-line px-2 py-1">
+                    <summary className="cursor-pointer text-[11.5px] text-muted">MAC por puerto ({Object.keys(sel.macs).length})</summary>
+                    <ul className="mt-1 space-y-1 max-h-48 overflow-y-auto">
+                      {Object.entries(sel.macs)
+                        .sort(([, x], [, y]) => x.port.localeCompare(y.port, undefined, { numeric: true }))
+                        .map(([k, mp]) => {
+                          const ips = mp.macs.map((e) => e.ip).filter(Boolean);
+                          return (
+                            <li key={k} className="text-[11px] leading-snug">
+                              <span className="font-mono">{mp.port}</span>
+                              <span className="text-muted">
+                                {" "}
+                                · {mp.total} MAC · {macVendors(mp).join(", ")}
+                                {ips.length > 0 && ` · ${ips.slice(0, 2).join(", ")}${ips.length > 2 ? "…" : ""}`}
+                                {macPortLinked(topo, sel, k) && " · con enlace"}
+                              </span>
+                            </li>
+                          );
+                        })}
+                    </ul>
+                  </details>
+                )}
                 <div className="grid grid-cols-2 gap-1.5">
                   <Btn className="!text-[11.5px]" onClick={() => setPath({ from: sel.id, to: path.to !== sel.id ? path.to : undefined })}>
                     <Route size={13} /> Desde aquí

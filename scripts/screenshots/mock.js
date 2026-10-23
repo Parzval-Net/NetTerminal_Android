@@ -272,6 +272,42 @@ const topoManual = {
     { a: "sw-acceso-02", aPort: "Gi1/0/5", b: "cam-acceso", bPort: "", proto: "manual" },
   ],
 };
+// Fuentes con tablas MAC/ARP leídas en dist-sw01: un enlace MAC/OUI ya confirmado y sugerencias
+// pendientes (HSRP alta, varias MAC media, MAC local baja); las VM quedan solo en el detalle.
+const vmw = (n) => ({ mac: `0050.56aa.000${n}`, vlan: "20", vendor: "VMware", kind: "host" });
+const topoMac = {
+  nodes: [
+    ...topoSources.nodes.map((n) =>
+      n.id !== "dist-sw01"
+        ? n
+        : {
+            ...n,
+            ports: { "gi1/0/10": n.ports["gi1/0/10"], "gi1/0/12": n.ports["gi1/0/12"] },
+            macs: {
+              "gi1/0/46": { port: "Gi1/0/46", total: 1, macs: [{ mac: "0000.0c07.ac0a", vlan: "10", ip: "192.0.2.254", fhrp: "HSRP v1 grupo 10" }] },
+              "gi1/0/30": { port: "Gi1/0/30", total: 1, macs: [{ mac: "00e0.fc12.3456", vlan: "10", ip: "192.0.2.30", vendor: "Huawei", kind: "net" }] },
+              "gi1/0/40": {
+                port: "Gi1/0/40",
+                total: 6,
+                macs: [
+                  { mac: "001b.2100.0001", vlan: "20", ip: "192.0.2.101", vendor: "Intel", kind: "host" },
+                  { mac: "3c07.5400.0001", vlan: "20", vendor: "Apple", kind: "host" },
+                  { mac: "f8bc.1200.0001", vlan: "20", ip: "192.0.2.103", vendor: "Dell", kind: "host" },
+                  { mac: "0011.2233.4401", vlan: "20" },
+                  vmw(4),
+                  vmw(5),
+                ],
+              },
+              "gi1/0/11": { port: "Gi1/0/11", total: 1, macs: [{ mac: "5254.0012.3456", vlan: "10" }] },
+              "gi1/0/12": { port: "Gi1/0/12", total: 1, macs: [{ mac: "00e0.fc00.0abc", vlan: "10", vendor: "Huawei", kind: "net" }] },
+              "gi1/0/15": { port: "Gi1/0/15", total: 2, macs: [vmw(1), vmw(2)] },
+            },
+          },
+    ),
+    { id: "mac-00e0.fc12.3456", name: "Huawei 192.0.2.30", ip: "192.0.2.30", platform: "Huawei (por OUI)", explored: false, manual: true, addrOnly: true, addrs: ["192.0.2.30"], x: 530, y: 420 },
+  ],
+  links: [...topoSources.links, { a: "dist-sw01", aPort: "Gi1/0/30", b: "mac-00e0.fc12.3456", bPort: "", proto: "MAC/OUI" }],
+};
 // ?scene=topology-*: diagrama y fuentes de cada demo (activadas o apagadas).
 const topoScene = new URLSearchParams(location.search).get("scene");
 const TOPO_SCENES = {
@@ -279,6 +315,7 @@ const TOPO_SCENES = {
   "topology-sources-off": [topoSources, {}],
   "topology-ospf": [topoOspf, { routing: true }],
   "topology-manual": [topoManual, { descriptions: true }],
+  "topology-mac": [topoMac, { routing: true, descriptions: true, mac: true }],
 };
 if (TOPO_SCENES[topoScene]) [settings.topology, settings.topoSources] = TOPO_SCENES[topoScene];
 
@@ -974,6 +1011,14 @@ Object.assign(scenes, {
   "topology-sources-off": async () => { await tool("Topología")(); await svgNode("rt-borde01"); },
   "topology-ospf": async () => { await tool("Topología")(); await svgNode("rt-borde01"); },
   "topology-manual": async () => { await tool("Topología")(); await svgNode("ap-bodega"); },
+  // Tablas MAC/ARP: enlace MAC/OUI confirmado, sugerencias por confianza y detalle por puerto.
+  "topology-mac": async () => {
+    await tool("Topología")();
+    await svgNode("dist-sw01");
+    await wait(300);
+    const h = document.evaluate("//*[text()='Fuentes de descubrimiento']", document, null, XPathResult.FIRST_ORDERED_NODE_TYPE, null).singleNodeValue;
+    h?.scrollIntoView({ block: "start" });
+  },
   "t-subnet": tool("Subredes"),
   "t-perf": tool("Velocidad"),
   "t-transfer": tool("TFTP / HTTP"),
