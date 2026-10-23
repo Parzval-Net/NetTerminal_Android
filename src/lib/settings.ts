@@ -5,6 +5,7 @@ import { type AlertRule, exampleAlerts } from "./alerts";
 import type { MonitorTarget } from "./monitors";
 import type { TopoSnapshot, TopoSources, Topology } from "./topology";
 import type { SnmpProfile } from "./snmp";
+import { type ListKey, SUGGEST_DEFAULT, migrateSuggest } from "./suggest";
 
 export type ModuleId = "monitor" | "diag" | "topology" | "subnet" | "perf" | "transfer" | "syslog" | "plugins" | "backup" | "snmp";
 
@@ -44,8 +45,12 @@ export interface Settings {
   confirmClose: boolean;
   /** Reintenta solo con algoritmos legacy si el equipo SSH los exige (apagado por defecto: abre la puerta a un downgrade). */
   autoLegacySsh: boolean;
-  /** Sugerencias de comandos del catálogo al escribir (beta, apagado por defecto). */
+  /** Sugerencias de comandos del catálogo al escribir. */
   commandSuggest: boolean;
+  /** El usuario eligió el valor de commandSuggest (si no, sigue al valor por defecto). */
+  commandSuggestSet: boolean;
+  /** Tecla que abre la lista de sugerencias. */
+  suggestListKey: ListKey;
   autoLog: boolean;
   highlightEnabled: boolean;
   /** Esquemas activos por defecto (las sesiones pueden fijar su fabricante). */
@@ -127,7 +132,9 @@ export const defaultSettings: Settings = {
   rightClickPaste: true,
   confirmClose: true,
   autoLegacySsh: false,
-  commandSuggest: false,
+  commandSuggest: SUGGEST_DEFAULT,
+  commandSuggestSet: false,
+  suggestListKey: "ctrl+period",
   autoLog: false,
   highlightEnabled: true,
   highlightSchemes: ["cisco", "common"],
@@ -211,7 +218,10 @@ export function useSettings() {
 
   useEffect(() => {
     invoke<unknown>("get_settings")
-      .then((s) => setSettings(mergeSettings(s)))
+      .then((s) => {
+        const raw = s && typeof s === "object" && !Array.isArray(s) ? (s as Record<string, unknown>) : null;
+        setSettings({ ...mergeSettings(s), ...migrateSuggest(raw) });
+      })
       .catch(() => setSettings(defaultSettings));
   }, []);
 

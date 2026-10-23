@@ -14,7 +14,7 @@ import { fontStack } from "../lib/theme";
 import { Settings, logOptions } from "../lib/settings";
 import { alertHighlights } from "../lib/alerts";
 import { StreamHighlighter, compile, effectiveRules } from "../lib/highlight";
-import { isMac, shortcutFor } from "../lib/platform";
+import { isMac, modLabel, shortcutFor } from "../lib/platform";
 import { paneBodyStyle } from "../lib/split";
 import { credStatus, needsUnlock } from "../lib/credentials";
 import { VaultUnlock } from "./VaultUnlock";
@@ -25,13 +25,21 @@ import {
   InputTracker,
   PROMPT,
   type SuggestEntry,
+  type SuggestIndex,
+  endsWithTyped,
   getIndex,
   ghostFor,
   lookup,
+  matchExecuted,
+  matchSpans,
+  nextWord,
   queryOf,
   remainderToInsert,
   safeInsert,
+  saveUsageSoon,
+  suggestAllowed,
   suggestKey,
+  usageStore,
 } from "../lib/suggest";
 
 export interface TermController {
@@ -81,11 +89,11 @@ interface Props {
   /** Activa "algoritmos legacy" en la sesión (y la guarda) tras un error de negociación SSH. */
   onEnableLegacy?: (id: string) => void;
   register: (id: string, ctrl: TermController | null) => void;
-  /** Catálogo de comandos: fuente de las sugerencias (beta). */
+  /** Catálogo de comandos: fuente de las sugerencias. */
   catalog?: CatalogVendor[];
 }
 
-/** Lista de sugerencias abierta con Ctrl+Espacio. */
+/** Lista de sugerencias (Ctrl+. por defecto, configurable). */
 interface SuggestList {
   items: SuggestEntry[];
   sel: number;
@@ -95,9 +103,6 @@ interface SuggestList {
   top?: number;
   bottom?: number;
 }
-
-/** Acceso a la API interna de xterm para el tamaño de celda (con respaldo por DOM). */
-type CoreDims = { _core?: { _renderService?: { dimensions?: { css?: { cell?: { width: number; height: number } } } } } };
 
 /** Ancho real de un carácter con la fuente dada (para alinear el texto gris con las celdas). */
 const charWidths = new Map<string, number>();
@@ -161,14 +166,15 @@ export const TerminalView = memo(function TerminalView({ id, session, active, vi
   /** Bóveda bloqueada al conectar una sesión con contraseña guardada: desbloquear u omitir. */
   const [unlockAsk, setUnlockAsk] = useState(false);
   const unlockResolve = useRef<((ok: boolean) => void) | null>(null);
-  // Sugerencias de comandos (beta): el texto gris se dibuja directo en el DOM (sin render
-  // de React por tecla); la lista y la confirmación sí usan estado.
+  // Sugerencias de comandos: el texto gris y el aviso de plataforma se dibujan directo en el
+  // DOM (sin render de React por tecla); la lista y la confirmación sí usan estado.
   const focusRef = useRef(active);
   focusRef.current = active;
   const catalogRef = useRef(catalog);
   catalogRef.current = catalog;
   const wrapRef = useRef<HTMLDivElement>(null);
   const ghostRef = useRef<HTMLDivElement>(null);
+  const hintRef = useRef<HTMLDivElement>(null);
   const [suggestList, setSuggestList] = useState<SuggestList | null>(null);
   const listRef = useRef<SuggestList | null>(null);
   const [suggestAsk, setSuggestAsk] = useState<{ entry: SuggestEntry; buf: string } | null>(null);
@@ -426,21 +432,44 @@ export const TerminalView = memo(function TerminalView({ id, session, active, vi
       term.write(`\r\n${dim("── Desconectado. Presiona Enter para reconectar ──")}\r\n`);
     };
 
-    // ---------- Sugerencias de comandos (beta) ----------
-    // Solo con el ajuste activo y en sesiones remotas; sin plataforma detectada o fijada no
-    // se muestra nada. Apagado, ningún evento hace trabajo extra (una comparación).
+    // ---------- Sugerencias de comandos ----------
+    // Solo con el ajuste activo y en sesiones remotas. Apagado, ningún evento hace trabajo
+    // extra (una comparación). Sin plataforma conocida se muestra un aviso una sola vez.
     const tracker = new InputTracker();
+    const usage = usageStore();
     let swallowPress = false;
     let suggestFrame = 0;
     /** Texto gris visible: Flecha derecha solo acepta lo que el usuario está viendo. */
     let shown: { buf: string; insert: string } | null = null;
     let ghostKey = "";
+    /** Aviso "Detecta la plataforma": una vez por pestaña. */
+    let hinted = false;
+    let hintTimer: number | undefined;
+    /** Medición opcional (solo la demo define los arreglos): tecla → texto gris dibujado y costo de cada cuadro. */
+    const { __ntSuggestPerf: perfLog, __ntSuggestCost: perfCost } = window as unknown as { __ntSuggestPerf?: number[]; __ntSuggestCost?: number[] };
+    let keyAt = 0;
     const screenEl = term.element?.querySelector<HTMLElement>(".xterm-screen") ?? null;
-    const tracking = () => settingsRef.current.commandSuggest && sessionRef.current.type !== "local" && !sessionRef.current.scp;
+    const tracking = () => suggestAllowed(settingsRef.current.commandSuggest, sessionRef.current);
     const suggestIndex = () => {
       const platform = sessionRef.current.platform;
       const cat = catalogRef.current;
       return platform && cat && tracking() ? getIndex(cat, platform) : null;
+    };
+    /** Pesos de historial y favoritos: se recalculan solo cuando cambian. */
+    let favSrc: string[] | null = null;
+    let favSet: ReadonlySet<string> = new Set();
+    const weightsFor = (idx: SuggestIndex) => {
+      const f = settingsRef.current.favCommands;
+      if (f !== favSrc) {
+        favSrc = f;
+        favSet = new Set(f);
+      }
+      return usage.weights(idx, favSet);
+    };
+    /** Guarda el uso de un comando del catálogo: solo su plantilla, nunca lo tecleado. */
+    const remember = (idx: SuggestIndex, entry: SuggestEntry) => {
+      usage.record(idx.platform, entry);
+      saveUsageSoon();
     };
     const setList = (l: SuggestList | null) => {
       listRef.current = l;
@@ -449,27 +478,38 @@ export const TerminalView = memo(function TerminalView({ id, session, active, vi
     const closeList = () => {
       if (listRef.current) setList(null);
     };
-    /** La línea en pantalla termina con lo tecleado y no hay nada a la derecha del cursor. */
-    const lineMatches = (buf: string) => {
+    /**
+     * Línea en pantalla hasta el cursor (con las filas envueltas de arriba hasta `need`
+     * caracteres); null si hay texto a la derecha del cursor.
+     */
+    const lineToCursor = (need: number): string | null => {
       const b = term.buffer.active;
       let y = b.baseY + b.cursorY;
       const line = b.getLine(y);
-      if (!line || b.cursorX >= term.cols || line.translateToString(true, b.cursorX).length) return false;
-      if (!buf) return true;
+      if (!line || b.cursorX >= term.cols || line.translateToString(true, b.cursorX).length) return null;
       let text = line.translateToString(false, 0, b.cursorX);
-      // Una línea larga sigue en la fila de arriba (envuelta).
-      while (text.length < buf.length && y > 0 && b.getLine(y)?.isWrapped) text = (b.getLine(--y)?.translateToString(false) ?? "") + text;
-      return text.endsWith(buf);
+      while (text.length < need && y > 0 && b.getLine(y)?.isWrapped) text = (b.getLine(--y)?.translateToString(false) ?? "") + text;
+      return text;
     };
-    const usable = () =>
-      tracker.active && focusRef.current && activeRef.current && statusRef.current === "connected" && term.buffer.active.type !== "alternate";
+    /** La línea en pantalla termina con lo tecleado y no hay nada a la derecha del cursor. */
+    const lineMatches = (buf: string) => {
+      const text = lineToCursor(buf.length);
+      return text !== null && (!buf || endsWithTyped(text, buf));
+    };
+    const visibleConnected = () =>
+      focusRef.current && activeRef.current && statusRef.current === "connected" && term.buffer.active.type !== "alternate";
+    const usable = () => tracker.active && visibleConnected();
     const currentGhost = () => {
       if (listRef.current || !usable()) return null;
       const idx = suggestIndex();
-      const g = idx ? ghostFor(idx, tracker.buf) : null;
+      const g = idx ? ghostFor(idx, tracker.buf, weightsFor(idx)) : null;
       return g && lineMatches(tracker.buf) ? g : null;
     };
-    /** Celda del cursor relativa al contenedor; null si el cursor no está a la vista. */
+    /**
+     * Celda del cursor relativa al contenedor; null si el cursor no está a la vista. El
+     * tamaño de celda sale de .xterm-screen, que xterm dimensiona a columnas × ancho de
+     * celda (sin API interna).
+     */
     const cursorBox = () => {
       const b = term.buffer.active;
       const row = b.baseY + b.cursorY - b.viewportY;
@@ -478,17 +518,47 @@ export const TerminalView = memo(function TerminalView({ id, session, active, vi
       const sr = screenEl.getBoundingClientRect();
       if (!sr.width || !sr.height) return null;
       const wr = wrap.getBoundingClientRect();
-      const cell = (term as unknown as CoreDims)._core?._renderService?.dimensions?.css?.cell;
-      const w = cell?.width || sr.width / term.cols;
-      const h = cell?.height || sr.height / term.rows;
+      const w = sr.width / term.cols;
+      const h = sr.height / term.rows;
       return { left: sr.left - wr.left + b.cursorX * w, top: sr.top - wr.top + row * h, w, h, max: (term.cols - b.cursorX) * w, wrapW: wr.width, wrapH: wr.height };
+    };
+    const hideHint = () => {
+      window.clearTimeout(hintTimer);
+      const el = hintRef.current;
+      if (el && el.style.display !== "none") el.style.display = "none";
+    };
+    /** Plataforma desconocida: un aviso discreto la primera vez que se escribe en un prompt. */
+    const maybeHint = () => {
+      if (hinted || !catalogRef.current || !usable() || queryOf(tracker.buf).length < 2 || !lineMatches(tracker.buf)) return;
+      const el = hintRef.current;
+      const box = cursorBox();
+      if (!el || !box) return;
+      hinted = true;
+      el.textContent = `Detecta la plataforma para activar sugerencias: Comandos (${modLabel}L) › Detectar`;
+      const st = el.style;
+      st.left = `${Math.max(4, Math.min(box.left - queryOf(tracker.buf).length * box.w, box.wrapW - 400))}px`;
+      st.top = box.wrapH - (box.top + box.h) >= 40 ? `${box.top + box.h + 4}px` : `${box.top - 30}px`;
+      st.display = "block";
+      hintTimer = window.setTimeout(hideHint, 6000);
     };
     const renderSuggest = () => {
       suggestFrame = 0;
+      if (!perfCost) return drawSuggest();
+      const t0 = performance.now();
+      drawSuggest();
+      perfCost.push(performance.now() - t0);
+    };
+    const drawSuggest = () => {
+      // Línea redibujada o prompt que llegó después de teclear: se confirma con la pantalla.
+      if (tracker.canResync && visibleConnected()) {
+        const text = lineToCursor(tracker.buf.length + 80);
+        if (text !== null) tracker.resync(text);
+      }
       const list = listRef.current;
       if (list && (!usable() || tracker.buf !== list.buf)) closeList();
       const el = ghostRef.current;
       if (!el) return;
+      if (!hinted && !suggestIndex()) maybeHint();
       const g = currentGhost();
       const box = g && cursorBox();
       if (!g || !box) {
@@ -505,19 +575,24 @@ export const TerminalView = memo(function TerminalView({ id, session, active, vi
       const font = `${o.fontSize}px ${o.fontFamily}`;
       const color = o.theme?.foreground ?? "";
       const key = `${g.rest}|${box.left}|${box.top}|${box.w}|${box.h}|${box.max}|${font}|${color}`;
-      if (key === ghostKey) return;
-      ghostKey = key;
-      el.textContent = g.rest;
-      const st = el.style;
-      st.display = "block";
-      st.left = `${box.left}px`;
-      st.top = `${box.top}px`;
-      st.height = `${box.h}px`;
-      st.lineHeight = `${box.h}px`;
-      st.maxWidth = `${box.max}px`;
-      st.font = font;
-      st.letterSpacing = `${box.w - charWidth(font)}px`;
-      st.color = color;
+      if (key !== ghostKey) {
+        ghostKey = key;
+        el.textContent = g.rest;
+        const st = el.style;
+        st.display = "block";
+        st.left = `${box.left}px`;
+        st.top = `${box.top}px`;
+        st.height = `${box.h}px`;
+        st.lineHeight = `${box.h}px`;
+        st.maxWidth = `${box.max}px`;
+        st.font = font;
+        st.letterSpacing = `${box.w - charWidth(font)}px`;
+        st.color = color;
+      }
+      if (perfLog && keyAt) {
+        perfLog.push(performance.now() - keyAt);
+        keyAt = 0;
+      }
     };
     const scheduleSuggest = () => {
       if (!suggestFrame) suggestFrame = requestAnimationFrame(renderSuggest);
@@ -533,7 +608,7 @@ export const TerminalView = memo(function TerminalView({ id, session, active, vi
     const openList = () => {
       const idx = suggestIndex();
       if (!idx || !usable() || !lineMatches(tracker.buf)) return;
-      const items = lookup(idx, tracker.buf, 8);
+      const items = lookup(idx, tracker.buf, 8, { weights: weightsFor(idx) });
       const box = cursorBox();
       if (!items.length || !box) return;
       // Alineada con el inicio de lo tecleado; abajo del cursor o arriba si no cabe.
@@ -545,26 +620,33 @@ export const TerminalView = memo(function TerminalView({ id, session, active, vi
     const pickSuggestion = (entry: SuggestEntry, buf: string, confirmed: boolean) => {
       closeList();
       scheduleSuggest();
-      if (!tracker.active || tracker.buf !== buf) return;
+      const idx = suggestIndex();
+      if (!idx || !tracker.active || tracker.buf !== buf) return;
       const rest = remainderToInsert(entry, buf);
       if (!rest) return;
       // Lo que cambia configuración o puede cortar servicio se confirma antes de escribirlo.
       if (entry.risk !== "read" && !confirmed) return setSuggestAsk({ entry, buf });
       typeInsert(rest);
+      remember(idx, entry);
     };
     /** Tecla con las sugerencias activas; true si la tomaron (no llega al equipo). */
     const suggestKeyDown = (e: KeyboardEvent) => {
       const list = listRef.current;
-      const enabled = statusRef.current === "connected" && !!suggestIndex();
-      if (!enabled) {
+      if (e.key === "Escape") hideHint();
+      const idx = statusRef.current === "connected" ? suggestIndex() : null;
+      if (!idx) {
         closeList();
         return false;
       }
       const g = list ? null : currentGhost();
       const canAccept = !!g?.insert && shown?.insert === g.insert && shown.buf === tracker.buf;
-      switch (suggestKey(e, { enabled, listOpen: !!list, canAccept })) {
+      switch (suggestKey(e, { enabled: true, listOpen: !!list, canAccept, listKey: settingsRef.current.suggestListKey })) {
         case "accept":
           typeInsert(g!.insert);
+          remember(idx, g!.entry);
+          return true;
+        case "word":
+          typeInsert(nextWord(g!.insert));
           return true;
         case "open":
           openList();
@@ -596,6 +678,7 @@ export const TerminalView = memo(function TerminalView({ id, session, active, vi
       reset: () => {
         tracker.reset();
         closeList();
+        hideHint();
       },
       pick: pickSuggestion,
     };
@@ -620,6 +703,14 @@ export const TerminalView = memo(function TerminalView({ id, session, active, vi
       }
       if (statusRef.current !== "connected") return;
       if (tracking()) {
+        if (data === "\r") {
+          hideHint();
+          // Historial: la plantilla del catálogo que corresponde a la línea ejecutada.
+          const idx = tracker.active ? suggestIndex() : null;
+          const entry = idx && matchExecuted(idx, tracker.buf);
+          if (entry) remember(idx, entry);
+        }
+        if (perfLog) keyAt = performance.now();
         tracker.input(data);
         scheduleSuggest();
       }
@@ -768,6 +859,7 @@ export const TerminalView = memo(function TerminalView({ id, session, active, vi
       observer.disconnect();
       cancelAnimationFrame(frame);
       cancelAnimationFrame(suggestFrame);
+      window.clearTimeout(hintTimer);
       suggestRef.current = null;
       host.removeEventListener("contextmenu", onContextMenu);
       host.removeEventListener("paste", onNativePaste, true);
@@ -876,6 +968,8 @@ export const TerminalView = memo(function TerminalView({ id, session, active, vi
       <div ref={hostRef} className="w-full h-full" />
       {/* Texto gris de la sugerencia: solo visual, lo dibuja la terminal (sin render por tecla). */}
       <div ref={ghostRef} aria-hidden="true" className="absolute z-[5] pointer-events-none whitespace-pre overflow-hidden opacity-45" style={{ display: "none" }} />
+      {/* Aviso de plataforma desconocida (una vez por pestaña): lo muestra la terminal. */}
+      <div ref={hintRef} role="status" className="absolute z-[6] pointer-events-none rounded-md border border-line bg-panel px-2 py-1 text-[11px] text-muted shadow-pop whitespace-nowrap" style={{ display: "none" }} />
       {suggestList && (
         <SuggestPopup
           list={suggestList}
@@ -964,9 +1058,8 @@ export const TerminalView = memo(function TerminalView({ id, session, active, vi
   );
 });
 
-/** Lista de sugerencias (Ctrl+Espacio): el foco sigue en la terminal, que maneja las flechas. */
+/** Lista de sugerencias: el foco sigue en la terminal, que maneja las flechas. */
 function SuggestPopup({ list, listId, fontFamily, onPick }: { list: SuggestList; listId: string; fontFamily: string; onPick: (e: SuggestEntry) => void }) {
-  const typed = queryOf(list.buf).length;
   const selRef = useRef<HTMLLIElement>(null);
   useEffect(() => {
     selRef.current?.scrollIntoView({ block: "nearest" });
@@ -991,8 +1084,7 @@ function SuggestPopup({ list, listId, fontFamily, onPick }: { list: SuggestList;
           >
             <div className="flex items-center gap-2 min-w-0">
               <span className="truncate whitespace-pre" style={{ fontFamily }}>
-                <span className="font-semibold">{it.cmd.slice(0, typed)}</span>
-                {it.cmd.slice(typed)}
+                {matchSpans(it, list.buf).map((p, j) => (p.hit ? <span key={j} className="font-semibold">{p.text}</span> : p.text))}
               </span>
               {it.risk !== "read" && (
                 <span className="ml-auto shrink-0 rounded px-1.5 text-[10.5px] font-medium bg-danger text-danger-fg">{riskLabel[it.risk]}</span>

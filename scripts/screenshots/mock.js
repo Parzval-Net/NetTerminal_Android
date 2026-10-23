@@ -160,11 +160,16 @@ localStorage.clear();
 settings.appTheme = new URLSearchParams(location.search).get("theme") ?? "dark";
 if (location.search.includes("big=")) settings.confirmClose = false;
 if (location.search.includes("autolegacy=1")) settings.autoLegacySsh = true;
-// ?scene=suggest: sugerencias de comandos (beta) activas y core-sw01 con plataforma IOS-XE
-// (con &video=1 la terminal hace eco de lo que se escribe).
+// ?scene=suggest: sugerencias de comandos activas y core-sw01 con plataforma IOS-XE (con
+// &video=1 la terminal hace eco de lo que se escribe; &noplatform=1 deja la plataforma sin
+// detectar para ver el aviso). window.__ntSuggestPerf recibe la latencia tecla → texto gris y
+// window.__ntSuggestCost el costo de cada cuadro de sugerencias (ms).
 if (location.search.includes("scene=suggest")) {
   settings.commandSuggest = true;
-  sessions[0].platform = "iosxe";
+  settings.commandSuggestSet = true;
+  if (!location.search.includes("noplatform=1")) sessions[0].platform = "iosxe";
+  window.__ntSuggestPerf = [];
+  window.__ntSuggestCost = [];
 }
 if (location.search.includes("scene=vertical") || location.search.includes("layout=vertical")) settings.tabLayout = "vertical";
 // ?toast=1: una alerta por palabra clave activa que dispara un aviso (toast) y marca la primera pestaña.
@@ -719,12 +724,17 @@ if (new URLSearchParams(location.search).has("video")) {
     }, 500);
     return job;
   };
+  // Mensaje asíncrono (syslog con "logging synchronous"): corta la línea y la redibuja con lo tecleado.
+  window.__ntMockAsync = () => {
+    for (const id of channels.keys()) out(id, `\r\n*Oct 21 10:42:17: %LINK-3-UPDOWN: Interface GigabitEthernet1/0/3, changed state to down\r\n${promptOf(id)}${lineBuf.get(id) ?? ""}`);
+  };
   // Pausa entre equipos al enviar a varias sesiones: se ve el avance y el botón Detener.
   localStorage.setItem("broadcastDelay", "3000");
   // Eco y respuestas en orden, con una pausa breve por línea como un equipo real.
   const queues = new Map();
   const later = (id, fn, ms) => {
-    const at = Math.max(Date.now(), queues.get(id) ?? 0) + ms;
+    // Al menos 1 ms después del anterior: lo tecleado mientras responde sale tras el prompt (typeahead).
+    const at = Math.max(Date.now(), queues.get(id) ?? 0) + Math.max(1, ms);
     queues.set(id, at);
     setTimeout(fn, at - Date.now());
   };
