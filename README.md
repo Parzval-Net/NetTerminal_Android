@@ -2,7 +2,7 @@
 
 Cliente de conexión liviano y multiplataforma (macOS, Windows, Linux) para el trabajo diario con equipos de red y servidores: **SSH, Telnet, Serial y terminal local**, con sesiones guardadas en carpetas y pestañas.
 
-Construido con [Tauri 2](https://tauri.app) (backend en Rust) y xterm.js. Usa el WebView del sistema: la app pesa ~7 MB, usa ~80 MB de memoria en reposo y 0 % de CPU sin actividad (medido en macOS).
+Construido con [Tauri 2](https://tauri.app) (backend en Rust) y xterm.js. Usa el WebView del sistema: la app pesa ~8 MB, usa ~90 MB de memoria en reposo (proceso de la app más los del WebView) y 0 % de CPU sin actividad (medido en macOS, v0.9.0).
 
 ![NetTerminal: sesiones en carpetas, terminal con resaltado por fabricante y catálogo de comandos](docs/screenshots/terminal.png)
 
