@@ -1011,6 +1011,7 @@ pub fn run() {
             snmp::snmp_request,
             snmp::snmp_walk,
             snmp::snmp_walk_many,
+            snmp::snmp_topo_read,
             snmp::snmp_trap_start,
             snmp::snmp_secret_set,
             snmp::snmp_secret_has,

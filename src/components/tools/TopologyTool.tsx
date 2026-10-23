@@ -3,6 +3,7 @@ import { invoke } from "@tauri-apps/api/core";
 import { save } from "@tauri-apps/plugin-dialog";
 import { writeText } from "@tauri-apps/plugin-clipboard-manager";
 import {
+  Activity,
   Camera,
   Check,
   ChevronDown,
@@ -33,6 +34,7 @@ import {
   LIMITS,
   LINK_LEGEND,
   LinkSuggestion,
+  LinkTraffic,
   MAC_COMMANDS,
   MacPort,
   NEIGHBOR_COMMANDS,
@@ -50,6 +52,8 @@ import {
   TopoSources,
   TopoVendor,
   Topology,
+  UTIL_LEGEND,
+  UtilLevel,
   acceptSuggestion,
   addManualLink,
   addManualNode,
@@ -58,6 +62,7 @@ import {
   deleteManualLink,
   deleteManualNode,
   diffTopology,
+  fmtBps,
   isCliError,
   isIpv4,
   isIpv6,
@@ -72,6 +77,7 @@ import {
   linkGroup,
   linkKey,
   macPortLinked,
+  macPortsFromRows,
   macVendors,
   mergeNeighbors,
   nodeId,
@@ -89,9 +95,15 @@ import {
   toDrawio,
   toMermaid,
   toSvg,
+  trafficLabel,
   updateManualLink,
   updateManualNode,
+  utilLevel,
 } from "../../lib/topology";
+import { ARP_FALLBACK, TopoRead, needsArpFallback, parseSnmpDiscovery, snmpDiscoveryPlan } from "../../lib/topoSnmp";
+import { linkTraffic } from "../../lib/topoTraffic";
+import { SnmpProfile, targetParams } from "../../lib/snmp";
+import { TRAFFIC_INTERVALS, TrafficInterval, useTopoTraffic } from "./useTopoTraffic";
 import { vendorFor } from "../../lib/commands";
 import type { Session } from "../../types";
 import type { TerminalRef } from "./FileManager";
@@ -121,24 +133,106 @@ type ManualForm =
   | { kind: "link"; edit?: TopoLink; a: string; aPort: string; b: string; bPort: string };
 
 /** Secciones del panel lateral. */
-type PanelSection = "fuentes" | "sugerencias" | "detalle" | "ruta" | "manual" | "snapshots" | "leyenda";
-/** Estado visual de la herramienta (panel y secciones). Es comodidad de interfaz: no va a Ajustes. */
+type PanelSection = "fuentes" | "trafico" | "sugerencias" | "detalle" | "ruta" | "manual" | "snapshots" | "leyenda";
+type DiscoveryMode = "cli" | "snmp";
+/**
+ * Estado visual de la herramienta (panel, secciones, modo de descubrimiento, intervalo y animación
+ * del tráfico). Es comodidad de interfaz: no va a Ajustes. El tráfico y la lectura por consola no se
+ * recuerdan: parten apagados en cada apertura.
+ */
 interface TopoUi {
   panel: boolean;
   sec: Partial<Record<PanelSection, boolean>>;
+  mode: DiscoveryMode;
+  snmpProfile: string;
+  interval: TrafficInterval;
+  anim: boolean;
+  /** Puntas de flecha por sentido sobre cada enlace con tráfico. */
+  arrows: boolean;
+  /** Etiqueta de tasas (↑ ↓ y %) junto a cada enlace con tráfico. */
+  rates: boolean;
 }
 const UI_KEY = "topoUi";
-const UI_DEFAULT: TopoUi = { panel: true, sec: { fuentes: false, sugerencias: false, detalle: true, ruta: true, manual: false, snapshots: false, leyenda: false } };
+const UI_DEFAULT: TopoUi = {
+  panel: true,
+  sec: { fuentes: false, trafico: false, sugerencias: false, detalle: true, ruta: true, manual: false, snapshots: false, leyenda: false },
+  mode: "cli",
+  snmpProfile: "",
+  interval: 30,
+  anim: false,
+  arrows: true,
+  rates: true,
+};
 
 function loadUi(): TopoUi {
   try {
     const v = JSON.parse(localStorage.getItem(UI_KEY) ?? "null") as Partial<TopoUi> | null;
     if (!v || typeof v !== "object") return UI_DEFAULT;
     const sec = v.sec && typeof v.sec === "object" ? v.sec : {};
-    return { panel: v.panel !== false, sec: { ...UI_DEFAULT.sec, ...sec } };
+    return {
+      panel: v.panel !== false,
+      sec: { ...UI_DEFAULT.sec, ...sec },
+      mode: v.mode === "snmp" ? "snmp" : "cli",
+      snmpProfile: typeof v.snmpProfile === "string" ? v.snmpProfile.slice(0, 64) : "",
+      interval: TRAFFIC_INTERVALS.includes(v.interval as TrafficInterval) ? (v.interval as TrafficInterval) : 30,
+      anim: v.anim === true,
+      arrows: v.arrows !== false,
+      rates: v.rates !== false,
+    };
   } catch {
     return UI_DEFAULT;
   }
+}
+
+/** Color del tema por nivel de utilización (sin velocidad conocida: acento). */
+const UTIL_VAR: Record<UtilLevel, string> = { ok: "var(--ok)", warn: "var(--warn)", crit: "var(--danger)", none: "var(--accent)" };
+
+/** El sistema pide reducir movimiento (se respeta aunque "Animación" esté activa). */
+function useReducedMotion(): boolean {
+  const q = typeof window !== "undefined" && window.matchMedia ? window.matchMedia("(prefers-reduced-motion: reduce)") : null;
+  const [reduced, setReduced] = useState(() => !!q?.matches);
+  useEffect(() => {
+    if (!q) return;
+    const on = () => setReduced(q.matches);
+    q.addEventListener("change", on);
+    return () => q.removeEventListener("change", on);
+  }, [q]);
+  return reduced;
+}
+
+/** Desplaza una curva cuadrática en paralelo (un carril por sentido). */
+function lanePath(a: Pt, c: Pt, b: Pt, off: number): string {
+  const dx = b.x - a.x;
+  const dy = b.y - a.y;
+  const len = Math.hypot(dx, dy) || 1;
+  const nx = (-dy / len) * off;
+  const ny = (dx / len) * off;
+  return `M ${a.x + nx} ${a.y + ny} Q ${c.x + nx} ${c.y + ny} ${b.x + nx} ${b.y + ny}`;
+}
+
+/** Punta de flecha sobre la curva en t, hacia B (forward) o hacia A, en su carril. */
+function arrowHead(a: Pt, c: Pt, b: Pt, t: number, forward: boolean, off: number): string {
+  const px = (1 - t) ** 2 * a.x + 2 * (1 - t) * t * c.x + t ** 2 * b.x;
+  const py = (1 - t) ** 2 * a.y + 2 * (1 - t) * t * c.y + t ** 2 * b.y;
+  let tx = 2 * (1 - t) * (c.x - a.x) + 2 * t * (b.x - c.x);
+  let ty = 2 * (1 - t) * (c.y - a.y) + 2 * t * (b.y - c.y);
+  const tl = Math.hypot(tx, ty) || 1;
+  tx /= tl;
+  ty /= tl;
+  const dx = b.x - a.x;
+  const dy = b.y - a.y;
+  const len = Math.hypot(dx, dy) || 1;
+  const cx = px + (-dy / len) * off;
+  const cy = py + (dx / len) * off;
+  const s = forward ? 1 : -1;
+  const [ux, uy] = [tx * s, ty * s];
+  const [nx, ny] = [-uy, ux];
+  const pts = [
+    [cx + ux * 6, cy + uy * 6],
+    [cx - ux * 4 + nx * 4, cy - uy * 4 + ny * 4],
+    [cx - ux * 4 - nx * 4, cy - uy * 4 - ny * 4],
+  ];
+  return pts.map((p) => p.map((v) => v.toFixed(1)).join(",")).join(" ");
 }
 
 function saveUi(ui: TopoUi) {
@@ -174,6 +268,8 @@ export function TopologyTool({
   topo,
   snapshots,
   sources,
+  snmpProfiles,
+  visible,
   onTopo,
   onSnapshots,
   onSources,
@@ -184,6 +280,10 @@ export function TopologyTool({
   topo: Topology;
   snapshots: TopoSnapshot[];
   sources: TopoSources;
+  /** Perfiles de Herramientas › SNMP (sin secretos: viven en la bóveda). */
+  snmpProfiles: SnmpProfile[];
+  /** La herramienta está a la vista: sin ella no se leen contadores de tráfico. */
+  visible: boolean;
   onTopo: (t: Topology | ((t: Topology) => Topology)) => void;
   onSnapshots: (s: TopoSnapshot[]) => void;
   onSources: (s: TopoSources) => void;
@@ -217,6 +317,23 @@ export function TopologyTool({
   const setPanel = (panel: boolean) => setUi((u) => ({ ...u, panel }));
 
   useEffect(() => saveUi(ui), [ui]);
+
+  // Descubrimiento por SNMP: perfiles v2c o v3 (GETBULK); v1 no se ofrece.
+  const mode = ui.mode;
+  const profiles = useMemo(() => snmpProfiles.filter((p) => p.version !== "1" && p.host.trim()), [snmpProfiles]);
+  const profile = profiles.find((p) => p.id === ui.snmpProfile) ?? profiles[0];
+
+  // Tráfico en enlaces: apagado al abrir; la lectura por consola también (envía comandos).
+  const [trafficOn, setTrafficOn] = useState(false);
+  const [trafficCli, setTrafficCli] = useState(false);
+  const reducedMotion = useReducedMotion();
+  const traffic = useTopoTraffic({
+    topo,
+    profiles: snmpProfiles,
+    terminals,
+    opts: { on: trafficOn, cli: trafficCli, interval: ui.interval },
+    visible,
+  });
 
   // Migra el diagrama de versiones anteriores (antes vivía en el navegador, fuera de la carpeta de datos).
   useEffect(() => {
@@ -332,6 +449,55 @@ export function TopologyTool({
     setBusy(false);
   };
 
+  /**
+   * Descubrimiento con un perfil SNMP: solo lectura (GET y GETBULK de las tablas permitidas en el
+   * backend), con las mismas fuentes activas que por consola. Los secretos salen de la bóveda.
+   */
+  const discoverSnmp = async () => {
+    const p = profile;
+    if (!p) return;
+    if (!p.saved) {
+      setMsg(`El perfil "${p.name || p.host}" no tiene secretos guardados: guárdalos en Herramientas › SNMP (bóveda cifrada).`);
+      return;
+    }
+    setBusy(true);
+    setMsg(`Leyendo por SNMP ${p.host} (LLDP, CDP${routingOn ? ", OSPF, BGP" : ""}${macOn ? ", tabla MAC y ARP" : ""})…`);
+    try {
+      const opts = { routing: routingOn, mac: macOn, ports: readPorts };
+      const plan = snmpDiscoveryPlan(opts);
+      const target = targetParams(p, { community: "", authPass: "", privPass: "" });
+      let r = await invoke<TopoRead>("snmp_topo_read", { target, gets: plan.gets, walks: plan.walks });
+      if (opts.mac && needsArpFallback(r)) {
+        const r2 = await invoke<TopoRead>("snmp_topo_read", { target, gets: [], walks: ARP_FALLBACK });
+        r = { ...r, walks: [...r.walks, ...r2.walks], ms: r.ms + r2.ms };
+      }
+      const d = parseSnmpDiscovery(r, opts);
+      let macs: Record<string, MacPort> | undefined;
+      if (opts.mac) {
+        const { lookupOui } = await import("../../lib/oui");
+        macs = macPortsFromRows(d.macRows, d.arpRows, lookupOui);
+      }
+      const host = p.host.trim();
+      const name = d.name ?? (p.name.trim() || host);
+      onTopo((t) => mergeNeighbors(t, { name, ip: isIpv4(host) || isIpv6(host) ? host : undefined, ports: d.ports, addrs: d.addrs, macs }, [...d.neighbors, ...d.routing]));
+      setSelected(nodeId(name));
+      traffic.prime(nodeId(name), p.id, d.ifIndex);
+      const parts = [
+        `${d.neighbors.length} vecinos CDP/LLDP`,
+        routingOn ? `${d.routing.length} de ruteo` : "",
+        macs ? `${Object.keys(macs).length} puertos con MAC` : "",
+      ].filter(Boolean);
+      const l2 = d.l2Empty
+        ? "LLDP y CDP vacíos por SNMP: el protocolo está apagado en el equipo (o su agente no publica LLDP-MIB ni CISCO-CDP-MIB)."
+        : "";
+      const notes = d.notes.length ? `Avisos: ${d.notes.slice(0, 3).join("; ")}${d.notes.length > 3 ? ` y ${d.notes.length - 3} más` : ""}.` : "";
+      setMsg([`${name}: ${parts.join(", ")} por SNMP en ${(r.ms / 1000).toFixed(1)} s.`, l2, notes].filter(Boolean).join(" "));
+    } catch (e) {
+      setMsg(`SNMP: ${String(e)}`);
+    }
+    setBusy(false);
+  };
+
   const node = (id: string) => topo.nodes.find((n) => n.id === id);
   const sel = selected ? node(selected) : undefined;
 
@@ -364,6 +530,51 @@ export function TopologyTool({
   const routeNodes = useMemo(() => new Set(route?.nodes), [route]);
 
   const geometry = useMemo(() => linkGeometry(view, view.links, PARALLEL_GAP), [view]);
+
+  // Última tasa por enlace (se recalcula una vez por lectura, no por cuadro).
+  const linkRates = useMemo(() => {
+    const m = new Map<string, LinkTraffic>();
+    if (!trafficOn) return m;
+    for (const l of topo.links) {
+      const lt = linkTraffic(l, traffic.rates);
+      if (lt) m.set(linkKey(l), lt);
+    }
+    return m;
+  }, [trafficOn, traffic.rates, topo.links]);
+  // La animación va en los carriles de cada sentido: sin flechas tampoco se anima.
+  const animate = ui.anim && ui.arrows && !reducedMotion && visible;
+  /** Etiquetas de tasa: en enlaces paralelos se apilan en el centro del par, con el puerto de A. */
+  const trafficLabels = useMemo(() => {
+    if (!linkRates.size) return [];
+    const pairKey = (l: TopoLink) => [l.a, l.b].sort().join("~");
+    const mids = new Map<string, Pt[]>();
+    for (const g of geometry) mids.set(pairKey(g.l), [...(mids.get(pairKey(g.l)) ?? []), g.mid]);
+    const used = new Map<string, number>();
+    const out: { key: string; x: number; y: number; text: string; color: string; dim: boolean; anchor: "middle" | "end" }[] = [];
+    for (const g of geometry) {
+      const k = linkKey(g.l);
+      const lt = linkRates.get(k);
+      if (!lt || removed.has(k)) continue;
+      const pk = pairKey(g.l);
+      const i = used.get(pk) ?? 0;
+      used.set(pk, i + 1);
+      const ms = mids.get(pk)!;
+      const multi = g.pair.length > 1;
+      // Paralelos: la pila queda a la izquierda del par, fuera de las líneas y del rótulo del agregado.
+      const x = multi ? Math.min(...ms.map((m) => m.x)) - 18 : g.mid.x;
+      const y = (multi ? ms.reduce((a, m) => a + m.y, 0) / ms.length - 6 : g.mid.y + 20) + i * 14;
+      out.push({
+        key: `${k}|${g.l.proto}`,
+        x,
+        y,
+        anchor: multi ? "end" : "middle",
+        text: `${multi ? `${g.l.aPort || "?"}: ` : ""}${trafficLabel(lt)}`,
+        color: UTIL_VAR[utilLevel(lt.util)],
+        dim: !!route && !routeKeys.has(k),
+      });
+    }
+    return out;
+  }, [geometry, linkRates, removed, route, routeKeys]);
 
   // Sugerencias: se calculan del diagrama ya leído, sin comandos, y solo con su fuente activa.
   const suggestions = useMemo(() => collectSuggestions(topo, sources, dismissed), [topo, sources, dismissed]);
@@ -533,7 +744,7 @@ export function TopologyTool({
   }, [suggestions.length]);
 
   const showSuggestions = () => {
-    setUi((u) => ({ panel: true, sec: { ...u.sec, sugerencias: true } }));
+    setUi((u) => ({ ...u, panel: true, sec: { ...u.sec, sugerencias: true } }));
     requestAnimationFrame(() => suggestionsRef.current?.scrollIntoView({ block: "start", behavior: "smooth" }));
   };
 
@@ -546,9 +757,15 @@ export function TopologyTool({
   const legendKinds = LINK_LEGEND.filter(([, s]) => linkDash(s) && view.links.some((l) => linkDash(l) === linkDash(s)));
   const hasPhysical = view.links.some((l) => !linkDash(l));
   const hasTentative = view.nodes.some((n) => n.manual || n.addrOnly);
-  const showLegend = legendKinds.length > 0 || hasTentative;
+  const hasTraffic = linkRates.size > 0;
+  const showLegend = legendKinds.length > 0 || hasTentative || hasTraffic;
 
   const activeSources = TOPO_SOURCES.filter((s) => sourceOn(sources, s.id)).length;
+  const trafficSummary = !trafficOn
+    ? "Apagado"
+    : !visible
+      ? "En pausa (herramienta oculta)"
+      : `Cada ${ui.interval} s · ${linkRates.size} enlaces con datos${trafficCli ? " · también por consola" : ""}`;
   const diffCount = diff ? diff.addedLinks.length + diff.removedLinks.length + diff.addedNodes.length + diff.removedNodes.length : 0;
   const hint = "Descubre los vecinos del equipo conectado y sigue la ruta salto a salto: clic en un vecino y 'Conectar'. Solo usa comandos de consulta.";
 
@@ -563,34 +780,70 @@ export function TopologyTool({
           </p>
         </header>
         <div className="flex flex-wrap items-end gap-2">
-          <Label text="Equipo (sesión conectada)" className="flex-1 min-w-40">
-            <select className="field" value={connId} onChange={(e) => setConnId(e.target.value)}>
-              {!terminals.length && <option value="">Sin sesiones conectadas</option>}
-              {terminals.map((t) => (
-                <option key={t.connId} value={t.connId}>
-                  {t.name}
-                  {t.host ? ` · ${t.host}` : ""}
-                </option>
-              ))}
+          <Label text="Descubrir con" className="w-36">
+            <select className="field" value={mode} onChange={(e) => setUi((u) => ({ ...u, mode: e.target.value as DiscoveryMode }))}>
+              <option value="cli">Consola (CLI)</option>
+              <option value="snmp">SNMP (perfil)</option>
             </select>
           </Label>
-          <Label text="Fabricante" className="w-40">
-            <select className="field" value={vendor} onChange={(e) => setVendor(e.target.value as TopoVendor)}>
-              {VENDORS.map((v) => (
-                <option key={v.id} value={v.id}>
-                  {v.label}
-                </option>
-              ))}
-            </select>
-          </Label>
-          <label className="flex items-center gap-1.5 h-8 text-[12px]" title="Lee estado, velocidad, descripción y Port-channel de las interfaces (comandos de consulta)">
+          {mode === "cli" ? (
+            <>
+              <Label text="Equipo (sesión conectada)" className="flex-1 min-w-40">
+                <select className="field" value={connId} onChange={(e) => setConnId(e.target.value)}>
+                  {!terminals.length && <option value="">Sin sesiones conectadas</option>}
+                  {terminals.map((t) => (
+                    <option key={t.connId} value={t.connId}>
+                      {t.name}
+                      {t.host ? ` · ${t.host}` : ""}
+                    </option>
+                  ))}
+                </select>
+              </Label>
+              <Label text="Fabricante" className="w-40">
+                <select className="field" value={vendor} onChange={(e) => setVendor(e.target.value as TopoVendor)}>
+                  {VENDORS.map((v) => (
+                    <option key={v.id} value={v.id}>
+                      {v.label}
+                    </option>
+                  ))}
+                </select>
+              </Label>
+            </>
+          ) : (
+            <Label text="Perfil SNMP del equipo (v2c o v3)" className="flex-1 min-w-48">
+              <select className="field" value={profile?.id ?? ""} onChange={(e) => setUi((u) => ({ ...u, snmpProfile: e.target.value }))}>
+                {!profiles.length && <option value="">Sin perfiles: créalos en Herramientas › SNMP</option>}
+                {profiles.map((p) => (
+                  <option key={p.id} value={p.id}>
+                    {p.name || p.host} · {p.host} · {p.version === "3" ? `v3 ${p.level}` : "v2c"}
+                    {p.saved ? "" : " (sin secretos guardados)"}
+                  </option>
+                ))}
+              </select>
+            </Label>
+          )}
+          <label
+            className="flex items-center gap-1.5 h-8 text-[12px]"
+            title={mode === "cli" ? "Lee estado, velocidad, descripción y Port-channel de las interfaces (comandos de consulta)" : "Lee ifOperStatus, ifHighSpeed e ifAlias (IF-MIB)"}
+          >
             <input type="checkbox" className="accent-[var(--accent)]" checked={readPorts} onChange={(e) => setReadPorts(e.target.checked)} />
             Estado de puertos
           </label>
-          <Btn kind="primary" disabled={!term || busy} onClick={discover} title={hint}>
-            <Radar size={14} className={busy ? "animate-pulse" : ""} /> {busy ? "Leyendo…" : "Descubrir vecinos"}
-          </Btn>
+          {mode === "cli" ? (
+            <Btn kind="primary" disabled={!term || busy} onClick={discover} title={hint}>
+              <Radar size={14} className={busy ? "animate-pulse" : ""} /> {busy ? "Leyendo…" : "Descubrir vecinos"}
+            </Btn>
+          ) : (
+            <Btn kind="primary" disabled={!profile || busy} onClick={discoverSnmp} title="Lee LLDP-MIB y CISCO-CDP-MIB (y las fuentes activas) con GETBULK, solo lectura">
+              <Radar size={14} className={busy ? "animate-pulse" : ""} /> {busy ? "Leyendo…" : "Descubrir por SNMP"}
+            </Btn>
+          )}
         </div>
+        {mode === "snmp" && (
+          <p className="mt-1.5 text-[11.5px] text-muted">
+            Solo lectura con el perfil y sus secretos de la bóveda; tope de 10.000 filas y 20 s por tabla. Si LLDP y CDP vuelven vacíos por SNMP, el protocolo está apagado en el equipo.
+          </p>
+        )}
         <div className="flex flex-wrap items-center gap-1 mt-2.5 @max-[860px]:[&_button]:px-2" role="toolbar" aria-label="Diagrama">
           <Btn kind="ghost" title="Acercar" onClick={() => setZoom((z) => Math.min(2.5, z + 0.2))}>
             <ZoomIn size={14} />
@@ -617,9 +870,9 @@ export function TopologyTool({
                 x: r.left,
                 y: r.bottom + 4,
                 items: [
-                  ["Imagen SVG", <Download size={13} />, () => exportFile("svg", toSvg(topo, W, H))],
+                  ["Imagen SVG", <Download size={13} />, () => exportFile("svg", toSvg(topo, W, H, linkRates))],
                   ["draw.io (editable)", <Download size={13} />, () => exportFile("drawio", toDrawio(topo, W, H))],
-                  ["CSV de enlaces y puertos", <Download size={13} />, () => exportFile("csv", toCsv(topo)), !topo.links.length],
+                  ["CSV de enlaces y puertos", <Download size={13} />, () => exportFile("csv", toCsv(topo, linkRates)), !topo.links.length],
                   [
                     "Copiar como Mermaid",
                     <FileCode2 size={13} />,
@@ -633,6 +886,15 @@ export function TopologyTool({
           </Btn>
           {exportMenu && <ContextMenu menu={exportMenu} onClose={() => setExportMenu(null)} />}
           <div className="ml-auto flex items-center gap-1">
+            <Btn
+              kind={trafficOn ? "default" : "ghost"}
+              aria-pressed={trafficOn}
+              title={trafficOn ? "Dejar de leer el tráfico de los enlaces" : "Mostrar el tráfico de los enlaces (opciones en el panel)"}
+              onClick={() => setTrafficOn(!trafficOn)}
+              className={trafficOn ? "!text-accent" : ""}
+            >
+              <Activity size={14} aria-hidden /> <span className="@max-[860px]:sr-only">Tráfico</span>
+            </Btn>
             {suggestions.length > 0 && (
               <Btn
                 title="Ver sugerencias en el panel"
@@ -688,10 +950,18 @@ export function TopologyTool({
             const isRoute = routeKeys.has(k);
             const state = removed.has(k) ? "removed" : added.has(k) ? "added" : null;
             const hot = isRoute || selected === g.l.a || selected === g.l.b;
-            const color = state === "removed" ? "var(--danger)" : state === "added" ? "var(--ok)" : hot ? "var(--accent)" : "var(--muted)";
+            const lt = state ? undefined : linkRates.get(k);
+            const level = lt ? utilLevel(lt.util) : undefined;
+            const color =
+              state === "removed" ? "var(--danger)" : state === "added" ? "var(--ok)" : level ? UTIL_VAR[level] : hot ? "var(--accent)" : "var(--muted)";
             const dim = route && !isRoute;
+            const aName = node(g.l.a)?.name ?? g.l.a;
+            const bName = node(g.l.b)?.name ?? g.l.b;
+            const dirLevel = (bps: number | null) => UTIL_VAR[lt?.speed && bps !== null ? utilLevel(bps / lt.speed) : "none"];
             const tip = [
-              `${node(g.l.a)?.name ?? g.l.a} ${g.l.aPort || "?"} ↔ ${g.l.bPort || "?"} ${node(g.l.b)?.name ?? g.l.b} (${protoLabel(g.l)})`,
+              `${aName} ${g.l.aPort || "?"} ↔ ${g.l.bPort || "?"} ${bName} (${protoLabel(g.l)})`,
+              lt &&
+                `Tráfico: ↑ ${aName} → ${bName} ${fmtBps(lt.ab)} · ↓ ${bName} → ${aName} ${fmtBps(lt.ba)}${lt.speed ? ` · enlace de ${fmtBps(lt.speed)}, ${Math.round((lt.util ?? 0) * 100)} %` : " · velocidad desconocida"}`,
               portLine(node(g.l.a), g.l.aPort) && `${g.l.aPort}: ${portLine(node(g.l.a), g.l.aPort)}`,
               portLine(node(g.l.b), g.l.bPort) && `${g.l.bPort}: ${portLine(node(g.l.b), g.l.bPort)}`,
               g.l.logical ? "Sesión lógica: no es un enlace físico" : "",
@@ -709,10 +979,23 @@ export function TopologyTool({
                   d={g.d}
                   fill="none"
                   stroke={color}
-                  strokeWidth={isRoute ? 3.5 : hot || state ? 2.5 : g.l.logical ? 1.25 : 1.5}
+                  strokeWidth={isRoute ? 3.5 : lt ? 1.75 + 3 * Math.min(1, lt.util ?? 0) : hot || state ? 2.5 : g.l.logical ? 1.25 : 1.5}
                   strokeDasharray={dash}
                   strokeLinecap={dash ? "round" : undefined}
                 />
+                {lt && (
+                  <>
+                    {/* Un carril y una punta de flecha por sentido: A→B y B→A. */}
+                    {animate && !!lt.ab && <path className="topo-flow" d={lanePath(g.a, g.c, g.b, 4)} fill="none" stroke={dirLevel(lt.ab)} strokeWidth={1.5} strokeLinecap="round" />}
+                    {animate && !!lt.ba && <path className="topo-flow topo-flow-rev" d={lanePath(g.a, g.c, g.b, -4)} fill="none" stroke={dirLevel(lt.ba)} strokeWidth={1.5} strokeLinecap="round" />}
+                    {ui.arrows && (
+                      <>
+                        <polygon points={arrowHead(g.a, g.c, g.b, 0.4, true, 5)} fill={dirLevel(lt.ab)} stroke="var(--panel)" strokeWidth={0.75} />
+                        <polygon points={arrowHead(g.a, g.c, g.b, 0.6, false, -5)} fill={dirLevel(lt.ba)} stroke="var(--panel)" strokeWidth={0.75} />
+                      </>
+                    )}
+                  </>
+                )}
                 {/* Área de clic más ancha que la línea. */}
                 <path d={g.d} fill="none" stroke="transparent" strokeWidth={12} />
                 {[
@@ -790,13 +1073,32 @@ export function TopologyTool({
               </g>
             );
           })}
+          {/* Las tasas van en una capa propia sobre los equipos: un enlace corto no las tapa. */}
+          {ui.rates && trafficLabels.map((t) => (
+            <text
+              key={t.key}
+              x={t.x}
+              y={t.y}
+              opacity={t.dim ? 0.25 : 1}
+              fontSize={10.5}
+              fontWeight={600}
+              textAnchor={t.anchor}
+              fill={t.color}
+              stroke="var(--panel)"
+              strokeWidth={4}
+              paintOrder="stroke"
+              pointerEvents="none"
+            >
+              {t.text}
+            </text>
+          ))}
         </svg>
       )}
           </div>
           {!ui.panel && sel && (
             <div className="absolute top-2 left-2 flex items-center gap-2 max-w-[calc(100%-1rem)] rounded-lg border border-line bg-panel shadow-pop pl-3 pr-1 py-1 text-[12px]">
               <span className="font-medium truncate">{sel.name}</span>
-              <Btn kind="ghost" className="!h-6 !px-2 !text-[11.5px] !text-accent" onClick={() => setUi((u) => ({ panel: true, sec: { ...u.sec, detalle: true } }))}>
+              <Btn kind="ghost" className="!h-6 !px-2 !text-[11.5px] !text-accent" onClick={() => setUi((u) => ({ ...u, panel: true, sec: { ...u.sec, detalle: true } }))}>
                 Ver detalle
               </Btn>
             </div>
@@ -829,6 +1131,33 @@ export function TopologyTool({
                       </svg>
                       Equipo manual o visto solo por ruteo
                     </span>
+                  )}
+                  {hasTraffic && (
+                    <>
+                      <span className="mt-1 font-medium text-fg">Tráfico (color y grosor por utilización)</span>
+                      {UTIL_LEGEND.map(([text, lv]) => (
+                        <span key={lv} className="inline-flex items-center gap-1.5">
+                          <svg width="34" height="8" aria-hidden className="shrink-0">
+                            <line x1="2" y1="4" x2="32" y2="4" stroke={UTIL_VAR[lv]} strokeWidth={lv === "crit" ? 4.5 : lv === "warn" ? 3.5 : 2.5} strokeLinecap="round" />
+                          </svg>
+                          {text}
+                        </span>
+                      ))}
+                      <span className="inline-flex items-center gap-1.5">
+                        <svg width="34" height="8" aria-hidden className="shrink-0">
+                          <line x1="2" y1="4" x2="32" y2="4" stroke={UTIL_VAR.none} strokeWidth={2.5} strokeLinecap="round" />
+                        </svg>
+                        Velocidad desconocida
+                      </span>
+                      {ui.arrows && <span className="inline-flex items-center gap-1.5">
+                        <svg width="34" height="12" aria-hidden className="shrink-0">
+                          <line x1="2" y1="6" x2="32" y2="6" stroke="var(--muted)" strokeWidth={1.5} />
+                          <polygon points="13,1.5 19,4.5 13,7.5" fill="var(--ok)" />
+                          <polygon points="21,4.5 15,7.5 21,10.5" fill="var(--warn)" />
+                        </svg>
+                        Una flecha por sentido · ↑ de A hacia B, ↓ de B hacia A (detalle al pasar el mouse)
+                      </span>}
+                    </>
                   )}
                 </div>
               )}
@@ -866,6 +1195,80 @@ export function TopologyTool({
             </div>
           ))}
         </div>
+            </Collapsible>
+
+            <Collapsible
+              title="Tráfico en enlaces"
+              summary={trafficSummary}
+              open={isOpen("trafico")}
+              onToggle={(v) => setOpen("trafico", v)}
+            >
+              <div className="space-y-2.5 text-[12px]">
+                <div>
+                  <Toggle checked={trafficOn} onChange={setTrafficOn} label="Tráfico en enlaces" />
+                  <p className="mt-0.5 pl-10 text-[11px] text-muted leading-snug">
+                    Lee los contadores de las interfaces con enlace de cada equipo explorado, solo mientras Topología está a la vista. Por SNMP usa el perfil del equipo (misma IP o
+                    nombre, con secretos guardados): un GET de ifHCInOctets, ifHCOutOctets e ifHighSpeed (IF-MIB), o los de 32 bits si el agente no los tiene.
+                  </p>
+                </div>
+                <label className="flex items-center gap-2 pl-10">
+                  <span className="text-muted">Cada</span>
+                  <select
+                    className="field !h-7 !w-24 !text-[12px]"
+                    value={ui.interval}
+                    onChange={(e) => setUi((u) => ({ ...u, interval: Number(e.target.value) as TrafficInterval }))}
+                  >
+                    {TRAFFIC_INTERVALS.map((i) => (
+                      <option key={i} value={i}>
+                        {i} s
+                      </option>
+                    ))}
+                  </select>
+                </label>
+                <div>
+                  <Toggle checked={trafficCli} onChange={setTrafficCli} label="También por consola" />
+                  <p className="mt-0.5 pl-10 text-[11px] text-muted leading-snug">
+                    Para equipos sin perfil SNMP: envía <span className="font-mono">show interfaces</span>, <span className="font-mono">display interface</span> o{" "}
+                    <span className="font-mono">show interfaces extensive</span> a su sesión conectada en cada lectura. Solo consulta, pero ocupa la sesión unos segundos.
+                  </p>
+                </div>
+                <div>
+                  <Toggle checked={ui.arrows} onChange={(arrows) => setUi((u) => ({ ...u, arrows }))} label="Flechas de dirección" />
+                  <p className="mt-0.5 pl-10 text-[11px] text-muted leading-snug">Una punta por sentido sobre cada enlace. Sin flechas, el color y el grosor siguen indicando la utilización.</p>
+                </div>
+                <div>
+                  <Toggle checked={ui.rates} onChange={(rates) => setUi((u) => ({ ...u, rates }))} label="Velocidad de tráfico" />
+                  <p className="mt-0.5 pl-10 text-[11px] text-muted leading-snug">Muestra ↑ ↓ en Mb/s y el % de uso junto al enlace. El detalle sigue disponible al pasar el mouse.</p>
+                </div>
+                <div>
+                  <Toggle checked={ui.anim && ui.arrows} onChange={(anim) => setUi((u) => ({ ...u, anim, arrows: anim || u.arrows }))} label="Animación" />
+                  <p className="mt-0.5 pl-10 text-[11px] text-muted leading-snug">
+                    Trazo animado en el sentido del tráfico (CSS, se pausa con la herramienta oculta).
+                    {reducedMotion ? " El sistema pide reducir movimiento: queda desactivada." : ""}
+                  </p>
+                </div>
+                {trafficOn && (
+                  <div className="rounded-md border border-line px-2 py-1.5 space-y-0.5 text-[11.5px]">
+                    {!traffic.status.last && <p className="text-muted">Leyendo…</p>}
+                    {traffic.status.snmp.length > 0 && <p>SNMP: {traffic.status.snmp.join(", ")}</p>}
+                    {traffic.status.cli.length > 0 && <p>Consola: {traffic.status.cli.join(", ")}</p>}
+                    {traffic.status.none.length > 0 && (
+                      <p className="text-muted">
+                        Sin fuente: {traffic.status.none.join(", ")}. {trafficCli ? "Conecta su sesión o crea su perfil SNMP." : 'Crea su perfil SNMP o activa "También por consola".'}
+                      </p>
+                    )}
+                    {traffic.status.errors.map((e) => (
+                      <p key={e} className="text-danger">
+                        {e}
+                      </p>
+                    ))}
+                    {traffic.status.last && !linkRates.size && !traffic.status.errors.length && (
+                      <p className="text-muted">La tasa aparece desde la segunda lectura ({ui.interval} s).</p>
+                    )}
+                    {traffic.status.last && <p className="text-muted">Última lectura: {new Date(traffic.status.last).toLocaleTimeString()}</p>}
+                  </div>
+                )}
+              </div>
             </Collapsible>
 
             {suggestionSources.length > 0 && (

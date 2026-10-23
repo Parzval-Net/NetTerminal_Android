@@ -167,3 +167,25 @@ button {
   -webkit-text-fill-color: var(--muted);
   color: var(--muted);
 }
+
+/* Topología: trazo animado en el sentido del tráfico. Solo stroke-dashoffset en CSS (sin renders
+   de React por cuadro), en pasos de 10 por segundo: el navegador no lo pinta a 60 cuadros y el
+   costo de CPU baja en proporción. Se omite si el sistema pide reducir movimiento. */
+.topo-flow {
+  stroke-dasharray: 2 12;
+  animation: topo-flow 2.8s steps(28) infinite;
+  pointer-events: none;
+}
+.topo-flow-rev {
+  animation-direction: reverse;
+}
+@keyframes topo-flow {
+  to {
+    stroke-dashoffset: -28;
+  }
+}
+@media (prefers-reduced-motion: reduce) {
+  .topo-flow {
+    animation: none;
+  }
+}

@@ -1957,6 +1957,272 @@ pub fn snmp_secret_delete(profile: String, state: tauri::State<'_, crate::AppSta
     state.creds.delete(&check_profile(&profile)?)
 }
 
+// ---------- Topología y tráfico por SNMP (solo lectura, OIDs de una lista fija) ----------
+//
+// Herramientas › Topología descubre vecinos y lee contadores con el perfil SNMP del equipo.
+// Este comando solo admite los OID de las tablas que necesita (nada de SET ni subárboles
+// arbitrarios): un frontend comprometido no puede usar el perfil para recorrer otra cosa.
+// Cada OID está verificado contra el archivo MIB oficial citado. La lista se repite en
+// src/lib/topoSnmp.ts y un test de scripts/tests/topology.test.mjs comprueba que coincidan.
+
+/// Tablas y columnas que se pueden recorrer (WALK con GETBULK).
+pub const TOPO_WALK_ROOTS: &[(&str, &str)] = &[
+    // IF-MIB, RFC 2863: ifDescr { ifEntry 2 }, ifOperStatus { ifEntry 8 }; ifName { ifXEntry 1 },
+    // ifHighSpeed { ifXEntry 15 }, ifAlias { ifXEntry 18 }. ifEntry = 1.3.6.1.2.1.2.2.1,
+    // ifXEntry = 1.3.6.1.2.1.31.1.1.1.
+    ("1.3.6.1.2.1.2.2.1.2", "ifDescr"),
+    ("1.3.6.1.2.1.2.2.1.8", "ifOperStatus"),
+    ("1.3.6.1.2.1.31.1.1.1.1", "ifName"),
+    ("1.3.6.1.2.1.31.1.1.1.15", "ifHighSpeed"),
+    ("1.3.6.1.2.1.31.1.1.1.18", "ifAlias"),
+    // LLDP-MIB, IEEE Std 802.1AB-2005 cláusula 12.1 (lldpMIB = 1.0.8802.1.1.2):
+    // lldpLocPortTable { lldpLocalSystemData 7 } = 1.0.8802.1.1.2.1.3.7,
+    // lldpRemEntry { lldpRemTable 1 } = 1.0.8802.1.1.2.1.4.1.1 (columnas 4 a 10),
+    // lldpRemManAddrEntry { lldpRemManAddrTable 1 } = 1.0.8802.1.1.2.1.4.2.1 (IfSubtype, columna 3).
+    ("1.0.8802.1.1.2.1.3.7", "lldpLocPortTable"),
+    ("1.0.8802.1.1.2.1.4.1.1.4", "lldpRemChassisIdSubtype"),
+    ("1.0.8802.1.1.2.1.4.1.1.5", "lldpRemChassisId"),
+    ("1.0.8802.1.1.2.1.4.1.1.6", "lldpRemPortIdSubtype"),
+    ("1.0.8802.1.1.2.1.4.1.1.7", "lldpRemPortId"),
+    ("1.0.8802.1.1.2.1.4.1.1.8", "lldpRemPortDesc"),
+    ("1.0.8802.1.1.2.1.4.1.1.9", "lldpRemSysName"),
+    ("1.0.8802.1.1.2.1.4.1.1.10", "lldpRemSysDesc"),
+    ("1.0.8802.1.1.2.1.4.2.1.3", "lldpRemManAddrIfSubtype"),
+    // CISCO-CDP-MIB (ciscoCdpMIB = { ciscoMgmt 23 } = 1.3.6.1.4.1.9.9.23), cdpCacheEntry =
+    // { cdpCacheTable 1 } = 1.3.6.1.4.1.9.9.23.1.2.1.1: AddressType 3, Address 4, DeviceId 6,
+    // DevicePort 7, Platform 8.
+    ("1.3.6.1.4.1.9.9.23.1.2.1.1.3", "cdpCacheAddressType"),
+    ("1.3.6.1.4.1.9.9.23.1.2.1.1.4", "cdpCacheAddress"),
+    ("1.3.6.1.4.1.9.9.23.1.2.1.1.6", "cdpCacheDeviceId"),
+    ("1.3.6.1.4.1.9.9.23.1.2.1.1.7", "cdpCacheDevicePort"),
+    ("1.3.6.1.4.1.9.9.23.1.2.1.1.8", "cdpCachePlatform"),
+    // OSPF-MIB, RFC 4750 (igual en RFC 1850): ospfNbrEntry = { ospfNbrTable 1 } = 1.3.6.1.2.1.14.10.1,
+    // ospfNbrRtrId 3, ospfNbrState 6.
+    ("1.3.6.1.2.1.14.10.1.3", "ospfNbrRtrId"),
+    ("1.3.6.1.2.1.14.10.1.6", "ospfNbrState"),
+    // BGP4-MIB, RFC 4273: bgpPeerEntry = { bgpPeerTable 1 } = 1.3.6.1.2.1.15.3.1,
+    // bgpPeerState 2, bgpPeerRemoteAs 9.
+    ("1.3.6.1.2.1.15.3.1.2", "bgpPeerState"),
+    ("1.3.6.1.2.1.15.3.1.9", "bgpPeerRemoteAs"),
+    // IP-MIB, RFC 4293: ipAddrEntry { ipAddrTable 1 } = 1.3.6.1.2.1.4.20.1 (ipAdEntIfIndex 2,
+    // ipAdEntNetMask 3); ipNetToPhysicalEntry = 1.3.6.1.2.1.4.35.1 (PhysAddress 4, Type 6);
+    // ipNetToMediaEntry = 1.3.6.1.2.1.4.22.1 (PhysAddress 2, Type 4), alternativa obsoleta.
+    ("1.3.6.1.2.1.4.20.1.2", "ipAdEntIfIndex"),
+    ("1.3.6.1.2.1.4.20.1.3", "ipAdEntNetMask"),
+    ("1.3.6.1.2.1.4.35.1.4", "ipNetToPhysicalPhysAddress"),
+    ("1.3.6.1.2.1.4.35.1.6", "ipNetToPhysicalType"),
+    ("1.3.6.1.2.1.4.22.1.2", "ipNetToMediaPhysAddress"),
+    ("1.3.6.1.2.1.4.22.1.4", "ipNetToMediaType"),
+    // BRIDGE-MIB, RFC 4188 (dot1dBridge = { mib-2 17 }): dot1dBasePortIfIndex
+    // { dot1dBasePortEntry 2 } = 1.3.6.1.2.1.17.1.4.1.2; dot1dTpFdbEntry = 1.3.6.1.2.1.17.4.3.1
+    // (dot1dTpFdbPort 2, dot1dTpFdbStatus 3).
+    ("1.3.6.1.2.1.17.1.4.1.2", "dot1dBasePortIfIndex"),
+    ("1.3.6.1.2.1.17.4.3.1.2", "dot1dTpFdbPort"),
+    ("1.3.6.1.2.1.17.4.3.1.3", "dot1dTpFdbStatus"),
+    // Q-BRIDGE-MIB, RFC 4363 (qBridgeMIB = { dot1dBridge 7 }): dot1qTpFdbEntry =
+    // 1.3.6.1.2.1.17.7.1.2.2.1 (dot1qTpFdbPort 2, dot1qTpFdbStatus 3).
+    ("1.3.6.1.2.1.17.7.1.2.2.1.2", "dot1qTpFdbPort"),
+    ("1.3.6.1.2.1.17.7.1.2.2.1.3", "dot1qTpFdbStatus"),
+];
+
+/// Columnas cuyas instancias se pueden pedir con GET (contadores de tráfico y velocidad).
+pub const TOPO_GET_COLUMNS: &[(&str, &str)] = &[
+    // IF-MIB, RFC 2863: ifSpeed { ifEntry 5 }, ifInOctets { ifEntry 10 }, ifOutOctets { ifEntry 16 },
+    // ifHCInOctets { ifXEntry 6 }, ifHCOutOctets { ifXEntry 10 }, ifHighSpeed { ifXEntry 15 }.
+    ("1.3.6.1.2.1.2.2.1.5", "ifSpeed"),
+    ("1.3.6.1.2.1.2.2.1.10", "ifInOctets"),
+    ("1.3.6.1.2.1.2.2.1.16", "ifOutOctets"),
+    ("1.3.6.1.2.1.31.1.1.1.6", "ifHCInOctets"),
+    ("1.3.6.1.2.1.31.1.1.1.10", "ifHCOutOctets"),
+    ("1.3.6.1.2.1.31.1.1.1.15", "ifHighSpeed"),
+];
+
+/// Escalares que se pueden pedir con GET (con su ".0").
+pub const TOPO_GET_SCALARS: &[(&str, &str)] = &[
+    // SNMPv2-MIB, RFC 3418: sysName { system 5 }.
+    ("1.3.6.1.2.1.1.5.0", "sysName"),
+    // OSPF-MIB, RFC 4750: ospfRouterId { ospfGeneralGroup 1 }.
+    ("1.3.6.1.2.1.14.1.1.0", "ospfRouterId"),
+    // BGP4-MIB, RFC 4273: bgpLocalAs { bgp 2 }, bgpIdentifier { bgp 4 }.
+    ("1.3.6.1.2.1.15.2.0", "bgpLocalAs"),
+    ("1.3.6.1.2.1.15.4.0", "bgpIdentifier"),
+];
+
+/// Topes del comando: filas y tiempo por tabla y tiempo total.
+#[derive(Clone, Copy, Debug)]
+pub struct TopoLimits {
+    pub max_rows: usize,
+    pub table_time: Duration,
+    pub total_time: Duration,
+}
+
+pub const TOPO_LIMITS: TopoLimits = TopoLimits { max_rows: 10_000, table_time: Duration::from_secs(20), total_time: Duration::from_secs(120) };
+/// Máximo de recorridos y de OID para GET en una llamada.
+pub const TOPO_MAX_WALKS: usize = 40;
+pub const TOPO_MAX_GETS: usize = 192;
+/// OID por PDU de GET: 48 contadores caben holgados en un datagrama.
+const TOPO_GET_CHUNK: usize = 48;
+/// Largo máximo del índice de una instancia pedida con GET (ifIndex es un solo número).
+const TOPO_MAX_INSTANCE: usize = 1;
+
+fn topo_listed(list: &[(&str, &str)], oid: &Oid) -> bool {
+    list.iter().any(|(r, _)| parse_oid(r).is_ok_and(|r| &r == oid))
+}
+
+/// Recorrido permitido: coincidencia exacta con una raíz de la lista (por componentes).
+pub fn topo_walk_oid(s: &str) -> Result<Oid, String> {
+    let oid = parse_oid(s)?;
+    if topo_listed(TOPO_WALK_ROOTS, &oid) {
+        Ok(oid)
+    } else {
+        Err(format!("OID no permitido en Topología: {}", oid_str(&oid)))
+    }
+}
+
+/// GET permitido: un escalar de la lista o una instancia (ifIndex) de una columna permitida.
+pub fn topo_get_oid(s: &str) -> Result<Oid, String> {
+    let oid = parse_oid(s)?;
+    let instance = TOPO_GET_COLUMNS.iter().any(|(c, _)| {
+        parse_oid(c).is_ok_and(|c| oid.len() > c.len() && oid.len() - c.len() <= TOPO_MAX_INSTANCE && oid.starts_with(&c))
+    });
+    if instance || topo_listed(TOPO_GET_SCALARS, &oid) {
+        Ok(oid)
+    } else {
+        Err(format!("OID no permitido en Topología: {}", oid_str(&oid)))
+    }
+}
+
+/// Fila con el valor legible y, para cadenas de octetos, también en hexadecimal: una MAC o una
+/// IP (cdpCacheAddress, lldpRemChassisId) pueden parecer texto imprimible.
+#[derive(Serialize, Clone, Debug)]
+pub struct TopoRow {
+    pub oid: String,
+    #[serde(rename = "type")]
+    pub kind: &'static str,
+    pub value: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub hex: Option<String>,
+}
+
+fn topo_rows(vbs: &[(Oid, Value)]) -> Vec<TopoRow> {
+    vbs.iter()
+        .map(|(o, v)| {
+            let (kind, value) = display(v);
+            let hex = match v {
+                Value::Str(b) => Some(hex(&b[..b.len().min(64)], "")),
+                _ => None,
+            };
+            TopoRow { oid: oid_str(o), kind, value, hex }
+        })
+        .collect()
+}
+
+#[derive(Serialize, Debug)]
+#[serde(rename_all = "camelCase")]
+pub struct TopoWalk {
+    pub oid: String,
+    pub rows: Vec<TopoRow>,
+    /// Se alcanzó el tope de filas.
+    pub truncated: bool,
+    /// Se alcanzó el tope de tiempo de la tabla o el total: resultado parcial.
+    pub timed_out: bool,
+    pub error: Option<String>,
+}
+
+#[derive(Serialize, Debug)]
+#[serde(rename_all = "camelCase")]
+pub struct TopoRead {
+    pub gets: Vec<TopoRow>,
+    pub get_error: Option<String>,
+    pub walks: Vec<TopoWalk>,
+    pub ms: u64,
+}
+
+/// GET (en grupos) y recorridos con topes de filas y tiempo. Un error o un tope en una tabla
+/// no detiene las demás; si el agente no responde al primer pedido, se devuelve el error.
+pub fn topo_read(c: &mut Client, gets: &[Oid], walks: &[(Oid, String)], lim: TopoLimits) -> Result<TopoRead, ReqError> {
+    let start = Instant::now();
+    let mut out = TopoRead { gets: Vec::new(), get_error: None, walks: Vec::new(), ms: 0 };
+    let mut answered = false;
+    for chunk in gets.chunks(TOPO_GET_CHUNK) {
+        match c.get(chunk) {
+            Ok(vbs) => {
+                answered = true;
+                out.gets.extend(topo_rows(&vbs));
+            }
+            Err(e @ ReqError::Timeout(_)) if !answered => return Err(e),
+            Err(e) => {
+                out.get_error = Some(e.text());
+                break;
+            }
+        }
+    }
+    for (root, text) in walks {
+        let left = lim.total_time.saturating_sub(start.elapsed());
+        if left.is_zero() {
+            out.walks.push(TopoWalk { oid: text.clone(), rows: Vec::new(), truncated: false, timed_out: true, error: Some("Tiempo total agotado: tabla no leída".into()) });
+            continue;
+        }
+        let deadline = Instant::now() + lim.table_time.min(left);
+        let stop = AtomicBool::new(false);
+        let mut vbs = Vec::new();
+        let res = c.walk(root, Some(25), lim.max_rows, &stop, &mut |b| {
+            vbs.extend(b);
+            // El recorrido revisa `stop` antes de cada pedido: así se corta por tiempo.
+            if Instant::now() >= deadline {
+                stop.store(true, Ordering::SeqCst);
+            }
+        });
+        if !answered && vbs.is_empty() {
+            if let Err(ReqError::Timeout(e)) = &res {
+                return Err(ReqError::Timeout(e.clone()));
+            }
+        }
+        answered |= res.is_ok() || !vbs.is_empty();
+        let timed_out = stop.load(Ordering::SeqCst);
+        out.walks.push(TopoWalk {
+            oid: text.clone(),
+            truncated: matches!(res, Ok((_, true))) && !timed_out,
+            timed_out,
+            error: res.err().map(|e| e.text()),
+            rows: topo_rows(&vbs),
+        });
+    }
+    out.ms = start.elapsed().as_millis() as u64;
+    Ok(out)
+}
+
+/// OIDs para GET y recorridos (OID y su texto original) ya validados.
+pub type TopoPlan = (Vec<Oid>, Vec<(Oid, String)>);
+
+/// Valida la lista de OID pedida desde la interfaz contra las listas permitidas.
+pub fn topo_check(gets: &[String], walks: &[String]) -> Result<TopoPlan, String> {
+    if gets.len() > TOPO_MAX_GETS || walks.len() > TOPO_MAX_WALKS || (gets.is_empty() && walks.is_empty()) {
+        return Err(format!("Indica hasta {TOPO_MAX_GETS} OID para GET y {TOPO_MAX_WALKS} tablas"));
+    }
+    let g = gets.iter().map(|o| topo_get_oid(o)).collect::<Result<Vec<_>, _>>()?;
+    let w = walks.iter().map(|o| topo_walk_oid(o).map(|r| (r, o.clone()))).collect::<Result<Vec<_>, _>>()?;
+    Ok((g, w))
+}
+
+/// Lectura para Topología con un perfil SNMP: GET de contadores y escalares permitidos y
+/// recorridos de las tablas permitidas, con topes de filas y tiempo. Solo lectura.
+#[tauri::command(async)]
+pub fn snmp_topo_read(
+    target: TargetParams,
+    gets: Vec<String>,
+    walks: Vec<String>,
+    state: tauri::State<'_, crate::AppState>,
+) -> Result<TopoRead, String> {
+    let (gets, walks) = topo_check(&gets, &walks)?;
+    let mut target = target.into_target(|p| vault_secret(&state, p))?;
+    // Un equipo que no responde no deja la herramienta esperando minutos por tabla.
+    target.timeout = target.timeout.min(Duration::from_secs(5));
+    target.retries = target.retries.min(2);
+    let mut c = Client::connect(target).map_err(|e| e.text())?;
+    topo_read(&mut c, &gets, &walks, TOPO_LIMITS).map_err(|e| e.text())
+}
+
 #[cfg(test)]
 pub(crate) mod tests {
     use super::*;
@@ -2674,5 +2940,83 @@ pub(crate) mod tests {
         let mut bad = Client::connect(target(addr, "otra-secreta")).unwrap();
         let err = bad.get(&[parse_oid("1.3.6.1.2.1.1.1.0").unwrap()]).err().unwrap().text();
         assert!(err.contains("Sin respuesta") && !err.contains("otra-secreta"), "{err}");
+    }
+
+    #[test]
+    fn topo_allowlist_enforced() {
+        // Raíces y columnas permitidas, también con punto inicial.
+        for ok in ["1.0.8802.1.1.2.1.4.1.1.9", ".1.3.6.1.4.1.9.9.23.1.2.1.1.6", "1.3.6.1.2.1.17.7.1.2.2.1.2", "1.3.6.1.2.1.4.35.1.4"] {
+            assert!(topo_walk_oid(ok).is_ok(), "{ok}");
+        }
+        // Subárboles no listados: system completo, la MIB entera, CISCO-CONFIG-COPY, hijos o
+        // padres de una raíz permitida y prefijos de texto engañosos (".1.1.90" no es ".1.1.9").
+        for bad in [
+            "1.3.6.1.2.1.1",
+            "1.3",
+            "1.3.6.1.4.1.9.9.96.1.1.1.1",
+            "1.0.8802.1.1.2.1.4.1.1.9.0",
+            "1.0.8802.1.1.2.1.4.1",
+            "1.0.8802.1.1.2.1.4.1.1.90",
+            "1.3.6.1.2.1.25.4.2.1.5",
+            "1.3.6.1.2.1.31.1.1.1.6",
+            "x",
+        ] {
+            assert!(topo_walk_oid(bad).is_err(), "{bad}");
+        }
+        // GET: instancias de los contadores (un ifIndex) y escalares listados.
+        for ok in ["1.3.6.1.2.1.31.1.1.1.6.10101", "1.3.6.1.2.1.2.2.1.10.3", "1.3.6.1.2.1.1.5.0", "1.3.6.1.2.1.15.2.0"] {
+            assert!(topo_get_oid(ok).is_ok(), "{ok}");
+        }
+        for bad in ["1.3.6.1.2.1.31.1.1.1.6", "1.3.6.1.2.1.31.1.1.1.6.1.2", "1.3.6.1.2.1.1.1.0", "1.3.6.1.2.1.1.5", "1.3.6.1.2.1.25.4.2.1.5.1", "1.3.6.1.2.1.2.2.1.100.1"] {
+            assert!(topo_get_oid(bad).is_err(), "{bad}");
+        }
+        // Topes de cantidad.
+        let many = |n: usize, o: &str| vec![o.to_string(); n];
+        assert!(topo_check(&many(TOPO_MAX_GETS, "1.3.6.1.2.1.31.1.1.1.6.1"), &[]).is_ok());
+        assert!(topo_check(&many(TOPO_MAX_GETS + 1, "1.3.6.1.2.1.31.1.1.1.6.1"), &[]).is_err());
+        assert!(topo_check(&[], &many(TOPO_MAX_WALKS + 1, "1.3.6.1.2.1.31.1.1.1.1")).is_err());
+        assert!(topo_check(&[], &[]).is_err());
+        assert!(topo_check(&[], &["1.3.6.1.2.1.1".into()]).err().unwrap().contains("no permitido"));
+        // Toda raíz y columna de las listas es un OID válido y no hay repetidos.
+        let all: Vec<_> = TOPO_WALK_ROOTS.iter().chain(TOPO_GET_COLUMNS).chain(TOPO_GET_SCALARS).collect();
+        for (o, _) in &all {
+            parse_oid(o).unwrap();
+        }
+        let walk: std::collections::HashSet<_> = TOPO_WALK_ROOTS.iter().map(|x| x.0).collect();
+        assert_eq!(walk.len(), TOPO_WALK_ROOTS.len());
+    }
+
+    #[test]
+    fn topo_read_limits_rows_time_and_mixed_results() {
+        let name = parse_oid("1.3.6.1.2.1.31.1.1.1.1").unwrap();
+        let hc = parse_oid("1.3.6.1.2.1.31.1.1.1.6").unwrap();
+        let mut tree: Vec<(Oid, Value)> = (1..=60).map(|i| ([name.clone(), vec![i]].concat(), Value::Str(format!("Gi1/0/{i}").into_bytes()))).collect();
+        tree.extend((1..=3).map(|i| ([hc.clone(), vec![i]].concat(), Value::Counter64(1_000 * i as u64))));
+        tree.sort_by(|a, b| a.0.cmp(&b.0));
+        let addr = fake_agent(b"public", tree);
+        let mut c = Client::connect(target(addr, "public")).unwrap();
+        let gets: Vec<Oid> = (1..=3).chain([99]).map(|i| [hc.clone(), vec![i]].concat()).collect();
+        let walks = vec![(name.clone(), "1.3.6.1.2.1.31.1.1.1.1".to_string()), (parse_oid("1.0.8802.1.1.2.1.4.1.1.9").unwrap(), "lldp".to_string())];
+        // Tope de filas: 10 de 60, marcado como truncado; LLDP vacío sin error.
+        let lim = TopoLimits { max_rows: 10, table_time: Duration::from_secs(20), total_time: Duration::from_secs(120) };
+        let r = topo_read(&mut c, &gets, &walks, lim).unwrap();
+        assert_eq!(r.gets.len(), 4);
+        assert_eq!((r.gets[2].kind, r.gets[2].value.as_str()), ("Counter64", "3000"));
+        assert_eq!(r.gets[3].kind, "noSuchObject");
+        assert_eq!((r.walks[0].rows.len(), r.walks[0].truncated, r.walks[0].timed_out), (10, true, false));
+        assert_eq!(r.walks[0].rows[0].hex.as_deref(), Some("4769312F302F31"), "cadenas también en hex");
+        assert!(r.walks[1].rows.is_empty() && r.walks[1].error.is_none());
+        // Tope de tiempo por tabla: se corta tras el primer lote, resultado parcial.
+        let lim = TopoLimits { max_rows: 10_000, table_time: Duration::ZERO, total_time: Duration::from_secs(120) };
+        let r = topo_read(&mut c, &[], &walks[..1], lim).unwrap();
+        assert!(r.walks[0].timed_out && !r.walks[0].truncated && r.walks[0].rows.len() == 25, "{:?}", r.walks[0].rows.len());
+        // Tope total agotado: las tablas siguientes no se leen.
+        let lim = TopoLimits { max_rows: 10_000, table_time: Duration::from_secs(20), total_time: Duration::ZERO };
+        let r = topo_read(&mut c, &[], &walks, lim).unwrap();
+        assert!(r.walks.iter().all(|w| w.timed_out && w.rows.is_empty() && w.error.is_some()));
+        // Agente que no responde: error claro sin secretos.
+        let mut bad = Client::connect(target(addr, "otra-secreta")).unwrap();
+        let e = topo_read(&mut bad, &gets, &walks, TOPO_LIMITS).err().unwrap().text();
+        assert!(e.contains("Sin respuesta") && !e.contains("otra-secreta"), "{e}");
     }
 }

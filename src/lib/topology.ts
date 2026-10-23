@@ -519,27 +519,36 @@ export function parseRoutingNeighbors(results: CommandOutput[]): { neighbors: Ne
   const neighbors = [...igp];
   for (const b of bgp) {
     if (b.routerId) selfAddrs.push(b.routerId);
-    for (const p of b.peers) {
-      if (!/^\d+$/.test(p.state)) continue;
-      // Directo si la IP del par es la de la interfaz de un vecino IGP (no su router-id).
-      const via = igp.find((n) => n.ip === p.ip && n.localPort);
-      neighbors.push({
-        name: p.ip,
-        localPort: via?.localPort ?? "",
-        remotePort: "",
-        ip: p.ip,
-        addrs: [p.ip],
-        proto: "BGP",
-        byAddr: true,
-        logical: !via && !!b.localAs && p.remoteAs === b.localAs,
-      });
-    }
+    // State/PfxRcd numérico = sesión establecida.
+    neighbors.push(...bgpNeighbors(igp, b.localAs, b.peers.filter((p) => /^\d+$/.test(p.state))));
   }
   return { neighbors, selfAddrs: [...new Set(selfAddrs)] };
 }
 
+/**
+ * Pares BGP establecidos como vecinos (CLI y SNMP). Directo si la IP del par es la de la
+ * interfaz de un vecino IGP (no su router-id) o, por SNMP, si cae en una subred propia
+ * (`ifaceOf`); si no, un iBGP (mismo AS) es una sesión lógica.
+ */
+export function bgpNeighbors(igp: Neighbor[], localAs: string | undefined, peers: BgpPeer[], ifaceOf?: (ip: string) => string | undefined): Neighbor[] {
+  return peers.map((p) => {
+    const via = igp.find((n) => n.ip === p.ip && n.localPort)?.localPort ?? ifaceOf?.(p.ip);
+    return {
+      name: p.ip,
+      localPort: via ?? "",
+      remotePort: "",
+      ip: p.ip,
+      addrs: [p.ip],
+      proto: "BGP" as const,
+      byAddr: true,
+      logical: !via && !!localAs && p.remoteAs === localAs,
+    };
+  });
+}
+
 /** Rangos que se repiten en todos los equipos (loopback, link-local, interno de Junos 128.0.0.0/16). */
 const SHARED_ADDR = /^(0\.|127\.|169\.254\.|128\.0\.|255\.)/;
+export const isSharedAddr = (ip: string) => SHARED_ADDR.test(ip);
 
 /**
  * Direcciones IPv4 propias desde "show ip interface brief" (Cisco), "display ip interface brief"
@@ -698,6 +707,8 @@ const MAX_DEVICE_TEXT = 255;
 const CONTROL_RE = /[\x00-\x1f\x7f-\x9f\u200b-\u200f\u2028-\u202e\u2060-\u2064\u2066-\u2069\ufeff]/g;
 /** Texto que viene de un equipo: sin caracteres de control ni de dirección y con largo acotado. */
 const clean = (s: string, max = MAX_DEVICE_TEXT) => s.replace(CONTROL_RE, "").slice(0, max);
+/** Texto de un equipo (también por SNMP) limpio de control y dirección, con largo acotado. */
+export const cleanDeviceText = clean;
 const cleanOpt = (s: string | undefined, max = MAX_DEVICE_TEXT) => (s ? clean(s, max) || undefined : undefined);
 
 function cleanNeighbor(n: Neighbor): Neighbor {
@@ -1025,7 +1036,8 @@ export function toMermaid(t: Topology): string {
   return lines.join("\n");
 }
 
-export function toCsv(t: Topology): string {
+/** CSV de enlaces y puertos; con `traffic`, agrega las últimas tasas y la utilización de cada enlace. */
+export function toCsv(t: Topology, traffic?: Map<string, LinkTraffic>): string {
   const node = (id: string) => t.nodes.find((n) => n.id === id);
   // Nombres y descripciones vienen de los equipos (CDP/LLDP): una celda que empieza con
   // = + - @ sería una fórmula al abrir el CSV en Excel. Se antepone ' (OWASP CSV injection).
@@ -1034,17 +1046,24 @@ export function toCsv(t: Topology): string {
     const formula = /^[=@\t\r]/.test(v) || /^[+-](?!\d+(\.\d+)?$)./.test(v);
     return `"${(formula ? `'${v}` : v).replace(/"/g, '""')}"`;
   };
+  const withTraffic = !!traffic?.size;
+  const num = (n: number | null | undefined) => (n == null || !Number.isFinite(n) ? "" : String(Math.round(n)));
   return [
-    "equipo_a,ip_a,puerto_a,estado_a,velocidad_a,descripcion_a,equipo_b,ip_b,puerto_b,estado_b,velocidad_b,descripcion_b,agregado,protocolo",
+    "equipo_a,ip_a,puerto_a,estado_a,velocidad_a,descripcion_a,equipo_b,ip_b,puerto_b,estado_b,velocidad_b,descripcion_b,agregado,protocolo" +
+      (withTraffic ? ",trafico_a_b_bps,trafico_b_a_bps,velocidad_enlace_bps,utilizacion_pct,lectura" : ""),
     ...t.links.map((l) => {
       const a = node(l.a);
       const b = node(l.b);
       const pa = portOf(a, l.aPort);
       const pb = portOf(b, l.bPort);
+      const lt = traffic?.get(linkKey(l));
       return [
         a?.name ?? l.a, a?.ip, l.aPort, pa?.status, pa?.speed, pa?.desc,
         b?.name ?? l.b, b?.ip, l.bPort, pb?.status, pb?.speed, pb?.desc,
         linkGroup(t, l), protoLabel(l),
+        ...(withTraffic
+          ? [num(lt?.ab), num(lt?.ba), num(lt?.speed), lt?.util == null ? "" : (lt.util * 100).toFixed(1), lt ? new Date(lt.ts).toISOString() : ""]
+          : []),
       ]
         .map(q)
         .join(",");
@@ -1088,6 +1107,55 @@ export function toDrawio(t: Topology, w = 170, h = 54): string {
   ].join("\n");
 }
 
+// ---------- Tráfico en enlaces ----------
+
+/** Tráfico de un enlace en ambos sentidos, en bits/s, con la velocidad y la utilización. */
+export interface LinkTraffic {
+  /** De A hacia B (sale por aPort o entra por bPort). */
+  ab: number | null;
+  /** De B hacia A. */
+  ba: number | null;
+  /** Velocidad del enlace en bits/s (la menor informada por sus extremos). */
+  speed?: number;
+  /** Utilización (0 a 1) del sentido más cargado; sin velocidad conocida queda indefinida. */
+  util?: number;
+  /** Momento de la lectura (ms). */
+  ts: number;
+}
+
+export type UtilLevel = "ok" | "warn" | "crit" | "none";
+/** Umbrales de utilización: amarillo desde 70 %, rojo desde 90 %. */
+export const UTIL_WARN = 0.7;
+export const UTIL_CRIT = 0.9;
+export const utilLevel = (u: number | undefined): UtilLevel =>
+  u === undefined || !Number.isFinite(u) ? "none" : u >= UTIL_CRIT ? "crit" : u >= UTIL_WARN ? "warn" : "ok";
+/** Colores fijos para el SVG exportado (en pantalla se usan los del tema). */
+export const UTIL_COLORS: Record<UtilLevel, string> = { ok: "#1a7f37", warn: "#bf8700", crit: "#cf222e", none: "#57606a" };
+export const UTIL_LEGEND: [string, UtilLevel][] = [
+  ["Utilización bajo 70 %", "ok"],
+  ["Utilización de 70 % a 89 %", "warn"],
+  ["Utilización de 90 % o más", "crit"],
+];
+
+/** Bits por segundo legibles: 950 b/s, 35 Mb/s, 1.2 Gb/s. */
+export function fmtBps(bps: number | null | undefined): string {
+  if (bps == null || !Number.isFinite(bps) || bps < 0) return "?";
+  const u = ["b/s", "kb/s", "Mb/s", "Gb/s", "Tb/s"];
+  let i = 0;
+  let v = bps;
+  while (v >= 999.5 && i < u.length - 1) {
+    v /= 1000;
+    i++;
+  }
+  return `${v >= 10 || i === 0 ? Math.round(v) : v.toFixed(1)} ${u[i]}`;
+}
+
+/** Etiqueta de un enlace: "↑ 120 Mb/s ↓ 35 Mb/s" (↑ de A hacia B) y el porcentaje si se conoce. */
+export function trafficLabel(lt: LinkTraffic): string {
+  const pct = lt.util === undefined ? "" : ` · ${Math.round(lt.util * 100)} %`;
+  return `↑ ${fmtBps(lt.ab)} ↓ ${fmtBps(lt.ba)}${pct}`;
+}
+
 // ---------- Geometría y SVG ----------
 
 export type Pt = { x: number; y: number };
@@ -1129,13 +1197,25 @@ export const xmlEsc = (s: string) =>
 /** Caracteres que XML 1.0 no admite o que invierten el texto: se quitan (salto de línea y tab se conservan). */
 const XML_STRIP = /[\x00-\x08\x0b\x0c\x0e-\x1f\x7f-\x9f\u200b-\u200f\u2028-\u202e\u2060-\u2064\u2066-\u2069\ufeff]/g;
 
-/** SVG autónomo (colores fijos claros) para documentación, con leyenda si hay enlaces no CDP/LLDP. */
-export function toSvg(t: Topology, W = 170, H = 54): string {
+/**
+ * SVG autónomo (colores fijos claros) para documentación, con leyenda si hay enlaces no CDP/LLDP.
+ * Con `traffic`, cada enlace con datos lleva su color de utilización y la última tasa por sentido.
+ */
+export function toSvg(t: Topology, W = 170, H = 54, traffic?: Map<string, LinkTraffic>): string {
   if (!t.nodes.length) return "";
   const xs = t.nodes.map((n) => n.x);
   const ys = t.nodes.map((n) => n.y);
-  const kinds = LINK_LEGEND.filter(([, s]) => t.links.some((l) => linkDash(l) === linkDash(s)));
-  const legendH = kinds.some(([, s]) => linkDash(s)) ? kinds.length * 18 + 16 : 0;
+  const allKinds = LINK_LEGEND.filter(([, s]) => t.links.some((l) => linkDash(l) === linkDash(s)));
+  const kinds = allKinds.some(([, s]) => linkDash(s)) ? allKinds : [];
+  const withTraffic = t.links.some((l) => traffic?.has(linkKey(l)));
+  const trafficRows: [string, string][] = withTraffic
+    ? [
+        ...UTIL_LEGEND.map(([text, lv]): [string, string] => [text, UTIL_COLORS[lv]]),
+        ["↑ de A hacia B, ↓ de B hacia A (A: primer equipo del enlace en el CSV)", UTIL_COLORS.none],
+      ]
+    : [];
+  const legendRows = kinds.length + trafficRows.length;
+  const legendH = legendRows ? legendRows * 18 + 16 : 0;
   const minX = Math.min(...xs) - W / 2 - 40;
   const minY = Math.min(...ys) - H / 2 - 40;
   const w = Math.max(...xs) - minX + W / 2 + 40;
@@ -1149,7 +1229,11 @@ export function toSvg(t: Topology, W = 170, H = 54): string {
   const groups = new Set<string>();
   for (const g of linkGeometry(t, t.links)) {
     const dash = linkDash(g.l);
-    parts.push(`<path d="${g.d}" fill="none" stroke="#8a919c" stroke-width="2"${dash ? ` stroke-dasharray="${dash}" stroke-linecap="round"` : ""}/>`);
+    const lt = traffic?.get(linkKey(g.l));
+    const stroke = lt ? UTIL_COLORS[utilLevel(lt.util)] : "#8a919c";
+    const width = lt ? (2 + 3 * Math.min(1, lt.util ?? 0)).toFixed(1) : "2";
+    parts.push(`<path d="${g.d}" fill="none" stroke="${stroke}" stroke-width="${width}"${dash ? ` stroke-dasharray="${dash}" stroke-linecap="round"` : ""}/>`);
+    if (lt) parts.push(label({ x: g.mid.x, y: g.mid.y + 16 }, trafficLabel(lt), 600, stroke));
     if (g.l.aPort) parts.push(label(g.pa, g.l.aPort));
     if (g.l.bPort) parts.push(label(g.pb, g.l.bPort));
     const grp = linkGroup(t, g.l);
@@ -1168,14 +1252,15 @@ export function toSvg(t: Topology, W = 170, H = 54): string {
   }
   if (legendH) {
     const y0 = minY + h - legendH + 8;
-    kinds.forEach(([text, s], i) => {
+    const row = (i: number, text: string, stroke: string, dash?: string, width = 2) => {
       const y = y0 + i * 18 + 6;
-      const dash = linkDash(s);
       parts.push(
-        `<line x1="${minX + 16}" y1="${y}" x2="${minX + 56}" y2="${y}" stroke="#8a919c" stroke-width="2"${dash ? ` stroke-dasharray="${dash}" stroke-linecap="round"` : ""}/>`,
+        `<line x1="${minX + 16}" y1="${y}" x2="${minX + 56}" y2="${y}" stroke="${stroke}" stroke-width="${width}"${dash ? ` stroke-dasharray="${dash}" stroke-linecap="round"` : ""}/>`,
         `<text x="${minX + 64}" y="${y + 4}" font-size="11" fill="#1f2328">${xmlEsc(text)}</text>`,
       );
-    });
+    };
+    kinds.forEach(([text, s], i) => row(i, text, "#8a919c", linkDash(s)));
+    trafficRows.forEach(([text, color], i) => row(kinds.length + i, text, color, undefined, 4));
   }
   parts.push("</svg>");
   return parts.join("\n");
@@ -1634,6 +1719,14 @@ export function buildMacPorts(results: CommandOutput[], lookup: OuiLookup): Reco
     if (/\barp\b/i.test(cmd)) arp.push(...parseArpTable(out));
     else rows.push(...parseMacTable(out));
   }
+  return macPortsFromRows(rows, arp, lookup);
+}
+
+/** Puerto propio del equipo (CPU, SVI, Router, IRB): sus MAC no indican un vecino. */
+export const isSelfPort = (port: string) => SELF_PORT.test(port);
+
+/** Agrupa filas MAC y ARP ya leídas (por CLI o SNMP) por interfaz local. */
+export function macPortsFromRows(rows: MacRow[], arp: ArpRow[], lookup: OuiLookup): Record<string, MacPort> {
   const selfMacs = new Set(arp.filter((a) => a.self).map((a) => a.mac));
   const ipOf = new Map<string, string>();
   for (const a of arp) if (!a.self && !ipOf.has(a.mac)) ipOf.set(a.mac, a.ip);
@@ -1641,6 +1734,8 @@ export function buildMacPorts(results: CommandOutput[], lookup: OuiLookup): Reco
   for (const r of rows) {
     if (isMulticastMac(r.mac) || selfMacs.has(r.mac)) continue;
     const k = canonPort(r.port);
+    // El nombre viene del equipo (también por SNMP): "__proto__" no se usa como clave.
+    if (UNSAFE_KEYS.has(k)) continue;
     let p = byPort.get(k);
     if (!p) {
       if (byPort.size >= MAX_MAC_PORTS) continue;

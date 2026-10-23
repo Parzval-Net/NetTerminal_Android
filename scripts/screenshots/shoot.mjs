@@ -1,9 +1,9 @@
 // Genera las capturas del README con datos ficticios, controlando Chrome por DevTools Protocol.
 // Uso: `npx vite --port 1430` en otra terminal y luego `node scripts/screenshots/shoot.mjs`.
 // Variables opcionales: PORT (puerto de vite), OUT (carpeta de salida), CHROME (binario).
-// Cada captura: [archivo, escena, tema, { query?, hover?, type?, keys? }]; `hover` es un selector CSS
+// Cada captura: [archivo, escena, tema, { query?, hover?, type?, keys?, wait?, motion? }]; `hover` es un selector CSS
 // sobre el que se deja el mouse antes de capturar (estados hover, p. ej. la X de una pestaña);
-// `type` se escribe tecla por tecla en la terminal y `keys` son teclas especiales ("ctrl+space").
+// `type` se escribe tecla por tecla en la terminal y `keys` son teclas especiales ("ctrl+period").
 import { spawn } from "node:child_process";
 import { mkdtempSync, mkdirSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
@@ -21,6 +21,8 @@ const SHOTS = [
   ["topologia", "topology", "light"],
   ["topologia-cambios", "compare", "light"],
   ["topologia-fuentes", "topology-mac", "light", { query: "&topoOpen=fuentes,sugerencias" }],
+  // La tasa necesita dos lecturas de contadores (intervalo mínimo 15 s): se espera más.
+  ["topologia-trafico", "topology-traffic", "light", { query: "&topoPanel=0&topoOpen=leyenda", wait: 19000, motion: true }],
   ["comandos-so", "oscmds", "light"],
   ["subredes", "subnet", "light"],
   ["velocidad", "speed", "light"],
@@ -53,10 +55,14 @@ const SHOTS = [
   ["pestanas-x-oscuro", "terminal", "dark", { hover: '[title^="core-sw01"]' }],
   ["pestanas-x-oscuro-tema-claro", "terminal", "dark", { query: "&term=nt-light", hover: '[title^="core-sw01"]' }],
   ["pestanas-verticales-x-oscuro", "vertical", "dark", { hover: '[role="tab"][data-id="t3"]' }],
-  ["sugerencias-comandos", "suggest", "light", { query: "&video=1", type: "show ip int" }],
+  ["sugerencias-comandos", "suggest", "light", { query: "&video=1", type: "sh ip int", keys: ["ctrl+period"] }],
+  // Modo configuración de interfaz: `sh` sería `shutdown`, así que no hay texto gris; la tecla de
+  // lista explica cómo pedir sugerencias, y con `do ` vuelven.
+  ["sugerencias-config", "suggest-config", "light", { query: "&video=1", type: "sh", keys: ["ctrl+period"] }],
+  ["sugerencias-config-do", "suggest-config", "dark", { query: "&video=1&term=solarized-dark", type: "do sh ip int b" }],
 ];
 /** Teclas especiales para `keys`: [key, code, keyCode, modificadores CDP (2 = Ctrl)]. */
-const KEYS = { "ctrl+space": [" ", "Space", 32, 2], right: ["ArrowRight", "ArrowRight", 39, 0], down: ["ArrowDown", "ArrowDown", 40, 0] };
+const KEYS = { "ctrl+space": [" ", "Space", 32, 2], "ctrl+period": [".", "Period", 190, 2], right: ["ArrowRight", "ArrowRight", 39, 0], down: ["ArrowDown", "ArrowDown", 40, 0] };
 const only = process.argv.slice(2);
 
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
@@ -93,9 +99,11 @@ try {
   mkdirSync(OUT, { recursive: true });
   for (const [name, scene, theme, extra = {}] of SHOTS) {
     if (only.length && !only.includes(name)) continue;
-    await send("Emulation.setEmulatedMedia", { features: [{ name: "prefers-color-scheme", value: theme }] });
+    // `motion`: sin "reducir movimiento" (Chrome headless lo informa activo), para ver animaciones.
+    const motion = extra.motion ? [{ name: "prefers-reduced-motion", value: "no-preference" }] : [];
+    await send("Emulation.setEmulatedMedia", { features: [{ name: "prefers-color-scheme", value: theme }, ...motion] });
     await send("Page.navigate", { url: `${BASE}?scene=${scene}&theme=${theme}${extra.query ?? ""}` });
-    await sleep(5000);
+    await sleep(extra.wait ?? 5000);
     if (extra.hover) {
       const { result: r } = await send("Runtime.evaluate", {
         expression: `(() => { const e = document.querySelector(${JSON.stringify(extra.hover)}); if (!e) return null; const b = e.getBoundingClientRect(); return [b.left + b.width / 2, b.top + b.height / 2]; })()`,
