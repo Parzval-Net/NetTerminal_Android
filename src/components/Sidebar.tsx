@@ -388,14 +388,14 @@ export const Sidebar = memo(function Sidebar(p: Props) {
             onKeyDown={(e) => e.key === "Escape" && setFilter("")}
           />
         </div>
-        <HeadBtn title={`Nueva sesión (${modLabel}N)`} onClick={() => p.onNew(target)}>
-          <Plus size={16} />
-        </HeadBtn>
         {p.onQuickConnect && (
           <HeadBtn title={`Conexión rápida sin guardar (${modLabel}O)`} aria-label="Conexión rápida sin guardar" onClick={p.onQuickConnect}>
             <Zap size={15} />
           </HeadBtn>
         )}
+        <HeadBtn title={`Nueva sesión (${modLabel}N)`} onClick={() => p.onNew(target)}>
+          <Plus size={16} />
+        </HeadBtn>
         <HeadBtn title="Nueva carpeta" onClick={() => createFolder(target ?? "")}>
           <FolderPlus size={15} />
         </HeadBtn>
