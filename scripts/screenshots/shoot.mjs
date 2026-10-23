@@ -3,7 +3,7 @@
 // Variables opcionales: PORT (puerto de vite), OUT (carpeta de salida), CHROME (binario).
 // Cada captura: [archivo, escena, tema, { query?, hover?, type?, keys? }]; `hover` es un selector CSS
 // sobre el que se deja el mouse antes de capturar (estados hover, p. ej. la X de una pestaña);
-// `type` se escribe tecla por tecla en la terminal y `keys` son teclas especiales ("ctrl+space").
+// `type` se escribe tecla por tecla en la terminal y `keys` son teclas especiales ("ctrl+period").
 import { spawn } from "node:child_process";
 import { mkdtempSync, mkdirSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
@@ -53,10 +53,10 @@ const SHOTS = [
   ["pestanas-x-oscuro", "terminal", "dark", { hover: '[title^="core-sw01"]' }],
   ["pestanas-x-oscuro-tema-claro", "terminal", "dark", { query: "&term=nt-light", hover: '[title^="core-sw01"]' }],
   ["pestanas-verticales-x-oscuro", "vertical", "dark", { hover: '[role="tab"][data-id="t3"]' }],
-  ["sugerencias-comandos", "suggest", "light", { query: "&video=1", type: "show ip int" }],
+  ["sugerencias-comandos", "suggest", "light", { query: "&video=1", type: "sh ip int", keys: ["ctrl+period"] }],
 ];
 /** Teclas especiales para `keys`: [key, code, keyCode, modificadores CDP (2 = Ctrl)]. */
-const KEYS = { "ctrl+space": [" ", "Space", 32, 2], right: ["ArrowRight", "ArrowRight", 39, 0], down: ["ArrowDown", "ArrowDown", 40, 0] };
+const KEYS = { "ctrl+space": [" ", "Space", 32, 2], "ctrl+period": [".", "Period", 190, 2], right: ["ArrowRight", "ArrowRight", 39, 0], down: ["ArrowDown", "ArrowDown", 40, 0] };
 const only = process.argv.slice(2);
 
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
