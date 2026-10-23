@@ -808,10 +808,10 @@
     },
     {
       "cmd": "sudo tcpdump -i {{interfaz}} -nn -w {{archivo}}.pcap",
-      "desc": "Guarda la captura en un archivo pcap para analizar con Wireshark.",
+      "desc": "Guarda la captura en un archivo pcap para analizar con Wireshark. Escribe un archivo en disco.",
       "cat": "Diagnóstico",
-      "risk": "read",
-      "note": "Requiere sudo. La captura puede contener datos sensibles; proteger el archivo.",
+      "risk": "change",
+      "note": "Requiere sudo. La captura puede contener datos sensibles; proteger el archivo. Vigilar el espacio en disco y los datos sensibles de la captura.",
       "source": "https://github.com/apple-oss-distributions/tcpdump/blob/main/tcpdump/tcpdump.1"
     },
     {

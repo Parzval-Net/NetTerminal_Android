@@ -1,5 +1,5 @@
 # Catálogo y packs de comandos
-⌘L abre el catálogo de comandos: 1.777 comandos verificados con fuente oficial.
+⌘L abre el catálogo de comandos: 1.776 comandos verificados con fuente oficial.
 Incluye Cisco, Juniper, Fortinet, Huawei, Check Point y WatchGuard, además de Windows, macOS y Linux.
 Detectar ajusta la sintaxis a la plataforma del equipo conectado.
 Puedes buscar por comando o por tarea, por ejemplo vecinos.

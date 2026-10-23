@@ -100,31 +100,48 @@ const maxRisk = (a: Risk, b: Risk): Risk => (RANK[a] >= RANK[b] ? a : b);
 
 // ---------- Riesgo calculado ----------
 
-/** Comandos que solo consultan o ajustan la sesión actual. */
+/**
+ * Comandos que solo consultan o ajustan la sesión actual. Quedan fuera a propósito: copiar la
+ * configuración a la flash local (escribe un archivo), "monitor traffic ... write-file",
+ * "execute ping-options <ajuste>" (cambia opciones de la sesión) y "diagnose sys session
+ * filter <criterio>" (fija un filtro); "diagnose test authserver" prueba credenciales.
+ */
 const READ_START =
-  /^(show|display|get|dir|more|ping|traceroute|tracert|tracepath|verify|monitor (traffic|interface|start|stop)|test policy|compare configuration|who|policy-check|tcpdump|dnslookup|nslookup|vpn-tunnel diag-report|(undo )?terminal (logging|monitor|debugging|trapping)|request system storage cleanup dry-run|request system software validate|admin show|packet-tracer|ethanalyzer local|telnet|ssh|terminal (length|width|monitor|pager)|screen-length\s+\d+\s+temporary|screen-width|set cli |file (list|show|checksum)|commit check|request support information|diagnose (sys (top|status|session (stat|list|filter)|ha (status|checksum))|hardware|vpn (ike gateway|tunnel) list|sniffer packet|netlink|ip (route|arp) list|firewall iprope lookup|test)|execute (ping|traceroute|ping-options|telnet|ssh)|tftp \S+ put|copy (running-config|startup-config|run|start) (tftp|scp|ftp|http|flash|bootflash|disk)|execute backup)\b/i;
-
-const DISRUPTIVE =
-  /^(reload(?! cancel)|reboot|shutdown|halt|poweroff|power-off|erase|format|write erase|delete|undelete|rmdir|squeeze|zeroize|factory|configure replace|reset saved-configuration|reset (bgp|ospf|isis|mpls|ip ospf)|clear (ip )?(bgp|ospf|isis|eigrp)(?!.*\bsoft\b)|clear bgp(?!.*\bsoft\b)|clear (ip )?route|clear arp\s*$|clear ip nat translation|request system (reboot|halt|power-off|zeroize)|request chassis cluster failover(?! reset)|execute (reboot|shutdown|factoryreset|formatlogdisk|restore|ha failover|disk format)|diagnose sys session clear|schedule reboot|install (activate|remove|commit)|deactivate|cpstop|cprestart|mdsstop|fw unload(local)?|clusterXL_admin down|set cluster member admin down|fwaccel off|fw tab\b.*\s-x\b|vpn tu (del|delete)\b|ifconfig \S+ down|ip link set \S+ down|cphaprob\b.*-s problem)\b/i;
+  /^(show|display|get|dir|more|ping|traceroute|tracert|tracepath|verify|monitor (traffic(?!.*\bwrite-file\b)|interface|start|stop)|test policy|compare configuration|who|policy-check|tcpdump|dnslookup|nslookup|vpn-tunnel diag-report|(undo )?terminal (logging|monitor|debugging|trapping)|request system storage cleanup dry-run|request system software validate|admin show|packet-tracer|ethanalyzer local|telnet|ssh|terminal (length|width|monitor|pager)|screen-length\s+\d+\s+temporary|screen-width|set cli |file (list|show|checksum)|commit check|request support information|diagnose (sys (top|status|session (stat|list)|session filter(?=\s*$)|ha (status|checksum (?!recalculate)))|hardware|vpn (ike gateway|tunnel) list|sniffer packet|netlink|ip (route|arp) list|firewall iprope lookup|test application)|execute (ping6?|traceroute6?|telnet|ssh)(?!-)|execute (ping|traceroute)-options view-settings|tftp \S+ put|copy (running-config|startup-config|run|start) (tftp|scp|ftp|http)|execute backup)\b/i;
 
 /**
- * FortiOS: "diagnose ..." consulta salvo que lleve un verbo que cambia estado, y algunos
- * "execute" sin argumentos solo muestran información.
+ * Cortan servicio o sesiones, o dejan el equipo en otro estado (conmutación, rollback,
+ * borrado de tablas, túneles o SA). Incluye el "debug" de IOS, que puede saturar la CPU.
+ */
+const DISRUPTIVE =
+  /^(reload(?! cancel)|reboot|shutdown|halt|poweroff|power-off|erase|format|write erase|delete|undelete|rmdir|squeeze|zeroize|factory|configure replace|configure revert now|reset saved-configuration|reset (bgp|ospf|isis|mpls|ip ospf|ike sa|ipsec sa|recycle-bin)|rollback (configuration|running-config)\b|commit replace|abort trial|debug(ging)?\b|redundancy (force-)?switchover|(system|slave|master) switchover|test cable-diagnostics|clear (ip )?(bgp|ospf|isis|eigrp)(?!.*\bsoft\b)|clear bgp(?!.*\bsoft\b)|clear (ip )?route|clear arp\s*$|clear ip nat translation|clear crypto\b|clear mac(-| )address-table\b|clear interfaces statistics all\b|clear ethernet-switching table\s*$|request system (reboot|halt|power-off|zeroize|logout|software rollback)|request chassis cluster failover|request chassis routing-engine master\b|request node (reboot|halt|power-off|offline)|restart \S+|set interfaces \S+( unit \d+)? disable\b|execute (reboot|shutdown|factoryreset|formatlogdisk|restore|ha failover|disk format)|execute router clear (bgp|ospf)(?!.*\bsoft\b)|diagnose sys session clear|diagnose vpn tunnel down\b|diagnose vpn ike (gateway (clear|flush)|restart)\b|diagnose firewall auth clear\b|schedule reboot|install (activate|remove|commit)|deactivate|cpstop|cpstart|cprestart|cphastop|mdsstop|fw unload(local)?|clusterXL_admin down|set cluster member admin down|fwaccel off|fw tab\b.*\s-x\b|fw ctl conntab\b.*\s-x\b|fw ctl zdebug\b|fw ctl debug (?!(0|-x)\s*$)\S|vpn tu (del|delete)\b|save config\s*$|load configuration\b|set interface \S+ state off\b|set static-route\b.*\boff\b|upgrade system\b|vpn-tunnel rekey\b|cluster (failover|reboot|reset)\b|import config\b|restore (image|factory-default|backup-image)\b|ifconfig \S+ down|ip link set \S+ down|cphaprob\b.*-s problem)\b/i;
+
+/**
+ * FortiOS: "diagnose ..." consulta salvo que lleve un verbo que cambia estado ("up" y "down"
+ * levantan o bajan túneles), y algunos "execute" sin argumentos solo muestran información.
  */
 const FORTI_DIAG_READ =
-  /^diagnose\b(?!.*\b(clear|delete|del|reset|kill|killall|restart|flush|enable|disable|set|unset|start|stop|filter|update|purge|failover|clean|reload|test(?!-connectivity)|run|reboot|shutdown)\b)/i;
+  /^diagnose\b(?!.*\b(clear|delete|del|reset|kill|killall|restart|flush|enable|disable|set|unset|start|stop|filter|update|purge|failover|clean|reload|test(?!-connectivity)|run|reboot|shutdown|up|down|recalculate)\b)/i;
 const FORTI_EXEC_READ =
   /^execute (date|time|sensor list|disk list|dhcp lease-list|tac report|log display|log filter dump|ping6|traceroute6|ha manage|log fortianalyzer test-connectivity|switch-controller (get-conn-status|diagnose-connection)|vpn (ipsec|sslvpn) list)\b(?!\s+\d)/i;
 /**
  * Check Point (Gaia clish/expert): comandos de consulta propios. Excluye explícitamente
- * las opciones que modifican (fw tab -x, vpn tu del, cphaprob -d ... register).
+ * las opciones que modifican (fw tab -x, fw ctl conntab -x, cphaprob -d ... register), las
+ * capturas que escriben a disco (-o) y el menú interactivo "vpn tu", que permite borrar SA.
  */
 const CHECKPOINT_READ =
-  /^(fw (ver|stat|tab\b(?!.*\s-x\b)|ctl (iflist|arp|conntab|multik (stat|print_heavy_conn)|affinity -l|fast_accel show_table|pstat|chain|get)\b|up_execute|samp get|log|lslogs|getifs)|fwaccel (stat|stats|conns|ver)\b|cphaprob\b(?!.*\s-d\b)|cpstat|cpinfo|cplic print|cpview|cpwd_admin list|api status|mdsstat|mdsenv|\$MDSVERUTIL|vpn (tu\b(?!.*\b(del|delete)\b)|overlap_encdom)|vsenv|vsx stat|ips stat|mgmt_cli show|asg (monitor|stat)|connection_pipelining (status|heaviest_conn)|dynamic_balancing -p|cppcap|fw monitor|fgate stat|cp_log_export show|set virtual-system \S+$)/i;
+  /^(fw (ver|stat|tab\b(?!.*\s-x\b)|ctl (iflist|arp|conntab(?!.*\s-x\b)|multik (stat|print_heavy_conn)|affinity -l|fast_accel show_table|pstat|chain|get)\b|up_execute|samp get|log|lslogs|getifs)|fwaccel (stat|stats|conns|ver)\b|cphaprob\b(?!.*\s-d\b)|cpstat|cpinfo(?!.*\s-o\b)|cplic print|cpview|cpwd_admin list|api status|mdsstat|mdsenv|\$MDSVERUTIL|vpn (tu (tlist|list)\b|overlap_encdom)|vsenv|vsx stat|ips stat|mgmt_cli show|asg (monitor|stat)|connection_pipelining (status|heaviest_conn)|dynamic_balancing -p|cppcap(?!.*\s-o\b)|fw monitor(?!.*\s-o\b)|fgate stat|cp_log_export show|set virtual-system \S+$)/i;
 
-/** Herramientas Linux de solo lectura (modo expert de Gaia y equipos basados en Linux). */
+/**
+ * Herramientas Linux de solo lectura (modo expert de Gaia y equipos basados en Linux). Cada
+ * nombre termina en espacio o fin de línea: "ls" no cubre "lsof" ni "hostname" a
+ * "hostnamectl". "date" y "hostname" con argumento que fija un valor quedan fuera.
+ */
 const LINUX_READ =
-  /^(top|uptime|free|df|du|cat|less|tail|head|grep|ls|uname|hostname|date|dmidecode|raid_diagnostic|lspci|arp -an|ip (neigh|route|addr|link)( show)?\b(?!.*\b(add|del|delete|flush|set|change|replace|append|prepend)\b)|netstat|ss\b|ifconfig( \S+)?$)/i;
+  /^((top|uptime|free|df|du|cat|less|tail|head|grep|ls|lsof|lsns|lsblk|lscpu|lsmod|lsusb|lshw|uname|dmidecode|raid_diagnostic|lspci|netstat)(\s|$)|hostname( -\w+)*\s*$|date(?!.*\s(-s|--set)\b)(\s|$)|arp -an|ip (neigh|route|addr|link)( show)?\b(?!.*\b(add|del|delete|flush|set|change|replace|append|prepend)\b)|ss\b|ifconfig( \S+)?$)/i;
+
+/** tcpdump distingue mayúsculas: -w escribe la captura a disco y -G rota archivos (exige -w). */
+const TCPDUMP_WRITE = /^tcpdump\b.*\s-[A-Za-z]*[wG]\b/;
 
 /**
  * ethtool distingue mayúsculas: -k/-g/-a/-l/-c muestran y -K/-G/-A/-L/-C cambian (y -E
@@ -157,7 +174,8 @@ const OS_READ = new RegExp(
       "scutil (-r\\b|--(dns|nwi|proxy|get)\\b|--nc (list|status|show|statistics)\\b)",
       "dscacheutil -(q|statistics|cachedump)\\b",
       "dns-sd -[BGLQZ]\\b",
-      "nettop|ndp -[anpr]+\\b|(\\S*/)?airport -[Is]\\b|arp -n\\b|ifconfig( -\\w+)*( \\S+)?$|system_profiler|sw_vers|networkQuality|wdutil (info|diagnose|log)?\\b",
+      // wdutil diagnose y wdutil log escriben archivos o cambian el nivel de registro.
+      "nettop|ndp -[anpr]+\\b|(\\S*/)?airport -[Is]\\b|arp -n\\b|ifconfig( -\\w+)*( \\S+)?$|system_profiler|sw_vers|networkQuality|wdutil( info)?\\s*$",
       "/usr/libexec/ApplicationFirewall/socketfilterfw --(get|list)\\w*",
       "pfctl -s\\w*",
       "log (show|stream)\\b",
@@ -190,22 +208,29 @@ const OS_DISRUPTIVE = new RegExp(
   "^(" +
     [
       "ipconfig /release6?\\b",
-      "netsh wlan disconnect\\b|rasdial\\b.*/disconnect\\b",
-      "(Disable|Restart)-NetAdapter\\b|Remove-NetIPAddress\\b|(Restart|Stop)-Computer\\b",
+      "netsh wlan (disconnect|connect)\\b|rasdial\\b.*/disconnect\\b",
+      "(Disable|Restart)-NetAdapter\\b|Remove-NetIPAddress\\b|Remove-NetRoute\\b|Set-DnsClientServerAddress\\b|(Restart|Stop)-Computer\\b",
       "netsh (int|interface) (ip|ipv4|ipv6|tcp) reset\\b|netsh winsock reset\\b",
-      "ip (-\\S+ )*(addr|address|a) flush\\b|ip (-\\S+ )*route flush\\b",
+      "ip (-\\S+ )*(addr|address|a) flush\\b|ip (-\\S+ )*(route|r) (flush|del|delete)\\b",
       "nmcli( -\\S+)* ((c|con|connection) down|(n|networking) off|(r|radio) \\S+ off|(d|dev|device) (disconnect|down))\\b",
       "systemctl (restart|stop) (NetworkManager|networking|network|systemd-networkd|wicked)\\b",
       "netplan apply\\b|dhclient -r\\b|ifdown\\b|rc-service networking (restart|stop)\\b",
-      "networksetup -(setnetworkserviceenabled \\S+ off|setairportpower \\S+ off)\\b",
-      "route (-n )?(delete|del) (default|0\\.0\\.0\\.0)\\b",
+      // Cambiar DNS, IP o el modo DHCP de un servicio corta la resolución o la sesión remota.
+      "networksetup -(setnetworkserviceenabled \\S+ off|setairportpower \\S+ off|setdnsservers|setmanual\\b|setdhcp|setairportnetwork)",
+      "ipconfig set \\S+ (DHCP|BOOTP|MANUAL|INFORM|NONE|LINKLOCAL)\\b",
+      // Borrar cualquier ruta (no solo la por defecto) o vaciar la tabla ARP completa.
+      "route (-n )?(delete|del)\\b",
+      "arp -d (\\*|-a)(\\s|$)",
     ].join("|") +
     ")",
   "i",
 );
 
-/** Una consulta deja de serlo si su salida se ejecuta, se escribe a disco o termina procesos. */
-const PIPE_CHANGES = /^(sh|bash|zsh|tee|xargs|sudo|iex|Invoke-Expression|(Stop|Remove|Disable|Restart|Set|Clear|Reset|Rename|New|Add|Enable|Start|Export|Out-File|Uninstall|Install)-\w+)\b/i;
+/**
+ * Una consulta deja de serlo si su salida se ejecuta, se escribe a disco o termina procesos.
+ * "| save" (Junos) y "| redirect" / "| append" (IOS) guardan la salida en el equipo.
+ */
+const PIPE_CHANGES = /^(sh|bash|zsh|tee|xargs|sudo|iex|Invoke-Expression|save|redirect|append|(Stop|Remove|Disable|Restart|Set|Clear|Reset|Rename|New|Add|Enable|Start|Export|Out-File|Uninstall|Install)-\w+)\b/i;
 const REDIRECT_WRITE = /(^|[^2&])>{1,2}\s*(?!\s*(\/dev\/null|\$null|nul)\b)\S/i;
 
 /** Navegación de contexto en FortiOS con VDOM (no cambia configuración). */
@@ -214,8 +239,12 @@ const FORTI_CONTEXT = /^(config global|config vdom|edit \S+|end|next)$/i;
 /** ethtool -s (minúscula) cambia velocidad/dúplex y renegocia el enlace; -S solo muestra. */
 const ETHTOOL_SET = /^ethtool -s\b/;
 
-/** Dentro de un bloque de configuración, estas órdenes cortan servicio. */
-const DISRUPTIVE_IN_CONFIG = /^(shutdown|set status down|disable|no ip address|undo ip address|set .*admin-status down)\b/i;
+/**
+ * Dentro de un bloque de configuración, estas órdenes cortan servicio: apagar la interfaz,
+ * cambiar o quitar su IP (IOS, VRP y la forma "ip a.b.c.d/n" de Fireware) o "apply", que en
+ * Fireware aplica de inmediato todos los cambios pendientes de políticas.
+ */
+const DISRUPTIVE_IN_CONFIG = /^(shutdown|set status down|disable|(no |undo )?ip address\b|ip \d+\.\d+\.\d+\.\d+\/\d+|apply\s*$|set .*admin-status down)\b/i;
 
 /**
  * ";" "&&" "||" y "&" encadenan otro comando en la misma línea (shells, cmd y NX-OS): se
@@ -294,7 +323,7 @@ function evalRisk(cmd: string): Risk {
     if (DISRUPTIVE.test(line) || ETHTOOL_SET.test(line) || OS_DISRUPTIVE.test(line) || (multi && DISRUPTIVE_IN_CONFIG.test(line)))
       return "disruptive";
     const read = [READ_START, FORTI_DIAG_READ, FORTI_EXEC_READ, CHECKPOINT_READ, LINUX_READ, ETHTOOL_READ, IPTABLES_READ, OS_READ].some((re) => re.test(line));
-    if (!read) risk = maxRisk(risk, "change");
+    if (!read || TCPDUMP_WRITE.test(line)) risk = maxRisk(risk, "change");
     if (segments.slice(1).some((x) => PIPE_CHANGES.test(x)) || REDIRECT_WRITE.test(raw)) risk = maxRisk(risk, "change");
   }
   return risk;
