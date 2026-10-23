@@ -358,16 +358,20 @@ export function TopologyTool({
       return;
     }
     const base = term.session;
+    // Solo lo necesario para llegar al vecino: usuario, llave, jump host y compatibilidad. No se copian
+    // comandos al conectar, túneles ni argumentos extra hacia una IP que informó otro equipo.
+    const ssh = proto === "ssh";
     onOpenSession({
-      ...base,
       id: "",
       name: n.name,
       type: proto,
       host: n.ip,
-      port: proto === base.type ? base.port : proto === "ssh" ? 22 : 23,
-      platform: undefined,
-      on_connect: base.on_connect,
-      scp: undefined,
+      port: ssh ? (base.type === "ssh" ? base.port : 22) : base.type === "telnet" ? base.port : 23,
+      username: ssh ? base.username : undefined,
+      identity_file: ssh ? base.identity_file : undefined,
+      jump_host: ssh ? base.jump_host : undefined,
+      legacy_ssh: ssh ? base.legacy_ssh : undefined,
+      highlight: base.highlight,
       created_at: new Date().toISOString(),
     });
     setMsg(`Abriendo ${proto.toUpperCase()} a ${n.name}: autentícate en su pestaña, vuelve aquí y pulsa "Descubrir vecinos".`);
@@ -1058,9 +1062,14 @@ export function TopologyTool({
                             <span className="text-muted">Protocolo</span>
                             <select className="field !h-7 !text-[12px]" value={proto} onChange={(e) => setProto(e.target.value as "ssh" | "telnet")}>
                               <option value="ssh">SSH</option>
-                              <option value="telnet">Telnet</option>
+                              <option value="telnet">Telnet (sin cifrar)</option>
                             </select>
                           </div>
+                        )}
+                        {!saved && sel.ip && proto === "telnet" && (
+                          <p className="text-[11.5px] text-warn">
+                            Telnet no cifra: usuario y contraseña viajan en claro hasta {sel.ip}. Úsalo solo si el equipo no tiene SSH.
+                          </p>
                         )}
                         <Btn
                           kind="primary"
