@@ -438,8 +438,8 @@ const handlers = {
   },
   get_settings: () => settings,
   save_settings: () => null,
-  app_version: () => "0.9.3",
-  update_check: () => ({ current: "0.9.3", latest: "0.9.3", newer: false, url: "", notes: "", published: "", supported: true, reason: null }),
+  app_version: () => "0.9.4",
+  update_check: () => ({ current: "0.9.4", latest: "0.9.4", newer: false, url: "", notes: "", published: "", supported: true, reason: null }),
   app_repo: () => "Parzval-Net/Net_Terminal",
   cmdpacks_list: () => [],
   list_notes: () => [
@@ -757,10 +757,10 @@ if (new URLSearchParams(location.search).has("video")) {
     return null;
   };
   if (location.search.includes("update=1")) {
-    // La revisión automática al abrir no encuentra nada; "Buscar ahora" encuentra la 0.9.3.
+    // La revisión automática al abrir no encuentra nada; "Buscar ahora" encuentra la 0.9.4.
     let checks = 0;
     handlers.update_check = () => ({
-      current: "0.9.1", latest: "0.9.3", newer: checks++ > 0, supported: true, reason: null, published: new Date(now).toISOString(),
+      current: "0.9.1", latest: "0.9.4", newer: checks++ > 0, supported: true, reason: null, published: new Date(now).toISOString(),
       url: "https://github.com/Parzval-Net/Net_Terminal/releases/latest",
       notes: "- Vista dividida: selector de pestaña más rápido\n- Cliente SNMP: exportación CSV de traps\n- Catálogo: nuevos comandos de diagnóstico",
     });
