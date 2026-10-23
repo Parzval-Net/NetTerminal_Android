@@ -6,7 +6,7 @@ import type { TabLayout } from "../lib/settings";
 import { MenuItem, layoutItem, splitMenuItems, tabMenuItems } from "./tabMenu";
 import { ConnStatus, Tab, TabState, tabTitle } from "../types";
 import { ContextMenu } from "./Sidebar";
-import { QuickBolt, SessionIcon, isQuickSession } from "./SessionIcon";
+import { SessionIcon, isQuickSession } from "./SessionIcon";
 import { modLabel } from "../lib/platform";
 
 export interface TabBarProps {
@@ -241,16 +241,6 @@ export const TabBar = memo(function TabBar(props: TabBarProps) {
         >
           <Plus size={16} />
         </button>}
-        {!vertical && props.onQuickConnect && (
-          <button
-            onClick={props.onQuickConnect}
-            title={`Conexión rápida sin guardar (${modLabel}O)`}
-            aria-label="Conexión rápida sin guardar"
-            className="mb-1.5 w-7 h-7 shrink-0 grid place-items-center rounded-md hover:bg-hover"
-          >
-            <QuickBolt size={15} />
-          </button>
-        )}
       </div>
       {onSplit && (
         <button

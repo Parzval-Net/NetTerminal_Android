@@ -2,7 +2,7 @@ import { memo, useCallback, useEffect, useRef, useState } from "react";
 import { PanelLeftClose, PanelLeftOpen, PanelTop, Plus, Wrench, X } from "lucide-react";
 import { tabTitle } from "../types";
 import { ContextMenu } from "./Sidebar";
-import { QuickBolt, SessionIcon, isQuickSession } from "./SessionIcon";
+import { SessionIcon, isQuickSession } from "./SessionIcon";
 import { TabBarProps, closeBtnClass, dotColor } from "./TabBar";
 import { MenuItem, layoutItem, newTabMenuItems, tabMenuItems } from "./tabMenu";
 import { modLabel } from "../lib/platform";
@@ -300,21 +300,6 @@ export const VerticalTabs = memo(function VerticalTabs(props: TabBarProps) {
           <Plus size={14} />
           {!collapsed && "Nueva pestaña"}
         </button>
-        {props.onQuickConnect && (
-          <button
-            onClick={props.onQuickConnect}
-            title={`Conexión rápida sin guardar (${modLabel}O)`}
-            aria-label="Conexión rápida sin guardar"
-            className={
-              collapsed
-                ? "mx-auto w-8 h-8 shrink-0 grid place-items-center rounded-md hover:bg-hover"
-                : "h-8 shrink-0 flex items-center gap-2 pl-2.5 rounded-md text-[12.5px] text-muted hover:text-fg hover:bg-hover"
-            }
-          >
-            <QuickBolt size={14} />
-            {!collapsed && "Conexión rápida"}
-          </button>
-        )}
       </div>
 
       {onTabLayout && (

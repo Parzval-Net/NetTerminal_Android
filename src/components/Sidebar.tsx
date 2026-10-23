@@ -392,7 +392,9 @@ export const Sidebar = memo(function Sidebar(p: Props) {
           <Search size={14} className="absolute left-2.5 top-1/2 -translate-y-1/2 text-muted" />
           <input
             className="field !h-7 !pl-8 !text-[12px]"
-            placeholder="Filtrar nombre, IP, carpeta"
+            placeholder="Filtrar…"
+            title="Filtra por nombre, IP o carpeta"
+            aria-label="Filtrar sesiones por nombre, IP o carpeta"
             value={filter}
             onChange={(e) => setFilter(e.target.value)}
             onKeyDown={(e) => e.key === "Escape" && setFilter("")}
@@ -401,6 +403,11 @@ export const Sidebar = memo(function Sidebar(p: Props) {
         <HeadBtn title={`Nueva sesión (${modLabel}N)`} onClick={() => p.onNew(target)}>
           <Plus size={16} />
         </HeadBtn>
+        {p.onQuickConnect && (
+          <HeadBtn title={`Conexión rápida sin guardar (${modLabel}O)`} aria-label="Conexión rápida sin guardar" onClick={p.onQuickConnect}>
+            <QuickBolt size={15} />
+          </HeadBtn>
+        )}
         <HeadBtn title="Nueva carpeta" onClick={() => createFolder(target ?? "")}>
           <FolderPlus size={15} />
         </HeadBtn>
