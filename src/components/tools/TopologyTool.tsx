@@ -2,40 +2,70 @@ import { useEffect, useMemo, useRef, useState } from "react";
 import { invoke } from "@tauri-apps/api/core";
 import { save } from "@tauri-apps/plugin-dialog";
 import { writeText } from "@tauri-apps/plugin-clipboard-manager";
-import { Camera, Copy, Download, FileCode2, GitCompare, Network, Radar, Route, Trash2, X, ZoomIn, ZoomOut } from "lucide-react";
+import { Camera, Check, Copy, Download, FileCode2, GitCompare, Network, Pencil, Plus, Radar, Route, Trash2, X, ZoomIn, ZoomOut } from "lucide-react";
 import { runOnDevice } from "../../lib/deviceRun";
 import {
+  ADDRESS_COMMANDS,
+  CommandOutput,
   FALLBACK_COMMANDS,
+  LIMITS,
+  LINK_LEGEND,
+  LinkSuggestion,
   NEIGHBOR_COMMANDS,
+  Neighbor,
   PortInfo,
   PORT_COMMANDS,
+  Pt,
+  ROUTING_COMMANDS,
+  TOPO_SOURCES,
   TopoLink,
   TopoNode,
+  TopoResult,
   TopoSnapshot,
+  TopoSources,
   TopoVendor,
   Topology,
+  acceptSuggestion,
+  addManualLink,
+  addManualNode,
+  collectSuggestions,
+  deleteManualLink,
+  deleteManualNode,
   diffTopology,
   isCliError,
+  isPhysicalProto,
+  isRoutingProto,
+  isUserProto,
   junosDetailCommand,
+  knownAddrs,
   layout,
+  linkDash,
+  linkGeometry,
   linkGroup,
   linkKey,
   mergeNeighbors,
   nodeId,
   parseNeighbors,
+  parseOwnAddresses,
   parsePortInfo,
+  parseRoutingNeighbors,
   pathToText,
   portOf,
   promptName,
+  protoLabel,
   shortestPath,
+  sourceOn,
   toCsv,
   toDrawio,
   toMermaid,
+  toSvg,
+  updateManualLink,
+  updateManualNode,
 } from "../../lib/topology";
 import { vendorFor } from "../../lib/commands";
 import type { Session } from "../../types";
 import type { TerminalRef } from "./FileManager";
-import { Btn, Label, Section } from "./ui";
+import { Btn, Label, Section, Toggle } from "./ui";
 
 const W = 170;
 const H = 54;
@@ -50,76 +80,11 @@ const VENDORS: { id: TopoVendor; label: string }[] = [
   { id: "juniper", label: "Juniper (LLDP)" },
   { id: "fortinet", label: "Fortinet (LLDP)" },
 ];
+const CONFIDENCE_COLOR = { alta: "var(--ok)", media: "var(--warn)", baja: "var(--muted)" } as const;
 
-type Pt = { x: number; y: number };
-
-/** Punto de una curva cuadrática A-C-B en t. */
-const quad = (a: Pt, c: Pt, b: Pt, t: number): Pt => ({
-  x: (1 - t) ** 2 * a.x + 2 * (1 - t) * t * c.x + t ** 2 * b.x,
-  y: (1 - t) ** 2 * a.y + 2 * (1 - t) * t * c.y + t ** 2 * b.y,
-});
-
-/** Geometría de cada enlace: los paralelos entre el mismo par se separan en curvas. */
-function linkGeometry(t: Topology, links: TopoLink[]) {
-  const byPair = new Map<string, TopoLink[]>();
-  for (const l of links) {
-    const k = [l.a, l.b].sort().join("~");
-    byPair.set(k, [...(byPair.get(k) ?? []), l]);
-  }
-  const pos = new Map(t.nodes.map((n) => [n.id, n]));
-  return links.flatMap((l) => {
-    const a = pos.get(l.a);
-    const b = pos.get(l.b);
-    if (!a || !b) return [];
-    const sibs = byPair.get([l.a, l.b].sort().join("~"))!;
-    const i = sibs.indexOf(l);
-    // El sentido de la normal se fija por el orden alfabético del par, no del enlace.
-    const [p, q] = l.a < l.b ? [a, b] : [b, a];
-    const dx = q.x - p.x;
-    const dy = q.y - p.y;
-    const len = Math.hypot(dx, dy) || 1;
-    const off = (i - (sibs.length - 1) / 2) * PARALLEL_GAP;
-    const c = { x: (a.x + b.x) / 2 + (-dy / len) * off * 2, y: (a.y + b.y) / 2 + (dx / len) * off * 2 };
-    return [{ l, a, b, c, d: `M ${a.x} ${a.y} Q ${c.x} ${c.y} ${b.x} ${b.y}`, pa: quad(a, c, b, sibs.length > 1 ? 0.3 : 0.22), pb: quad(a, c, b, sibs.length > 1 ? 0.7 : 0.78), mid: quad(a, c, b, 0.5), pair: sibs }];
-  });
-}
-
-/** SVG autónomo (colores fijos claros) para documentación. */
-function toSvg(t: Topology): string {
-  if (!t.nodes.length) return "";
-  const xs = t.nodes.map((n) => n.x);
-  const ys = t.nodes.map((n) => n.y);
-  const minX = Math.min(...xs) - W / 2 - 40;
-  const minY = Math.min(...ys) - H / 2 - 40;
-  const w = Math.max(...xs) - minX + W / 2 + 40;
-  const h = Math.max(...ys) - minY + H / 2 + 40;
-  const esc = (s: string) => s.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/"/g, "&quot;");
-  const parts = [
-    `<svg xmlns="http://www.w3.org/2000/svg" viewBox="${minX} ${minY} ${w} ${h}" width="${w}" height="${h}" font-family="Helvetica, Arial, sans-serif">`,
-    `<rect x="${minX}" y="${minY}" width="${w}" height="${h}" fill="#ffffff"/>`,
-  ];
-  const label = (p: Pt, text: string, weight = 400) =>
-    `<text x="${p.x}" y="${p.y}" font-size="11" font-weight="${weight}" fill="#1f2328" text-anchor="middle" paint-order="stroke" stroke="#fff" stroke-width="4">${esc(text)}</text>`;
-  const groups = new Set<string>();
-  for (const g of linkGeometry(t, t.links)) {
-    parts.push(`<path d="${g.d}" fill="none" stroke="#8a919c" stroke-width="2"/>`, label(g.pa, g.l.aPort), label(g.pb, g.l.bPort));
-    const grp = linkGroup(t, g.l);
-    const gk = `${[g.l.a, g.l.b].sort().join("~")}|${grp}`;
-    if (grp && g.pair.length > 1 && !groups.has(gk)) {
-      groups.add(gk);
-      parts.push(label(g.mid, `${grp} ×${g.pair.length}`, 600));
-    }
-  }
-  for (const n of t.nodes) {
-    parts.push(
-      `<rect x="${n.x - W / 2}" y="${n.y - H / 2}" width="${W}" height="${H}" rx="10" fill="${n.explored ? "#eaf1ff" : "#f4f5f7"}" stroke="${n.explored ? "#2563eb" : "#c3c8d0"}" stroke-width="1.5"/>`,
-      `<text x="${n.x}" y="${n.y - 4}" font-size="13" font-weight="600" fill="#1f2328" text-anchor="middle">${esc(n.name)}</text>`,
-    );
-    if (n.ip) parts.push(`<text x="${n.x}" y="${n.y + 14}" font-size="11" fill="#636b78" text-anchor="middle">${esc(n.ip)}</text>`);
-  }
-  parts.push("</svg>");
-  return parts.join("\n");
-}
+type ManualForm =
+  | { kind: "node"; editId?: string; name: string; ip: string; platform: string }
+  | { kind: "link"; edit?: TopoLink; a: string; aPort: string; b: string; bPort: string };
 
 /** Topología guardada por versiones anteriores en el almacenamiento del navegador. */
 function legacyTopo(): Topology | null {
@@ -131,21 +96,34 @@ function legacyTopo(): Topology | null {
   }
 }
 
+/** Muestra de línea para la leyenda (mismo trazo que el diagrama). */
+function LegendLine({ dash }: { dash?: string }) {
+  return (
+    <svg width="34" height="8" aria-hidden className="shrink-0">
+      <line x1="2" y1="4" x2="32" y2="4" stroke="var(--muted)" strokeWidth={2} strokeDasharray={dash} strokeLinecap="round" />
+    </svg>
+  );
+}
+
 export function TopologyTool({
   terminals,
   sessions,
   topo,
   snapshots,
+  sources,
   onTopo,
   onSnapshots,
+  onSources,
   onOpenSession,
 }: {
   terminals: TerminalRef[];
   sessions: Session[];
   topo: Topology;
   snapshots: TopoSnapshot[];
+  sources: TopoSources;
   onTopo: (t: Topology | ((t: Topology) => Topology)) => void;
   onSnapshots: (s: TopoSnapshot[]) => void;
+  onSources: (s: TopoSources) => void;
   onOpenSession: (s: Session) => void;
 }) {
   const [connId, setConnId] = useState("");
@@ -160,6 +138,9 @@ export function TopologyTool({
   const [path, setPath] = useState<{ from?: string; to?: string }>({});
   const [compareId, setCompareId] = useState("");
   const [snapName, setSnapName] = useState<string | null>(null);
+  const [form, setForm] = useState<ManualForm | null>(null);
+  const [formErr, setFormErr] = useState("");
+  const [dismissed, setDismissed] = useState<Set<string>>(() => new Set());
   const drag = useRef<{ id: string; sx: number; sy: number; x: number; y: number } | null>(null);
 
   // Migra el diagrama de versiones anteriores (antes vivía en el navegador, fuera de la carpeta de datos).
@@ -192,6 +173,8 @@ export function TopologyTool({
     return out;
   };
 
+  const routingOn = sourceOn(sources, "routing");
+
   const discover = async () => {
     if (!term) return;
     setBusy(true);
@@ -199,12 +182,32 @@ export function TopologyTool({
     try {
       const outputs: string[] = [];
       for (const cmd of NEIGHBOR_COMMANDS[vendor]) outputs.push(await run(cmd));
+      // "% CDP is not enabled", "% LLDP is not enabled" o comando inexistente en todos.
+      const l2Off = outputs.every(isCliError);
       let neighbors = parseNeighbors(vendor, outputs);
       // Junos: la tabla resumida no trae IP de gestión; se pide el detalle por interfaz.
       if (vendor === "juniper" && neighbors.some((n) => !n.ip)) {
         const ifaces = [...new Set(neighbors.filter((n) => !n.ip).map((n) => n.localPort))].slice(0, MAX_DETAIL);
         for (const iface of ifaces) outputs.push(await run(junosDetailCommand(iface)));
         neighbors = parseNeighbors(vendor, outputs);
+      }
+      // Vecinos de ruteo: solo con la fuente activa (apagada no se envía ningún comando).
+      let routing: Neighbor[] = [];
+      let addrs: string[] | undefined;
+      if (routingOn && ROUTING_COMMANDS[vendor].length) {
+        const results: CommandOutput[] = [];
+        for (const cmd of ROUTING_COMMANDS[vendor]) results.push({ cmd, out: await run(cmd) });
+        const r = parseRoutingNeighbors(results);
+        routing = r.neighbors;
+        addrs = r.selfAddrs;
+        outputs.push(...results.map((x) => x.out));
+        // Direcciones propias: para reconocer este equipo cuando otro lo reporta por IP.
+        const addrCmd = ADDRESS_COMMANDS[vendor];
+        if (addrCmd && (routing.length || topo.nodes.some((n) => n.addrOnly))) {
+          const out = await run(addrCmd);
+          addrs = [...addrs, ...parseOwnAddresses([out])];
+          outputs.push(out);
+        }
       }
       let ports: Record<string, PortInfo> | undefined;
       if (readPorts && PORT_COMMANDS[vendor].length) {
@@ -213,16 +216,25 @@ export function TopologyTool({
         ports = parsePortInfo(portOuts);
         outputs.push(...portOuts);
       }
-      const name = promptName(outputs[outputs.length - 1]) ?? term.name;
-      onTopo((t) => mergeNeighbors(t, { name, ip: term.host, ports }, neighbors));
+      const last = [...outputs].reverse().find((o) => o.trim()) ?? "";
+      const name = promptName(last) ?? term.name;
+      onTopo((t) => mergeNeighbors(t, { name, ip: term.host, ports, addrs }, [...neighbors, ...routing]));
       setSelected(nodeId(name));
-      setMsg(
-        neighbors.length
-          ? `${name}: ${neighbors.length} vecinos encontrados`
-          : vendor === "fortinet"
-            ? `${name}: sin vecinos. Habilita la recepción LLDP (set lldp-reception enable) en la interfaz.`
-            : `${name}: sin vecinos. Verifica que CDP/LLDP esté habilitado (lldp run / lldp enable).`,
-      );
+      const parts = [
+        `${neighbors.length} vecinos CDP/LLDP`,
+        routingOn && ROUTING_COMMANDS[vendor].length ? `${routing.length} de ruteo` : "",
+      ].filter(Boolean);
+      const l2Hint =
+        vendor === "fortinet"
+          ? "Habilita la recepción LLDP (set lldp-reception enable) en la interfaz."
+          : l2Off
+            ? "CDP/LLDP no está habilitado en el equipo."
+            : "";
+      const routingHint =
+        !neighbors.length && !routing.length && !routingOn && ROUTING_COMMANDS[vendor].length
+          ? 'Activa "Vecinos de ruteo" en Fuentes de descubrimiento o agrega los enlaces a mano.'
+          : "";
+      setMsg([`${name}: ${parts.join(", ")}.`, neighbors.length ? "" : l2Hint, routingHint].filter(Boolean).join(" "));
     } catch (e) {
       setMsg(String(e));
     }
@@ -260,7 +272,11 @@ export function TopologyTool({
   const routeKeys = useMemo(() => new Set(route?.links.map(linkKey)), [route]);
   const routeNodes = useMemo(() => new Set(route?.nodes), [route]);
 
-  const geometry = useMemo(() => linkGeometry(view, view.links), [view]);
+  const geometry = useMemo(() => linkGeometry(view, view.links, PARALLEL_GAP), [view]);
+
+  // Sugerencias: se calculan del diagrama ya leído, sin comandos, y solo con su fuente activa.
+  const suggestions = useMemo(() => collectSuggestions(topo, sources, dismissed), [topo, sources, dismissed]);
+  const suggestionSources = TOPO_SOURCES.filter((s) => s.kind === "suggestions" && sourceOn(sources, s.id));
 
   const box = useMemo(() => {
     if (!view.nodes.length) return { x: 0, y: 0, w: 800, h: 400 };
@@ -327,16 +343,61 @@ export function TopologyTool({
   };
 
   const portLine = (n: TopoNode | undefined, port: string) => {
-    const p = portOf(n, port);
+    const p = port ? portOf(n, port) : undefined;
     return p ? [p.status, p.speed, p.group, p.desc].filter(Boolean).join(" · ") : "";
   };
 
+  /** Aplica una edición manual: si falla, muestra el error en el formulario o en el mensaje. */
+  const apply = (r: TopoResult, ok: string, onDone?: () => void) => {
+    if (!r.topo) {
+      if (form) setFormErr(r.error);
+      else setMsg(r.error);
+      return false;
+    }
+    onTopo(r.topo);
+    setMsg(ok);
+    setFormErr("");
+    onDone?.();
+    return true;
+  };
+
+  const submitForm = () => {
+    if (!form) return;
+    if (form.kind === "node") {
+      const input = { name: form.name, ip: form.ip, platform: form.platform };
+      const r = form.editId ? updateManualNode(topo, form.editId, input) : addManualNode(topo, input);
+      apply(r, form.editId ? "Equipo actualizado" : `Equipo "${form.name.trim()}" agregado`, () => {
+        setForm(null);
+        setSelected(nodeId(form.name));
+      });
+    } else {
+      const input = { a: form.a, aPort: form.aPort, b: form.b, bPort: form.bPort };
+      const r = form.edit ? updateManualLink(topo, form.edit, input) : addManualLink(topo, input);
+      apply(r, form.edit ? "Enlace actualizado" : "Enlace manual agregado", () => setForm(null));
+    }
+  };
+
+  const accept = (s: LinkSuggestion) => apply(acceptSuggestion(topo, s), `Enlace confirmado: ${node(s.a)?.name ?? s.a} ${s.aPort} ↔ ${s.target}`);
+
   const pathText = route ? pathToText(topo, route) : "";
+  const nodesByName = useMemo(() => [...topo.nodes].sort((a, b) => a.name.localeCompare(b.name)), [topo.nodes]);
+  const nodeSub = (n: TopoNode, ghost: boolean) =>
+    ghost
+      ? "ya no aparece"
+      : n.ip && n.ip !== n.name
+        ? n.ip
+        : n.addrOnly
+          ? "visto por ruteo"
+          : n.manual
+            ? "manual"
+            : n.explored
+              ? "explorado"
+              : "sin IP de gestión";
 
   return (
     <div className="space-y-4">
       <Section
-        title="Topología CDP / LLDP"
+        title="Topología"
         hint="Descubre los vecinos del equipo conectado y sigue la ruta salto a salto: clic en un vecino y 'Conectar'. Solo usa comandos de consulta."
       >
         <div className="flex flex-wrap items-end gap-2">
@@ -379,7 +440,7 @@ export function TopologyTool({
             <Network size={14} />
           </Btn>
           <span className="w-px h-5 bg-[var(--border)] mx-1" />
-          <Btn kind="ghost" title="Exportar imagen SVG" disabled={!topo.nodes.length} onClick={() => exportFile("svg", toSvg(topo))}>
+          <Btn kind="ghost" title="Exportar imagen SVG" disabled={!topo.nodes.length} onClick={() => exportFile("svg", toSvg(topo, W, H))}>
             <Download size={14} /> SVG
           </Btn>
           <Btn kind="ghost" title="Exportar a draw.io (editable)" disabled={!topo.nodes.length} onClick={() => exportFile("drawio", toDrawio(topo, W, H))}>
@@ -477,119 +538,297 @@ export function TopologyTool({
       </Section>
 
       <div className="grid gap-4 [grid-template-columns:1fr_280px]">
-        <div className="rounded-xl border border-line bg-panel overflow-auto" style={{ height: 520 }}>
-          {!view.nodes.length ? (
-            <div className="h-full grid place-items-center text-[12.5px] text-muted p-6 text-center">
-              Conecta una sesión con un equipo y pulsa "Descubrir vecinos" para empezar el diagrama.
+        <div className="space-y-2 min-w-0">
+          <div className="rounded-xl border border-line bg-panel overflow-auto" style={{ height: 520 }}>
+            {!view.nodes.length ? (
+              <div className="h-full grid place-items-center text-[12.5px] text-muted p-6 text-center">
+                Conecta una sesión con un equipo y pulsa "Descubrir vecinos", o agrega equipos y enlaces a mano.
+              </div>
+            ) : (
+              <svg
+                viewBox={`${box.x} ${box.y} ${box.w} ${box.h}`}
+                style={{ width: `${zoom * 100}%`, height: `${zoom * 100}%` }}
+                onPointerMove={onPointerMove}
+                onPointerUp={() => (drag.current = null)}
+                onPointerLeave={() => (drag.current = null)}
+              >
+                {geometry.map((g, i) => {
+                  const k = linkKey(g.l);
+                  const isRoute = routeKeys.has(k);
+                  const state = removed.has(k) ? "removed" : added.has(k) ? "added" : null;
+                  const hot = isRoute || selected === g.l.a || selected === g.l.b;
+                  const color = state === "removed" ? "var(--danger)" : state === "added" ? "var(--ok)" : hot ? "var(--accent)" : "var(--muted)";
+                  const dim = route && !isRoute;
+                  const tip = [
+                    `${node(g.l.a)?.name ?? g.l.a} ${g.l.aPort || "?"} ↔ ${g.l.bPort || "?"} ${node(g.l.b)?.name ?? g.l.b} (${protoLabel(g.l)})`,
+                    portLine(node(g.l.a), g.l.aPort) && `${g.l.aPort}: ${portLine(node(g.l.a), g.l.aPort)}`,
+                    portLine(node(g.l.b), g.l.bPort) && `${g.l.bPort}: ${portLine(node(g.l.b), g.l.bPort)}`,
+                    g.l.logical ? "Sesión lógica: no es un enlace físico" : "",
+                    state === "removed" ? "Ya no aparece (respecto del snapshot)" : state === "added" ? "Nuevo (respecto del snapshot)" : "",
+                  ]
+                    .filter(Boolean)
+                    .join("\n");
+                  const grp = linkGroup(view, g.l);
+                  const showGroup = grp && g.pair.length > 1 && g.pair.indexOf(g.l) === 0;
+                  const dash = state === "removed" ? "6 5" : linkDash(g.l);
+                  return (
+                    <g key={i} opacity={dim ? 0.25 : 1}>
+                      <title>{tip}</title>
+                      <path
+                        d={g.d}
+                        fill="none"
+                        stroke={color}
+                        strokeWidth={isRoute ? 3.5 : hot || state ? 2.5 : g.l.logical ? 1.25 : 1.5}
+                        strokeDasharray={dash}
+                        strokeLinecap={dash ? "round" : undefined}
+                      />
+                      {/* Área de clic más ancha que la línea. */}
+                      <path d={g.d} fill="none" stroke="transparent" strokeWidth={12} />
+                      {[
+                        [g.pa, g.l.aPort],
+                        [g.pb, g.l.bPort],
+                      ]
+                        .filter(([, label]) => label)
+                        .map(([pt, label], j) => (
+                          <text
+                            key={j}
+                            x={(pt as Pt).x}
+                            y={(pt as Pt).y}
+                            fontSize={11}
+                            textAnchor="middle"
+                            fill="var(--text)"
+                            stroke="var(--panel)"
+                            strokeWidth={4}
+                            paintOrder="stroke"
+                          >
+                            {label as string}
+                          </text>
+                        ))}
+                      {showGroup ? (
+                        <text x={g.mid.x} y={g.mid.y + 4} fontSize={11} fontWeight={600} textAnchor="middle" fill="var(--accent)" stroke="var(--panel)" strokeWidth={4} paintOrder="stroke">
+                          {grp} ×{g.pair.length}
+                        </text>
+                      ) : (
+                        isRoutingProto(g.l.proto) && (
+                          <text x={g.mid.x} y={g.mid.y + 4} fontSize={10} fontWeight={600} textAnchor="middle" fill="var(--muted)" stroke="var(--panel)" strokeWidth={4} paintOrder="stroke">
+                            {protoLabel(g.l)}
+                          </text>
+                        )
+                      )}
+                    </g>
+                  );
+                })}
+                {view.nodes.map((n) => {
+                  const ghost = ghostIds.has(n.id);
+                  const isNew = newIds.has(n.id);
+                  const onRoute = routeNodes.has(n.id);
+                  const tentative = n.manual || n.addrOnly;
+                  return (
+                    <g
+                      key={n.id}
+                      style={{ cursor: ghost ? "default" : "grab" }}
+                      opacity={route && !onRoute && !ghost ? 0.35 : 1}
+                      onPointerDown={(e) => {
+                        if (ghost) return;
+                        (e.currentTarget.ownerSVGElement as SVGSVGElement).setPointerCapture(e.pointerId);
+                        drag.current = { id: n.id, sx: e.clientX, sy: e.clientY, x: n.x, y: n.y };
+                        setSelected(n.id);
+                      }}
+                    >
+                      {/* Fondo opaco: el relleno de los explorados es translúcido y dejaba ver los enlaces. */}
+                      <rect x={n.x - W / 2} y={n.y - H / 2} width={W} height={H} rx={10} fill="var(--panel)" />
+                      <rect
+                        x={n.x - W / 2}
+                        y={n.y - H / 2}
+                        width={W}
+                        height={H}
+                        rx={10}
+                        fill={n.explored ? "var(--selected)" : "var(--chrome)"}
+                        stroke={
+                          ghost ? "var(--danger)" : isNew ? "var(--ok)" : selected === n.id || onRoute ? "var(--accent)" : n.explored ? "var(--accent)" : "var(--field-border)"
+                        }
+                        strokeDasharray={ghost ? "5 4" : tentative ? "4 3" : undefined}
+                        strokeWidth={selected === n.id || onRoute || ghost || isNew ? 2.5 : 1.5}
+                      />
+                      <text x={n.x} y={n.y - 4} fontSize={13} fontWeight={600} textAnchor="middle" fill="var(--text)">
+                        {n.name.length > 22 ? `${n.name.slice(0, 21)}…` : n.name}
+                      </text>
+                      <text x={n.x} y={n.y + 14} fontSize={11} textAnchor="middle" fill="var(--muted)">
+                        {nodeSub(n, ghost)}
+                      </text>
+                    </g>
+                  );
+                })}
+              </svg>
+            )}
+          </div>
+          {!!view.nodes.length && (
+            <div className="flex flex-wrap items-center gap-x-4 gap-y-1 px-1 text-[11.5px] text-muted" aria-label="Leyenda de enlaces">
+              {LINK_LEGEND.map(([text, s]) => (
+                <span key={text} className="inline-flex items-center gap-1.5">
+                  <LegendLine dash={linkDash(s)} />
+                  {text}
+                </span>
+              ))}
+              <span className="inline-flex items-center gap-1.5">
+                <svg width="22" height="12" aria-hidden className="shrink-0">
+                  <rect x="1" y="1" width="20" height="10" rx="3" fill="var(--chrome)" stroke="var(--field-border)" strokeDasharray="4 3" />
+                </svg>
+                Equipo manual o visto solo por ruteo
+              </span>
             </div>
-          ) : (
-            <svg
-              viewBox={`${box.x} ${box.y} ${box.w} ${box.h}`}
-              style={{ width: `${zoom * 100}%`, height: `${zoom * 100}%` }}
-              onPointerMove={onPointerMove}
-              onPointerUp={() => (drag.current = null)}
-              onPointerLeave={() => (drag.current = null)}
-            >
-              {geometry.map((g, i) => {
-                const k = linkKey(g.l);
-                const isRoute = routeKeys.has(k);
-                const state = removed.has(k) ? "removed" : added.has(k) ? "added" : null;
-                const hot = isRoute || selected === g.l.a || selected === g.l.b;
-                const color = state === "removed" ? "var(--danger)" : state === "added" ? "var(--ok)" : hot ? "var(--accent)" : "var(--muted)";
-                const dim = route && !isRoute;
-                const tip = [
-                  `${node(g.l.a)?.name ?? g.l.a} ${g.l.aPort} ↔ ${g.l.bPort} ${node(g.l.b)?.name ?? g.l.b} (${g.l.proto})`,
-                  portLine(node(g.l.a), g.l.aPort) && `${g.l.aPort}: ${portLine(node(g.l.a), g.l.aPort)}`,
-                  portLine(node(g.l.b), g.l.bPort) && `${g.l.bPort}: ${portLine(node(g.l.b), g.l.bPort)}`,
-                  state === "removed" ? "Ya no aparece (respecto del snapshot)" : state === "added" ? "Nuevo (respecto del snapshot)" : "",
-                ]
-                  .filter(Boolean)
-                  .join("\n");
-                const grp = linkGroup(view, g.l);
-                const showGroup = grp && g.pair.length > 1 && g.pair.indexOf(g.l) === 0;
-                return (
-                  <g key={i} opacity={dim ? 0.25 : 1}>
-                    <title>{tip}</title>
-                    <path
-                      d={g.d}
-                      fill="none"
-                      stroke={color}
-                      strokeWidth={isRoute ? 3.5 : hot || state ? 2.5 : 1.5}
-                      strokeDasharray={state === "removed" ? "6 5" : undefined}
-                    />
-                    {/* Área de clic más ancha que la línea. */}
-                    <path d={g.d} fill="none" stroke="transparent" strokeWidth={12} />
-                    {[
-                      [g.pa, g.l.aPort],
-                      [g.pb, g.l.bPort],
-                    ].map(([pt, label], j) => (
-                      <text
-                        key={j}
-                        x={(pt as Pt).x}
-                        y={(pt as Pt).y}
-                        fontSize={11}
-                        textAnchor="middle"
-                        fill="var(--text)"
-                        stroke="var(--panel)"
-                        strokeWidth={4}
-                        paintOrder="stroke"
-                      >
-                        {label as string}
-                      </text>
-                    ))}
-                    {showGroup && (
-                      <text x={g.mid.x} y={g.mid.y + 4} fontSize={11} fontWeight={600} textAnchor="middle" fill="var(--accent)" stroke="var(--panel)" strokeWidth={4} paintOrder="stroke">
-                        {grp} ×{g.pair.length}
-                      </text>
-                    )}
-                  </g>
-                );
-              })}
-              {view.nodes.map((n) => {
-                const ghost = ghostIds.has(n.id);
-                const isNew = newIds.has(n.id);
-                const onRoute = routeNodes.has(n.id);
-                return (
-                  <g
-                    key={n.id}
-                    style={{ cursor: ghost ? "default" : "grab" }}
-                    opacity={route && !onRoute && !ghost ? 0.35 : 1}
-                    onPointerDown={(e) => {
-                      if (ghost) return;
-                      (e.currentTarget.ownerSVGElement as SVGSVGElement).setPointerCapture(e.pointerId);
-                      drag.current = { id: n.id, sx: e.clientX, sy: e.clientY, x: n.x, y: n.y };
-                      setSelected(n.id);
-                    }}
-                  >
-                    {/* Fondo opaco: el relleno de los explorados es translúcido y dejaba ver los enlaces. */}
-                    <rect x={n.x - W / 2} y={n.y - H / 2} width={W} height={H} rx={10} fill="var(--panel)" />
-                    <rect
-                      x={n.x - W / 2}
-                      y={n.y - H / 2}
-                      width={W}
-                      height={H}
-                      rx={10}
-                      fill={n.explored ? "var(--selected)" : "var(--chrome)"}
-                      stroke={
-                        ghost ? "var(--danger)" : isNew ? "var(--ok)" : selected === n.id || onRoute ? "var(--accent)" : n.explored ? "var(--accent)" : "var(--field-border)"
-                      }
-                      strokeDasharray={ghost ? "5 4" : undefined}
-                      strokeWidth={selected === n.id || onRoute || ghost || isNew ? 2.5 : 1.5}
-                    />
-                    <text x={n.x} y={n.y - 4} fontSize={13} fontWeight={600} textAnchor="middle" fill="var(--text)">
-                      {n.name.length > 22 ? `${n.name.slice(0, 21)}…` : n.name}
-                    </text>
-                    <text x={n.x} y={n.y + 14} fontSize={11} textAnchor="middle" fill="var(--muted)">
-                      {ghost ? "ya no aparece" : (n.ip ?? (n.explored ? "explorado" : "sin IP de gestión"))}
-                    </text>
-                  </g>
-                );
-              })}
-            </svg>
           )}
         </div>
 
         <div className="space-y-4 min-w-0">
+          <Section title="Fuentes de descubrimiento" hint="CDP/LLDP y lo manual, siempre activos">
+            <div className="space-y-2.5">
+              {TOPO_SOURCES.map((s) => (
+                <div key={s.id}>
+                  <Toggle checked={sourceOn(sources, s.id)} onChange={(v) => onSources({ ...sources, [s.id]: v })} label={s.label} />
+                  <p className="mt-0.5 pl-10 text-[11px] text-muted leading-snug">{s.hint}</p>
+                </div>
+              ))}
+            </div>
+          </Section>
+
+          {suggestionSources.length > 0 && (
+            <Section title="Sugerencias" hint={suggestions.length ? "Confirma cada una antes de dibujarla" : "Sin sugerencias por ahora"}>
+              {suggestions.length ? (
+                <ul className="space-y-2 max-h-56 overflow-y-auto">
+                  {suggestions.map((s) => (
+                    <li key={s.id} className="rounded-md border border-line px-2 py-1.5 text-[11.5px]">
+                      <div className="flex items-center gap-1.5">
+                        <span className="font-mono flex-1 min-w-0 [overflow-wrap:anywhere]" title={`${node(s.a)?.name ?? s.a} ${s.aPort} → ${s.target} ${s.bPort}`}>
+                          <span className="whitespace-nowrap">
+                            {node(s.a)?.name ?? s.a} {s.aPort}
+                          </span>{" "}
+                          <span className="whitespace-nowrap">
+                            → {s.target} {s.bPort}
+                          </span>
+                        </span>
+                        <span className="text-[10.5px] font-medium shrink-0" style={{ color: CONFIDENCE_COLOR[s.confidence] }} title={`Confianza ${s.confidence}`}>
+                          {s.confidence}
+                        </span>
+                      </div>
+                      <p className="text-muted truncate" title={s.reason}>
+                        {TOPO_SOURCES.find((x) => x.id === s.source)?.short ?? s.source}: "{s.reason}"
+                      </p>
+                      <div className="flex gap-1 mt-1">
+                        <Btn kind="primary" className="!h-6 !px-2 !text-[11px]" onClick={() => accept(s)}>
+                          <Check size={12} /> Confirmar
+                        </Btn>
+                        <Btn kind="ghost" className="!h-6 !px-2 !text-[11px]" onClick={() => setDismissed((d) => new Set([...d, s.id]))}>
+                          Descartar
+                        </Btn>
+                      </div>
+                    </li>
+                  ))}
+                </ul>
+              ) : (
+                <p className="text-[12px] text-muted">
+                  {topo.nodes.some((n) => n.ports && Object.keys(n.ports).length)
+                    ? "Ninguna descripción menciona un equipo sin enlace."
+                    : 'Descubre con "Estado de puertos" para leer las descripciones.'}
+                </p>
+              )}
+            </Section>
+          )}
+
+          <Section
+            title="Manual"
+            right={
+              !form && (
+                <div className="flex gap-1">
+                  <Btn kind="ghost" className="!px-1.5 !text-[11.5px]" title="Agregar equipo" onClick={() => (setFormErr(""), setForm({ kind: "node", name: "", ip: "", platform: "" }))}>
+                    <Plus size={13} /> Equipo
+                  </Btn>
+                  <Btn
+                    kind="ghost"
+                    className="!px-1.5 !text-[11.5px]"
+                    title="Agregar enlace"
+                    disabled={topo.nodes.length < 2}
+                    onClick={() => (setFormErr(""), setForm({ kind: "link", a: selected ?? "", aPort: "", b: "", bPort: "" }))}
+                  >
+                    <Plus size={13} /> Enlace
+                  </Btn>
+                </div>
+              )
+            }
+          >
+            {form?.kind === "node" && (
+              <form
+                className="space-y-2"
+                onSubmit={(e) => {
+                  e.preventDefault();
+                  submitForm();
+                }}
+              >
+                <Label text="Nombre">
+                  <input autoFocus className="field" maxLength={LIMITS.name} value={form.name} placeholder="ej: sw-bodega-01" onChange={(e) => setForm({ ...form, name: e.target.value })} />
+                </Label>
+                <Label text="IP de gestión (opcional)">
+                  <input className="field font-mono" maxLength={45} value={form.ip} placeholder="192.0.2.10" onChange={(e) => setForm({ ...form, ip: e.target.value })} />
+                </Label>
+                <Label text="Plataforma (opcional)">
+                  <input className="field" maxLength={LIMITS.platform} value={form.platform} placeholder="ej: C9200L-24P" onChange={(e) => setForm({ ...form, platform: e.target.value })} />
+                </Label>
+                {formErr && <p className="text-[11.5px] text-danger">{formErr}</p>}
+                <div className="flex gap-1.5">
+                  <Btn kind="primary" type="submit" className="flex-1">
+                    {form.editId ? "Guardar" : "Agregar equipo"}
+                  </Btn>
+                  <Btn type="button" onClick={() => setForm(null)}>
+                    Cancelar
+                  </Btn>
+                </div>
+              </form>
+            )}
+            {form?.kind === "link" && (
+              <form
+                className="space-y-2"
+                onSubmit={(e) => {
+                  e.preventDefault();
+                  submitForm();
+                }}
+              >
+                {(["a", "b"] as const).map((side) => (
+                  <div key={side} className="grid grid-cols-[1fr_92px] gap-1.5">
+                    <Label text={`Equipo ${side.toUpperCase()}`}>
+                      <select className="field" value={form[side]} onChange={(e) => setForm({ ...form, [side]: e.target.value })}>
+                        <option value="">Elegir…</option>
+                        {nodesByName.map((n) => (
+                          <option key={n.id} value={n.id}>
+                            {n.name}
+                          </option>
+                        ))}
+                      </select>
+                    </Label>
+                    <Label text="Interfaz">
+                      <input
+                        className="field font-mono"
+                        maxLength={LIMITS.port}
+                        value={side === "a" ? form.aPort : form.bPort}
+                        placeholder="Gi1/0/1"
+                        onChange={(e) => setForm({ ...form, [side === "a" ? "aPort" : "bPort"]: e.target.value })}
+                      />
+                    </Label>
+                  </div>
+                ))}
+                {formErr && <p className="text-[11.5px] text-danger">{formErr}</p>}
+                <div className="flex gap-1.5">
+                  <Btn kind="primary" type="submit" className="flex-1">
+                    {form.edit ? "Guardar" : "Agregar enlace"}
+                  </Btn>
+                  <Btn type="button" onClick={() => setForm(null)}>
+                    Cancelar
+                  </Btn>
+                </div>
+              </form>
+            )}
+            {!form && <p className="text-[12px] text-muted">Se guardan con el diagrama, entran en snapshots, rutas y exportaciones.</p>}
+          </Section>
+
           {diff && snapshot && (
             <Section title="Cambios" hint={`Respecto de "${snapshot.name}"`}>
               {!diff.addedLinks.length && !diff.removedLinks.length && !diff.addedNodes.length && !diff.removedNodes.length ? (
@@ -654,12 +893,42 @@ export function TopologyTool({
             </Section>
           )}
 
-          <Section title={sel ? sel.name : "Detalle"} hint={sel ? (sel.explored ? "Vecinos ya leídos" : "Aún no explorado") : "Selecciona un equipo"}>
+          <Section
+            title={sel ? sel.name : "Detalle"}
+            hint={sel ? (sel.manual ? "Agregado a mano" : sel.addrOnly ? "Visto por ruteo, aún sin nombre" : sel.explored ? "Vecinos ya leídos" : "Aún no explorado") : "Selecciona un equipo"}
+            right={
+              sel?.manual && (
+                <div className="flex gap-1">
+                  <Btn
+                    kind="ghost"
+                    className="!px-1.5"
+                    title="Editar equipo"
+                    onClick={() => (setFormErr(""), setForm({ kind: "node", editId: sel.id, name: sel.name, ip: sel.ip ?? "", platform: sel.platform ?? "" }))}
+                  >
+                    <Pencil size={13} />
+                  </Btn>
+                  <Btn
+                    kind="ghost"
+                    className="!px-1.5 hover:!text-danger"
+                    title="Eliminar equipo y sus enlaces"
+                    onClick={() => apply(deleteManualNode(topo, sel.id), `Equipo "${sel.name}" eliminado`, () => setSelected(null))}
+                  >
+                    <Trash2 size={13} />
+                  </Btn>
+                </div>
+              )
+            }
+          >
             {sel && (
               <div className="space-y-2 text-[12px]">
                 {sel.ip && (
                   <p>
-                    <span className="text-muted">Gestión:</span> <span className="font-mono">{sel.ip}</span>
+                    <span className="text-muted">{sel.addrOnly ? "Dirección:" : "Gestión:"}</span> <span className="font-mono">{sel.ip}</span>
+                  </p>
+                )}
+                {sel.addrOnly && knownAddrs(sel).length > 1 && (
+                  <p className="text-muted">
+                    Conocido por: <span className="font-mono">{knownAddrs(sel).slice(0, 6).join(", ")}</span>
                   </p>
                 )}
                 {sel.platform && (
@@ -675,17 +944,32 @@ export function TopologyTool({
                       const other = node(mine ? l.b : l.a);
                       const myPort = mine ? l.aPort : l.bPort;
                       const info = portLine(sel, myPort);
+                      const editable = isUserProto(l.proto);
                       return (
-                        <button
-                          key={i}
-                          onClick={() => setSelected(other?.id ?? null)}
-                          className="w-full text-left px-2 py-1 rounded-md hover:bg-hover"
-                        >
-                          <span className="font-mono text-[11.5px]">
-                            {myPort} → {other?.name} {mine ? l.bPort : l.aPort}
-                          </span>
-                          {info && <span className="block text-[11px] text-muted truncate">{info}</span>}
-                        </button>
+                        <div key={i} className="flex items-start rounded-md hover:bg-hover">
+                          <button onClick={() => setSelected(other?.id ?? null)} className="flex-1 min-w-0 text-left px-2 py-1">
+                            <span className="font-mono text-[11.5px]">
+                              {myPort || "?"} → {other?.name} {(mine ? l.bPort : l.aPort) || ""}
+                            </span>
+                            {!isPhysicalProto(l.proto) && <span className="ml-1.5 text-[10.5px] text-muted">{protoLabel(l)}</span>}
+                            {info && <span className="block text-[11px] text-muted truncate">{info}</span>}
+                          </button>
+                          {editable && (
+                            <>
+                              <Btn
+                                kind="ghost"
+                                className="!h-6 !px-1"
+                                title="Editar enlace"
+                                onClick={() => (setFormErr(""), setForm({ kind: "link", edit: l, a: l.a, aPort: l.aPort, b: l.b, bPort: l.bPort }))}
+                              >
+                                <Pencil size={12} />
+                              </Btn>
+                              <Btn kind="ghost" className="!h-6 !px-1 hover:!text-danger" title="Eliminar enlace" onClick={() => apply(deleteManualLink(topo, l), "Enlace eliminado")}>
+                                <X size={12} />
+                              </Btn>
+                            </>
+                          )}
+                        </div>
                       );
                     })}
                 </div>

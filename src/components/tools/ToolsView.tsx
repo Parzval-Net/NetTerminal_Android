@@ -99,6 +99,8 @@ export const ToolsView = memo(function ToolsView({ active, settings, update, mon
             snapshots={settings.topoSnapshots}
             onTopo={(t) => update((s) => ({ topology: typeof t === "function" ? t(s.topology) : t }))}
             onSnapshots={(topoSnapshots) => update({ topoSnapshots })}
+            sources={settings.topoSources ?? {}}
+            onSources={(topoSources) => update({ topoSources })}
             onOpenSession={onOpenSession}
           />
         );

@@ -37,7 +37,7 @@ export type Section = "appearance" | "highlight" | "terminal" | "alerts" | "modu
 const MODULES: [ModuleId, string, string][] = [
   ["monitor", "Monitoreo", "Sondas ICMP/TCP con gráfico y alarma sonora"],
   ["diag", "Diagnóstico", "Ping continuo, traceroute y verificación de puertos"],
-  ["topology", "Topología", "Diagrama de vecinos CDP/LLDP y seguimiento de rutas"],
+  ["topology", "Topología", "Diagrama de vecinos CDP/LLDP y de ruteo, enlaces manuales y seguimiento de rutas"],
   ["subnet", "Subredes", "Calculadora IPv4/IPv6 y división de redes"],
   ["perf", "Velocidad", "Speedtest (Cloudflare) e iperf3"],
   ["transfer", "Transferencias", "TFTP, HTTP, FTP y SFTP: servir firmware y recibir respaldos desde equipos"],

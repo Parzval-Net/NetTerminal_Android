@@ -3,7 +3,7 @@ import { invoke } from "@tauri-apps/api/core";
 import type { HlRule } from "./highlight";
 import { type AlertRule, exampleAlerts } from "./alerts";
 import type { MonitorTarget } from "./monitors";
-import type { TopoSnapshot, Topology } from "./topology";
+import type { TopoSnapshot, TopoSources, Topology } from "./topology";
 import type { SnmpProfile } from "./snmp";
 
 export type ModuleId = "monitor" | "diag" | "topology" | "subnet" | "perf" | "transfer" | "syslog" | "plugins" | "backup" | "snmp";
@@ -79,6 +79,8 @@ export interface Settings {
   /** Diagrama de topología en curso (se guarda con los datos, también en modo portable). */
   topology: Topology;
   topoSnapshots: TopoSnapshot[];
+  /** Fuentes opcionales de Topología (ruteo, descripciones); apagadas por defecto. */
+  topoSources: TopoSources;
   /** Nombre del log: {session} {host} {folder} {date} {time}. */
   logPattern: string;
   /** Anexar si el archivo ya existe (si no, se crea uno nuevo). */
@@ -155,6 +157,7 @@ export const defaultSettings: Settings = {
   disabledPacks: [],
   topology: { nodes: [], links: [] },
   topoSnapshots: [],
+  topoSources: {},
   logPattern: "{session}_{date}-{time}",
   logAppend: false,
   logRotateDaily: false,

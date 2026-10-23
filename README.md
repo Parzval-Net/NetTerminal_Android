@@ -52,7 +52,7 @@ Construido con [Tauri 2](https://tauri.app) (backend en Rust) y xterm.js. Usa el
 | Contraseñas | Opcional por sesión (SSH, Telnet, TCP y Serial): se guarda en una bóveda cifrada de la app (`credentials.vault`) y se completa sola en el primer pedido de contraseña al conectar; en Telnet/Serial también envía el usuario. Campo solo de escritura (nunca se muestra), llave en el llavero del sistema o contraseña maestra en modo portable (Ajustes › Credenciales). |
 | Botones y scripts | Barra de comandos rápidos (texto con `{{variables}}` o script). Scripts Python con API mínima `import netterminal as nt` (`run`, `send`, `wait_for`, `read`), similar a `crt.Screen` de SecureCRT. Incluye ejemplo de respaldo de configuración. |
 | Agentes IA (MCP) | Servidor MCP local para Claude Code, Claude Desktop, Gemini CLI y Codex: listar sesiones, leer salida, ejecutar comandos con aprobación del usuario y modo solo lectura. Apagado por defecto. |
-| Topología | Diagrama de vecinos CDP/LLDP (Cisco, Huawei, Juniper, Fortinet) con estado de puertos y Port-channel, ruta entre dos equipos, snapshots para comparar antes y después de un cambio, y exportación a SVG, draw.io, CSV o Mermaid. |
+| Topología | Diagrama de vecinos CDP/LLDP (Cisco, Huawei, Juniper, Fortinet), vecinos OSPF/EIGRP/BGP opcionales, equipos y enlaces manuales y sugerencias desde descripciones, con estado de puertos y Port-channel, ruta entre dos equipos, snapshots para comparar antes y después de un cambio, y exportación a SVG, draw.io, CSV o Mermaid. |
 | Comandos (⌘L) | Catálogo de 1.777 comandos verificados con fuente oficial. Equipos de red: Cisco (IOS, IOS-XE, NX-OS, IOS-XR, ASA), Juniper (Junos, Evolved, EX sin ELS), Fortinet (FortiOS 6.4 a 7.6), Huawei (VRP5, VRP8, YunShan OS en AR5700/AR6700/AR8000), Check Point (R80.40 a R82, clish y expert) y WatchGuard (Fireware 12.x y 2025+). Sistemas operativos (consultas de red: interfaces, DNS, rutas, ARP, conexiones, tráfico, Wi-Fi, firewall): Windows 10/11/Server (PowerShell), macOS 12 a 27 y Linux (Debian, Ubuntu, RHEL/Rocky/Alma, Fedora, SUSE, Arch, Alpine). Sintaxis por plataforma detectada, nivel de riesgo, favoritos, comandos propios y packs importables. En la terminal local se abre el catálogo del sistema del PC. |
 | Opciones por sesión | Comandos al conectar, reconexión automática, Enter como CR/LF/CRLF, eco local y codificación (UTF-8, Latin-1, Windows-1252). |
 | Pestañas | Horizontales (por defecto) o verticales a la izquierda, con ancho ajustable y modo solo íconos. Renombrar, desconectar sin cerrar, copiar toda la salida, limpiar historial, reiniciar terminal e indicador de actividad en segundo plano. |
@@ -217,7 +217,7 @@ Formato mínimo:
 
 Categorías: Sistema, Hardware, Interfaces, Capa 2, Enrutamiento, MPLS / VPN, Seguridad, Alta disponibilidad, QoS, Diagnóstico, Logs, Configuración. Riesgo: `read`, `change` o `disruptive`.
 
-## Topología CDP / LLDP
+## Topología CDP / LLDP, ruteo y manual
 
 Herramientas › Topología lee los vecinos del equipo conectado y dibuja el diagrama. Solo ejecuta comandos de consulta:
 
@@ -227,6 +227,20 @@ Herramientas › Topología lee los vecinos del equipo conectado y dibuja el dia
 | Huawei | `display lldp neighbor` | `display interface brief`, `display interface description`, `display eth-trunk` |
 | Juniper | `show lldp neighbors` y, para la IP de gestión, `show lldp neighbors interface X` (máx. 32) | `show interfaces descriptions` |
 | Fortinet | `diagnose lldprx neighbor summary/details` (en 7.6.3+ `diagnose lldp rx neighbor …`, se prueba solo) | No disponible |
+
+**Fuentes de descubrimiento** (panel en la misma herramienta, cada una se activa por separado, se guarda con los ajustes y viene apagada; apagada no envía ningún comando):
+
+| Fuente | Comandos (solo consulta) |
+| --- | --- |
+| Vecinos de ruteo (OSPF/EIGRP/BGP), para equipos con CDP/LLDP apagado | Cisco: `show ip ospf neighbor`, `show ip eigrp neighbors`, `show ip bgp summary` (en NX-OS `show bgp ipv4 unicast summary`). Huawei: `display ospf peer brief`. Juniper: `show ospf neighbor`. Más `show ip interface brief` / `display ip interface brief` / `show interfaces terse` para reconocer al equipo por sus direcciones |
+| Sugerencias por descripción de interfaz | Ninguno: usa las descripciones ya leídas con "Estado de puertos" |
+
+- **Vecinos de ruteo**: se rotulan por router-id o IP, con la interfaz local cuando la salida la trae. Al explorar ese equipo se fusiona con su nombre real si coincide su IP de gestión o cualquier dirección conocida. Las sesiones BGP iBGP sin IGP en común se dibujan como sesión lógica, no como enlace físico.
+- **Sugerencias**: descripciones como "UPLINK a dist-sw01 Gi1/0/48" o "to core-sw02 Te1/1/1" proponen un enlace con su nivel de confianza; nunca se dibujan solas, tú las confirmas o descartas.
+- **Manual**: agrega, edita y borra equipos (nombre, IP y plataforma opcionales) y enlaces (equipo + interfaz en cada extremo). Se guardan con el diagrama y entran en snapshots, rutas y exportaciones.
+- **Estilos**: línea continua CDP/LLDP; segmentada con el protocolo para ruteo; punteada para manual; raya y punto para descripción. La leyenda está bajo el diagrama y en el SVG exportado.
+
+![Fuentes de descubrimiento](docs/screenshots/topologia-fuentes.png)
 
 - **Seguir la ruta**: selecciona un vecino y pulsa "Conectar". Si el equipo coincide (por IP o nombre) con una sesión guardada, se usa esa sesión con su puerto, usuario y jump host; si no, se abre SSH o Telnet con los datos de la sesión de origen. La contraseña la escribes tú; al volver pulsas "Descubrir vecinos".
 - **Ruta entre dos equipos**: "Desde aquí" y "Hasta aquí" resaltan el camino más corto y lo listan con los puertos de cada salto, listo para copiar en un ticket.

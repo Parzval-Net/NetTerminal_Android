@@ -1,4 +1,17 @@
-/** Topología desde CDP/LLDP: comandos por fabricante, lectura de salidas y grafo. */
+/**
+ * Topología desde CDP/LLDP y vecinos de ruteo (OSPF, EIGRP, BGP): comandos por fabricante,
+ * lectura de salidas, grafo, elementos manuales y sugerencias desde descripciones.
+ */
+
+/** Origen de un enlace. */
+export type LinkProto = "CDP" | "LLDP" | "OSPF" | "EIGRP" | "BGP" | "manual" | "descripción";
+
+export const isPhysicalProto = (p: string) => p === "CDP" || p === "LLDP";
+export const isRoutingProto = (p: string) => p === "OSPF" || p === "EIGRP" || p === "BGP";
+/** Enlaces que el usuario puede editar o borrar (no vienen de un equipo). */
+export const isUserProto = (p: string) => p === "manual" || p === "descripción";
+/** Confianza del origen: un enlace descubierto reemplaza a uno manual en el mismo puerto. */
+const protoRank = (p: string) => (isPhysicalProto(p) ? 3 : isRoutingProto(p) ? 2 : p === "manual" ? 1 : 0);
 
 export interface Neighbor {
   name: string;
@@ -6,9 +19,15 @@ export interface Neighbor {
   remotePort: string;
   ip?: string;
   platform?: string;
-  proto: "CDP" | "LLDP";
+  proto: LinkProto;
   /** Agregado local (Port-channel, Eth-Trunk, ae) informado junto al vecino. */
   group?: string;
+  /** Vecino de ruteo: se conoce solo por router-id o dirección, sin hostname. */
+  byAddr?: boolean;
+  /** Direcciones conocidas del vecino (router-id, IP de la interfaz). */
+  addrs?: string[];
+  /** Sesión BGP que no es un enlace físico (iBGP entre loopbacks, multihop). */
+  logical?: boolean;
 }
 
 /** Estado de una interfaz local, leído con comandos de consulta. */
@@ -31,6 +50,12 @@ export interface TopoNode {
   y: number;
   /** Interfaces locales indexadas por canonPort. */
   ports?: Record<string, PortInfo>;
+  /** Direcciones conocidas (router-id, interfaces) para reconocer al equipo entre fuentes. */
+  addrs?: string[];
+  /** Equipo visto solo por un vecino de ruteo: su nombre es una IP hasta que se explore. */
+  addrOnly?: boolean;
+  /** Agregado a mano por el usuario (se puede editar y borrar). */
+  manual?: boolean;
 }
 
 export interface TopoLink {
@@ -38,7 +63,10 @@ export interface TopoLink {
   aPort: string;
   b: string;
   bPort: string;
-  proto: string;
+  /** LinkProto; string para aceptar diagramas guardados por versiones anteriores. */
+  proto: LinkProto | string;
+  /** Sesión lógica (BGP no directamente conectado): no es un salto físico. */
+  logical?: boolean;
 }
 
 export interface Topology {
@@ -70,6 +98,30 @@ export const FALLBACK_COMMANDS: Record<string, string> = {
   "diagnose lldprx neighbor details": "diagnose lldp rx neighbor details",
   "show interfaces status": "show interfaces description",
   "show etherchannel summary": "show port-channel summary",
+  // NX-OS: sintaxis por familia de direcciones (Cisco, documento 220604).
+  "show ip bgp summary": "show bgp ipv4 unicast summary",
+};
+
+/**
+ * Vecinos de ruteo (solo consulta). Sirven cuando CDP/LLDP está deshabilitado: el vecino se
+ * conoce por router-id o dirección. Formatos verificados en la documentación citada en cada parser.
+ */
+export const ROUTING_COMMANDS: Record<TopoVendor, string[]> = {
+  cisco: ["show ip ospf neighbor", "show ip eigrp neighbors", "show ip bgp summary"],
+  huawei: ["display ospf peer brief"],
+  juniper: ["show ospf neighbor"],
+  fortinet: [],
+};
+
+/**
+ * Direcciones propias del equipo explorado, para reconocerlo cuando otro lo reporta por IP.
+ * Solo se ejecuta si hubo vecinos de ruteo o hay equipos conocidos solo por dirección.
+ */
+export const ADDRESS_COMMANDS: Record<TopoVendor, string | undefined> = {
+  cisco: "show ip interface brief",
+  huawei: "display ip interface brief",
+  juniper: "show interfaces terse",
+  fortinet: undefined,
 };
 
 /** Comandos de estado de interfaces y agregados (opcionales, de solo lectura). */
@@ -83,20 +135,42 @@ export const PORT_COMMANDS: Record<TopoVendor, string[]> = {
 /** Detalle de Junos por interfaz: trae la IP de gestión que la tabla resumida no muestra. */
 export const junosDetailCommand = (iface: string) => `show lldp neighbors interface ${iface}`;
 
-/** Respuesta de error del equipo (comando inexistente en esa versión o plataforma). */
+/**
+ * Respuesta de error del equipo: comando inexistente en esa versión o plataforma, o protocolo
+ * deshabilitado (IOS responde "% CDP is not enabled", "% LLDP is not enabled", "% BGP not active").
+ */
 export function isCliError(out: string): boolean {
-  return /% ?Invalid (input|command)|% ?Unrecognized command|% ?Incomplete command|Error: ?Unrecognized command|Error: ?Wrong parameter|syntax error|unknown command|Unknown action|Command fail|Invalid command/i.test(
+  return /% ?Invalid (input|command)|% ?Unrecognized command|% ?Incomplete command|Error: ?Unrecognized command|Error: ?Wrong parameter|syntax error|unknown command|Unknown action|Command fail|Invalid command|^\s*% ?(CDP|LLDP) is not enabled|^\s*% ?BGP not active/im.test(
     out,
   );
 }
 
+const IP_RE = String.raw`\d{1,3}(?:\.\d{1,3}){3}`;
+
+/** IPv4 válida (cuatro octetos de 0 a 255, sin ceros a la izquierda). */
+export function isIpv4(s: string): boolean {
+  const p = s.split(".");
+  return p.length === 4 && p.every((o) => /^(0|[1-9]\d{0,2})$/.test(o) && Number(o) <= 255);
+}
+
+/** IPv6 válida (incluye "::" y sufijo IPv4). */
+export function isIpv6(s: string): boolean {
+  if (!/^[0-9a-f:.]{2,45}$/i.test(s) || !s.includes(":")) return false;
+  // El analizador de URL (WHATWG) valida la sintaxis completa de IPv6.
+  try {
+    return new URL(`http://[${s}]/`).hostname.length > 2;
+  } catch {
+    return false;
+  }
+}
+
 /** Nombre normalizado: sin dominio ni número de serie entre paréntesis (CDP de NX-OS). */
-export const nodeId = (name: string) =>
-  name
-    .trim()
-    .replace(/\(.*\)$/, "")
-    .split(".")[0]
-    .toLowerCase();
+export const nodeId = (name: string) => {
+  const s = name.trim().replace(/\(.*\)$/, "");
+  // Un vecino de ruteo se identifica por su dirección: no se corta en el primer punto.
+  if (isIpv4(s)) return s;
+  return s.split(".")[0].toLowerCase();
+};
 
 /** Abrevia interfaces largas para las etiquetas: GigabitEthernet1/0/1 -> Gi1/0/1. */
 export function shortPort(p: string): string {
@@ -314,6 +388,162 @@ export function parseNeighbors(vendor: string, outputs: string[]): Neighbor[] {
   return [...byKey.values()];
 }
 
+// ---------- Vecinos de ruteo ----------
+
+/** Estados OSPF sin adyacencia: el vecino no se dibuja. */
+const OSPF_DOWN = /^(down|attempt)\b/i;
+
+const ospfNeighbor = (rid: string, addr: string | undefined, iface: string): Neighbor => ({
+  name: rid,
+  localPort: iface,
+  remotePort: "",
+  ip: addr ?? rid,
+  addrs: [...new Set([rid, addr].filter((x): x is string => !!x && isIpv4(x)))],
+  proto: "OSPF",
+  byAddr: true,
+});
+
+/**
+ * Cisco IOS, IOS-XE y NX-OS "show ip ospf neighbor".
+ * Columnas: Neighbor ID, Pri, State, Dead Time (Up Time en NX-OS), Address, Interface.
+ * Fuente: Cisco, "Understand Show IP OSPF Neighbor Command Output", Document ID 13688,
+ * https://www.cisco.com/c/en/us/support/docs/ip/open-shortest-path-first-ospf/13688-16.html
+ * En enlaces punto a punto el estado se imprime "FULL/  -" (con espacios), por eso se admite.
+ */
+export function parseCiscoOspf(out: string): Neighbor[] {
+  const re = new RegExp(String.raw`^\s*(${IP_RE})\s+\d+\s+([A-Za-z0-9-]+(?:\/\s*[A-Za-z-]+)?)\s+(\S+)\s+(${IP_RE})\s+(\S+)\s*$`, "gm");
+  return [...out.matchAll(re)].filter((m) => isIpv4(m[1]) && !OSPF_DOWN.test(m[2])).map((m) => ospfNeighbor(m[1], m[4], m[5]));
+}
+
+/**
+ * Junos "show ospf neighbor": Address, Interface, State, ID (router-id), Pri, Dead.
+ * Fuente: Juniper, "show (ospf | ospf3) neighbor",
+ * https://juniper.net/documentation/en_US/junos13.1/topics/reference/command-summary/show-ospf-ospf3-neighbor.html
+ */
+export function parseJunosOspf(out: string): Neighbor[] {
+  const re = new RegExp(String.raw`^\s*(${IP_RE})\s+(\S+)\s+([A-Za-z0-9]+)\s+(${IP_RE})\s+\d+\s+\d+\s*$`, "gm");
+  return [...out.matchAll(re)].filter((m) => isIpv4(m[4]) && !OSPF_DOWN.test(m[3])).map((m) => ospfNeighbor(m[4], m[1], m[2]));
+}
+
+/**
+ * Huawei VRP "display ospf peer brief": Area Id, Interface, Neighbor id (router-id), State.
+ * No informa la IP de la interfaz del vecino, solo su router-id.
+ * Fuente: Huawei, "display ospf peer", WLAN AC V200R008C10 Command Reference,
+ * https://support.huawei.com/enterprise/en/doc/EDOC1100008283/9dc18ce0/display-ospf-peer
+ */
+export function parseHuaweiOspf(out: string): Neighbor[] {
+  if (!/Area\s*Id\s+Interface\s+Neighbor\s*id\s+State/i.test(out)) return [];
+  const re = new RegExp(String.raw`^\s*${IP_RE}\s+(\S+)\s+(${IP_RE})\s+(\S+)\s*$`, "gm");
+  return [...out.matchAll(re)].filter((m) => isIpv4(m[2]) && !OSPF_DOWN.test(m[3])).map((m) => ospfNeighbor(m[2], undefined, m[1]));
+}
+
+/**
+ * Cisco "show ip eigrp neighbors" (IOS, IOS-XE, NX-OS). El formato antiguo empieza en Address y
+ * el actual antepone la columna H; luego Interface, Hold, Uptime, SRTT, RTO, Q, Seq.
+ * Fuente: Cisco IOS Command Reference, "show ip eigrp neighbors",
+ * https://www.cisco.com/E-Learning/bulk/public/tac/cim/cib/using_cisco_ios_software/cmdrefs/show_ip_eigrp_neighbors.htm
+ */
+export function parseEigrp(out: string): Neighbor[] {
+  if (!/EIGRP/i.test(out)) return [];
+  const re = new RegExp(String.raw`^\s*(?:\d+\s+)?(${IP_RE})\s+(\S+)\s+\d+\s+\S+`, "gm");
+  return [...out.matchAll(re)]
+    .filter((m) => isIpv4(m[1]))
+    .map((m) => ({ name: m[1], localPort: m[2], remotePort: "", ip: m[1], addrs: [m[1]], proto: "EIGRP" as const, byAddr: true }));
+}
+
+export interface BgpPeer {
+  ip: string;
+  remoteAs: string;
+  state: string;
+}
+
+/**
+ * Cisco "show ip bgp summary" (IOS/IOS-XE) y "show bgp ipv4 unicast summary" (NX-OS).
+ * Columnas: Neighbor, V, AS, MsgRcvd, MsgSent, TblVer, InQ, OutQ, Up/Down, State/PfxRcd.
+ * State/PfxRcd numérico = sesión establecida; Idle, Active, etc. = caída (se omite).
+ * Fuente: Cisco, "Understand Basic BGP Troubleshoot", Document ID 220604,
+ * https://www.cisco.com/c/en/us/support/docs/ip/border-gateway-protocol-bgp/220604-understand-basic-bgp-troubleshoot.html
+ */
+export function parseBgpSummary(out: string): { routerId?: string; localAs?: string; peers: BgpPeer[] } {
+  const re = new RegExp(String.raw`^\s*(${IP_RE})\s+4\s+(\d+(?:\.\d+)?)\s+\d+\s+\d+\s+\d+\s+\d+\s+\d+\s+\S+\s+(.+?)\s*$`, "gm");
+  const routerId = out.match(new RegExp(String.raw`BGP router identifier (${IP_RE})`))?.[1];
+  return {
+    routerId: routerId && isIpv4(routerId) ? routerId : undefined,
+    localAs: out.match(/local AS number (\d+(?:\.\d+)?)/)?.[1],
+    peers: [...out.matchAll(re)].filter((m) => isIpv4(m[1])).map((m) => ({ ip: m[1], remoteAs: m[2], state: m[3] })),
+  };
+}
+
+/** Comando de ruteo y su salida (el parser se elige por el comando). */
+export interface CommandOutput {
+  cmd: string;
+  out: string;
+}
+
+/**
+ * Vecinos de ruteo a partir de las salidas de ROUTING_COMMANDS. Un par BGP cuya IP es la de un
+ * vecino OSPF/EIGRP está directamente conectado (se usa esa interfaz); si no, un par iBGP
+ * (mismo AS) se marca como sesión lógica. Un eBGP sin IGP en común se asume directo: es lo
+ * predeterminado (TTL 1); un eBGP multihop no se distingue con el resumen.
+ */
+export function parseRoutingNeighbors(results: CommandOutput[]): { neighbors: Neighbor[]; selfAddrs: string[] } {
+  const igp: Neighbor[] = [];
+  const selfAddrs: string[] = [];
+  const bgp: ReturnType<typeof parseBgpSummary>[] = [];
+  for (const { cmd, out } of results) {
+    if (!out || isCliError(out)) continue;
+    const c = cmd.trim().toLowerCase();
+    if (c.startsWith("display ospf")) {
+      igp.push(...parseHuaweiOspf(out));
+      const rid = out.match(new RegExp(String.raw`Router ID\s+(${IP_RE})`, "i"))?.[1];
+      if (rid && isIpv4(rid)) selfAddrs.push(rid);
+    } else if (c.startsWith("show ospf")) igp.push(...parseJunosOspf(out));
+    else if (c.startsWith("show ip ospf")) igp.push(...parseCiscoOspf(out));
+    else if (c.includes("eigrp")) igp.push(...parseEigrp(out));
+    else if (c.includes("bgp")) bgp.push(parseBgpSummary(out));
+  }
+  const neighbors = [...igp];
+  for (const b of bgp) {
+    if (b.routerId) selfAddrs.push(b.routerId);
+    for (const p of b.peers) {
+      if (!/^\d+$/.test(p.state)) continue;
+      // Directo si la IP del par es la de la interfaz de un vecino IGP (no su router-id).
+      const via = igp.find((n) => n.ip === p.ip && n.localPort);
+      neighbors.push({
+        name: p.ip,
+        localPort: via?.localPort ?? "",
+        remotePort: "",
+        ip: p.ip,
+        addrs: [p.ip],
+        proto: "BGP",
+        byAddr: true,
+        logical: !via && !!b.localAs && p.remoteAs === b.localAs,
+      });
+    }
+  }
+  return { neighbors, selfAddrs: [...new Set(selfAddrs)] };
+}
+
+/** Rangos que se repiten en todos los equipos (loopback, link-local, interno de Junos 128.0.0.0/16). */
+const SHARED_ADDR = /^(0\.|127\.|169\.254\.|128\.0\.|255\.)/;
+
+/**
+ * Direcciones IPv4 propias desde "show ip interface brief" (Cisco), "display ip interface brief"
+ * (Huawei) o "show interfaces terse" (Junos). Lectura genérica: la primera IPv4 de cada fila de
+ * interfaz (o de la línea "inet" de Junos), sin máscara ni la dirección remota tras "-->".
+ */
+export function parseOwnAddresses(outputs: string[]): string[] {
+  const res = new Set<string>();
+  for (const out of outputs.filter((o) => o && !isCliError(o))) {
+    for (const line of out.split(/\r?\n/)) {
+      if (!/^\S*\d/.test(line) && !/^\s+inet\s/.test(line)) continue;
+      const ip = line.split("-->")[0].match(new RegExp(String.raw`(?:^|\s)(${IP_RE})(?:\/\d{1,2})?(?=\s|$)`))?.[1];
+      if (ip && isIpv4(ip) && !SHARED_ADDR.test(ip)) res.add(ip);
+    }
+  }
+  return [...res];
+}
+
 /** Columnas de una tabla de ancho fijo a partir de su encabezado. */
 function fixedColumns(header: string, names: string[]): { name: string; start: number }[] {
   return names
@@ -428,14 +658,59 @@ export function parsePortInfo(outputs: string[]): Record<string, PortInfo> {
 /** Puerto de un nodo: información conocida (si se leyó su estado). */
 export const portOf = (n: TopoNode | undefined, port: string): PortInfo | undefined => n?.ports?.[canonPort(port)];
 
-/** Incorpora los vecinos de un equipo al grafo (sin duplicar enlaces en ambos sentidos). */
+/** Máximo de direcciones que se guardan por equipo (un L3 con cientos de SVI no infla los datos). */
+const MAX_ADDRS = 256;
+
+/** Direcciones conocidas de un equipo: la de gestión y las aprendidas. */
+export const knownAddrs = (n: TopoNode): string[] => [...new Set([n.ip, ...(n.addrs ?? [])].filter((x): x is string => !!x))];
+
+const unionAddrs = (a: string[] | undefined, b: (string | undefined)[]) => {
+  const all = [...new Set([...(a ?? []), ...b.filter((x): x is string => !!x)])];
+  return all.length ? all.slice(0, MAX_ADDRS) : undefined;
+};
+
+/** Quita bucles y enlaces repetidos (mismo par de puertos y origen) tras fusionar equipos. */
+function dedupeLinks(links: TopoLink[]): TopoLink[] {
+  const seen = new Set<string>();
+  return links.filter((l) => {
+    if (l.a === l.b) return false;
+    const k = `${linkKey(l)}|${l.proto}`;
+    if (seen.has(k)) return false;
+    seen.add(k);
+    return true;
+  });
+}
+
+/**
+ * Incorpora los vecinos de un equipo al grafo (sin duplicar enlaces en ambos sentidos).
+ * Los vecinos de ruteo (byAddr) se reconocen por cualquier dirección conocida; cuando un equipo
+ * se explora, los nodos que solo se conocían por una de sus direcciones se fusionan con él.
+ */
 export function mergeNeighbors(
   t: Topology,
-  device: { name: string; ip?: string; platform?: string; ports?: Record<string, PortInfo> },
+  device: { name: string; ip?: string; platform?: string; ports?: Record<string, PortInfo>; addrs?: string[] },
   neighbors: Neighbor[],
 ): Topology {
-  const nodes = t.nodes.map((n) => ({ ...n }));
-  const links = [...t.links];
+  let nodes = t.nodes.map((n) => ({ ...n }));
+  let links = t.links.map((l) => ({ ...l }));
+  /** Absorbe los nodos conocidos solo por dirección que coinciden con alguna de `addrs`. */
+  const absorb = (target: TopoNode, addrs: (string | undefined)[]) => {
+    const set = new Set(addrs.filter(Boolean));
+    if (!set.size) return;
+    for (const n of nodes.filter((x) => x !== target && x.addrOnly && knownAddrs(x).some((a) => set.has(a)))) {
+      target.addrs = unionAddrs(target.addrs, knownAddrs(n));
+      if (!target.x && !target.y) {
+        target.x = n.x;
+        target.y = n.y;
+      }
+      for (const l of links) {
+        if (l.a === n.id) l.a = target.id;
+        if (l.b === n.id) l.b = target.id;
+      }
+      nodes = nodes.filter((x) => x !== n);
+    }
+    links = dedupeLinks(links);
+  };
   const ensure = (name: string, extra: Partial<TopoNode> = {}) => {
     const id = nodeId(name);
     let n = nodes.find((x) => x.id === id);
@@ -445,29 +720,68 @@ export function mergeNeighbors(
     }
     if (extra.ip && !n.ip) n.ip = extra.ip;
     if (extra.platform && !n.platform) n.platform = extra.platform;
-    if (extra.explored) n.explored = true;
+    if (extra.explored) {
+      n.explored = true;
+      // Un equipo explorado ya no es una suposición: deja de ser manual o solo-dirección.
+      delete n.manual;
+      delete n.addrOnly;
+    }
+    if (n.ip && !n.addrOnly) absorb(n, [n.ip]);
     return n;
   };
   const self = ensure(device.name, { ip: device.ip, platform: device.platform, explored: true });
   if (device.ports) self.ports = { ...self.ports, ...device.ports };
+  if (device.addrs?.length) self.addrs = unionAddrs(self.addrs, device.addrs);
+  absorb(self, [device.ip, ...(device.addrs ?? [])]);
+  const selfAddrs = new Set(knownAddrs(self));
+
+  /** Vecino de ruteo: se busca por cualquier dirección conocida antes de crear un nodo nuevo. */
+  const ensureAddr = (nb: Neighbor): TopoNode | null => {
+    const addrs = nb.addrs?.length ? nb.addrs : [nb.ip ?? nb.name];
+    if (addrs.some((a) => selfAddrs.has(a))) return null;
+    let n = nodes.find((x) => x.id === nodeId(nb.name)) ?? nodes.find((x) => knownAddrs(x).some((a) => addrs.includes(a)));
+    if (!n) {
+      n = { id: nodeId(nb.name), name: nb.name, ip: nb.ip, explored: false, addrOnly: true, x: 0, y: 0 };
+      nodes.push(n);
+    }
+    if (!n.ip) n.ip = nb.ip;
+    n.addrs = unionAddrs(n.addrs, addrs);
+    return n;
+  };
+
+  const same = (x: string, y: string) => !!x && !!y && canonPort(x) === canonPort(y);
   for (const nb of neighbors) {
-    const other = ensure(nb.name, { ip: nb.ip, platform: nb.platform });
-    if (other.id === self.id) continue;
-    const aPort = shortPort(nb.localPort);
-    const bPort = shortPort(nb.remotePort);
-    if (nb.group) {
+    const other = nb.byAddr ? ensureAddr(nb) : ensure(nb.name, { ip: nb.ip, platform: nb.platform });
+    if (!other || other.id === self.id) continue;
+    const aPort = nb.localPort ? shortPort(nb.localPort) : "";
+    const bPort = nb.remotePort ? shortPort(nb.remotePort) : "";
+    if (nb.group && aPort) {
       const k = canonPort(aPort);
       self.ports = { ...self.ports, [k]: { ...self.ports?.[k], group: self.ports?.[k]?.group ?? shortPort(nb.group) } };
     }
+    const pair = links.filter((l) => (l.a === self.id && l.b === other.id) || (l.a === other.id && l.b === self.id));
+    const selfPort = (l: TopoLink) => (l.a === self.id ? l.aPort : l.bPort);
+    const otherPort = (l: TopoLink) => (l.a === self.id ? l.bPort : l.aPort);
     // El mismo enlace visto desde el otro extremo (con otra nomenclatura de puertos).
-    const dup = links.some(
-      (l) =>
-        (l.a === self.id && l.b === other.id && canonPort(l.aPort) === canonPort(aPort)) ||
-        (l.b === self.id && l.a === other.id && (canonPort(l.bPort) === canonPort(aPort) || canonPort(l.aPort) === canonPort(bPort))),
-    );
-    if (!dup) links.push({ a: self.id, aPort, b: other.id, bPort, proto: nb.proto });
+    let dup = pair.find((l) => same(selfPort(l), aPort) || (l.a === other.id && same(otherPort(l), bPort)));
+    // Un enlace de ruteo conocido desde el otro equipo, sin el puerto de este lado.
+    if (!dup && aPort && !isPhysicalProto(nb.proto)) dup = pair.find((l) => l.proto === nb.proto && !selfPort(l) && l.a === other.id);
+    // BGP sin interfaz: una sesión por par; si es directa y el par ya está unido, no aporta.
+    if (!dup && nb.proto === "BGP" && !aPort) dup = pair.find((l) => l.proto === "BGP") ?? (nb.logical ? undefined : pair[0]);
+    const link: TopoLink = { a: self.id, aPort, b: other.id, bPort, proto: nb.proto, ...(nb.logical ? { logical: true } : {}) };
+    if (!dup) links.push(link);
+    else if (protoRank(nb.proto) > protoRank(dup.proto)) {
+      // Un origen más confiable reemplaza al anterior (manual o ruteo confirmado por CDP/LLDP).
+      const keepA = selfPort(dup);
+      const keepB = otherPort(dup);
+      Object.assign(dup, link, { aPort: aPort || keepA, bPort: bPort || keepB });
+      if (!link.logical) delete dup.logical;
+    } else if (aPort && !selfPort(dup)) {
+      if (dup.a === self.id) dup.aPort = aPort;
+      else dup.bPort = aPort;
+    }
   }
-  return layout({ nodes, links });
+  return layout({ nodes, links: dedupeLinks(links) });
 }
 
 /** Disposición por niveles desde el primer equipo explorado; respeta nodos ya movidos. */
@@ -515,12 +829,18 @@ export function linkGroup(t: Topology, l: TopoLink): string | undefined {
 /** Ruta más corta (en saltos) entre dos equipos. Devuelve los enlaces en orden, o null. */
 export function shortestPath(t: Topology, from: string, to: string): { nodes: string[]; links: TopoLink[] } | null {
   if (from === to) return { nodes: [from], links: [] };
+  // Las sesiones BGP lógicas no son saltos físicos: solo se usan si no hay otro camino.
+  const hops = t.links.filter((l) => !l.logical);
+  return bfsPath(hops, from, to) ?? (hops.length < t.links.length ? bfsPath(t.links, from, to) : null);
+}
+
+function bfsPath(all: TopoLink[], from: string, to: string): { nodes: string[]; links: TopoLink[] } | null {
   const prev = new Map<string, { node: string; link: TopoLink }>();
   const seen = new Set([from]);
   const queue = [from];
   while (queue.length) {
     const id = queue.shift()!;
-    for (const l of t.links) {
+    for (const l of all) {
       const other = l.a === id ? l.b : l.b === id ? l.a : null;
       if (!other || seen.has(other)) continue;
       seen.add(other);
@@ -550,10 +870,33 @@ export function pathToText(t: Topology, path: { nodes: string[]; links: TopoLink
   path.links.forEach((l, i) => {
     const from = path.nodes[i];
     const [out, inn] = l.a === from ? [l.aPort, l.bPort] : [l.bPort, l.aPort];
-    lines.push(`  ${out} → ${inn}  ${name(path.nodes[i + 1])}`);
+    const via = isPhysicalProto(l.proto) ? "" : `  (${protoLabel(l)})`;
+    lines.push(`  ${out || "?"} → ${inn || "?"}  ${name(path.nodes[i + 1])}${via}`);
   });
   return lines.join("\n");
 }
+
+/** Origen del enlace para etiquetas y exportaciones. */
+export const protoLabel = (l: Pick<TopoLink, "proto" | "logical">) => (l.logical ? `${l.proto} lógica` : l.proto);
+
+/** Estilo de línea por origen (SVG en pantalla y exportado, draw.io). */
+export function linkDash(l: Pick<TopoLink, "proto" | "logical">): string | undefined {
+  if (isPhysicalProto(l.proto)) return undefined;
+  if (l.logical) return "3 5";
+  if (isRoutingProto(l.proto)) return "8 5";
+  if (l.proto === "manual") return "1.5 4";
+  if (l.proto === "descripción") return "9 4 2 4";
+  return "4 4";
+}
+
+/** Leyenda de estilos: [etiqueta, ejemplo de enlace]. */
+export const LINK_LEGEND: [string, Pick<TopoLink, "proto" | "logical">][] = [
+  ["CDP / LLDP", { proto: "CDP" }],
+  ["Ruteo (OSPF, EIGRP, BGP)", { proto: "OSPF" }],
+  ["Sesión BGP lógica", { proto: "BGP", logical: true }],
+  ["Manual", { proto: "manual" }],
+  ["Descripción", { proto: "descripción" }],
+];
 
 /** Clave de un enlace independiente del sentido y de la nomenclatura de puertos. */
 export const linkKey = (l: TopoLink) =>
@@ -585,12 +928,19 @@ export function toMermaid(t: Topology): string {
   // Nombres y puertos vienen de los equipos: sin comillas, HTML ni saltos de línea que cierren
   // la etiqueta y agreguen directivas (click, href) o marcado al renderizar el diagrama.
   const safe = (s: string) => s.replace(/"/g, "'").replace(/</g, "#lt;").replace(/>/g, "#gt;").replace(/[\r\n]+/g, " ");
-  const id = (s: string) => s.replace(/[^\w]/g, "_");
+  // Identificadores por posición: un nombre como "end" o una IP no rompen la sintaxis.
+  const idx = new Map(t.nodes.map((n, i) => [n.id, `n${i}`]));
   const lines = ["graph TD"];
-  for (const n of t.nodes) lines.push(`  ${id(n.id)}["${safe(n.name)}${n.ip ? `<br/>${safe(n.ip)}` : ""}"]`);
+  for (const n of t.nodes) lines.push(`  ${idx.get(n.id)}["${safe(n.name)}${n.ip ? `<br/>${safe(n.ip)}` : ""}"]`);
   for (const l of t.links) {
+    const s = idx.get(l.a);
+    const d = idx.get(l.b);
+    if (!s || !d) continue;
     const g = linkGroup(t, l);
-    lines.push(`  ${id(l.a)} ---|"${safe(l.aPort)} ↔ ${safe(l.bPort)}${g ? ` (${safe(g)})` : ""}"| ${id(l.b)}`);
+    const extra = [g, isPhysicalProto(l.proto) ? "" : protoLabel(l)].filter(Boolean).map((x) => safe(x!)).join(", ");
+    // Línea punteada para lo que no es un enlace CDP/LLDP (ruteo, manual, descripción).
+    const edge = isPhysicalProto(l.proto) ? "---" : "-.-";
+    lines.push(`  ${s} ${edge}|"${safe(l.aPort || "?")} ↔ ${safe(l.bPort || "?")}${extra ? ` (${extra})` : ""}"| ${d}`);
   }
   return lines.join("\n");
 }
@@ -614,7 +964,7 @@ export function toCsv(t: Topology): string {
       return [
         a?.name ?? l.a, a?.ip, l.aPort, pa?.status, pa?.speed, pa?.desc,
         b?.name ?? l.b, b?.ip, l.bPort, pb?.status, pb?.speed, pb?.desc,
-        linkGroup(t, l), l.proto,
+        linkGroup(t, l), protoLabel(l),
       ]
         .map(q)
         .join(",");
@@ -639,9 +989,10 @@ export function toDrawio(t: Topology, w = 170, h = 54): string {
     const s = idx.get(l.a);
     const d = idx.get(l.b);
     if (!s || !d) return;
-    const g = linkGroup(t, l);
+    const label = [linkGroup(t, l), isPhysicalProto(l.proto) ? "" : protoLabel(l)].filter(Boolean).join(" · ");
+    const dash = linkDash(l);
     cells.push(
-      `<mxCell id="e${i}" value="${g ? esc(g) : ""}" style="endArrow=none;html=0;strokeColor=#6a7280;fontSize=10;" edge="1" parent="1" source="${s}" target="${d}"><mxGeometry relative="1" as="geometry"/></mxCell>`,
+      `<mxCell id="e${i}" value="${esc(label)}" style="endArrow=none;html=0;strokeColor=#6a7280;fontSize=10;${dash ? `dashed=1;dashPattern=${dash};` : ""}" edge="1" parent="1" source="${s}" target="${d}"><mxGeometry relative="1" as="geometry"/></mxCell>`,
       `<mxCell id="e${i}a" value="${esc(l.aPort)}" style="edgeLabel;html=0;fontSize=10;" vertex="1" connectable="0" parent="e${i}"><mxGeometry x="-0.7" relative="1" as="geometry"><mxPoint as="offset"/></mxGeometry></mxCell>`,
       `<mxCell id="e${i}b" value="${esc(l.bPort)}" style="edgeLabel;html=0;fontSize=10;" vertex="1" connectable="0" parent="e${i}"><mxGeometry x="0.7" relative="1" as="geometry"><mxPoint as="offset"/></mxGeometry></mxCell>`,
     );
@@ -655,4 +1006,370 @@ export function toDrawio(t: Topology, w = 170, h = 54): string {
     "</diagram>",
     "</mxfile>",
   ].join("\n");
+}
+
+// ---------- Geometría y SVG ----------
+
+export type Pt = { x: number; y: number };
+
+/** Punto de una curva cuadrática A-C-B en t. */
+const quad = (a: Pt, c: Pt, b: Pt, t: number): Pt => ({
+  x: (1 - t) ** 2 * a.x + 2 * (1 - t) * t * c.x + t ** 2 * b.x,
+  y: (1 - t) ** 2 * a.y + 2 * (1 - t) * t * c.y + t ** 2 * b.y,
+});
+
+/** Geometría de cada enlace: los paralelos entre el mismo par se separan en curvas. */
+export function linkGeometry(t: Topology, links: TopoLink[], gap = 26) {
+  const byPair = new Map<string, TopoLink[]>();
+  for (const l of links) {
+    const k = [l.a, l.b].sort().join("~");
+    byPair.set(k, [...(byPair.get(k) ?? []), l]);
+  }
+  const pos = new Map(t.nodes.map((n) => [n.id, n]));
+  return links.flatMap((l) => {
+    const a = pos.get(l.a);
+    const b = pos.get(l.b);
+    if (!a || !b) return [];
+    const sibs = byPair.get([l.a, l.b].sort().join("~"))!;
+    const i = sibs.indexOf(l);
+    // El sentido de la normal se fija por el orden alfabético del par, no del enlace.
+    const [p, q] = l.a < l.b ? [a, b] : [b, a];
+    const dx = q.x - p.x;
+    const dy = q.y - p.y;
+    const len = Math.hypot(dx, dy) || 1;
+    const off = (i - (sibs.length - 1) / 2) * gap;
+    const c = { x: (a.x + b.x) / 2 + (-dy / len) * off * 2, y: (a.y + b.y) / 2 + (dx / len) * off * 2 };
+    return [{ l, a, b, c, d: `M ${a.x} ${a.y} Q ${c.x} ${c.y} ${b.x} ${b.y}`, pa: quad(a, c, b, sibs.length > 1 ? 0.3 : 0.22), pb: quad(a, c, b, sibs.length > 1 ? 0.7 : 0.78), mid: quad(a, c, b, 0.5), pair: sibs }];
+  });
+}
+
+/** Texto seguro dentro de un SVG/XML. */
+export const xmlEsc = (s: string) => s.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;").replace(/"/g, "&quot;");
+
+/** SVG autónomo (colores fijos claros) para documentación, con leyenda si hay enlaces no CDP/LLDP. */
+export function toSvg(t: Topology, W = 170, H = 54): string {
+  if (!t.nodes.length) return "";
+  const xs = t.nodes.map((n) => n.x);
+  const ys = t.nodes.map((n) => n.y);
+  const kinds = LINK_LEGEND.filter(([, s]) => t.links.some((l) => linkDash(l) === linkDash(s)));
+  const legendH = kinds.some(([, s]) => linkDash(s)) ? kinds.length * 18 + 16 : 0;
+  const minX = Math.min(...xs) - W / 2 - 40;
+  const minY = Math.min(...ys) - H / 2 - 40;
+  const w = Math.max(...xs) - minX + W / 2 + 40;
+  const h = Math.max(...ys) - minY + H / 2 + 40 + legendH;
+  const parts = [
+    `<svg xmlns="http://www.w3.org/2000/svg" viewBox="${minX} ${minY} ${w} ${h}" width="${w}" height="${h}" font-family="Helvetica, Arial, sans-serif">`,
+    `<rect x="${minX}" y="${minY}" width="${w}" height="${h}" fill="#ffffff"/>`,
+  ];
+  const label = (p: Pt, text: string, weight = 400, fill = "#1f2328") =>
+    `<text x="${p.x}" y="${p.y}" font-size="11" font-weight="${weight}" fill="${fill}" text-anchor="middle" paint-order="stroke" stroke="#fff" stroke-width="4">${xmlEsc(text)}</text>`;
+  const groups = new Set<string>();
+  for (const g of linkGeometry(t, t.links)) {
+    const dash = linkDash(g.l);
+    parts.push(`<path d="${g.d}" fill="none" stroke="#8a919c" stroke-width="2"${dash ? ` stroke-dasharray="${dash}" stroke-linecap="round"` : ""}/>`);
+    if (g.l.aPort) parts.push(label(g.pa, g.l.aPort));
+    if (g.l.bPort) parts.push(label(g.pb, g.l.bPort));
+    const grp = linkGroup(t, g.l);
+    const gk = `${[g.l.a, g.l.b].sort().join("~")}|${grp}`;
+    if (grp && g.pair.length > 1 && !groups.has(gk)) {
+      groups.add(gk);
+      parts.push(label(g.mid, `${grp} ×${g.pair.length}`, 600));
+    } else if (isRoutingProto(g.l.proto)) parts.push(label(g.mid, protoLabel(g.l), 600, "#636b78"));
+  }
+  for (const n of t.nodes) {
+    parts.push(
+      `<rect x="${n.x - W / 2}" y="${n.y - H / 2}" width="${W}" height="${H}" rx="10" fill="${n.explored ? "#eaf1ff" : "#f4f5f7"}" stroke="${n.explored ? "#2563eb" : "#c3c8d0"}" stroke-width="1.5"${n.manual || n.addrOnly ? ' stroke-dasharray="4 3"' : ""}/>`,
+      `<text x="${n.x}" y="${n.y - 4}" font-size="13" font-weight="600" fill="#1f2328" text-anchor="middle">${xmlEsc(n.name)}</text>`,
+    );
+    if (n.ip && n.ip !== n.name) parts.push(`<text x="${n.x}" y="${n.y + 14}" font-size="11" fill="#636b78" text-anchor="middle">${xmlEsc(n.ip)}</text>`);
+  }
+  if (legendH) {
+    const y0 = minY + h - legendH + 8;
+    kinds.forEach(([text, s], i) => {
+      const y = y0 + i * 18 + 6;
+      const dash = linkDash(s);
+      parts.push(
+        `<line x1="${minX + 16}" y1="${y}" x2="${minX + 56}" y2="${y}" stroke="#8a919c" stroke-width="2"${dash ? ` stroke-dasharray="${dash}" stroke-linecap="round"` : ""}/>`,
+        `<text x="${minX + 64}" y="${y + 4}" font-size="11" fill="#1f2328">${xmlEsc(text)}</text>`,
+      );
+    });
+  }
+  parts.push("</svg>");
+  return parts.join("\n");
+}
+
+// ---------- Equipos y enlaces manuales ----------
+
+export const LIMITS = { name: 64, port: 64, platform: 120 } as const;
+
+/** Caracteres de control, de formato invisibles o de dirección (spoofing de texto). */
+const CONTROL_RANGES: [number, number][] = [[0x00, 0x1f], [0x7f, 0x9f], [0x200b, 0x200f], [0x2028, 0x202e], [0x2060, 0x2064], [0x2066, 0x2069], [0xfeff, 0xfeff]];
+const hasControl = (s: string) =>
+  [...s].some((ch) => {
+    const c = ch.codePointAt(0)!;
+    return CONTROL_RANGES.some(([a, b]) => c >= a && c <= b);
+  });
+
+export type TopoResult = { topo: Topology; error?: undefined } | { topo?: undefined; error: string };
+
+function checkText(label: string, v: string, max: number, required: boolean): string | null {
+  if (!v) return required ? `${label}: obligatorio` : null;
+  if (v.length > max) return `${label}: máximo ${max} caracteres`;
+  if (hasControl(v)) return `${label}: tiene caracteres de control`;
+  return null;
+}
+
+export interface ManualNodeInput {
+  name: string;
+  ip?: string;
+  platform?: string;
+}
+
+/** Valida y normaliza un equipo manual. */
+export function validateManualNode(input: ManualNodeInput): { value?: ManualNodeInput; error?: string } {
+  const name = input.name.trim();
+  const ip = input.ip?.trim() ?? "";
+  const platform = input.platform?.trim() ?? "";
+  const err =
+    checkText("Nombre", name, LIMITS.name, true) ??
+    (!nodeId(name) ? "Nombre: no válido" : null) ??
+    checkText("Plataforma", platform, LIMITS.platform, false) ??
+    (ip && !isIpv4(ip) && !isIpv6(ip) ? "IP de gestión: formato no válido (IPv4 o IPv6)" : null);
+  if (err) return { error: err };
+  return { value: { name, ip: ip || undefined, platform: platform || undefined } };
+}
+
+export function addManualNode(t: Topology, input: ManualNodeInput): TopoResult {
+  const { value, error } = validateManualNode(input);
+  if (!value) return { error: error! };
+  const id = nodeId(value.name);
+  if (t.nodes.some((n) => n.id === id)) return { error: `Ya existe un equipo "${value.name}"` };
+  if (value.ip && t.nodes.some((n) => knownAddrs(n).includes(value.ip!))) return { error: `La IP ${value.ip} ya pertenece a otro equipo` };
+  const node: TopoNode = { id, name: value.name, explored: false, manual: true, x: 0, y: 0 };
+  if (value.ip) node.ip = value.ip;
+  if (value.platform) node.platform = value.platform;
+  return { topo: layout({ ...t, nodes: [...t.nodes, node] }) };
+}
+
+/** Edita un equipo manual; si cambia el nombre, cambia su id y se actualizan sus enlaces. */
+export function updateManualNode(t: Topology, id: string, input: ManualNodeInput): TopoResult {
+  const cur = t.nodes.find((n) => n.id === id);
+  if (!cur?.manual) return { error: "Solo se pueden editar equipos agregados a mano" };
+  const { value, error } = validateManualNode(input);
+  if (!value) return { error: error! };
+  const nid = nodeId(value.name);
+  if (nid !== id && t.nodes.some((n) => n.id === nid)) return { error: `Ya existe un equipo "${value.name}"` };
+  if (value.ip && t.nodes.some((n) => n.id !== id && knownAddrs(n).includes(value.ip!))) return { error: `La IP ${value.ip} ya pertenece a otro equipo` };
+  const nodes = t.nodes.map((n) => (n.id === id ? { ...n, id: nid, name: value.name, ip: value.ip, platform: value.platform } : n));
+  const links = t.links.map((l) => ({ ...l, a: l.a === id ? nid : l.a, b: l.b === id ? nid : l.b }));
+  return { topo: { ...t, nodes, links } };
+}
+
+/** Borra un equipo manual y todos sus enlaces. */
+export function deleteManualNode(t: Topology, id: string): TopoResult {
+  if (!t.nodes.find((n) => n.id === id)?.manual) return { error: "Solo se pueden borrar equipos agregados a mano" };
+  return { topo: { ...t, nodes: t.nodes.filter((n) => n.id !== id), links: t.links.filter((l) => l.a !== id && l.b !== id) } };
+}
+
+export interface ManualLinkInput {
+  a: string;
+  aPort: string;
+  b: string;
+  bPort: string;
+}
+
+export const sameLink = (x: TopoLink, y: TopoLink) => x.a === y.a && x.b === y.b && x.aPort === y.aPort && x.bPort === y.bPort && x.proto === y.proto;
+
+function buildManualLink(t: Topology, input: ManualLinkInput, proto: LinkProto, except?: TopoLink): { link?: TopoLink; error?: string } {
+  const aPort = input.aPort.trim();
+  const bPort = input.bPort.trim();
+  if (!t.nodes.some((n) => n.id === input.a)) return { error: "Equipo A: elige un equipo del diagrama" };
+  if (!t.nodes.some((n) => n.id === input.b)) return { error: "Equipo B: elige un equipo del diagrama" };
+  if (input.a === input.b) return { error: "Los extremos deben ser equipos distintos" };
+  const err = checkText("Interfaz A", aPort, LIMITS.port, false) ?? checkText("Interfaz B", bPort, LIMITS.port, false);
+  if (err) return { error: err };
+  if (/\s/.test(aPort) || /\s/.test(bPort)) return { error: "Las interfaces no llevan espacios (ej: Gi1/0/1)" };
+  const link: TopoLink = { a: input.a, aPort: aPort ? shortPort(aPort) : "", b: input.b, bPort: bPort ? shortPort(bPort) : "", proto };
+  const k = linkKey(link);
+  if (t.links.some((l) => (!except || !sameLink(l, except)) && linkKey(l) === k)) return { error: "Ese enlace ya existe en el diagrama" };
+  return { link };
+}
+
+export function addManualLink(t: Topology, input: ManualLinkInput, proto: LinkProto = "manual"): TopoResult {
+  const { link, error } = buildManualLink(t, input, proto);
+  if (!link) return { error: error! };
+  return { topo: { ...t, links: [...t.links, link] } };
+}
+
+/** Edita un enlace manual o confirmado desde una sugerencia (conserva su origen). */
+export function updateManualLink(t: Topology, old: TopoLink, input: ManualLinkInput): TopoResult {
+  const i = t.links.findIndex((l) => sameLink(l, old));
+  if (i < 0 || !isUserProto(old.proto)) return { error: "Solo se pueden editar enlaces agregados a mano" };
+  const { link, error } = buildManualLink(t, input, old.proto as LinkProto, old);
+  if (!link) return { error: error! };
+  return { topo: { ...t, links: t.links.map((l, j) => (j === i ? link : l)) } };
+}
+
+export function deleteManualLink(t: Topology, old: TopoLink): TopoResult {
+  if (!isUserProto(old.proto) || !t.links.some((l) => sameLink(l, old))) return { error: "Solo se pueden borrar enlaces agregados a mano" };
+  return { topo: { ...t, links: t.links.filter((l) => !sameLink(l, old)) } };
+}
+
+// ---------- Fuentes de descubrimiento y sugerencias ----------
+
+/**
+ * Fuentes opcionales (CDP/LLDP y lo manual están siempre disponibles). Cada una se habilita por
+ * separado en Topología y se guarda en los ajustes; apagada, no envía ningún comando.
+ * Para sumar una fuente: agrega su id aquí, su definición en TOPO_SOURCES y, si propone
+ * enlaces, un generador en SUGGESTERS que devuelva LinkSuggestion con su `source`.
+ */
+export type TopoSourceId = "routing" | "descriptions";
+export type TopoSources = Partial<Record<TopoSourceId, boolean>>;
+
+export interface TopoSourceDef {
+  id: TopoSourceId;
+  label: string;
+  /** Nombre corto para rotular sugerencias. */
+  short: string;
+  hint: string;
+  /** discovery: ejecuta comandos al descubrir; suggestions: solo propone enlaces por confirmar. */
+  kind: "discovery" | "suggestions";
+}
+
+export const TOPO_SOURCES: TopoSourceDef[] = [
+  {
+    id: "routing",
+    label: "Vecinos de ruteo (OSPF/EIGRP/BGP)",
+    short: "Ruteo",
+    hint: "Para equipos con CDP/LLDP apagado: suma consultas de ruteo y direcciones al descubrir.",
+    kind: "discovery",
+  },
+  {
+    id: "descriptions",
+    label: "Sugerencias por descripción de interfaz",
+    short: "Descripción",
+    hint: "Propone enlaces desde descripciones como \"UPLINK a dist-sw01 Gi1/0/48\" (requiere Estado de puertos). Tú confirmas cada uno.",
+    kind: "suggestions",
+  },
+];
+
+export const sourceOn = (s: TopoSources | undefined, id: TopoSourceId) => s?.[id] === true;
+
+export type SuggestionConfidence = "alta" | "media" | "baja";
+
+/** Enlace propuesto por una fuente de sugerencias; nunca se dibuja hasta que el usuario lo confirma. */
+export interface LinkSuggestion {
+  /** Estable entre lecturas: sirve para descartarla. */
+  id: string;
+  source: TopoSourceId;
+  /** Origen con que queda el enlace al confirmarlo. */
+  proto: LinkProto;
+  confidence: SuggestionConfidence;
+  a: string;
+  aPort: string;
+  /** Nombre o IP del otro extremo (puede no existir aún en el diagrama). */
+  target: string;
+  bPort: string;
+  /** Texto que la originó (por ejemplo, la descripción de la interfaz). */
+  reason: string;
+}
+
+const HOST_RE = String.raw`([A-Za-z][\w.-]{1,62}|\d{1,3}(?:\.\d{1,3}){3})`;
+const PORT_RE =
+  /^(?:gi(?:gabitethernet)?|gige|te(?:ngig\w*)?|fa(?:stethernet)?|fo(?:rtygig\w*)?|hu(?:ndredgig\w*)?|twe(?:ntyfivegig\w*)?|eth(?:ernet)?|ge|xe|et|mge|ae|po(?:rt-channel)?|port|eth-trunk|xge|\d{2,3}ge|multige|be|bundle-ether|wan|lan|mgmt|dmz)-?\d+(?:[/:.]\d+)*$/i;
+/** Nombres que parecen interfaces o VLAN, no equipos. */
+const IFACE_LIKE = /^(?:gi|gig|te|fa|fo|hu|twe|eth|ethernet|ge|xe|et|mge|ae|po|port|vlan|vlanif|vl|lo|loopback|mgmt|tunnel|tu|be|xge|irb|em|fxp|me|wan|lan|dmz|ckt|cid)-?\d/i;
+const NOT_HOST = new Set(["wi-fi", "e-mail", "n-a", "to-do", "end-user", "end-users"]);
+const LINK_WORD = String.raw`(?:up|down)?link|enlace|conexi[oó]n|conectad[oa]|troncal|trunk|isl|peer-?link`;
+const DESC_RES = [
+  // Palabra de enlace + preposición opcional + equipo: "UPLINK a dist-sw01 Gi1/0/48".
+  new RegExp(String.raw`(?<![\w-])(?:${LINK_WORD})(?![\w])[\s:_-]*(?:(?:to|a|al|hacia|con|towards)(?![\w])[\s:_-]*)?${HOST_RE}(?![\w/])(?:[\s:_,-]+(\S+))?`, "gi"),
+  // Preposición direccional sola: "to core-sw02 Te1/1/1", "hacia fw-borde01".
+  new RegExp(String.raw`(?:^|[\s\[(<:_-])(?:to|hacia|towards)(?![\w])[\s:_-]*${HOST_RE}(?![\w/])(?:[\s:_,-]+(\S+))?`, "gi"),
+];
+
+const looksLikeHost = (h: string) =>
+  isIpv4(h) || (h.length >= 3 && /[\d_-]/.test(h) && !/^\d/.test(h) && !IFACE_LIKE.test(h) && !NOT_HOST.has(h.toLowerCase()));
+
+/**
+ * Equipo (y puerto) mencionado en una descripción de interfaz. Heurística conservadora en
+ * español e inglés: exige una palabra de enlace o una preposición direccional, y que el nombre
+ * parezca un hostname (con dígito, guion o guion bajo) o una IPv4.
+ */
+export function parseDescriptionHint(desc: string): { host: string; port?: string } | null {
+  if (!desc || desc.length > 240) return null;
+  for (const re of DESC_RES) {
+    for (const m of desc.matchAll(re)) {
+      const host = m[1].replace(/[.-]+$/, "");
+      if (!looksLikeHost(host)) continue;
+      const p = m[2]?.replace(/[),.;]+$/, "");
+      return { host, port: p && PORT_RE.test(p) ? p : undefined };
+    }
+  }
+  return null;
+}
+
+/** Interfaz legible desde su forma canónica: "gi1/0/48" -> "Gi1/0/48". */
+function prettyPort(k: string): string {
+  return /^(hu|fo|twe|te|gi|fa|po|eth)\d/.test(k) ? k[0].toUpperCase() + k.slice(1) : k;
+}
+
+/** Equipo del diagrama que corresponde a un nombre o IP. */
+export const findNode = (t: Topology, nameOrIp: string) =>
+  t.nodes.find((n) => n.id === nodeId(nameOrIp)) ?? (isIpv4(nameOrIp) ? t.nodes.find((n) => knownAddrs(n).includes(nameOrIp)) : undefined);
+
+/** Sugerencias desde las descripciones de interfaz ya leídas (no ejecuta comandos). */
+export function suggestFromDescriptions(t: Topology): LinkSuggestion[] {
+  const res: LinkSuggestion[] = [];
+  const onPort = (id: string, port: string) =>
+    t.links.some((l) => (l.a === id && canonPort(l.aPort) === canonPort(port)) || (l.b === id && canonPort(l.bPort) === canonPort(port)));
+  for (const n of t.nodes) {
+    for (const [k, info] of Object.entries(n.ports ?? {})) {
+      if (!info.desc) continue;
+      const hint = parseDescriptionHint(info.desc);
+      if (!hint) continue;
+      const target = findNode(t, hint.host);
+      if (target?.id === n.id || nodeId(hint.host) === n.id) continue;
+      // Ya hay un enlace en ese puerto (de cualquier origen), o el otro extremo ya lo informa.
+      if (onPort(n.id, k) || (target && hint.port && onPort(target.id, hint.port))) continue;
+      res.push({
+        id: `descriptions|${n.id}|${k}`,
+        source: "descriptions",
+        proto: "descripción",
+        confidence: target && hint.port ? "alta" : target || hint.port ? "media" : "baja",
+        a: n.id,
+        aPort: prettyPort(k),
+        target: target?.name ?? hint.host,
+        bPort: hint.port ? shortPort(hint.port) : "",
+        reason: info.desc,
+      });
+    }
+  }
+  return res;
+}
+
+/** Generadores de sugerencias por fuente (solo leen el diagrama; no ejecutan comandos). */
+export const SUGGESTERS: Partial<Record<TopoSourceId, (t: Topology) => LinkSuggestion[]>> = {
+  descriptions: suggestFromDescriptions,
+};
+
+/** Sugerencias de las fuentes activas, sin las descartadas. */
+export function collectSuggestions(t: Topology, sources: TopoSources | undefined, dismissed: Set<string> = new Set()): LinkSuggestion[] {
+  return (Object.entries(SUGGESTERS) as [TopoSourceId, (t: Topology) => LinkSuggestion[]][])
+    .filter(([id]) => sourceOn(sources, id))
+    .flatMap(([, fn]) => fn(t))
+    .filter((s) => !dismissed.has(s.id));
+}
+
+/** Confirma una sugerencia: crea el equipo si no existe (como manual) y el enlace con su origen. */
+export function acceptSuggestion(t: Topology, s: LinkSuggestion): TopoResult {
+  let topo = t;
+  if (!findNode(topo, s.target)) {
+    const r = addManualNode(topo, isIpv4(s.target) ? { name: s.target, ip: s.target } : { name: s.target });
+    if (!r.topo) return r;
+    topo = r.topo;
+  }
+  const target = findNode(topo, s.target);
+  if (!target) return { error: "No se pudo crear el equipo" };
+  return addManualLink(topo, { a: s.a, aPort: s.aPort, b: target.id, bPort: s.bPort }, s.proto);
 }

@@ -212,6 +212,75 @@ settings.topoSnapshots = [{
     links: [...topology.links.filter((l) => l.b !== "ar-wan01"), { a: "dist-sw01", aPort: "Gi1/0/3", b: "sw-acceso-03", bPort: "Gi1/0/24", proto: "CDP" }],
   },
 }];
+// Topología con fuentes adicionales: un ejemplo de cada tipo de enlace (CDP, LLDP, OSPF, EIGRP,
+// BGP directo y lógico, manual y descripción) y una sugerencia pendiente de confirmar.
+const topoSources = {
+  nodes: [
+    { id: "core-sw01", name: "core-sw01", ip: "192.0.2.1", platform: "C9500-24Y4C", explored: true, x: 340, y: 80, addrs: ["192.0.2.1", "198.51.100.1"] },
+    { id: "rt-borde01", name: "rt-borde01", ip: "192.0.2.40", platform: "ISR4451", explored: true, x: 720, y: 80, addrs: ["192.0.2.40", "198.51.100.2", "198.51.100.17"] },
+    { id: "dist-sw01", name: "dist-sw01", ip: "192.0.2.11", platform: "C9300-48P", explored: true, x: 200, y: 250,
+      ports: {
+        "gi1/0/10": { status: "connected", speed: "a-1000", desc: "AP bodega" },
+        "gi1/0/12": { status: "connected", speed: "a-1000", desc: "UPLINK a sw-patio-01 Gi0/1" },
+        "gi1/0/20": { status: "connected", speed: "a-1000", desc: "hacia sw-taller-02 Gi0/24" },
+      } },
+    { id: "fw-perimetro", name: "fw-perimetro", ip: "198.51.100.10", platform: "FortiGate-200F", explored: false, x: 420, y: 250 },
+    { id: "192.0.2.41", name: "192.0.2.41", ip: "198.51.100.6", explored: false, addrOnly: true, addrs: ["192.0.2.41", "198.51.100.6"], x: 680, y: 250 },
+    { id: "198.51.100.18", name: "198.51.100.18", ip: "198.51.100.18", explored: false, addrOnly: true, addrs: ["198.51.100.18"], x: 920, y: 250 },
+    { id: "203.0.113.1", name: "203.0.113.1", ip: "203.0.113.1", explored: false, addrOnly: true, addrs: ["203.0.113.1"], x: 980, y: 80 },
+    { id: "ap-bodega", name: "ap-bodega", platform: "AP de pared", explored: false, manual: true, x: 90, y: 420 },
+    { id: "sw-patio-01", name: "sw-patio-01", ip: "192.0.2.61", explored: false, manual: true, x: 310, y: 420 },
+  ],
+  links: [
+    { a: "core-sw01", aPort: "Gi1/0/1", b: "dist-sw01", bPort: "Gi1/0/48", proto: "CDP" },
+    { a: "core-sw01", aPort: "Gi1/0/10", b: "fw-perimetro", bPort: "port1", proto: "LLDP" },
+    { a: "rt-borde01", aPort: "Gi0/0", b: "core-sw01", bPort: "Te1/1/2", proto: "OSPF" },
+    { a: "rt-borde01", aPort: "", b: "core-sw01", bPort: "", proto: "BGP", logical: true },
+    { a: "rt-borde01", aPort: "Gi0/1", b: "192.0.2.41", bPort: "", proto: "OSPF" },
+    { a: "rt-borde01", aPort: "Gi0/2", b: "198.51.100.18", bPort: "", proto: "EIGRP" },
+    { a: "rt-borde01", aPort: "", b: "203.0.113.1", bPort: "", proto: "BGP" },
+    { a: "dist-sw01", aPort: "Gi1/0/10", b: "ap-bodega", bPort: "eth0", proto: "manual" },
+    { a: "dist-sw01", aPort: "Gi1/0/12", b: "sw-patio-01", bPort: "Gi0/1", proto: "descripción" },
+  ],
+};
+// Equipo con CDP/LLDP apagado: solo vecinos de ruteo, rotulados por IP.
+const topoOspf = {
+  nodes: [
+    { id: "rt-borde01", name: "rt-borde01", ip: "192.0.2.40", platform: "ISR4451", explored: true, x: 560, y: 80, addrs: ["192.0.2.40", "198.51.100.1", "198.51.100.5"] },
+    { id: "192.0.2.41", name: "192.0.2.41", ip: "198.51.100.2", explored: false, addrOnly: true, addrs: ["192.0.2.41", "198.51.100.2"], x: 260, y: 250 },
+    { id: "192.0.2.42", name: "192.0.2.42", ip: "198.51.100.6", explored: false, addrOnly: true, addrs: ["192.0.2.42", "198.51.100.6"], x: 500, y: 250 },
+    { id: "198.51.100.18", name: "198.51.100.18", ip: "198.51.100.18", explored: false, addrOnly: true, addrs: ["198.51.100.18"], x: 740, y: 250 },
+    { id: "192.0.2.50", name: "192.0.2.50", ip: "192.0.2.50", explored: false, addrOnly: true, addrs: ["192.0.2.50"], x: 980, y: 250 },
+  ],
+  links: [
+    { a: "rt-borde01", aPort: "Gi0/0", b: "192.0.2.41", bPort: "", proto: "OSPF" },
+    { a: "rt-borde01", aPort: "Gi0/1", b: "192.0.2.42", bPort: "", proto: "OSPF" },
+    { a: "rt-borde01", aPort: "Gi0/2", b: "198.51.100.18", bPort: "", proto: "EIGRP" },
+    { a: "rt-borde01", aPort: "", b: "192.0.2.50", bPort: "", proto: "BGP", logical: true },
+  ],
+};
+// Diagrama con equipos y enlaces agregados a mano, más sugerencias desde descripciones.
+const topoManual = {
+  nodes: [
+    ...topology.nodes.filter((n) => !["ar-wan01", "fw-perimetro"].includes(n.id)),
+    { id: "ap-bodega", name: "ap-bodega", platform: "AP de pared", explored: false, manual: true, x: 130, y: 590 },
+    { id: "cam-acceso", name: "cam-acceso", ip: "192.0.2.80", explored: false, manual: true, x: 390, y: 590 },
+  ].map((n) => (n.id === "sw-acceso-01" ? { ...n, explored: true, ports: { "gi1/0/10": { desc: "AP bodega" }, "gi1/0/20": { desc: "hacia sw-taller-02 Gi0/24" } } } : n)),
+  links: [
+    ...topology.links.filter((l) => !["ar-wan01", "fw-perimetro"].includes(l.b)),
+    { a: "sw-acceso-01", aPort: "Gi1/0/10", b: "ap-bodega", bPort: "eth0", proto: "manual" },
+    { a: "sw-acceso-02", aPort: "Gi1/0/5", b: "cam-acceso", bPort: "", proto: "manual" },
+  ],
+};
+// ?scene=topology-*: diagrama y fuentes de cada demo (activadas o apagadas).
+const topoScene = new URLSearchParams(location.search).get("scene");
+const TOPO_SCENES = {
+  "topology-sources": [topoSources, { routing: true, descriptions: true }],
+  "topology-sources-off": [topoSources, {}],
+  "topology-ospf": [topoOspf, { routing: true }],
+  "topology-manual": [topoManual, { descriptions: true }],
+};
+if (TOPO_SCENES[topoScene]) [settings.topology, settings.topoSources] = TOPO_SCENES[topoScene];
 
 
 // Respaldos de configuración (Herramientas › Respaldos): dos versiones previas de core-sw01.
@@ -900,6 +969,11 @@ Object.assign(scenes, {
   "t-monitor": tool("Monitoreo"),
   "t-diag": tool("Diagnóstico"),
   "t-topology": tool("Topología"),
+  // Fuentes de descubrimiento activadas y apagadas (mismo diagrama), solo ruteo y manual.
+  "topology-sources": async () => { await tool("Topología")(); await wait(300); document.querySelector('[aria-label="Leyenda de enlaces"]')?.scrollIntoView({ block: "end" }); },
+  "topology-sources-off": async () => { await tool("Topología")(); await svgNode("rt-borde01"); },
+  "topology-ospf": async () => { await tool("Topología")(); await svgNode("rt-borde01"); },
+  "topology-manual": async () => { await tool("Topología")(); await svgNode("ap-bodega"); },
   "t-subnet": tool("Subredes"),
   "t-perf": tool("Velocidad"),
   "t-transfer": tool("TFTP / HTTP"),
