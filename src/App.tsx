@@ -8,7 +8,6 @@ import { TerminalView, TermController } from "./components/TerminalView";
 import { CredChange, SessionModal } from "./components/SessionModal";
 import { CommandPalette } from "./components/CommandPalette";
 import { QuickConnectDialog } from "./components/QuickConnectDialog";
-import { QuickBolt } from "./components/SessionIcon";
 import { ConfirmDialog } from "./components/ConfirmDialog";
 import { NotesPanel } from "./components/NotesPanel";
 import { CommandsPanel } from "./components/CommandsPanel";
@@ -1335,13 +1334,7 @@ function EmptyState({
   onTools: () => void;
 }) {
   const items: [React.ReactNode, string, () => void][] = [
-    [
-      <span key="q" className="flex items-center gap-1.5">
-        <QuickBolt size={14} /> Conexión rápida sin guardar
-      </span>,
-      `${modLabel}O`,
-      onQuick,
-    ],
+    ["Conexión rápida sin guardar", `${modLabel}O`, onQuick],
     ["Buscar sesión", `${modLabel}K`, onPalette],
     ["Nueva sesión guardada", `${modLabel}N`, onNew],
     ["Terminal local", `${modLabel}T`, onLocal],
