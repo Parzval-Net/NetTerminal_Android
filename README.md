@@ -177,6 +177,8 @@ Auditoría del binario con REA (Ghidra y utilidades nativas de macOS) y revisió
 | Servidor FTP: 60 s para iniciar sesión, máx. 8 clientes y 3 intentos, rutas confinadas, datos solo con la IP que inició sesión (RFC 2577); cliente FTP con tope de 4 MB por listado | Con tests |
 | TFTP/HTTP: rutas sin `:` en Windows (unidades o flujos NTFS) ni enlaces simbólicos al crear carpetas, timeout acotado a 30 s; el servidor HTTP ya no se cierra con rutas UTF-8 mal formadas | Con tests |
 | Ping y diagnóstico: un host entre corchetes no inyecta opciones (`[-f]`) | Con tests |
+| Topología: la salida del equipo se trata como no confiable (sin contaminación de prototipo, expresiones sin retroceso catastrófico, tope de 2.000 vecinos, sin caracteres de control ni bidi, nombres de interfaz validados antes de armar comandos); fuentes opcionales apagadas no envían comandos y todos los comandos son de consulta; "seguir la ruta" valida la IP y no copia comandos al conectar ni túneles | Con tests |
+| Comandos de transferencia: tope de 16 MB de salida por comando | Código |
 
 Pendiente para distribución corporativa: firmar con Developer ID + notarización (macOS) y certificado de firma de código (Windows). Las limitaciones conocidas están en [SECURITY.md](SECURITY.md#limitaciones-conocidas). Sin firma, AppLocker o Intune pueden bloquear la app. Los scripts Python ejecutan código local por diseño: en una carpeta portable compartida, revisa los scripts antes de ejecutarlos.
 
