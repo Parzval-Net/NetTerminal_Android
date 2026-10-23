@@ -103,11 +103,11 @@ Destination/Mask    Proto   Pre  Cost      Flags NextHop         Interface
 
 <ar-wan01>`;
 
-function terminalFor(s) {
+let terminalFor = (s) => {
   if (s.highlight === "huawei") return HUAWEI;
   if (s.type === "local") return "\x1b[32muser@laptop\x1b[0m:\x1b[34m~\x1b[0m$ ";
   return CISCO.replaceAll("core-sw01", s.name);
-}
+};
 
 const notes = {
   "plantilla-vlan.txt": `! Alta de VLAN en acceso (variables con {{...}})
@@ -761,6 +761,20 @@ if (new URLSearchParams(location.search).has("video")) {
     lineBuf.set(id, buf);
     return null;
   };
+  // ?scene=suggest-config: core-sw01 parte en modo configuración de interfaz (prueba de que
+  // `sh` no se sugiere como `show`, porque ahí es `shutdown`); `end` vuelve a modo consulta.
+  if (location.search.includes("scene=suggest-config")) {
+    const connect = handlers.connect;
+    handlers.connect = (args) => {
+      if (args.session?.name === "core-sw01") modes.set(args.id, "config-if");
+      return connect(args);
+    };
+    const base = terminalFor;
+    terminalFor = (s) =>
+      s.name === "core-sw01"
+        ? `${base(s)}configure terminal\nEnter configuration commands, one per line.  End with CNTL/Z.\ncore-sw01(config)#interface GigabitEthernet1/0/4\ncore-sw01(config-if)#`
+        : base(s);
+  }
   handlers.save_session = ({ session }) => {
     const saved = { ...session, id: session.id || `v${Date.now()}`, created_at: session.created_at || new Date().toISOString() };
     const i = sessions.findIndex((x) => x.id === saved.id);
@@ -1085,6 +1099,7 @@ Object.assign(scenes, {
   "t-backup": scenes.backup,
   "t-plugins": tool("Plugins"),
   suggest: async () => { await open("core-sw01"); },
+  "suggest-config": async () => { await open("core-sw01"); },
 });
 // Acceso para el script de QA (CDP): pasos adicionales sobre una escena.
 window.__demo = { click, open, wait, svgNode, emit, find, setVal };

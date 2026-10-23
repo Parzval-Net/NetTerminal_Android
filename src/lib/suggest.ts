@@ -12,6 +12,9 @@
  *   (`sh ip int br` → `show ip interface brief`) con búsqueda binaria por nivel de palabra.
  * - Ranking: prefijo exacto primero, luego abreviaturas; dentro de cada grupo pesa el uso
  *   local (plantillas aceptadas o ejecutadas, nunca argumentos) y los favoritos.
+ * - Modo: el prompt dice si la CLI está en configuración (`(config-if)#`, `[HUAWEI]`, `#` de
+ *   Junos, `FGT (interface) #`). Ahí una abreviatura puede ser otro comando (`sh` es `shutdown`),
+ *   así que solo se sugiere tras `do `/`run ` o con `display`/`show` completo (Huawei, ASA).
  * - Seguridad: el texto gris solo ofrece consultas; lo que inserta una sugerencia nunca
  *   incluye Enter, saltos de línea ni caracteres de control, y se corta en el primer
  *   marcador ({{interfaz}} o <interfaz>).
@@ -20,8 +23,12 @@ import { type CatalogVendor, type Risk, appliesTo, commandFor, computeRisk } fro
 
 /** Prompt típico de equipos y shells (también lo usan los comandos al conectar). */
 export const PROMPT = /[>#$%\]]\s*$/;
-/** Pedido de usuario, contraseña o passphrase: ahí no se sigue lo tecleado. */
-export const CREDENTIALS = /(password|passphrase|contraseña|username|user name|login)[^\n]*:\s*$/i;
+/**
+ * Pedido de usuario, contraseña, passphrase o segundo factor: ahí no se sigue lo tecleado.
+ * Incluye los de RADIUS/TACACS+ (PASSCODE, PIN, token, OTP, código de verificación).
+ */
+export const CREDENTIALS =
+  /(password|passphrase|passcode|pass code|contraseña|clave|username|user name|usuario|login|\bpin\b|\btoken\b|\botp\b|one-time|verification code|código|\bsecret\b|\bresponse\b)[^\n]*:\s*$/i;
 
 /** Tope de la línea seguida: una línea más larga deja de sugerir. */
 const MAX_BUF = 256;
@@ -44,6 +51,74 @@ export function atPrompt(line: string, buf: string): boolean {
   return buf.length > 0 && endsWithTyped(line, buf);
 }
 
+/** El prompt de una línea que es prompt + lo tecleado (sin el "$" del desplazamiento de IOS). */
+function promptPart(line: string, buf: string): string {
+  return line.endsWith(buf) ? line.slice(0, line.length - buf.length) : line.slice(0, line.lastIndexOf("$"));
+}
+
+// ---------- Modo de la CLI (según el prompt) ----------
+
+/**
+ * exec: modo de consulta (Cisco `>`/`#`, Huawei `<...>`, Junos `>`, FortiOS `FGT #`).
+ * config: configuración o un modo que no es la CLI de consulta, donde una abreviatura
+ * puede ser otro comando (`sh` es `shutdown` en una interfaz de Cisco).
+ */
+export type CliMode = "exec" | "config";
+
+/** Cisco `(config...)#`, `(config-if)#`, `(dhcp-config)#`; FortiOS `FGT (interface) #`; WatchGuard `WG(config)#`. */
+const PAREN_MODE = /\([^()]*\)\s*#\s*$/;
+/** Huawei: vista de sistema o de interfaz `[HUAWEI]`, `[~HUAWEI-GigabitEthernet0/0/1]`, `[*HUAWEI]`. */
+const BRACKET_MODE = /\[[^[\]]*\]\s*$/;
+
+/**
+ * Modo según el prompt. Ante la duda se elige config: apagar el texto gris nunca es un riesgo.
+ * Junos usa `#` en configuración y `%`/`$` en la shell de FreeBSD: solo `>` es modo operacional.
+ */
+export function cliMode(prompt: string, vendor: string): CliMode {
+  const p = prompt.trimEnd();
+  if (PAREN_MODE.test(p) || BRACKET_MODE.test(p)) return "config";
+  if (vendor === "juniper" && !p.endsWith(">")) return "config";
+  return "exec";
+}
+
+/**
+ * En configuración solo se sugiere lo que el fabricante ejecuta igual que en modo consulta:
+ * después de `do ` (Cisco IOS, IOS-XE, NX-OS, IOS-XR) o `run ` (Junos), o un comando que
+ * empieza con la palabra completa `display` (Huawei, válida en todas las vistas) o `show`
+ * (ASA, que acepta show en configuración). Cada entrada: prefijo de escape o palabra
+ * exigida, y si el escape se quita de la búsqueda.
+ */
+const CONFIG_ESCAPE: Record<string, { re: RegExp; strip: boolean; hint: string }> = {
+  cisco: { re: /^\s*do\s+/i, strip: true, hint: "Modo configuración: escribe «do » antes de una consulta para ver sugerencias" },
+  juniper: { re: /^\s*run\s+/i, strip: true, hint: "Modo configuración: escribe «run » antes de una consulta para ver sugerencias" },
+  huawei: { re: /^\s*display(\s|$)/i, strip: false, hint: "Vista de configuración: solo se sugieren comandos que empiezan con «display» completo" },
+};
+const ASA_ESCAPE = { re: /^\s*show(\s|$)/i, strip: false, hint: "Modo configuración: solo se sugieren comandos que empiezan con «show» completo" };
+
+/** La regla de escape de configuración para la plataforma (null: en configuración no se sugiere nada). */
+function configEscape(vendor: string, platform: string) {
+  if (platform === "asa") return ASA_ESCAPE;
+  return CONFIG_ESCAPE[vendor] ?? null;
+}
+
+/**
+ * Lo que se busca en el catálogo según el modo: en exec, lo tecleado; en configuración, solo
+ * lo que va detrás de un escape (`do `, `run `) o un `display`/`show` completo; si no, null
+ * (ni texto gris ni lista).
+ */
+export function suggestQuery(buf: string, prompt: string, idx: Pick<SuggestIndex, "vendor" | "platform">): string | null {
+  if (cliMode(prompt, idx.vendor) === "exec") return buf;
+  const esc = configEscape(idx.vendor, idx.platform);
+  const m = esc?.re.exec(buf);
+  if (!esc || !m) return null;
+  return esc.strip ? buf.slice(m[0].length) : buf;
+}
+
+/** Aviso para la tecla de lista en configuración. */
+export function configHint(idx: Pick<SuggestIndex, "vendor" | "platform">): string {
+  return configEscape(idx.vendor, idx.platform)?.hint ?? "Modo configuración: las sugerencias solo funcionan en modo consulta";
+}
+
 // ---------- Estado de la línea ----------
 
 export class InputTracker {
@@ -55,6 +130,8 @@ export class InputTracker {
   cred = false;
   /** Hubo una tecla de control o un pegado: lo tecleado es desconocido hasta el próximo Enter. */
   lost = false;
+  /** Prompt de la línea sincronizada (define el modo: consulta o configuración). Solo en memoria. */
+  prompt = "";
 
   /** Deja de seguir la línea hasta el próximo Enter o salto de línea. */
   reset() {
@@ -69,6 +146,7 @@ export class InputTracker {
     this.sync = false;
     this.cred = false;
     this.lost = false;
+    this.prompt = "";
   }
 
   /** Se puede sugerir sobre la línea actual. */
@@ -148,6 +226,7 @@ export class InputTracker {
   resync(line: string): boolean {
     if (!this.canResync || !atPrompt(line, this.buf)) return false;
     this.sync = true;
+    this.prompt = promptPart(line, this.buf);
     return true;
   }
 }
@@ -197,6 +276,8 @@ export interface SuggestIndex {
   abbrev: boolean;
   /** Ordenado por `key`. */
   entries: SuggestEntry[];
+  /** Los que no son consulta: lo tecleado no debe poder ser uno de ellos si se ofrece texto gris. */
+  risky: SuggestEntry[];
 }
 
 /**
@@ -208,6 +289,11 @@ export const ABBREV_VENDORS = new Set(["cisco", "huawei", "juniper", "fortinet"]
 /** {{variable}} de las plantillas o <marcador> de la documentación de los fabricantes. */
 const PLACEHOLDER = /\{\{[^}]*\}\}|<[A-Za-z][\w .:/-]*>/;
 const RANK: Record<Risk, number> = { read: 0, change: 1, disruptive: 2 };
+/**
+ * Filtros de salida que escriben a disco (Junos `| save`, IOS `| redirect`, `| append`,
+ * `| tee`): computeRisk los deja como consulta, pero aquí cuentan como cambio.
+ */
+const PIPE_WRITE = /\|\s*(save|redirect|append|tee)\b/i;
 
 /** Texto que se puede insertar de un comando: se corta en el primer marcador. */
 export function insertablePart(cmd: string): { insert: string; placeholder: boolean } {
@@ -230,7 +316,7 @@ export function buildIndex(vendors: CatalogVendor[], platform: string): SuggestI
     const key = cmd.toLowerCase();
     if (seen.has(key)) return;
     seen.add(key);
-    const computed = computeRisk(cmd);
+    const computed = PIPE_WRITE.test(cmd) && computeRisk(cmd) === "read" ? "change" : computeRisk(cmd);
     const risk = RANK[computed] > RANK[c.risk] ? computed : c.risk;
     const toks = key.split(" ");
     const starts: number[] = [];
@@ -244,7 +330,8 @@ export function buildIndex(vendors: CatalogVendor[], platform: string): SuggestI
   // El espacio es menor que cualquier carácter visible: ordenar por `key` ordena por palabras.
   entries.sort((a, b) => (a.key < b.key ? -1 : a.key > b.key ? 1 : a.order - b.order));
   entries.forEach((e, i) => (e.pos = i));
-  return { platform, vendor: vendor.id, abbrev: ABBREV_VENDORS.has(vendor.id), entries };
+  const risky = entries.filter((e) => e.risk !== "read");
+  return { platform, vendor: vendor.id, abbrev: ABBREV_VENDORS.has(vendor.id), entries, risky };
 }
 
 const cache = new WeakMap<CatalogVendor[], Map<string, SuggestIndex | null>>();
@@ -393,6 +480,9 @@ export const GHOST_MIN = 2;
 export function ghostFor(idx: SuggestIndex, buf: string, weights?: Weights): Ghost | null {
   const q = queryOf(buf);
   if (q.length < GHOST_MIN) return null;
+  // Si lo tecleado, tal como está, ya puede ser un comando con riesgo, no se sugiere nada:
+  // el texto gris haría creer que Enter ejecuta la consulta.
+  if (riskyAsTyped(idx, buf)) return null;
   const toks = q.split(" ");
   let best: SuggestEntry | null = null;
   let bestExact = false;
@@ -456,26 +546,53 @@ export function matchSpans(entry: SuggestEntry, buf: string): { text: string; hi
  * Se llama solo al presionar Enter.
  */
 export function matchExecuted(idx: SuggestIndex, buf: string): SuggestEntry | null {
-  const q = queryOf(buf).trimEnd();
-  if (!q) return null;
-  const toks = q.split(" ");
+  const toks = lineToks(buf);
+  if (!toks) return null;
   let best: SuggestEntry | null = null;
   let bestScore = -1;
   for (const e of idx.entries) {
-    if (e.toks.length !== toks.length) continue;
-    let score = 0;
-    let ok = true;
-    for (let i = 0; i < toks.length && ok; i++) {
-      const et = e.toks[i];
-      const ph = PLACEHOLDER.exec(et);
-      if (et === toks[i]) score += 2;
-      else if (ph) ok = toks[i].length > ph.index && toks[i].startsWith(et.slice(0, ph.index));
-      else if (idx.abbrev && et.startsWith(toks[i])) score += 1;
-      else ok = false;
-    }
-    if (ok && (score > bestScore || (score === bestScore && best && e.order < best.order))) (best = e), (bestScore = score);
+    const score = lineScore(e, toks, idx.abbrev);
+    if (score > bestScore || (score >= 0 && score === bestScore && best && e.order < best.order)) (best = e), (bestScore = score);
   }
   return best;
+}
+
+/** Palabras de una línea completa (null si está vacía). */
+const lineToks = (buf: string) => {
+  const q = queryOf(buf).trimEnd();
+  return q ? q.split(" ") : null;
+};
+
+/**
+ * Qué tan bien una línea completa corresponde a `e` (-1 si no corresponde): cada palabra
+ * igual vale 2 y cada abreviatura 1; un marcador acepta cualquier palabra (su valor no
+ * se guarda ni se compara).
+ */
+function lineScore(e: SuggestEntry, toks: string[], abbrev: boolean): number {
+  if (e.toks.length !== toks.length) return -1;
+  let score = 0;
+  for (let i = 0; i < toks.length; i++) {
+    const et = e.toks[i];
+    const ph = PLACEHOLDER.exec(et);
+    if (et === toks[i]) score += 2;
+    else if (ph) {
+      if (!(toks[i].length > ph.index && toks[i].startsWith(et.slice(0, ph.index)))) return -1;
+    } else if (abbrev && et.startsWith(toks[i])) score += 1;
+    else return -1;
+  }
+  return score;
+}
+
+/**
+ * Lo tecleado, si se presionara Enter tal como está, podría ser un comando del catálogo que
+ * no es consulta (escrito completo o abreviado, con o sin argumentos). Pocos comandos por
+ * plataforma: cuesta menos que la búsqueda.
+ */
+export function riskyAsTyped(idx: SuggestIndex, buf: string): boolean {
+  const toks = lineToks(buf);
+  if (!toks) return false;
+  for (const e of idx.risky) if (lineScore(e, toks, idx.abbrev) >= 0) return true;
+  return false;
 }
 
 /** Última barrera: corta en el primer salto de línea y quita cualquier carácter de control. */
@@ -492,7 +609,11 @@ type UsageMap = Record<string, Record<string, [number, number]>>;
 const MAX_PER_PLATFORM = 60;
 const MAX_PLATFORMS = 40;
 const MAX_TPL = 300;
+/** Tope del historial guardado (JSON): con plantillas típicas de 30 a 60 caracteres sobra. */
+export const MAX_USAGE_BYTES = 32 * 1024;
 export const USAGE_KEY = "nt.suggestUsage.v1";
+/** Objeto sin prototipo: una plataforma o plantilla "__proto__" no altera nada. */
+const dict = <T>(): Record<string, T> => Object.create(null);
 const today = () => Math.floor(Date.now() / 86_400_000);
 
 /**
@@ -501,7 +622,7 @@ const today = () => Math.floor(Date.now() / 86_400_000);
  * ni secretos. Con tope por plataforma; se borra desde Ajustes.
  */
 export class SuggestUsage {
-  private data: UsageMap = {};
+  private data: UsageMap = dict();
   /** Cambia en cada registro o borrado (invalida los pesos en caché). */
   version = 0;
   private cached = new WeakMap<SuggestIndex, { v: number; favs: unknown; w: Int32Array }>();
@@ -512,13 +633,15 @@ export class SuggestUsage {
 
   /** Carga validando forma y contenido (un archivo alterado no inyecta nada raro). */
   load(raw: string) {
-    this.data = {};
+    this.data = dict();
     try {
+      // Un valor más grande que el tope no lo escribió esta app: se descarta sin leerlo.
+      if (raw.length > MAX_USAGE_BYTES * 2) throw new Error("historial demasiado grande");
       const parsed = JSON.parse(raw);
       const p = parsed?.v === 1 && parsed.p && typeof parsed.p === "object" ? parsed.p : null;
       for (const [plat, m] of Object.entries(p ?? {}).slice(0, MAX_PLATFORMS)) {
         if (!/^[\w.-]{1,40}$/.test(plat) || !m || typeof m !== "object") continue;
-        const out: Record<string, [number, number]> = {};
+        const out = dict<[number, number]>();
         for (const [tpl, v] of Object.entries(m as Record<string, unknown>).slice(0, MAX_PER_PLATFORM)) {
           if (tpl.length > MAX_TPL || CONTROL.test(tpl) || !Array.isArray(v)) continue;
           const [n, d] = v;
@@ -527,13 +650,34 @@ export class SuggestUsage {
         this.data[plat] = out;
       }
     } catch {
-      this.data = {};
+      this.data = dict();
     }
+    this.trim();
     this.version++;
   }
 
   serialize(): string {
     return JSON.stringify({ v: 1, p: this.data });
+  }
+
+  /** Bajo el tope de bytes: salen las plantillas menos usadas (y, si empatan, las más antiguas). */
+  private trim() {
+    let size = this.serialize().length;
+    while (size > MAX_USAGE_BYTES) {
+      let worst: [string, string] | null = null;
+      let w: [number, number] = [Infinity, Infinity];
+      for (const [plat, m] of Object.entries(this.data))
+        for (const [tpl, v] of Object.entries(m)) if (v[0] < w[0] || (v[0] === w[0] && v[1] < w[1])) (worst = [plat, tpl]), (w = v);
+      if (!worst) break;
+      const [plat, tpl] = worst;
+      delete this.data[plat][tpl];
+      // Lo liberado: "plantilla":[n,d] y su coma (o la plataforma entera si quedó vacía).
+      size -= JSON.stringify(tpl).length + JSON.stringify(w).length + 2;
+      if (!Object.keys(this.data[plat]).length) {
+        delete this.data[plat];
+        size -= JSON.stringify(plat).length + 3;
+      }
+    }
   }
 
   /** Registra el uso de un comando del catálogo (aceptado o ejecutado). */
@@ -544,7 +688,7 @@ export class SuggestUsage {
     if (!m) {
       const plats = Object.keys(this.data);
       if (plats.length >= MAX_PLATFORMS) delete this.data[plats[0]];
-      m = this.data[platform] = {};
+      m = this.data[platform] = dict();
     }
     const prev = m[tpl];
     m[tpl] = [(prev?.[0] ?? 0) + 1, day];
@@ -555,11 +699,12 @@ export class SuggestUsage {
       for (const k of keys) if (k !== tpl && (m[k][0] < m[drop][0] || (m[k][0] === m[drop][0] && m[k][1] < m[drop][1]))) drop = k;
       delete m[drop];
     }
+    this.trim();
     this.version++;
   }
 
   clear() {
-    this.data = {};
+    this.data = dict();
     this.version++;
   }
 
@@ -576,7 +721,7 @@ export class SuggestUsage {
     const c = this.cached.get(idx);
     if (c && c.v === this.version && c.favs === favs) return c.w;
     const w = new Int32Array(idx.entries.length);
-    const m = this.data[idx.platform] ?? {};
+    const m = this.data[idx.platform] ?? dict();
     for (const e of idx.entries) {
       const u = m[e.tpl];
       let s = favs.has(`${idx.vendor}:${e.tpl}`) ? 4 : 0;
@@ -720,4 +865,56 @@ export function suggestKey(e: KeyLike, ctx: { enabled: boolean; listOpen: boolea
     if (!e.metaKey && !e.shiftKey && e.ctrlKey !== e.altKey) return "word";
   }
   return "pass";
+}
+
+// ---------- Color del texto gris ----------
+
+/** "#rgb", "#rrggbb" o "rgb(r, g, b)" a [r, g, b] (null si no se reconoce). */
+function parseColor(c: string | undefined): [number, number, number] | null {
+  if (!c) return null;
+  let m = /^#([0-9a-f]{3}|[0-9a-f]{6})$/i.exec(c.trim());
+  if (m) {
+    const h = m[1].length === 3 ? [...m[1]].map((x) => x + x).join("") : m[1];
+    return [parseInt(h.slice(0, 2), 16), parseInt(h.slice(2, 4), 16), parseInt(h.slice(4, 6), 16)];
+  }
+  m = /^rgba?\(\s*(\d+)\s*,\s*(\d+)\s*,\s*(\d+)/i.exec(c.trim());
+  return m ? [+m[1], +m[2], +m[3]] : null;
+}
+
+/** Luminancia relativa (WCAG 2.x). */
+function luminance([r, g, b]: number[]): number {
+  const lin = (v: number) => ((v /= 255) <= 0.03928 ? v / 12.92 : ((v + 0.055) / 1.055) ** 2.4);
+  return 0.2126 * lin(r) + 0.7152 * lin(g) + 0.0722 * lin(b);
+}
+
+function ratioOf(a: number[], b: number[]): number {
+  const [l1, l2] = [luminance(a), luminance(b)].sort((p, q) => q - p);
+  return (l1 + 0.05) / (l2 + 0.05);
+}
+
+/** Contraste WCAG entre dos colores (0 si alguno no se reconoce). */
+export function contrastRatio(a: string, b: string): number {
+  const x = parseColor(a);
+  const y = parseColor(b);
+  return x && y ? ratioOf(x, y) : 0;
+}
+
+/** Contraste mínimo del texto gris con el fondo (WCAG 1.4.11, componentes no textuales). */
+export const GHOST_CONTRAST = 3;
+
+/**
+ * Color del texto gris: el del texto mezclado con el fondo, con la menor opacidad (desde 45%)
+ * que llega a 3:1 con el fondo. Así se ve en todos los temas y queda por debajo del texto real
+ * (en temas de poco contraste, como Solarized, se le acerca sin igualarlo).
+ * null si los colores no se reconocen (la terminal usa entonces opacidad fija).
+ */
+export function ghostColor(fg: string | undefined, bg: string | undefined): string | null {
+  const f = parseColor(fg);
+  const b = parseColor(bg);
+  if (!f || !b) return null;
+  const mix = (a: number) => f.map((v, i) => Math.round(v * a + b[i] * (1 - a)));
+  let a = 0.45;
+  while (a < 0.9 && ratioOf(mix(a), b) < GHOST_CONTRAST) a += 0.025;
+  const [r, g, bl] = mix(a);
+  return `rgb(${r}, ${g}, ${bl})`;
 }

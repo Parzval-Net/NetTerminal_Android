@@ -54,6 +54,10 @@ const SHOTS = [
   ["pestanas-x-oscuro-tema-claro", "terminal", "dark", { query: "&term=nt-light", hover: '[title^="core-sw01"]' }],
   ["pestanas-verticales-x-oscuro", "vertical", "dark", { hover: '[role="tab"][data-id="t3"]' }],
   ["sugerencias-comandos", "suggest", "light", { query: "&video=1", type: "sh ip int", keys: ["ctrl+period"] }],
+  // Modo configuración de interfaz: `sh` sería `shutdown`, así que no hay texto gris; la tecla de
+  // lista explica cómo pedir sugerencias, y con `do ` vuelven.
+  ["sugerencias-config", "suggest-config", "light", { query: "&video=1", type: "sh", keys: ["ctrl+period"] }],
+  ["sugerencias-config-do", "suggest-config", "dark", { query: "&video=1&term=solarized-dark", type: "do sh ip int b" }],
 ];
 /** Teclas especiales para `keys`: [key, code, keyCode, modificadores CDP (2 = Ctrl)]. */
 const KEYS = { "ctrl+space": [" ", "Space", 32, 2], "ctrl+period": [".", "Period", 190, 2], right: ["ArrowRight", "ArrowRight", 39, 0], down: ["ArrowDown", "ArrowDown", 40, 0] };
