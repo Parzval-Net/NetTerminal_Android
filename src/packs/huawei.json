@@ -44,12 +44,7 @@
       "desc": "Muestra fecha, hora y zona horaria del equipo. Clave para correlacionar logs y alarmas.",
       "cat": "Sistema",
       "risk": "read",
-      "platforms": [
-        "vrp5",
-        "vrp8"
-      ],
-      "note": "En YunShan verificar en tu versión (no se revisó la sección System Time).",
-      "source": "https://support.huawei.com/enterprise/en/doc/DOC1000060766/b9a04cb4/common-display-commands"
+      "source": "https://support.huawei.com/enterprise/en/doc/EDOC1100517148/9bac53ac/system-time-configuration-commands"
     },
     {
       "cmd": "display users",
@@ -63,42 +58,37 @@
       "desc": "Muestra el software, el archivo de configuración y los parches de arranque actual y del próximo reinicio.",
       "cat": "Sistema",
       "risk": "read",
-      "source": "https://support.huawei.com/enterprise/en/doc/DOC1000060766/b9a04cb4/common-display-commands"
+      "source": "https://support.huawei.com/enterprise/en/doc/EDOC1100517148/116aa164/upgrade-maintenance-configuration-commands"
     },
     {
       "cmd": "display patch-information",
       "desc": "Muestra los parches instalados y su estado. Útil para validar baseline de software.",
       "cat": "Sistema",
       "risk": "read",
-      "source": "https://support.huawei.com/enterprise/en/doc/DOC1000060766/b9a04cb4/common-display-commands"
+      "source": "https://support.huawei.com/enterprise/en/doc/EDOC1100517148/116aa164/upgrade-maintenance-configuration-commands"
     },
     {
       "cmd": "display license",
       "desc": "Muestra el archivo de licencia activo, su vigencia y los ítems de control.",
       "cat": "Sistema",
       "risk": "read",
-      "platforms": [
-        "vrp5",
-        "vrp8"
-      ],
-      "note": "En YunShan la licencia se gestiona con otra familia de comandos; verificar en tu versión.",
-      "source": "https://support.huawei.com/enterprise/en/doc/DOC1000060766/b9a04cb4/common-display-commands"
+      "source": "https://support.huawei.com/enterprise/en/doc/EDOC1100517148/30d119d7/license-configuration-commands"
     },
     {
       "cmd": "display diagnostic-information",
       "desc": "Recolecta la salida de múltiples display para análisis de fallas o casos con soporte. Tarda y genera mucha salida.",
       "cat": "Sistema",
       "risk": "read",
-      "note": "Se puede redirigir a archivo: 'display diagnostic-information > {{archivo}}' según versión.",
-      "source": "https://support.huawei.com/enterprise/en/doc/DOC1000060766/b9a04cb4/common-display-commands"
+      "note": "Para guardar la salida en un archivo, agregar el nombre al final (display diagnostic-information {{archivo}}). Genera mucha salida y puede subir la CPU por unos momentos.",
+      "source": "https://support.huawei.com/enterprise/en/doc/EDOC1100517148/54f8dacb/first-login-to-a-device-configuration-commands"
     },
     {
       "cmd": "display cpu-usage",
       "desc": "Muestra el uso de CPU actual y por proceso. Base para diagnosticar alta CPU y flapping de protocolos.",
       "cat": "Sistema",
       "risk": "read",
-      "note": "En CloudEngine con VRP8 el comando documentado es 'display cpu'.",
-      "source": "https://support.huawei.com/enterprise/en/doc/EDOC1100112347/6a4c3444/displaying-the-cpu-usage"
+      "note": "En CloudEngine (VRP8) el comando documentado es 'display cpu'; en NE8000 es 'display cpu-usage'.",
+      "source": "https://support.huawei.com/enterprise/en/doc/EDOC1100517148/c6801428/hardware-management-configuration-commands"
     },
     {
       "cmd": "display cpu-usage history",
@@ -109,7 +99,15 @@
         "vrp5",
         "vrp8"
       ],
-      "note": "En VRP8 admite '1hour', '24hour' o '72hour'.",
+      "variants": [
+        {
+          "platforms": [
+            "yunshan"
+          ],
+          "cmd": "display cpu-usage monitor history"
+        }
+      ],
+      "note": "Admite 1hour, 24hour o 72hour en switches S (VRP5) y NE (VRP8). En YunShan se usa 'display cpu-usage monitor history'. Sintaxis no confirmada en documentación oficial para AR (V300R026); verificar.",
       "source": "https://support.huawei.com/enterprise/en/doc/EDOC1100279274/177f4258/device-management-configuration"
     },
     {
@@ -130,7 +128,7 @@
         }
       ],
       "note": "En YunShan (AR5700/AR6700/AR8000) el comando es 'display memory'. En CloudEngine VRP8 también se documenta 'display memory'.",
-      "source": "https://support.huawei.com/enterprise/en/doc/EDOC1100112347/1d4b04d2/displaying-the-memory-usage"
+      "source": "https://support.huawei.com/enterprise/en/doc/EDOC1100517148/c6801428/hardware-management-configuration-commands"
     },
     {
       "cmd": "display health",
@@ -138,21 +136,21 @@
       "cat": "Sistema",
       "risk": "read",
       "note": "Documentado en AR V300R, YunShan y CloudEngine. En switches S V200R011 no aparece; verificar en tu versión.",
-      "source": "https://support.huawei.com/enterprise/en/doc/EDOC1100112347/7ae1492e/displaying-the-device-health-status"
+      "source": "https://support.huawei.com/enterprise/en/doc/EDOC1100517148/c6801428/hardware-management-configuration-commands"
     },
     {
       "cmd": "display alarm active",
       "desc": "Lista las alarmas activas no despejadas. Punto de partida en cualquier troubleshooting.",
       "cat": "Sistema",
       "risk": "read",
-      "source": "https://support.huawei.com/enterprise/en/doc/EDOC1100112347/48d72bac/displaying-alarm-information"
+      "source": "https://support.huawei.com/enterprise/en/doc/EDOC1100517148/b9291acb/fault-management-configuration-commands"
     },
     {
       "cmd": "display alarm history",
       "desc": "Muestra las alarmas históricas registradas desde el arranque.",
       "cat": "Sistema",
       "risk": "read",
-      "source": "https://support.huawei.com/enterprise/en/doc/EDOC1100112347/48d72bac/displaying-alarm-information"
+      "source": "https://support.huawei.com/enterprise/en/doc/EDOC1100517148/b9291acb/fault-management-configuration-commands"
     },
     {
       "cmd": "display esn",
@@ -175,16 +173,18 @@
     },
     {
       "cmd": "display configuration recover-result",
-      "desc": "Muestra si hubo comandos que fallaron al cargar la configuración en el arranque.",
+      "desc": "Muestra el resultado de la restauración de la configuración tras un upgrade, incluidos los comandos que fallaron.",
       "cat": "Sistema",
       "risk": "read",
-      "source": "https://support.huawei.com/enterprise/en/doc/DOC1000060766/b9a04cb4/common-display-commands"
+      "note": "Sintaxis no confirmada en documentación oficial para AR (V300R026); verificar.",
+      "source": "https://support.huawei.com/enterprise/en/doc/EDOC1100517148/d5595e3f/configuration-file-management-configuration-commands"
     },
     {
       "cmd": "dir",
       "desc": "Lista archivos y espacio libre del almacenamiento (flash/cfcard). Revisar antes de upgrades o respaldos.",
       "cat": "Sistema",
       "risk": "read",
+      "note": "Vista usuario.",
       "source": "https://support.huawei.com/enterprise/en/doc/EDOC1100517148/336e0358/file-system-management-configuration-commands"
     },
     {
@@ -212,7 +212,7 @@
       "desc": "Muestra el estado de tarjetas, slots y componentes (registro, alimentación, estado).",
       "cat": "Hardware",
       "risk": "read",
-      "source": "https://support.huawei.com/enterprise/en/doc/DOC1000060766/b9a04cb4/common-display-commands"
+      "source": "https://support.huawei.com/enterprise/en/doc/EDOC1100517148/c6801428/hardware-management-configuration-commands"
     },
     {
       "cmd": "display elabel",
@@ -232,7 +232,7 @@
         }
       ],
       "note": "En YunShan y CloudEngine VRP8 el comando es 'display device elabel'.",
-      "source": "https://support.huawei.com/enterprise/en/doc/EDOC1100112347/a8bbda1/displaying-electronic-labels"
+      "source": "https://support.huawei.com/enterprise/en/doc/EDOC1100517148/c6801428/hardware-management-configuration-commands"
     },
     {
       "cmd": "display temperature all",
@@ -316,8 +316,8 @@
           "cmd": "display interface transceiver verbose"
         }
       ],
-      "note": "En YunShan la sintaxis es 'display interface transceiver'. En NE VRP8 IP Fabric reporta 'display optical-module'; verificar en tu versión.",
-      "source": "https://support.huawei.com/enterprise/en/doc/EDOC1100112347/94ef2802/displaying-optical-module-information"
+      "note": "En YunShan se usa 'display interface transceiver [verbose]'. En switches S y AR (VRP5) la sintaxis es 'display transceiver [interface ...] [verbose]'.",
+      "source": "https://support.huawei.com/enterprise/en/doc/EDOC1100517148/c6801428/hardware-management-configuration-commands"
     },
     {
       "cmd": "display transceiver interface {{interfaz}} verbose",
@@ -346,7 +346,7 @@
       "platforms": [
         "vrp8"
       ],
-      "note": "Sintaxis documentada: 'display elabel optical-module { brief | interface ifnum }'.",
+      "note": "Sintaxis documentada en NE8000: 'display elabel optical-module { brief | interface ifnum }'. No figura en la referencia de CloudEngine 12800 V200R025C00.",
       "source": "https://support.huawei.com/enterprise/en/doc/EDOC1100279274/177f4258/device-management-configuration"
     },
     {
@@ -354,11 +354,7 @@
       "desc": "Muestra el estado de redundancia entre MPU activa y standby y si el sistema está listo para conmutar.",
       "cat": "Hardware",
       "risk": "read",
-      "platforms": [
-        "vrp5",
-        "vrp8"
-      ],
-      "source": "https://support.huawei.com/enterprise/en/doc/DOC1000060766/b9a04cb4/common-display-commands"
+      "source": "https://support.huawei.com/enterprise/en/doc/EDOC1100517148/4ebb5c08/intra-chassis-high-availability-configuration-commands"
     },
     {
       "cmd": "display reboot-info",
@@ -373,9 +369,10 @@
           "platforms": [
             "yunshan"
           ],
-          "cmd": "display reboot information"
+          "cmd": "display reboot information slot {{slot}}"
         }
       ],
+      "note": "En YunShan el parámetro slot es obligatorio. Sintaxis no confirmada en documentación oficial para AR (V300R026); verificar.",
       "source": "https://support.huawei.com/enterprise/en/doc/EDOC1000178165/5840eb45/configuring-system-startup-commands"
     },
     {
@@ -397,7 +394,7 @@
       "desc": "Detalle de una interfaz: estado, velocidad/duplex, MTU, contadores, CRC y tasas. Base para diagnosticar errores físicos.",
       "cat": "Interfaces",
       "risk": "read",
-      "source": "https://support.huawei.com/enterprise/en/doc/DOC1000060766/b9a04cb4/common-display-commands"
+      "source": "https://support.huawei.com/enterprise/en/doc/EDOC1100517148/98a1b33e/interface-basic-configuration-commands"
     },
     {
       "cmd": "display interface description",
@@ -437,6 +434,7 @@
           "cmd": "display interface counters {{interfaz}}"
         }
       ],
+      "note": "Sintaxis no confirmada en documentación oficial para AR (V300R026, que documenta 'display interface counters'); verificar.",
       "source": "https://support.huawei.com/enterprise/en/doc/EDOC1000178165/cdd85713/basic-interface-configuration-commands"
     },
     {
@@ -456,6 +454,7 @@
           "cmd": "display interface counters errors"
         }
       ],
+      "note": "Sintaxis no confirmada en documentación oficial para AR (V300R026); verificar.",
       "source": "https://support.huawei.com/enterprise/en/doc/EDOC1000178165/cdd85713/basic-interface-configuration-commands"
     },
     {
@@ -468,16 +467,13 @@
         "yunshan"
       ],
       "note": "Documentado en CloudEngine VRP8 y YunShan. En NE40E/NE8000 verificar en tu versión.",
-      "source": "https://support.huawei.com/enterprise/en/doc/DOC1000060766/b9a04cb4/common-display-commands"
+      "source": "https://support.huawei.com/enterprise/en/doc/EDOC1100517148/98a1b33e/interface-basic-configuration-commands"
     },
     {
       "cmd": "display ipv6 interface brief",
       "desc": "Lista interfaces con IPv6 y su estado.",
       "cat": "Interfaces",
       "risk": "read",
-      "platforms": [
-        "yunshan"
-      ],
       "source": "https://support.huawei.com/enterprise/en/doc/EDOC1100517148/98a1b33e/interface-basic-configuration-commands"
     },
     {
@@ -497,6 +493,7 @@
           "cmd": "reset interface counters {{interfaz}}"
         }
       ],
+      "note": "En CloudEngine (VRP8) se usa 'reset interface counters'. Vista usuario.",
       "source": "https://support.huawei.com/enterprise/en/doc/EDOC1000178165/cdd85713/basic-interface-configuration-commands"
     },
     {
@@ -549,7 +546,7 @@
       "cmd": "system-view\ninterface {{interfaz}}\nip address {{ip}} {{mascara}}\nreturn",
       "desc": "Asigna una dirección IPv4 a una interfaz L3.",
       "cat": "Interfaces",
-      "risk": "change",
+      "risk": "disruptive",
       "variants": [
         {
           "platforms": [
@@ -602,13 +599,14 @@
     },
     {
       "cmd": "display mac-address flapping",
-      "desc": "Muestra MAC que se mueven entre puertos, síntoma típico de loops de capa 2.",
+      "desc": "Muestra la configuración de detección de MAC flapping y, según el modelo, los registros de MAC que cambian de puerto (síntoma típico de loops de capa 2).",
       "cat": "Capa 2",
       "risk": "read",
       "platforms": [
         "vrp5",
         "yunshan"
       ],
+      "note": "En switches S solo muestra la configuración; los eventos se ven con 'display mac-address flapping record'. Sintaxis no confirmada en documentación oficial para AR (V300R026); verificar.",
       "source": "https://support.huawei.com/enterprise/en/doc/EDOC1000178165/7404084d/mac-address-table-configuration-commands"
     },
     {
@@ -706,7 +704,7 @@
         "vrp5",
         "vrp8"
       ],
-      "note": "En CloudEngine VRP8 también aplica; NE no usa stack.",
+      "note": "En CloudEngine VRP8 también aplica; NE no usa stack. La referencia de AR V300R026 no documenta stack.",
       "source": "https://support.huawei.com/enterprise/en/doc/EDOC1000178165/3689aaf8/stack-configuration-commands"
     },
     {
@@ -727,7 +725,7 @@
           "cmd": "system-view\nvlan {{vlan}}\nquit\ninterface {{interfaz}}\nportswitch\nport link-type access\nport default vlan {{vlan}}\ncommit\nreturn"
         }
       ],
-      "note": "En NE VRP8 el puerto debe pasar a capa 2 con 'portswitch'. En AR5700 verificar si el puerto es L2 o L3 en tu modelo.",
+      "note": "En NE VRP8 el puerto debe pasar a capa 2 con 'portswitch'. En YunShan 'port link-type' solo existe en interfaces de Capa 2; si el puerto es L3, convertirlo antes con 'portswitch'. Cambiar el modo de un puerto en uso puede cortar el acceso.",
       "source": "https://support.huawei.com/enterprise/en/doc/EDOC1000178165/834147df/vlan-configuration-commands"
     },
     {
@@ -770,6 +768,7 @@
       "desc": "Muestra la tabla de rutas de una VRF (vpn-instance).",
       "cat": "Enrutamiento",
       "risk": "read",
+      "note": "Sintaxis no confirmada en documentación oficial para YunShan V600R025C00 sin parámetros adicionales (documenta '... vpn-instance <vrf> verbose' y '... protocol'); verificar.",
       "source": "https://support.huawei.com/enterprise/en/doc/EDOC1000178165/31b4832a/ip-routing-table-management-commands"
     },
     {
@@ -829,7 +828,7 @@
       "source": "https://support.huawei.com/enterprise/en/doc/EDOC1000178165/54c86941/bgp-configuration-commands"
     },
     {
-      "cmd": "display bgp peer {{ip}} verbose",
+      "cmd": "display bgp peer {{ip_vecino}} verbose",
       "desc": "Detalle de un vecino BGP: timers, capacidades, causa de última caída y contadores.",
       "cat": "Enrutamiento",
       "risk": "read",
@@ -843,18 +842,18 @@
       "source": "https://support.huawei.com/enterprise/en/doc/EDOC1000178165/54c86941/bgp-configuration-commands"
     },
     {
-      "cmd": "display bgp routing-table peer {{ip}} advertised-routes",
+      "cmd": "display bgp routing-table peer {{ip_vecino}} advertised-routes",
       "desc": "Muestra las rutas que el equipo anuncia a un vecino BGP.",
       "cat": "Enrutamiento",
       "risk": "read",
       "source": "https://support.huawei.com/enterprise/en/doc/EDOC1100517148/e597a48/bgp-configuration-commands"
     },
     {
-      "cmd": "refresh bgp {{ip}} import",
+      "cmd": "refresh bgp {{ip_vecino}} import",
       "desc": "Soft reset entrante: solicita al vecino reenviar rutas para aplicar nuevas políticas sin cortar la sesión.",
       "cat": "Enrutamiento",
       "risk": "change",
-      "note": "En YunShan 'refresh bgp' no acepta 'all' para IPv4 público; usa IP del vecino, 'external' o 'internal'.",
+      "note": "En YunShan 'refresh bgp' no acepta 'all' para IPv4 público; usa IP del vecino, 'external' o 'internal'. Vista usuario.",
       "source": "https://support.huawei.com/enterprise/en/doc/EDOC1100517148/e597a48/bgp-configuration-commands"
     },
     {
@@ -862,18 +861,19 @@
       "desc": "Reinicia el proceso OSPF y todas sus adyacencias. Provoca reconvergencia.",
       "cat": "Enrutamiento",
       "risk": "disruptive",
+      "note": "Vista usuario.",
       "source": "https://support.huawei.com/enterprise/en/doc/EDOC1000178165/753f0155/ospf-configuration-commands"
     },
     {
-      "cmd": "reset bgp {{ip}}",
+      "cmd": "reset bgp {{ip_vecino}}",
       "desc": "Reinicia (hard reset) la sesión BGP con un vecino. Corta el intercambio de rutas.",
       "cat": "Enrutamiento",
       "risk": "disruptive",
-      "note": "Preferir 'refresh bgp' cuando solo se requiere reaplicar políticas.",
+      "note": "Preferir 'refresh bgp' cuando solo se requiere reaplicar políticas. Vista usuario.",
       "source": "https://support.huawei.com/enterprise/en/doc/EDOC1100517148/e597a48/bgp-configuration-commands"
     },
     {
-      "cmd": "system-view\nip route-static {{ip}} {{mascara}} {{next_hop}}\nreturn",
+      "cmd": "system-view\nip route-static {{red_destino}} {{mascara}} {{next_hop}}\nreturn",
       "desc": "Agrega una ruta estática IPv4.",
       "cat": "Enrutamiento",
       "risk": "change",
@@ -882,9 +882,10 @@
           "platforms": [
             "vrp8"
           ],
-          "cmd": "system-view\nip route-static {{ip}} {{mascara}} {{next_hop}}\ncommit\nreturn"
+          "cmd": "system-view\nip route-static {{red_destino}} {{mascara}} {{next_hop}}\ncommit\nreturn"
         }
       ],
+      "note": "Vista de sistema. En VRP8 requiere commit (variante incluida).",
       "source": "https://support.huawei.com/enterprise/en/doc/EDOC1100517148/49714306/static-route-configuration-commands"
     },
     {
@@ -951,10 +952,6 @@
       "desc": "Muestra los vecinos BGP VPNv4 (sesiones MP-BGP entre PE o hacia RR).",
       "cat": "MPLS / VPN",
       "risk": "read",
-      "platforms": [
-        "vrp5",
-        "vrp8"
-      ],
       "source": "https://support.huawei.com/enterprise/en/doc/EDOC1000178165/54c86941/bgp-configuration-commands"
     },
     {
@@ -985,8 +982,10 @@
       "cat": "MPLS / VPN",
       "risk": "read",
       "platforms": [
+        "vrp5",
         "vrp8"
       ],
+      "note": "Documentado en NE8000 y en switches S y AR (VRP5). No figura en la referencia de CloudEngine 12800 V200R025C00.",
       "source": "https://support.huawei.com/enterprise/en/doc/EDOC1100279274/4189dec8/bgp-mpls-ip-vpn-configuration"
     },
     {
@@ -1032,9 +1031,9 @@
       "cat": "MPLS / VPN",
       "risk": "read",
       "platforms": [
+        "vrp5",
         "yunshan"
       ],
-      "note": "En AR VRP5 existe un comando equivalente; verificar en tu versión.",
       "source": "https://support.huawei.com/enterprise/en/doc/EDOC1100517148/cdcf5dac/ipsec-configuration-commands"
     },
     {
@@ -1042,9 +1041,6 @@
       "desc": "Muestra las SA IPsec (fase 2), SPI y contadores de tráfico cifrado.",
       "cat": "MPLS / VPN",
       "risk": "read",
-      "platforms": [
-        "yunshan"
-      ],
       "source": "https://support.huawei.com/enterprise/en/doc/EDOC1100517148/cdcf5dac/ipsec-configuration-commands"
     },
     {
@@ -1053,8 +1049,10 @@
       "cat": "MPLS / VPN",
       "risk": "disruptive",
       "platforms": [
+        "vrp5",
         "yunshan"
       ],
+      "note": "Vista usuario.",
       "source": "https://support.huawei.com/enterprise/en/doc/EDOC1100517148/cdcf5dac/ipsec-configuration-commands"
     },
     {
@@ -1062,10 +1060,6 @@
       "desc": "Muestra todas las ACL configuradas con sus reglas y contadores de match.",
       "cat": "Seguridad",
       "risk": "read",
-      "platforms": [
-        "vrp5",
-        "yunshan"
-      ],
       "source": "https://support.huawei.com/enterprise/en/doc/EDOC1000178165/f3ca4a6c/acl-configuration-commands"
     },
     {
@@ -1080,6 +1074,7 @@
       "desc": "Lista usuarios locales, estado y tipo de servicio.",
       "cat": "Seguridad",
       "risk": "read",
+      "note": "En CloudEngine (VRP8) se usa 'display aaa local-user'.",
       "source": "https://support.huawei.com/enterprise/en/doc/EDOC1000178165/330af205/aaa-configuration-commands"
     },
     {
@@ -1087,6 +1082,7 @@
       "desc": "Muestra los dominios AAA y sus esquemas de autenticación y autorización.",
       "cat": "Seguridad",
       "risk": "read",
+      "note": "En CloudEngine (VRP8) se usa 'display aaa domain'.",
       "source": "https://support.huawei.com/enterprise/en/doc/EDOC1000178165/330af205/aaa-configuration-commands"
     },
     {
@@ -1101,10 +1097,6 @@
       "desc": "Muestra las sesiones SSH activas.",
       "cat": "Seguridad",
       "risk": "read",
-      "platforms": [
-        "vrp8",
-        "yunshan"
-      ],
       "source": "https://support.huawei.com/enterprise/en/doc/EDOC1100517148/7fa11d5c/ssh-configuration-commands"
     },
     {
@@ -1123,6 +1115,15 @@
         "vrp5",
         "yunshan"
       ],
+      "variants": [
+        {
+          "platforms": [
+            "yunshan"
+          ],
+          "cmd": "display cpu-defend statistics all"
+        }
+      ],
+      "note": "En YunShan el parámetro es obligatorio: 'all' (AR5700, AR6700, AR8100) o 'mcu' (AR8700 y AR6700-H).",
       "source": "https://support.huawei.com/enterprise/en/doc/EDOC1100517148/74cf4e89/local-attack-defense-configuration-commands"
     },
     {
@@ -1164,7 +1165,7 @@
         }
       ],
       "note": "Aplica a AR con VRP5. En YunShan la tabla de sesiones se consulta con 'display session'.",
-      "source": "https://support.huawei.com/enterprise/en/doc/EDOC1100112357/d93152fe/displaying-the-firewall-configuration"
+      "source": "https://support.huawei.com/enterprise/en/doc/EDOC1100617160/10b7739a/firewall-configuration-commands"
     },
     {
       "cmd": "display firewall zone",
@@ -1175,7 +1176,7 @@
         "vrp5"
       ],
       "note": "Solo AR con VRP5.",
-      "source": "https://support.huawei.com/enterprise/en/doc/EDOC1100112357/d93152fe/displaying-the-firewall-configuration"
+      "source": "https://support.huawei.com/enterprise/en/doc/EDOC1100617160/10b7739a/firewall-configuration-commands"
     },
     {
       "cmd": "display nat outbound",
@@ -1191,11 +1192,11 @@
           "platforms": [
             "yunshan"
           ],
-          "cmd": "display nat-policy rule"
+          "cmd": "display nat-policy rule all"
         }
       ],
-      "note": "AR VRP5 usa 'nat outbound' en la interfaz. En YunShan (AR5700/AR6700/AR8000) NAT se configura con nat-policy.",
-      "source": "https://support.huawei.com/enterprise/en/doc/EDOC1100112351/63e60cd4/verifying-the-nat-configuration"
+      "note": "AR VRP5 usa 'nat outbound' en la interfaz. En YunShan (AR5700/AR6700/AR8000) NAT se configura con nat-policy y el comando exige 'all' o 'name <regla>'.",
+      "source": "https://support.huawei.com/enterprise/en/doc/EDOC1100617160/29a820da/nat-configuration-commands"
     },
     {
       "cmd": "display nat server",
@@ -1206,7 +1207,7 @@
         "vrp5",
         "yunshan"
       ],
-      "source": "https://support.huawei.com/enterprise/en/doc/EDOC1100112351/63e60cd4/verifying-the-nat-configuration"
+      "source": "https://support.huawei.com/enterprise/en/doc/EDOC1100617160/29a820da/nat-configuration-commands"
     },
     {
       "cmd": "display nat address-group",
@@ -1217,7 +1218,7 @@
         "vrp5",
         "yunshan"
       ],
-      "source": "https://support.huawei.com/enterprise/en/doc/EDOC1100112351/63e60cd4/verifying-the-nat-configuration"
+      "source": "https://support.huawei.com/enterprise/en/doc/EDOC1100617160/29a820da/nat-configuration-commands"
     },
     {
       "cmd": "display security-policy rule verbose source-zone any",
@@ -1247,7 +1248,7 @@
           "cmd": "display vrrp"
         }
       ],
-      "note": "En YunShan 'display vrrp' no tiene opción 'brief'.",
+      "note": "En YunShan y en CloudEngine (VRP8) 'display vrrp' no tiene opción 'brief'.",
       "source": "https://support.huawei.com/enterprise/en/doc/EDOC1000178165/3f68ca6c/vrrp-configuration-commands"
     },
     {
@@ -1284,10 +1285,6 @@
       "desc": "Estadísticas globales de BFD.",
       "cat": "Alta disponibilidad",
       "risk": "read",
-      "platforms": [
-        "vrp5",
-        "vrp8"
-      ],
       "source": "https://support.huawei.com/enterprise/en/doc/EDOC1000178165/e72e182d/bfd-configuration-commands"
     },
     {
@@ -1327,7 +1324,7 @@
           "cmd": "display traffic-policy statistics interface {{interfaz}} inbound"
         }
       ],
-      "note": "En YunShan el comando lleva guion: 'traffic-policy'. En VRP8 verificar parámetros exactos en tu versión.",
+      "note": "En YunShan el comando lleva guion: 'traffic-policy'.",
       "source": "https://support.huawei.com/enterprise/en/doc/EDOC1000178165/df30cd60/mqc-configuration-commands"
     },
     {
@@ -1338,6 +1335,7 @@
       "platforms": [
         "vrp5"
       ],
+      "note": "Sintaxis no confirmada en documentación oficial para AR (V300R026); verificar.",
       "source": "https://support.huawei.com/enterprise/en/doc/EDOC1000178165/df30cd60/mqc-configuration-commands"
     },
     {
@@ -1374,7 +1372,6 @@
           "cmd": "display traffic behavior"
         }
       ],
-      "note": "Sintaxis de VRP5 inferida del par classifier; verificar en tu versión.",
       "source": "https://support.huawei.com/enterprise/en/doc/EDOC1000178165/df30cd60/mqc-configuration-commands"
     },
     {
@@ -1455,10 +1452,8 @@
       "desc": "Muestra sesiones de port mirroring configuradas.",
       "cat": "Diagnóstico",
       "risk": "read",
-      "platforms": [
-        "vrp5"
-      ],
-      "source": "https://support.huawei.com/enterprise/en/doc/EDOC1000178165/cdd85713/basic-interface-configuration-commands"
+      "note": "Sintaxis no confirmada en documentación oficial para AR (V300R026, que documenta 'display observe-port'); verificar.",
+      "source": "https://support.huawei.com/enterprise/en/doc/EDOC1000178165/6bd51f84/mirroring-configuration-commands"
     },
     {
       "cmd": "display current-configuration | include {{texto}}",
@@ -1475,7 +1470,7 @@
       "platforms": [
         "yunshan"
       ],
-      "note": "Genera archivos en flash; revisar espacio libre con 'dir'.",
+      "note": "Genera archivos en flash; revisar espacio libre con 'dir'. Vista usuario.",
       "source": "https://support.huawei.com/enterprise/en/doc/EDOC1100513703/e3ed4ff/checking-system-diagnosis-information"
     },
     {
@@ -1490,7 +1485,7 @@
       "desc": "Desactiva todos los debugging activos para liberar CPU.",
       "cat": "Diagnóstico",
       "risk": "change",
-      "note": "Verificado en VRP8; en VRP5/YunShan es sintaxis estándar pero verificar en tu versión.",
+      "note": "Vista usuario. Es el atajo por defecto Ctrl+O en VRP8 y YunShan. En AR (VRP5) figura en la referencia de depuración como 'undo debugging all'.",
       "source": "https://support.huawei.com/enterprise/en/doc/EDOC1100279274/9854e1d4/information-management-configuration"
     },
     {
@@ -1519,6 +1514,7 @@
       "desc": "Habilita la salida de logs y traps en la sesión actual.",
       "cat": "Logs",
       "risk": "read",
+      "note": "Vista usuario. Solo afecta a la sesión actual.",
       "source": "https://support.huawei.com/enterprise/en/doc/EDOC1000178165/cf7845b/information-center-configuration-commands"
     },
     {
@@ -1526,6 +1522,7 @@
       "desc": "Habilita la visualización de logs en la terminal actual (requiere terminal monitor).",
       "cat": "Logs",
       "risk": "read",
+      "note": "Vista usuario. Solo afecta a la sesión actual.",
       "source": "https://support.huawei.com/enterprise/en/doc/EDOC1000178165/cf7845b/information-center-configuration-commands"
     },
     {
@@ -1533,6 +1530,7 @@
       "desc": "Deshabilita la salida de logs en la sesión actual.",
       "cat": "Logs",
       "risk": "read",
+      "note": "Vista usuario. Solo afecta a la sesión actual.",
       "source": "https://support.huawei.com/enterprise/en/doc/EDOC1000178165/cf7845b/information-center-configuration-commands"
     },
     {
@@ -1540,6 +1538,7 @@
       "desc": "Borra el log buffer. Se pierde evidencia; respaldar antes.",
       "cat": "Logs",
       "risk": "change",
+      "note": "Vista usuario.",
       "source": "https://support.huawei.com/enterprise/en/doc/EDOC1000178165/cf7845b/information-center-configuration-commands"
     },
     {
@@ -1554,6 +1553,7 @@
       "desc": "Muestra la configuración guardada que se cargará en el próximo arranque.",
       "cat": "Configuración",
       "risk": "read",
+      "note": "En YunShan la referencia de comandos solo lista 'display saved-configuration configuration' (autoguardado) y 'time'; la guía de configuración documenta 'display saved-configuration' sin parámetros. Sintaxis no confirmada en la referencia de YunShan V600R025C00; verificar.",
       "source": "https://support.huawei.com/enterprise/en/doc/EDOC1100513703/e5e30dfa/saving-configurations"
     },
     {
@@ -1568,6 +1568,7 @@
       "desc": "Compara la configuración en ejecución con la de próximo arranque. Confirma si hay cambios sin guardar.",
       "cat": "Configuración",
       "risk": "read",
+      "note": "Vista usuario.",
       "source": "https://support.huawei.com/enterprise/en/doc/EDOC1100513703/755c106b/comparing-configuration-files"
     },
     {
@@ -1575,7 +1576,7 @@
       "desc": "Entra a la vista de sistema para configurar.",
       "cat": "Configuración",
       "risk": "change",
-      "note": "En VRP8 abre modo dos fases (candidate) por defecto: el prompt pasa a [~HUAWEI] y los cambios requieren 'commit'. En VRP5 y YunShan aplica inmediato.",
+      "note": "En VRP8 abre modo dos fases (candidate) por defecto: el prompt pasa a [~HUAWEI] y los cambios requieren 'commit'. En VRP5 y YunShan aplica inmediato. Vista usuario.",
       "source": "https://support.huawei.com/enterprise/en/doc/EDOC1100279274/cc702209/cli-overview-configuration"
     },
     {
@@ -1586,6 +1587,7 @@
       "platforms": [
         "vrp8"
       ],
+      "note": "Vista usuario.",
       "source": "https://support.huawei.com/enterprise/en/doc/EDOC1100279274/cc702209/cli-overview-configuration"
     },
     {
@@ -1596,6 +1598,7 @@
       "platforms": [
         "vrp8"
       ],
+      "note": "Se ejecuta en vista de sistema o subvistas (no en vista usuario).",
       "source": "https://support.huawei.com/enterprise/en/doc/EDOC1100279274/cc702209/cli-overview-configuration"
     },
     {
@@ -1616,10 +1619,11 @@
       "platforms": [
         "vrp8"
       ],
+      "note": "Se ejecuta en vista de sistema o subvistas (no en vista usuario).",
       "source": "https://support.huawei.com/enterprise/en/doc/EDOC1100279274/cc702209/cli-overview-configuration"
     },
     {
-      "cmd": "commit trial {{tiempo}}",
+      "cmd": "commit trial {{segundos}}",
       "desc": "Aplica cambios en modo prueba: si no se confirma con 'commit' antes del tiempo (segundos), el equipo hace rollback automático. Práctica de cambio seguro.",
       "cat": "Configuración",
       "risk": "change",
@@ -1627,7 +1631,7 @@
         "vrp8",
         "yunshan"
       ],
-      "note": "En YunShan documentado en V600R025C00; no aparece en la Command Reference V600R022C00. En VRP5 no existe: usar 'schedule reboot' como red de seguridad.",
+      "note": "Se ejecuta en vista de sistema. Rango de 60 a 65535 segundos (600 por defecto). En YunShan documentado en V600R025C00; no aparece en la Command Reference V600R022C00. En VRP5 no existe: usar 'schedule reboot' como red de seguridad.",
       "source": "https://support.huawei.com/enterprise/en/doc/EDOC1100513703/e8fe0d30/entering-the-configuration-trial-run-mode"
     },
     {
@@ -1639,6 +1643,7 @@
         "vrp8",
         "yunshan"
       ],
+      "note": "Se ejecuta en vista de sistema o subvistas (no en vista usuario).",
       "source": "https://support.huawei.com/enterprise/en/doc/EDOC1100513703/e8fe0d30/entering-the-configuration-trial-run-mode"
     },
     {
@@ -1653,7 +1658,7 @@
       "source": "https://support.huawei.com/enterprise/en/doc/EDOC1100513703/e8fe0d30/entering-the-configuration-trial-run-mode"
     },
     {
-      "cmd": "commit label {{texto}}",
+      "cmd": "commit label {{etiqueta}}",
       "desc": "Genera un punto de rollback con etiqueta para identificar el cambio.",
       "cat": "Configuración",
       "risk": "change",
@@ -1661,6 +1666,7 @@
         "vrp8",
         "yunshan"
       ],
+      "note": "La etiqueta no lleva espacios ni comienza con dígito o guion. Se ejecuta en vista de sistema o subvistas.",
       "source": "https://support.huawei.com/enterprise/en/doc/EDOC1100513703/a0d25fee/rolling-back-configurations"
     },
     {
@@ -1695,10 +1701,10 @@
         "yunshan"
       ],
       "note": "No existe en switches S VRP5 V200R011.",
-      "source": "https://support.huawei.com/enterprise/en/doc/EDOC1100513703/a0d25fee/rolling-back-configurations"
+      "source": "https://support.huawei.com/enterprise/en/doc/EDOC1100517148/d5595e3f/configuration-file-management-configuration-commands"
     },
     {
-      "cmd": "rollback configuration to label {{texto}}",
+      "cmd": "rollback configuration to label {{etiqueta}}",
       "desc": "Revierte la configuración a un punto de rollback etiquetado.",
       "cat": "Configuración",
       "risk": "disruptive",
@@ -1735,7 +1741,7 @@
       "desc": "Guarda la configuración en ejecución en el archivo de arranque.",
       "cat": "Configuración",
       "risk": "change",
-      "note": "En VRP8 solo se guarda lo confirmado con commit.",
+      "note": "En VRP8 solo se guarda lo confirmado con commit. Vista usuario.",
       "source": "https://support.huawei.com/enterprise/en/doc/EDOC1100513703/e5e30dfa/saving-configurations"
     },
     {
@@ -1743,13 +1749,15 @@
       "desc": "Guarda la configuración en un archivo específico (respaldo antes de un cambio).",
       "cat": "Configuración",
       "risk": "change",
+      "note": "Vista usuario.",
       "source": "https://support.huawei.com/enterprise/en/doc/EDOC1100517148/d5595e3f/configuration-file-management-configuration-commands"
     },
     {
-      "cmd": "copy {{archivo}} {{archivo_destino}}",
+      "cmd": "copy {{archivo_origen}} {{archivo_destino}}",
       "desc": "Copia un archivo en flash, por ejemplo para respaldar la configuración de arranque.",
       "cat": "Configuración",
       "risk": "change",
+      "note": "Vista usuario.",
       "source": "https://support.huawei.com/enterprise/en/doc/EDOC1000178165/5906a2c/file-management-commands"
     },
     {
@@ -1757,11 +1765,7 @@
       "desc": "Programa un reinicio (formato hh:mm o mm) como red de seguridad antes de un cambio remoto riesgoso sin guardar. Si pierdes acceso, el equipo vuelve a la configuración guardada.",
       "cat": "Configuración",
       "risk": "disruptive",
-      "platforms": [
-        "vrp5",
-        "yunshan"
-      ],
-      "note": "Cancelar con 'undo schedule reboot' una vez validado el cambio. No guardar (save) hasta validar.",
+      "note": "Cancelar con 'undo schedule reboot' una vez validado el cambio. No guardar (save) hasta validar. Vista usuario.",
       "source": "https://support.huawei.com/enterprise/en/doc/EDOC1000178165/5840eb45/configuring-system-startup-commands"
     },
     {
@@ -1769,10 +1773,7 @@
       "desc": "Cancela el reinicio programado.",
       "cat": "Configuración",
       "risk": "change",
-      "platforms": [
-        "vrp5",
-        "yunshan"
-      ],
+      "note": "Vista usuario.",
       "source": "https://support.huawei.com/enterprise/en/doc/EDOC1000178165/5840eb45/configuring-system-startup-commands"
     },
     {
@@ -1780,10 +1781,6 @@
       "desc": "Muestra si hay un reinicio programado.",
       "cat": "Configuración",
       "risk": "read",
-      "platforms": [
-        "vrp5",
-        "yunshan"
-      ],
       "source": "https://support.huawei.com/enterprise/en/doc/EDOC1000178165/5840eb45/configuring-system-startup-commands"
     },
     {
@@ -1791,9 +1788,7 @@
       "desc": "Bloquea la configuración para que otros usuarios no puedan modificarla durante tu ventana.",
       "cat": "Configuración",
       "risk": "change",
-      "platforms": [
-        "yunshan"
-      ],
+      "note": "Se libera con 'undo configuration exclusive'.",
       "source": "https://support.huawei.com/enterprise/en/doc/EDOC1100517148/d5595e3f/configuration-file-management-configuration-commands"
     },
     {
@@ -1801,10 +1796,7 @@
       "desc": "Define el archivo de configuración para el próximo arranque.",
       "cat": "Configuración",
       "risk": "change",
-      "platforms": [
-        "vrp5",
-        "vrp8"
-      ],
+      "note": "Vista usuario.",
       "source": "https://support.huawei.com/enterprise/en/doc/EDOC1000178165/5840eb45/configuring-system-startup-commands"
     },
     {
@@ -1812,6 +1804,7 @@
       "desc": "Borra la configuración de arranque. Tras reinicio el equipo queda de fábrica.",
       "cat": "Configuración",
       "risk": "disruptive",
+      "note": "Vista usuario.",
       "source": "https://support.huawei.com/enterprise/en/doc/EDOC1100279274/c80a8cf/configuration-file-management-configuration"
     },
     {
@@ -1819,6 +1812,7 @@
       "desc": "Elimina un archivo de la flash (queda en la papelera hasta reset recycle-bin).",
       "cat": "Configuración",
       "risk": "disruptive",
+      "note": "Vista usuario.",
       "source": "https://support.huawei.com/enterprise/en/doc/EDOC1000178165/5906a2c/file-management-commands"
     },
     {
@@ -1826,6 +1820,7 @@
       "desc": "Vacía la papelera de la flash de forma permanente.",
       "cat": "Configuración",
       "risk": "disruptive",
+      "note": "Vista usuario.",
       "source": "https://support.huawei.com/enterprise/en/doc/EDOC1000178165/5906a2c/file-management-commands"
     },
     {
@@ -1833,6 +1828,7 @@
       "desc": "Reinicia el equipo. Pregunta si se desea guardar la configuración.",
       "cat": "Configuración",
       "risk": "disruptive",
+      "note": "Vista usuario.",
       "source": "https://support.huawei.com/enterprise/en/doc/EDOC1100279274/b37a634c/upgrade-maintenance-configuration"
     }
   ]
