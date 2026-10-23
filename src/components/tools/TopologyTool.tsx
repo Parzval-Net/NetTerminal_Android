@@ -151,6 +151,8 @@ interface TopoUi {
   arrows: boolean;
   /** Etiqueta de tasas (↑ ↓ y %) junto a cada enlace con tráfico. */
   rates: boolean;
+  /** Color y grosor del enlace según su utilización (verde, amarillo, rojo). */
+  color: boolean;
 }
 const UI_KEY = "topoUi";
 const UI_DEFAULT: TopoUi = {
@@ -162,6 +164,7 @@ const UI_DEFAULT: TopoUi = {
   anim: false,
   arrows: true,
   rates: true,
+  color: true,
 };
 
 function loadUi(): TopoUi {
@@ -178,6 +181,7 @@ function loadUi(): TopoUi {
       anim: v.anim === true,
       arrows: v.arrows !== false,
       rates: v.rates !== false,
+      color: v.color !== false,
     };
   } catch {
     return UI_DEFAULT;
@@ -569,12 +573,12 @@ export function TopologyTool({
         y,
         anchor: multi ? "end" : "middle",
         text: `${multi ? `${g.l.aPort || "?"}: ` : ""}${trafficLabel(lt)}`,
-        color: UTIL_VAR[utilLevel(lt.util)],
+        color: ui.color ? UTIL_VAR[utilLevel(lt.util)] : "var(--text)",
         dim: !!route && !routeKeys.has(k),
       });
     }
     return out;
-  }, [geometry, linkRates, removed, route, routeKeys]);
+  }, [geometry, linkRates, removed, route, routeKeys, ui.color]);
 
   // Sugerencias: se calculan del diagrama ya leído, sin comandos, y solo con su fuente activa.
   const suggestions = useMemo(() => collectSuggestions(topo, sources, dismissed), [topo, sources, dismissed]);
@@ -951,13 +955,14 @@ export function TopologyTool({
             const state = removed.has(k) ? "removed" : added.has(k) ? "added" : null;
             const hot = isRoute || selected === g.l.a || selected === g.l.b;
             const lt = state ? undefined : linkRates.get(k);
-            const level = lt ? utilLevel(lt.util) : undefined;
+            const level = lt && ui.color ? utilLevel(lt.util) : undefined;
             const color =
               state === "removed" ? "var(--danger)" : state === "added" ? "var(--ok)" : level ? UTIL_VAR[level] : hot ? "var(--accent)" : "var(--muted)";
             const dim = route && !isRoute;
             const aName = node(g.l.a)?.name ?? g.l.a;
             const bName = node(g.l.b)?.name ?? g.l.b;
-            const dirLevel = (bps: number | null) => UTIL_VAR[lt?.speed && bps !== null ? utilLevel(bps / lt.speed) : "none"];
+            // Sin color por utilización, las flechas van en el tono neutro del texto.
+            const dirLevel = (bps: number | null) => (ui.color ? UTIL_VAR[lt?.speed && bps !== null ? utilLevel(bps / lt.speed) : "none"] : "var(--muted)");
             const tip = [
               `${aName} ${g.l.aPort || "?"} ↔ ${g.l.bPort || "?"} ${bName} (${protoLabel(g.l)})`,
               lt &&
@@ -979,7 +984,7 @@ export function TopologyTool({
                   d={g.d}
                   fill="none"
                   stroke={color}
-                  strokeWidth={isRoute ? 3.5 : lt ? 1.75 + 3 * Math.min(1, lt.util ?? 0) : hot || state ? 2.5 : g.l.logical ? 1.25 : 1.5}
+                  strokeWidth={isRoute ? 3.5 : lt && ui.color ? 1.75 + 3 * Math.min(1, lt.util ?? 0) : hot || state ? 2.5 : g.l.logical ? 1.25 : 1.5}
                   strokeDasharray={dash}
                   strokeLinecap={dash ? "round" : undefined}
                 />
@@ -1134,8 +1139,8 @@ export function TopologyTool({
                   )}
                   {hasTraffic && (
                     <>
-                      <span className="mt-1 font-medium text-fg">Tráfico (color y grosor por utilización)</span>
-                      {UTIL_LEGEND.map(([text, lv]) => (
+                      {ui.color && <span className="mt-1 font-medium text-fg">Tráfico (color y grosor por utilización)</span>}
+                      {ui.color && UTIL_LEGEND.map(([text, lv]) => (
                         <span key={lv} className="inline-flex items-center gap-1.5">
                           <svg width="34" height="8" aria-hidden className="shrink-0">
                             <line x1="2" y1="4" x2="32" y2="4" stroke={UTIL_VAR[lv]} strokeWidth={lv === "crit" ? 4.5 : lv === "warn" ? 3.5 : 2.5} strokeLinecap="round" />
@@ -1233,8 +1238,12 @@ export function TopologyTool({
                   </p>
                 </div>
                 <div>
+                  <Toggle checked={ui.color} onChange={(color) => setUi((u) => ({ ...u, color }))} label="Color por utilización" />
+                  <p className="mt-0.5 pl-10 text-[11px] text-muted leading-snug">Verde, amarillo desde 70 % y rojo desde 90 %, con grosor según la carga. Sin color, los enlaces se ven como en el diagrama normal.</p>
+                </div>
+                <div>
                   <Toggle checked={ui.arrows} onChange={(arrows) => setUi((u) => ({ ...u, arrows }))} label="Flechas de dirección" />
-                  <p className="mt-0.5 pl-10 text-[11px] text-muted leading-snug">Una punta por sentido sobre cada enlace. Sin flechas, el color y el grosor siguen indicando la utilización.</p>
+                  <p className="mt-0.5 pl-10 text-[11px] text-muted leading-snug">Una punta por sentido sobre cada enlace. Sin flechas, el color (si está activo) sigue indicando la utilización.</p>
                 </div>
                 <div>
                   <Toggle checked={ui.rates} onChange={(rates) => setUi((u) => ({ ...u, rates }))} label="Velocidad de tráfico" />
