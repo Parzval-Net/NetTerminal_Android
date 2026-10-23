@@ -48,6 +48,11 @@ fn patterns() -> &'static Patterns {
 /// Ejecuta un comando en la sesión y transmite su salida. Responde Enter a
 /// confirmaciones con valor por defecto, "y" a preguntas sí/no y espacio a "--More--".
 /// Termina cuando vuelve a aparecer el prompt o vence el plazo.
+/// Tope de la salida de un comando: evita agotar memoria si el equipo no deja de enviar datos.
+const MAX_OUTPUT: usize = 16 * 1024 * 1024;
+/// Texto final que se conserva para reconocer preguntas de confirmación.
+const TAIL_KEEP: usize = 4096;
+
 pub fn run(app: AppHandle, conn: String, command: String, timeout_secs: u64) -> Result<String, String> {
     if command.contains(['\r', '\n']) {
         return Err("Un solo comando por operación".into());
@@ -101,8 +106,21 @@ pub fn run(app: AppHandle, conn: String, command: String, timeout_secs: u64) -> 
                 flush(&mut partial, true);
                 continue;
             };
+            if output.len() + chunk.len() > MAX_OUTPUT {
+                flush(&mut partial, true);
+                emit("error", "La salida del equipo superó el máximo permitido; se detuvo la lectura".into(), None);
+                break;
+            }
             output.push_str(&chunk);
             tail.push_str(&chunk);
+            // Las preguntas del equipo están al final: basta con lo último, sin releer todo en cada bloque.
+            if tail.len() > TAIL_KEEP * 2 {
+                let mut cut = tail.len() - TAIL_KEEP;
+                while !tail.is_char_boundary(cut) {
+                    cut += 1;
+                }
+                tail.drain(..cut);
+            }
             partial.push_str(&chunk);
             flush(&mut partial, false);
             let t = tail.trim_end_matches([' ', '\t']);
