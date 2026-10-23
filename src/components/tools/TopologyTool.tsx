@@ -147,6 +147,10 @@ interface TopoUi {
   snmpProfile: string;
   interval: TrafficInterval;
   anim: boolean;
+  /** Puntas de flecha por sentido sobre cada enlace con tráfico. */
+  arrows: boolean;
+  /** Etiqueta de tasas (↑ ↓ y %) junto a cada enlace con tráfico. */
+  rates: boolean;
 }
 const UI_KEY = "topoUi";
 const UI_DEFAULT: TopoUi = {
@@ -156,6 +160,8 @@ const UI_DEFAULT: TopoUi = {
   snmpProfile: "",
   interval: 30,
   anim: false,
+  arrows: true,
+  rates: true,
 };
 
 function loadUi(): TopoUi {
@@ -170,6 +176,8 @@ function loadUi(): TopoUi {
       snmpProfile: typeof v.snmpProfile === "string" ? v.snmpProfile.slice(0, 64) : "",
       interval: TRAFFIC_INTERVALS.includes(v.interval as TrafficInterval) ? (v.interval as TrafficInterval) : 30,
       anim: v.anim === true,
+      arrows: v.arrows !== false,
+      rates: v.rates !== false,
     };
   } catch {
     return UI_DEFAULT;
@@ -533,7 +541,8 @@ export function TopologyTool({
     }
     return m;
   }, [trafficOn, traffic.rates, topo.links]);
-  const animate = ui.anim && !reducedMotion && visible;
+  // La animación va en los carriles de cada sentido: sin flechas tampoco se anima.
+  const animate = ui.anim && ui.arrows && !reducedMotion && visible;
   /** Etiquetas de tasa: en enlaces paralelos se apilan en el centro del par, con el puerto de A. */
   const trafficLabels = useMemo(() => {
     if (!linkRates.size) return [];
@@ -979,8 +988,12 @@ export function TopologyTool({
                     {/* Un carril y una punta de flecha por sentido: A→B y B→A. */}
                     {animate && !!lt.ab && <path className="topo-flow" d={lanePath(g.a, g.c, g.b, 4)} fill="none" stroke={dirLevel(lt.ab)} strokeWidth={1.5} strokeLinecap="round" />}
                     {animate && !!lt.ba && <path className="topo-flow topo-flow-rev" d={lanePath(g.a, g.c, g.b, -4)} fill="none" stroke={dirLevel(lt.ba)} strokeWidth={1.5} strokeLinecap="round" />}
-                    <polygon points={arrowHead(g.a, g.c, g.b, 0.4, true, 5)} fill={dirLevel(lt.ab)} stroke="var(--panel)" strokeWidth={0.75} />
-                    <polygon points={arrowHead(g.a, g.c, g.b, 0.6, false, -5)} fill={dirLevel(lt.ba)} stroke="var(--panel)" strokeWidth={0.75} />
+                    {ui.arrows && (
+                      <>
+                        <polygon points={arrowHead(g.a, g.c, g.b, 0.4, true, 5)} fill={dirLevel(lt.ab)} stroke="var(--panel)" strokeWidth={0.75} />
+                        <polygon points={arrowHead(g.a, g.c, g.b, 0.6, false, -5)} fill={dirLevel(lt.ba)} stroke="var(--panel)" strokeWidth={0.75} />
+                      </>
+                    )}
                   </>
                 )}
                 {/* Área de clic más ancha que la línea. */}
@@ -1061,7 +1074,7 @@ export function TopologyTool({
             );
           })}
           {/* Las tasas van en una capa propia sobre los equipos: un enlace corto no las tapa. */}
-          {trafficLabels.map((t) => (
+          {ui.rates && trafficLabels.map((t) => (
             <text
               key={t.key}
               x={t.x}
@@ -1136,14 +1149,14 @@ export function TopologyTool({
                         </svg>
                         Velocidad desconocida
                       </span>
-                      <span className="inline-flex items-center gap-1.5">
+                      {ui.arrows && <span className="inline-flex items-center gap-1.5">
                         <svg width="34" height="12" aria-hidden className="shrink-0">
                           <line x1="2" y1="6" x2="32" y2="6" stroke="var(--muted)" strokeWidth={1.5} />
                           <polygon points="13,1.5 19,4.5 13,7.5" fill="var(--ok)" />
                           <polygon points="21,4.5 15,7.5 21,10.5" fill="var(--warn)" />
                         </svg>
                         Una flecha por sentido · ↑ de A hacia B, ↓ de B hacia A (detalle al pasar el mouse)
-                      </span>
+                      </span>}
                     </>
                   )}
                 </div>
@@ -1220,7 +1233,15 @@ export function TopologyTool({
                   </p>
                 </div>
                 <div>
-                  <Toggle checked={ui.anim} onChange={(anim) => setUi((u) => ({ ...u, anim }))} label="Animación" />
+                  <Toggle checked={ui.arrows} onChange={(arrows) => setUi((u) => ({ ...u, arrows }))} label="Flechas de dirección" />
+                  <p className="mt-0.5 pl-10 text-[11px] text-muted leading-snug">Una punta por sentido sobre cada enlace. Sin flechas, el color y el grosor siguen indicando la utilización.</p>
+                </div>
+                <div>
+                  <Toggle checked={ui.rates} onChange={(rates) => setUi((u) => ({ ...u, rates }))} label="Velocidad de tráfico" />
+                  <p className="mt-0.5 pl-10 text-[11px] text-muted leading-snug">Muestra ↑ ↓ en Mb/s y el % de uso junto al enlace. El detalle sigue disponible al pasar el mouse.</p>
+                </div>
+                <div>
+                  <Toggle checked={ui.anim && ui.arrows} onChange={(anim) => setUi((u) => ({ ...u, anim, arrows: anim || u.arrows }))} label="Animación" />
                   <p className="mt-0.5 pl-10 text-[11px] text-muted leading-snug">
                     Trazo animado en el sentido del tráfico (CSS, se pausa con la herramienta oculta).
                     {reducedMotion ? " El sistema pide reducir movimiento: queda desactivada." : ""}
