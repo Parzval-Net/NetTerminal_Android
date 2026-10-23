@@ -5,6 +5,7 @@ import { writeText } from "@tauri-apps/plugin-clipboard-manager";
 import {
   Camera,
   Check,
+  ChevronDown,
   ChevronUp,
   Copy,
   Download,
@@ -95,6 +96,10 @@ import { vendorFor } from "../../lib/commands";
 import type { Session } from "../../types";
 import type { TerminalRef } from "./FileManager";
 import { Btn, Collapsible, CountBadge, Label, Toggle } from "./ui";
+import { ContextMenu } from "../Sidebar";
+import type { MenuItem } from "../tabMenu";
+
+type Menu = { x: number; y: number; items: MenuItem[] };
 
 const W = 170;
 const H = 54;
@@ -190,6 +195,7 @@ export function TopologyTool({
   const [readPorts, setReadPorts] = useState(true);
   const [busy, setBusy] = useState(false);
   const [msg, setMsg] = useState("");
+  const [exportMenu, setExportMenu] = useState<Menu | null>(null);
   const [selected, setSelected] = useState<string | null>(null);
   const [zoom, setZoom] = useState(1);
   const [proto, setProto] = useState<"ssh" | "telnet">("ssh");
@@ -599,23 +605,33 @@ export function TopologyTool({
             <Network size={14} />
           </Btn>
           <span className="w-px h-5 bg-[var(--border)] mx-1 @max-[860px]:hidden" aria-hidden />
-          <Btn kind="ghost" title="Exportar imagen SVG" disabled={!topo.nodes.length} onClick={() => exportFile("svg", toSvg(topo, W, H))}>
-            <Download size={14} /> SVG
-          </Btn>
-          <Btn kind="ghost" title="Exportar a draw.io (editable)" disabled={!topo.nodes.length} onClick={() => exportFile("drawio", toDrawio(topo, W, H))}>
-            draw.io
-          </Btn>
-          <Btn kind="ghost" title="Exportar tabla de enlaces con estado de puertos" disabled={!topo.links.length} onClick={() => exportFile("csv", toCsv(topo))}>
-            CSV
-          </Btn>
           <Btn
             kind="ghost"
-            title="Copiar como Mermaid (Confluence, GitLab, GitHub)"
+            title="Exportar el diagrama: SVG, draw.io, CSV o Mermaid"
+            aria-haspopup="menu"
+            aria-expanded={!!exportMenu}
             disabled={!topo.nodes.length}
-            onClick={() => writeText(toMermaid(topo)).then(() => setMsg("Diagrama Mermaid copiado al portapapeles"))}
+            onClick={(e) => {
+              const r = e.currentTarget.getBoundingClientRect();
+              setExportMenu({
+                x: r.left,
+                y: r.bottom + 4,
+                items: [
+                  ["Imagen SVG", <Download size={13} />, () => exportFile("svg", toSvg(topo, W, H))],
+                  ["draw.io (editable)", <Download size={13} />, () => exportFile("drawio", toDrawio(topo, W, H))],
+                  ["CSV de enlaces y puertos", <Download size={13} />, () => exportFile("csv", toCsv(topo)), !topo.links.length],
+                  [
+                    "Copiar como Mermaid",
+                    <FileCode2 size={13} />,
+                    () => writeText(toMermaid(topo)).then(() => setMsg("Diagrama Mermaid copiado al portapapeles")),
+                  ],
+                ],
+              });
+            }}
           >
-            <FileCode2 size={14} /> Mermaid
+            <Download size={14} /> <span className="@max-[860px]:sr-only">Exportar</span> <ChevronDown size={12} aria-hidden />
           </Btn>
+          {exportMenu && <ContextMenu menu={exportMenu} onClose={() => setExportMenu(null)} />}
           <div className="ml-auto flex items-center gap-1">
             {suggestions.length > 0 && (
               <Btn
