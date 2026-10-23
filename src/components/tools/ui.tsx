@@ -90,10 +90,11 @@ export function CopyText({ text, mono = true }: { text: string; mono?: boolean }
         window.setTimeout(() => setDone(false), 1500);
       }}
       title="Copiar"
-      className={`group inline-flex items-center gap-1.5 px-2 h-6 rounded-md bg-hover text-[12px] hover:text-fg ${mono ? "font-mono" : ""}`}
+      // Alto mínimo (no fijo): un comando largo pasa a la línea siguiente dentro del botón sin montarse sobre el de abajo.
+      className={`group inline-flex items-center gap-1.5 px-2 py-0.5 min-h-6 max-w-full rounded-md bg-hover text-[12px] leading-snug text-left hover:text-fg ${mono ? "font-mono" : ""}`}
     >
-      {text}
-      {done ? <Check size={12} className="text-ok" /> : <Copy size={12} className="text-muted opacity-0 group-hover:opacity-100" />}
+      <span className="min-w-0 break-all">{text}</span>
+      {done ? <Check size={12} className="shrink-0 text-ok" /> : <Copy size={12} className="shrink-0 text-muted opacity-0 group-hover:opacity-100" />}
     </button>
   );
 }
