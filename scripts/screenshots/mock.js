@@ -781,5 +781,7 @@ Object.assign(scenes, {
 });
 // Acceso para el script de QA (CDP): pasos adicionales sobre una escena.
 window.__demo = { click, open, wait, svgNode, emit, find, setVal };
+// Acceso para backends simulados que extienden este (scripts/video/plugins/mock-video.js).
+window.__mock = { handlers, emit, cbs, channels, connSessions, sessions, settings, notes, enc };
 const scene = new URLSearchParams(location.search).get("scene");
 if (scene && scenes[scene]) window.addEventListener("load", () => wait(600).then(scenes[scene]));

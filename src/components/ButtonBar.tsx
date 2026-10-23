@@ -29,9 +29,10 @@ export const ButtonBar = memo(function ButtonBar(p: Props) {
   }, []);
 
   const openScripts = async (e: React.MouseEvent) => {
+    // Antes del await: React deja currentTarget en null al terminar el despacho del evento.
+    const r = (e.currentTarget as HTMLElement).getBoundingClientRect();
     const list = await invoke<string[]>("list_scripts").catch(() => scripts);
     setScripts(list);
-    const r = (e.currentTarget as HTMLElement).getBoundingClientRect();
     setMenu({
       x: r.left,
       y: r.bottom + 4,

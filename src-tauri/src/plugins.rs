@@ -592,6 +592,21 @@ mod tests {
         let _ = fs::remove_dir_all(base);
     }
 
+    /// Los plugins de ejemplo del repositorio pasan la misma revisión que una instalación real.
+    #[test]
+    fn example_plugins_pass_review() {
+        let repo = Path::new(env!("CARGO_MANIFEST_DIR")).parent().unwrap();
+        let data = std::env::temp_dir().join(format!("nt-plug-ej-{}", std::process::id()));
+        for (rel, id) in [("plugins/ejemplo-inventario", "ejemplo-inventario"), ("docs/ejemplos/plugins/diagnostico-basico", "diagnostico-basico")] {
+            let preview = stage(&data, &repo.join(rel)).unwrap_or_else(|e| panic!("{rel}: {e}"));
+            assert_eq!(preview.manifest.id, id);
+            assert!(preview.code.starts_with("# ===== main.py ====="), "{rel}");
+            assert!(preview.replaces.is_none());
+            cancel(&data, &preview.staging);
+        }
+        let _ = fs::remove_dir_all(data);
+    }
+
     #[test]
     fn rejects_bad_manifests_and_zip_slip() {
         let base = std::env::temp_dir().join(format!("nt-plug2-{}", std::process::id()));
