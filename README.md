@@ -77,6 +77,7 @@ Construido con [Tauri 2](https://tauri.app) (backend en Rust) y xterm.js. Usa el
 | Enviar línea o selección / todo (en Notas) | ⌘↵ / ⌘⇧↵ | Ctrl+Enter / Ctrl+Shift+Enter |
 | Buscar sesión / conexión rápida | ⌘K | Ctrl+Shift+K |
 | Nueva sesión | ⌘N | Ctrl+Shift+N |
+| Conexión rápida sin guardar | ⌘O | Ctrl+Shift+O |
 | Terminal local | ⌘T | Ctrl+Shift+T |
 | Cerrar pestaña | ⌘W | Ctrl+Shift+W |
 | Buscar en la salida | ⌘F | Ctrl+Shift+F |

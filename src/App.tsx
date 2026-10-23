@@ -688,6 +688,8 @@ function Workspace({
           return activeTab && openTab(activeTab.session);
         case "newSession":
           return setModal({});
+        case "quickConnect":
+          return setQuickOpen(true);
         case "toggleSidebar":
           return setSidebarOpen((o) => !o);
         case "find":
@@ -1002,6 +1004,7 @@ function Workspace({
           onOpen={openTab}
           onOpenMany={h.openMany}
           onNew={h.newSession}
+          onQuickConnect={h.openQuick}
           onEdit={h.editSession}
           onDuplicate={h.duplicateSession}
           onDelete={h.deleteSession}

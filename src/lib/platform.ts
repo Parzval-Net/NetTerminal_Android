@@ -21,6 +21,7 @@ export type AppAction =
   | "newTab"
   | "closeTab"
   | "newSession"
+  | "quickConnect"
   | "toggleSidebar"
   | "find"
   | "nextTab"
@@ -59,6 +60,8 @@ export function shortcutFor(e: KeyboardEvent): AppAction | null {
       return "closeTab";
     case "n":
       return "newSession";
+    case "o":
+      return "quickConnect";
     case "b":
       return "toggleSidebar";
     case "j":

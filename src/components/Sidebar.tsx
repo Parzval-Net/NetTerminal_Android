@@ -15,7 +15,7 @@ import {
   Trash2,
 } from "lucide-react";
 import { ConnStatus, Session, sessionTarget } from "../types";
-import { SessionIcon } from "./SessionIcon";
+import { QuickBolt, SessionIcon } from "./SessionIcon";
 import { modLabel } from "../lib/platform";
 import {
   FolderNode,
@@ -55,6 +55,8 @@ interface Props {
   onConfirm: (req: ConfirmRequest) => void;
   /** Abre la importación desde PuTTY, SecureCRT, MobaXterm, OpenSSH o CSV. */
   onImportFile?: () => void;
+  /** Conexión rápida sin guardar (SSH, Telnet, Serial). */
+  onQuickConnect?: () => void;
 }
 
 type MenuItem = [string, React.ReactNode, () => void, boolean?];
@@ -372,7 +374,20 @@ export const Sidebar = memo(function Sidebar(p: Props) {
 
   return (
     <aside className="w-64 shrink-0 h-full flex flex-col bg-chrome border-r border-line">
-      <div className="flex items-center gap-0.5 px-2.5 pt-3 pb-2">
+      {p.onQuickConnect && (
+        <div className="px-2.5 pt-3">
+          <button
+            onClick={p.onQuickConnect}
+            title={`Conexión rápida sin guardar: SSH, Telnet o Serial (${modLabel}O)`}
+            className="w-full h-8 flex items-center gap-2 px-2.5 rounded-md border border-line bg-panel text-[12.5px] font-medium hover:bg-hover"
+          >
+            <QuickBolt size={14} />
+            Conexión rápida
+            <span className="ml-auto text-[11px] font-normal text-muted">{modLabel}O</span>
+          </button>
+        </div>
+      )}
+      <div className="flex items-center gap-0.5 px-2.5 pt-2 pb-2">
         <div className="relative flex-1 mr-1">
           <Search size={14} className="absolute left-2.5 top-1/2 -translate-y-1/2 text-muted" />
           <input
