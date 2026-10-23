@@ -132,8 +132,14 @@ export const PORT_COMMANDS: Record<TopoVendor, string[]> = {
   fortinet: [],
 };
 
+/**
+ * Nombre de interfaz que se puede devolver al equipo dentro de un comando: viene de su salida,
+ * así que se rechaza todo lo que no sea letras, dígitos y / . : - _ (un "|" agregaría "| save").
+ */
+export const isSafeIface = (s: string) => /^[A-Za-z][\w/.:-]{0,63}$/.test(s);
+
 /** Detalle de Junos por interfaz: trae la IP de gestión que la tabla resumida no muestra. */
-export const junosDetailCommand = (iface: string) => `show lldp neighbors interface ${iface}`;
+export const junosDetailCommand = (iface: string): string | null => (isSafeIface(iface) ? `show lldp neighbors interface ${iface}` : null);
 
 /**
  * Respuesta de error del equipo: comando inexistente en esa versión o plataforma, o protocolo
@@ -220,7 +226,8 @@ export function promptName(output: string): string | null {
   const last = output.trimEnd().split("\n").pop() ?? "";
   const m =
     last.match(/^<([\w.\-]+)>\s*$/) ||
-    last.match(/^\[~?\*?([\w.\-]+)[^\]]*\]\s*$/) ||
+    // Tras el nombre, un separador explícito: "[\w.-]+[^\]]*" era cuadrático en una línea larga.
+    last.match(/^\[~?\*?([\w.\-]+)(?:[^\]\w.\-][^\]]*)?\]\s*$/) ||
     last.match(/^[\w.\-]+@([\w.\-]+)[>#%]\s*$/) ||
     last.match(/^([\w.\-]+)(?:\s\([^)]*\))?\s?[#$]\s*$/) ||
     last.match(/^([\w.\-]+)(?:\([^)]*\))?[#>]\s*$/);
@@ -231,7 +238,6 @@ function field(block: string, re: RegExp): string | undefined {
   return block.match(re)?.[1]?.trim() || undefined;
 }
 
-const IPV4 = /\b(\d{1,3}(?:\.\d{1,3}){3})\b/;
 const usableIp = (ip?: string) => (ip && ip !== "0.0.0.0" ? ip : undefined);
 
 /** Cisco "show cdp neighbors detail" (IOS, IOS-XE, NX-OS). */
@@ -256,6 +262,8 @@ export function parseCdp(out: string): Neighbor[] {
     });
 }
 
+const mgmtAt = (b: string) => b.indexOf("Management Addresses:");
+
 /** Cisco "show lldp neighbors detail". */
 export function parseCiscoLldp(out: string): Neighbor[] {
   return out
@@ -270,7 +278,8 @@ export function parseCiscoLldp(out: string): Neighbor[] {
           name,
           localPort: local,
           remotePort: remote,
-          ip: usableIp(field(b, /Management Addresses:[\s\S]*?IP:\s*(\d+\.\d+\.\d+\.\d+)/)),
+          // Desde el primer encabezado: "Management Addresses:[\s\S]*?IP:" era cuadrático si se repetía.
+          ip: usableIp(mgmtAt(b) >= 0 ? field(b.slice(mgmtAt(b)), /IP:\s*(\d+\.\d+\.\d+\.\d+)/) : undefined),
           platform: field(b, /System Description:\s*\n\s*([^\n]+)/),
           proto: "LLDP",
         },
@@ -345,14 +354,16 @@ export function parseJunosLldpDetail(out: string): Neighbor | null {
 export function parseFortiLldp(outputs: string[]): Neighbor[] {
   const all = outputs.join("\n");
   const byIdx = new Map<string, Neighbor>();
-  for (const m of all.matchAll(/^\s*(\d+)\s+port\s+'([^']+)'.*?\bport\s+'([^']+)'(?:\s+system\s+'([^']*)')?/gm)) {
+  // Sin saltos de línea dentro de las comillas: un nombre no puede abarcar varias líneas.
+  for (const m of all.matchAll(/^[ \t]*(\d+)[ \t]+port[ \t]+'([^'\n]+)'.*?\bport[ \t]+'([^'\n]+)'(?:[ \t]+system[ \t]+'([^'\n]*)')?/gm)) {
     const [, idx, local, remote, system] = m;
-    const chassis = all.slice(m.index ?? 0).match(/chassis\s+(\S+)/)?.[1];
+    // Solo en la misma línea: buscar en todo el resto de la salida era cuadrático.
+    const chassis = m[0].match(/chassis\s+(\S+)/)?.[1];
     byIdx.set(idx, { name: system || chassis || `vecino-${idx}`, localPort: local, remotePort: remote, proto: "LLDP" });
   }
   for (const m of all.matchAll(/lldprx\.neighbor\.(\d+)\.address\.\d+\.addr:\s*(\S+)/g)) {
     const n = byIdx.get(m[1]);
-    if (n && !n.ip && IPV4.test(m[2])) n.ip = usableIp(m[2]);
+    if (n && !n.ip && isIpv4(m[2])) n.ip = usableIp(m[2]);
   }
   for (const m of all.matchAll(/lldprx\.neighbor\.(\d+)\.system\.desc\.data:\s*([^\n]+)/g)) {
     const n = byIdx.get(m[1]);
@@ -465,12 +476,13 @@ export interface BgpPeer {
  * https://www.cisco.com/c/en/us/support/docs/ip/border-gateway-protocol-bgp/220604-understand-basic-bgp-troubleshoot.html
  */
 export function parseBgpSummary(out: string): { routerId?: string; localAs?: string; peers: BgpPeer[] } {
-  const re = new RegExp(String.raw`^\s*(${IP_RE})\s+4\s+(\d+(?:\.\d+)?)\s+\d+\s+\d+\s+\d+\s+\d+\s+\d+\s+\S+\s+(.+?)\s*$`, "gm");
+  // Estado hasta el fin de línea y se recorta después: "(.+?)\s*$" era cuadrático con muchos espacios.
+  const re = new RegExp(String.raw`^\s*(${IP_RE})\s+4\s+(\d+(?:\.\d+)?)\s+\d+\s+\d+\s+\d+\s+\d+\s+\d+\s+\S+\s+(\S[^\n]*)$`, "gm");
   const routerId = out.match(new RegExp(String.raw`BGP router identifier (${IP_RE})`))?.[1];
   return {
     routerId: routerId && isIpv4(routerId) ? routerId : undefined,
     localAs: out.match(/local AS number (\d+(?:\.\d+)?)/)?.[1],
-    peers: [...out.matchAll(re)].filter((m) => isIpv4(m[1])).map((m) => ({ ip: m[1], remoteAs: m[2], state: m[3] })),
+    peers: [...out.matchAll(re)].filter((m) => isIpv4(m[1])).map((m) => ({ ip: m[1], remoteAs: m[2], state: m[3].trim() })),
   };
 }
 
@@ -561,12 +573,16 @@ function sliceRow(line: string, cols: { name: string; start: number }[]): Record
   return row;
 }
 
+/** Claves que no se usan como índice de un objeto con datos del equipo (prototype pollution). */
+const UNSAFE_KEYS = new Set(["__proto__", "constructor", "prototype"]);
+
 /** Interpreta las salidas de PORT_COMMANDS y devuelve el estado por interfaz (clave canonPort). */
 export function parsePortInfo(outputs: string[]): Record<string, PortInfo> {
   const ports: Record<string, PortInfo> = {};
   const put = (iface: string, info: PortInfo) => {
-    if (!iface) return;
     const k = canonPort(iface);
+    // La interfaz viene del equipo: "__proto__" como clave contaminaría Object.prototype.
+    if (!iface || UNSAFE_KEYS.has(k)) return;
     const cur = (ports[k] ??= {});
     for (const [key, v] of Object.entries(info) as [keyof PortInfo, string | undefined][]) if (v && !cur[key]) cur[key] = v;
   };
@@ -605,7 +621,8 @@ export function parsePortInfo(outputs: string[]): Record<string, PortInfo> {
         const po = l.match(/\b(Po\d+)\(\w+\)/);
         if (po) group = po[1];
         // Las líneas que continúan la lista de miembros solo traen interfaces.
-        else if (!/^\s+(\S+\(\w+\)\s*)+$/.test(l)) {
+        // Miembros sin paréntesis en el nombre: "(\S+\(\w+\)\s*)+" era exponencial (ReDoS).
+        else if (!/^\s+(?:[^\s()]+\(\w+\)\s*)+$/.test(l)) {
           group = undefined;
           continue;
         }
@@ -618,7 +635,8 @@ export function parsePortInfo(outputs: string[]): Record<string, PortInfo> {
     hi = lines.findIndex((l) => /^Interface\s+PHY\s+Protocol\s+Description/i.test(l));
     if (hi >= 0) {
       for (const l of lines.slice(hi + 1)) {
-        const m = l.match(/^(\S*\d\S*)\s+(\S+)\s+(\S+)\s*(.*)$/);
+        // "(?=\S*\d)(\S+)" en vez de "(\S*\d\S*)", que era cuadrático en una línea larga.
+        const m = l.match(/^(?=\S*\d)(\S+)\s+(\S+)\s+(\S+)\s*(.*)$/);
         if (m) put(m[1], { status: `${m[2]}/${m[3]}`, desc: m[4].trim() || undefined });
       }
       continue;
@@ -627,7 +645,7 @@ export function parsePortInfo(outputs: string[]): Record<string, PortInfo> {
     hi = lines.findIndex((l) => /^Interface\s+PHY\s+Protocol/.test(l));
     if (hi >= 0) {
       for (const l of lines.slice(hi + 1)) {
-        const m = l.match(/^(\S*\d\S*)\s+(\S+)\s+(\S+)/);
+        const m = l.match(/^(?=\S*\d)(\S+)\s+(\S+)\s+(\S+)/);
         if (m) put(m[1], { status: `${m[2]}/${m[3]}` });
       }
       continue;
@@ -638,7 +656,8 @@ export function parsePortInfo(outputs: string[]): Record<string, PortInfo> {
       for (const l of lines) {
         const g = l.match(/(Eth-Trunk\d+)'s state information/i);
         if (g) group = g[1];
-        const m = l.match(/^((?:\d+GE|XGE|GE|MultiGE|\S*Ethernet)\S*\d)\s+(Up|Down|Selected|Unselect|Unselected|Indep)\b/i);
+        // Prefijo en un lookahead: "(?:…|\S*Ethernet)\S*\d" era cuadrático en una línea larga.
+        const m = l.match(/^(?=\d+GE|XGE|GE|MultiGE|\S*Ethernet)(\S*\d)\s+(Up|Down|Selected|Unselect|Unselected|Indep)\b/i);
         if (m && group) put(m[1], { group });
       }
       continue;
@@ -669,6 +688,45 @@ const unionAddrs = (a: string[] | undefined, b: (string | undefined)[]) => {
   return all.length ? all.slice(0, MAX_ADDRS) : undefined;
 };
 
+/** Máximo de vecinos que se incorporan por equipo explorado (miles de pares BGP no congelan la vista). */
+export const MAX_NEIGHBORS = 2000;
+/** Largo máximo de nombres, plataformas y descripciones que llegan de un equipo. */
+const MAX_DEVICE_TEXT = 255;
+/** Control, formato invisible y dirección: el mismo conjunto que CONTROL_RANGES. */
+const CONTROL_RE = /[\x00-\x1f\x7f-\x9f\u200b-\u200f\u2028-\u202e\u2060-\u2064\u2066-\u2069\ufeff]/g;
+/** Texto que viene de un equipo: sin caracteres de control ni de dirección y con largo acotado. */
+const clean = (s: string, max = MAX_DEVICE_TEXT) => s.replace(CONTROL_RE, "").slice(0, max);
+const cleanOpt = (s: string | undefined, max = MAX_DEVICE_TEXT) => (s ? clean(s, max) || undefined : undefined);
+
+function cleanNeighbor(n: Neighbor): Neighbor {
+  return {
+    ...n,
+    name: clean(n.name),
+    localPort: clean(n.localPort, LIMITS.port),
+    remotePort: clean(n.remotePort, LIMITS.port),
+    ip: n.ip && (isIpv4(n.ip) || isIpv6(n.ip)) ? n.ip : undefined,
+    platform: cleanOpt(n.platform),
+    group: cleanOpt(n.group, LIMITS.port),
+    addrs: n.addrs?.filter(isIpv4),
+  };
+}
+
+function cleanPorts(ports: Record<string, PortInfo> | undefined): Record<string, PortInfo> | undefined {
+  if (!ports) return undefined;
+  const res: Record<string, PortInfo> = {};
+  for (const [k, p] of Object.entries(ports)) {
+    const key = clean(k, LIMITS.port);
+    if (!key || UNSAFE_KEYS.has(key)) continue;
+    const info: PortInfo = {};
+    for (const f of ["status", "speed", "desc", "group"] as const) {
+      const v = cleanOpt(p[f], f === "desc" ? MAX_DEVICE_TEXT : LIMITS.port);
+      if (v) info[f] = v;
+    }
+    res[key] = info;
+  }
+  return res;
+}
+
 /** Quita bucles y enlaces repetidos (mismo par de puertos y origen) tras fusionar equipos. */
 function dedupeLinks(links: TopoLink[]): TopoLink[] {
   const seen = new Set<string>();
@@ -691,13 +749,19 @@ export function mergeNeighbors(
   device: { name: string; ip?: string; platform?: string; ports?: Record<string, PortInfo>; addrs?: string[] },
   neighbors: Neighbor[],
 ): Topology {
+  // Todo lo que informa el equipo se limpia aquí, antes de guardarse, exportarse o copiarse.
+  device = { ...device, name: clean(device.name) || "?", ports: cleanPorts(device.ports), addrs: device.addrs?.filter(isIpv4) };
+  neighbors = neighbors.map(cleanNeighbor).filter((n) => nodeId(n.name)).slice(0, MAX_NEIGHBORS);
   let nodes = t.nodes.map((n) => ({ ...n }));
   let links = t.links.map((l) => ({ ...l }));
   /** Absorbe los nodos conocidos solo por dirección que coinciden con alguna de `addrs`. */
   const absorb = (target: TopoNode, addrs: (string | undefined)[]) => {
     const set = new Set(addrs.filter(Boolean));
     if (!set.size) return;
-    for (const n of nodes.filter((x) => x !== target && x.addrOnly && knownAddrs(x).some((a) => set.has(a)))) {
+    const found = nodes.filter((x) => x !== target && x.addrOnly && knownAddrs(x).some((a) => set.has(a)));
+    // Sin nada que fusionar no se recorren los enlaces: con miles de vecinos era cuadrático.
+    if (!found.length) return;
+    for (const n of found) {
       target.addrs = unionAddrs(target.addrs, knownAddrs(n));
       if (!target.x && !target.y) {
         target.x = n.x;
@@ -739,9 +803,10 @@ export function mergeNeighbors(
   const ensureAddr = (nb: Neighbor): TopoNode | null => {
     const addrs = nb.addrs?.length ? nb.addrs : [nb.ip ?? nb.name];
     if (addrs.some((a) => selfAddrs.has(a))) return null;
-    let n = nodes.find((x) => x.id === nodeId(nb.name)) ?? nodes.find((x) => knownAddrs(x).some((a) => addrs.includes(a)));
+    const id = nodeId(nb.name);
+    let n = nodes.find((x) => x.id === id) ?? nodes.find((x) => knownAddrs(x).some((a) => addrs.includes(a)));
     if (!n) {
-      n = { id: nodeId(nb.name), name: nb.name, ip: nb.ip, explored: false, addrOnly: true, x: 0, y: 0 };
+      n = { id, name: nb.name, ip: nb.ip, explored: false, addrOnly: true, x: 0, y: 0 };
       nodes.push(n);
     }
     if (!n.ip) n.ip = nb.ip;
@@ -927,7 +992,9 @@ export function diffTopology(before: Topology, now: Topology): TopoDiff {
 export function toMermaid(t: Topology): string {
   // Nombres y puertos vienen de los equipos: sin comillas, HTML ni saltos de línea que cierren
   // la etiqueta y agreguen directivas (click, href) o marcado al renderizar el diagrama.
-  const safe = (s: string) => s.replace(/"/g, "'").replace(/</g, "#lt;").replace(/>/g, "#gt;").replace(/[\r\n]+/g, " ");
+  // "#" primero: Mermaid decodifica entidades como "#60;" a "<" y reabriría el marcado.
+  const safe = (s: string) =>
+    s.replace(/[\r\n]+/g, " ").replace(XML_STRIP, "").replace(/#/g, "#35;").replace(/"/g, "'").replace(/</g, "#lt;").replace(/>/g, "#gt;");
   // Identificadores por posición: un nombre como "end" o una IP no rompen la sintaxis.
   const idx = new Map(t.nodes.map((n, i) => [n.id, `n${i}`]));
   const lines = ["graph TD"];
@@ -975,7 +1042,7 @@ export function toCsv(t: Topology): string {
 /** Archivo .drawio (diagrams.net) editable, con los puertos como etiquetas en cada extremo. */
 export function toDrawio(t: Topology, w = 170, h = 54): string {
   const esc = (s: string) =>
-    s.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;").replace(/"/g, "&quot;").replace(/\n/g, "&#xa;");
+    xmlEsc(s).replace(/\n/g, "&#xa;");
   const idx = new Map(t.nodes.map((n, i) => [n.id, `n${i}`]));
   const cells = ['<mxCell id="0"/>', '<mxCell id="1" parent="0"/>'];
   for (const n of t.nodes) {
@@ -1044,7 +1111,10 @@ export function linkGeometry(t: Topology, links: TopoLink[], gap = 26) {
 }
 
 /** Texto seguro dentro de un SVG/XML. */
-export const xmlEsc = (s: string) => s.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;").replace(/"/g, "&quot;");
+export const xmlEsc = (s: string) =>
+  s.replace(XML_STRIP, "").replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;").replace(/"/g, "&quot;");
+/** Caracteres que XML 1.0 no admite o que invierten el texto: se quitan (salto de línea y tab se conservan). */
+const XML_STRIP = /[\x00-\x08\x0b\x0c\x0e-\x1f\x7f-\x9f\u200b-\u200f\u2028-\u202e\u2060-\u2064\u2066-\u2069\ufeff]/g;
 
 /** SVG autónomo (colores fijos claros) para documentación, con leyenda si hay enlaces no CDP/LLDP. */
 export function toSvg(t: Topology, W = 170, H = 54): string {

@@ -33,6 +33,8 @@ import {
   deleteManualNode,
   diffTopology,
   isCliError,
+  isIpv4,
+  isIpv6,
   isPhysicalProto,
   isRoutingProto,
   isUserProto,
@@ -188,7 +190,11 @@ export function TopologyTool({
       // Junos: la tabla resumida no trae IP de gestión; se pide el detalle por interfaz.
       if (vendor === "juniper" && neighbors.some((n) => !n.ip)) {
         const ifaces = [...new Set(neighbors.filter((n) => !n.ip).map((n) => n.localPort))].slice(0, MAX_DETAIL);
-        for (const iface of ifaces) outputs.push(await run(junosDetailCommand(iface)));
+        for (const iface of ifaces) {
+          // La interfaz viene de la salida del equipo: solo se reenvía si es un nombre válido.
+          const cmd = junosDetailCommand(iface);
+          if (cmd) outputs.push(await run(cmd));
+        }
         neighbors = parseNeighbors(vendor, outputs);
       }
       // Vecinos de ruteo: solo con la fuente activa (apagada no se envía ningún comando).
@@ -318,6 +324,11 @@ export function TopologyTool({
       return;
     }
     if (!term || !n.ip) return;
+    // La IP viene de un vecino (dato del equipo): solo una IPv4/IPv6 literal, nunca un nombre ni "-o…".
+    if (!isIpv4(n.ip) && !isIpv6(n.ip)) {
+      setMsg(`IP de gestión no válida: ${n.ip.slice(0, 64)}`);
+      return;
+    }
     const base = term.session;
     onOpenSession({
       ...base,

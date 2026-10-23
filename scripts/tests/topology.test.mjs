@@ -405,4 +405,132 @@ for (const cmd of sent) assert.equal(computeRisk(cmd), "read", cmd);
 for (const cmd of ["show ip ospf neighbor", "show ip eigrp neighbors", "show ip bgp summary", "show bgp ipv4 unicast summary", "display ospf peer brief", "show ospf neighbor", "show ip interface brief", "display ip interface brief", "show interfaces terse"])
   assert.ok(sent.has(cmd), `falta ${cmd}`);
 
+// ---------- Fuzz: salidas maliciosas o aleatorias de un equipo (no confiable) ----------
+
+/** Falla si fn tarda más de `ms` (backtracking catastrófico o crecimiento cuadrático). */
+const fast = (label, ms, fn) => {
+  const t0 = performance.now();
+  const r = fn();
+  const dt = performance.now() - t0;
+  assert.ok(dt < ms, `${label}: ${dt.toFixed(0)} ms (máximo ${ms} ms)`);
+  return r;
+};
+const BIG = 100_000;
+fast("promptName con '[' sin cierre", 300, () => T.promptName("[" + "a".repeat(BIG)));
+fast("BGP con muchos espacios", 300, () => T.parseBgpSummary(`192.0.2.1 4 65000 1 1 1 0 0 00:01 a${" ".repeat(BIG)}x`));
+fast("etherchannel con paréntesis anidables", 300, () => T.parsePortInfo([`Po1(SU)\n  ${"a(b)".repeat(40)}!`]));
+fast("Huawei descripción con dígitos", 300, () => T.parsePortInfo([`Interface PHY Protocol Description\n${"1".repeat(BIG)}x`]));
+fast("Huawei brief con dígitos", 300, () => T.parsePortInfo([`Interface PHY Protocol InUti\n${"1".repeat(BIG)}x`]));
+fast("Eth-Trunk con Ethernet repetido", 300, () => T.parsePortInfo([`Eth-Trunk1's state information\n${"Ethernet".repeat(BIG / 4)}1x`]));
+fast("LLDP con encabezados repetidos", 300, () => T.parseCiscoLldp(`Local Intf: Gi1\nPort id: x\nSystem Name: a\n${"Management Addresses:\n".repeat(BIG / 10)}`));
+fast("FortiOS con muchas filas sin chassis", 300, () => T.parseFortiLldp([`${"1 port 'a' x port 'b'\n".repeat(BIG / 20)}${"z".repeat(BIG)}`]));
+fast("descripción larga", 50, () => T.parseDescriptionHint(`uplink to ${"a-".repeat(115)}`));
+for (const [label, out] of [
+  ["OSPF", `192.0.2.1 1 FULL/${" ".repeat(BIG)}x`],
+  ["EIGRP", `EIGRP\n${"1 ".repeat(BIG)}`],
+  ["Junos OSPF", `192.0.2.1 ${"a ".repeat(BIG)}`],
+  ["Huawei OSPF", `Area Id Interface Neighbor id State\n0.0.0.0 ${"a ".repeat(BIG)}`],
+  ["direcciones", `1 ${"192.0.2.1".repeat(BIG / 9)}`],
+])
+  fast(label, 300, () => T.parseRoutingNeighbors([{ cmd: "show ip ospf neighbor", out }, { cmd: "show ip eigrp neighbors", out }, { cmd: "show ospf neighbor", out }, { cmd: "display ospf peer brief", out }]));
+
+// Miles de vecinos: la fusión no es cuadrática y se acota la cantidad.
+const many = Array.from({ length: 5000 }, (_, i) => ({ name: `sw${i}`, localPort: `Gi1/0/${i}`, remotePort: "Gi0/1", ip: `10.${(i >> 8) & 255}.${i & 255}.1`, proto: "CDP" }));
+const big = fast("fusión de 5000 vecinos CDP", 2000, () => T.mergeNeighbors({ nodes: [], links: [] }, { name: "core" }, many));
+assert.equal(big.links.length, T.MAX_NEIGHBORS, "vecinos acotados por equipo");
+const peers = many.map((n) => ({ ...n, name: n.ip, remotePort: "", addrs: [n.ip], proto: "OSPF", byAddr: true }));
+fast("fusión de 5000 vecinos OSPF", 2000, () => T.mergeNeighbors(big, { name: "core2" }, peers));
+
+// Prototype pollution: una interfaz llamada "__proto__" no toca Object.prototype.
+T.parsePortInfo([
+  "Port      Name               Status       Vlan       Duplex  Speed Type\n__proto__ evil               connected    1          a-full  a-1000 x\n",
+  "Interface PHY Protocol Description\n__proto__1 up up x\n",
+  "Interface Admin Link Description\n__proto__ up up evil\n",
+]);
+T.mergeNeighbors({ nodes: [], links: [] }, { name: "x", ports: JSON.parse('{"__proto__":{"status":"evil"}}') }, []);
+assert.equal({}.status, undefined, "Object.prototype intacto");
+assert.equal({}.desc, undefined, "Object.prototype intacto");
+
+// Junos: la interfaz del equipo solo vuelve en un comando si es un nombre válido.
+for (const bad of ["ge-0/0/0|save:/tmp/x", "ge-0/0/0 | save x", "ge-0/0/0;request", "ge-0/0/0\u0015reload", "-x", "", "a".repeat(80), "ge-0/0/0\nrequest system reboot"])
+  assert.equal(T.junosDetailCommand(bad), null, JSON.stringify(bad));
+for (const ok of ["ge-0/0/0", "ge-0/0/0.0", "xe-1/2/3:1", "et-0/0/49", "me0", "fxp0"]) {
+  const cmd = T.junosDetailCommand(ok);
+  assert.equal(cmd, `show lldp neighbors interface ${ok}`);
+  assert.equal(computeRisk(cmd), "read", cmd);
+}
+
+// IP para "Conectar y seguir la ruta": solo IPv4/IPv6 literales.
+for (const bad of ["-oProxyCommand=sh", "-p22", "192.0.2.1 -oX", "192.0.2.1;id", "host.example", "999.1.1.1", "01.2.3.4", "1.2.3", "[::1]", "::1;rm", "::1 -o", "", " "])
+  assert.ok(!T.isIpv4(bad) && !T.isIpv6(bad), JSON.stringify(bad));
+for (const ok of ["192.0.2.1", "2001:db8::1", "::ffff:192.0.2.1"]) assert.ok(T.isIpv4(ok) || T.isIpv6(ok), ok);
+
+// FortiOS: la IP de gestión debe ser una IPv4 exacta y el nombre no abarca líneas.
+const fz = T.parseFortiLldp(["1 port 'wan1' 5 mac x chassis y port 'p1' system 'a\nreload\nb'\nlldprx.neighbor.1.address.1.addr: -oProxyCommand=x;192.0.2.1"]);
+assert.equal(fz[0].ip, undefined, "IP con texto alrededor rechazada");
+assert.ok(!/\n/.test(fz[0].name), "nombre de una sola línea");
+
+// Lo que informa el equipo se guarda sin control ni dirección y con largo acotado.
+const dirty = T.mergeNeighbors({ nodes: [], links: [] }, { name: "core\u0007", ports: { "gi1/0/1": { desc: "to\u202e x\u0000", status: "up" } } }, [
+  { name: "sw\u202e1\u0000", localPort: "Gi1/0/1\u001b[31m", remotePort: "Gi0/1", ip: "-oProxyCommand=x", platform: "p\u2066".repeat(300), proto: "CDP" },
+]);
+const allText = JSON.stringify(dirty);
+assert.ok(!/[\u0000-\u001f\u007f-\u009f\u200b-\u200f\u2028-\u202e\u2060-\u2064\u2066-\u2069\ufeff]/.test(JSON.parse(allText).nodes.map((n) => n.name + (n.platform ?? "") + JSON.stringify(n.ports ?? {})).join("") + dirty.links.map((l) => l.aPort + l.bPort).join("")), "sin control ni bidi");
+assert.equal(dirty.nodes.find((n) => n.id === "sw1")?.ip, undefined, "IP de vecino no válida descartada");
+assert.ok(dirty.nodes.every((n) => (n.platform ?? "").length <= 255), "plataforma acotada");
+
+// Aleatorio: entradas con caracteres peligrosos no rompen parsers ni exportaciones.
+let seed = 1234567;
+const rnd = (n) => ((seed = (seed * 1103515245 + 12345) % 2 ** 31), seed % n);
+const ALPHA = ["a", "Z", "0", "9", ".", "-", "/", ":", " ", "\t", "\n", "\r", "(", ")", "[", "]", "<", ">", "&", '"', "'", "#", "|", "=", "+", "@", "%", "`", "$", ";", "\\", "\u0000", "\u001b", "\u0085", "\u200b", "\u202e", "\u2066", "\ufeff", "é", "→", "Gi1/0/1", "192.0.2.1", "FULL", "port '", "system '", "Device ID: ", "Interface: ", ",", "Port ID (outgoing port): ", "-----\n", "EIGRP", " 4 65000 ", "__proto__", "#60;", "]]>", "<!--", "{{", "}}"];
+const junk = (len) => Array.from({ length: len }, () => ALPHA[rnd(ALPHA.length)]).join("");
+const CTRL = /[\u0000-\u0008\u000b\u000c\u000e-\u001f\u007f-\u009f\u200b-\u200f\u2028-\u202e\u2060-\u2064\u2066-\u2069\ufeff]/;
+for (let i = 0; i < 300; i++) {
+  const outs = [junk(rnd(400)), junk(rnd(400)), junk(rnd(400))];
+  const nbs = fast(`fuzz ${i} parsers`, 200, () => [
+    ...T.parseNeighbors("cisco", outs),
+    ...T.parseNeighbors("huawei", outs),
+    ...T.parseNeighbors("juniper", outs),
+    ...T.parseNeighbors("fortinet", outs),
+    ...T.parseRoutingNeighbors(outs.map((out, j) => ({ cmd: T.ROUTING_COMMANDS.cisco[j], out }))).neighbors,
+  ]);
+  T.parsePortInfo(outs);
+  T.parseOwnAddresses(outs);
+  T.promptName(outs[0]);
+  // Vecinos inventados directamente, además de los que salgan de los parsers.
+  const forged = Array.from({ length: 5 }, () => ({ name: junk(1 + rnd(20)), localPort: junk(rnd(10)), remotePort: junk(rnd(10)), ip: junk(rnd(10)), platform: junk(rnd(30)), proto: "LLDP" }));
+  const t = T.mergeNeighbors({ nodes: [], links: [] }, { name: junk(1 + rnd(12)), ports: T.parsePortInfo(outs) }, [...nbs, ...forged]);
+  for (const n of t.nodes) {
+    assert.ok(!CTRL.test(n.name) && !CTRL.test(n.platform ?? ""), `fuzz ${i}: control en ${JSON.stringify(n.name)}`);
+    assert.ok(!n.ip || T.isIpv4(n.ip) || T.isIpv6(n.ip), `fuzz ${i}: IP ${JSON.stringify(n.ip)}`);
+  }
+  for (const l of t.links) assert.ok(!CTRL.test(l.aPort + l.bPort), `fuzz ${i}: control en puertos`);
+  T.collectSuggestions(t, { descriptions: true, routing: true });
+  // SVG y draw.io: XML bien formado (sin etiquetas ni entidades del equipo, sin caracteres inválidos).
+  for (const xml of [T.toSvg(t), T.toDrawio(t)]) {
+    assert.ok(!CTRL.test(xml), `fuzz ${i}: carácter inválido en XML`);
+    const tags = xml.match(/<\/?[a-zA-Z][^>]*>/g) ?? [];
+    assert.ok(tags.every((tag) => /^<\/?(svg|rect|path|text|line|mxfile|diagram|mxGraphModel|root|mxCell|mxGeometry|mxPoint)\b/.test(tag)), `fuzz ${i}: etiqueta inesperada`);
+    assert.ok(!/&(?!amp;|lt;|gt;|quot;|#xa;)/.test(xml), `fuzz ${i}: & sin escapar`);
+  }
+  // Mermaid: una línea por equipo y por enlace (ningún dato abre otra línea o directiva).
+  const mm = T.toMermaid(t);
+  assert.equal(mm.split("\n").length, 1 + t.nodes.length + t.links.length, `fuzz ${i}: líneas Mermaid`);
+  assert.ok(!/<(?!br\/>)|>(?<!<br\/>)|#(?!lt;|gt;|35;)/.test(mm.replace(/^graph TD$/m, "").replace(/ -\.?-+\|| ---\|/g, "").replace(/\| n\d+$/gm, "")), `fuzz ${i}: Mermaid sin < > ni entidades del equipo`);
+  // CSV: ninguna celda empieza con un carácter de fórmula.
+  for (const cell of T.toCsv(t).split("\n").slice(1).join(",").match(/"(?:[^"]|"")*"/g) ?? [])
+    assert.ok(!/^"[=@\t\r]/.test(cell) && !/^"[+-](?!(\d+(\.\d+)?)?"$)/.test(cell), `fuzz ${i}: celda ${cell}`);
+  // Copiar ruta: texto sin control ni saltos dentro de un salto.
+  const ids = t.nodes.map((n) => n.id);
+  const p = T.shortestPath(t, ids[0], ids.at(-1));
+  if (p) assert.equal(T.pathToText(t, p).split("\n").length, p.nodes.length, `fuzz ${i}: ruta`);
+}
+
+// Mermaid: una entidad numérica del equipo no se decodifica a "<".
+assert.match(T.toMermaid({ nodes: [{ id: "a", name: "#60;img src=x#62;", explored: true, x: 0, y: 0 }], links: [] }), /#35;60;img src=x#35;62;/);
+
+// Fuentes: apagadas o con valores que no son true, no hay sugerencias ni consultas de ruteo.
+for (const s of [undefined, {}, { routing: false }, { routing: "true" }, { routing: 1 }]) assert.equal(T.sourceOn(s, "routing"), false, JSON.stringify(s));
+assert.deepEqual(T.collectSuggestions(s0, { descriptions: "true" }), [], "solo true habilita");
+
 console.log("topology: ok");
