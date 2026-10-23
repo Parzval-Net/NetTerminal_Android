@@ -655,6 +655,133 @@ const handlers = {
   },
 };
 
+// ?scene=topology-snmp / topology-traffic: agentes SNMP simulados para Topología (descubrimiento
+// por perfil y contadores de tráfico que cambian con el tiempo). Datos ficticios (RFC 5737).
+const TOPO_SNMP_SCENE = topoScene === "topology-snmp" || topoScene === "topology-traffic";
+const enc8 = new TextEncoder();
+const hexStr = (s) => [...enc8.encode(s)].map((b) => b.toString(16).padStart(2, "0").toUpperCase()).join("");
+const vStr = (oid, v) => ({ oid, type: "OCTET STRING", value: v, hex: hexStr(v) });
+const vHex = (oid, h) => ({ oid, type: "Hex-STRING", value: h.match(/../g).join(":").toUpperCase(), hex: h.toUpperCase() });
+const vInt = (oid, v) => ({ oid, type: "INTEGER", value: String(v) });
+const vIp = (oid, v) => ({ oid, type: "IpAddress", value: v });
+const vGauge = (oid, v) => ({ oid, type: "Gauge32", value: String(v) });
+const IFN = "1.3.6.1.2.1.31.1.1.1";
+const LLDPM = "1.0.8802.1.1.2.1";
+const CDPM = "1.3.6.1.4.1.9.9.23.1.2.1.1";
+/** Interfaces por equipo: [ifIndex, ifName, Mb/s, entrada b/s, salida b/s]. */
+const SNMP_IFS = {
+  "192.0.2.1": [
+    [10101, "Te1/1/1", 10000, 1.1e9, 2.4e9],
+    [10102, "Te1/1/2", 10000, 0.2e9, 0.3e9],
+    [10001, "Gi1/0/1", 1000, 0.21e9, 0.76e9],
+    [10002, "Gi1/0/2", 1000, 0.18e9, 0.94e9],
+    [10010, "Gi1/0/10", 1000, 35e6, 120e6],
+    [10030, "Gi1/0/30", 1000, 2e6, 1e6],
+    [10046, "Gi1/0/46", 1000, 8e6, 4e6],
+  ],
+  "192.0.2.2": [
+    [10101, "Te1/1/1", 10000, 2.4e9, 1.1e9],
+    [10011, "Gi1/0/11", 1000, 95e6, 310e6],
+  ],
+  "192.0.2.11": [
+    [10048, "Gi1/0/48", 1000, 0.76e9, 0.21e9],
+    [10047, "Gi1/0/47", 1000, 0.94e9, 0.18e9],
+    [10001, "Gi1/0/1", 1000, 12e6, 45e6],
+    [10002, "Gi1/0/2", 1000, 140e6, 610e6],
+  ],
+};
+const SNMP_NAMES = { "192.0.2.1": "core-sw01", "192.0.2.2": "core-sw02", "192.0.2.11": "dist-sw01" };
+const trafficStart = Date.now() / 1000;
+/** Octetos acumulados con una tasa que varía suave (siempre crecientes). */
+function octetsAt(bps, phase) {
+  const t = Date.now() / 1000 - trafficStart;
+  const k = 0.03;
+  const integral = t - k * 20 * Math.cos(t / 20 + phase) + k * 20 * Math.cos(phase);
+  return String(Math.round(5e9 + (bps / 8) * integral));
+}
+/** Tablas de core-sw01 para el descubrimiento (LLDP, CDP, OSPF, BGP, FDB, ARP e IF-MIB). */
+function coreSnmpRows() {
+  const rows = [];
+  for (const [i, n, sp] of SNMP_IFS["192.0.2.1"]) {
+    rows.push(vStr(`${IFN}.1.${i}`, n), vStr(`1.3.6.1.2.1.2.2.1.2.${i}`, n.replace(/^Te/, "TenGigabitEthernet").replace(/^Gi/, "GigabitEthernet")));
+    rows.push(vInt(`1.3.6.1.2.1.2.2.1.8.${i}`, 1), vGauge(`${IFN}.15.${i}`, sp));
+  }
+  rows.push(vStr(`${IFN}.18.10101`, "ISL core-sw02"), vStr(`${IFN}.18.10001`, "UPLINK dist-sw01"), vStr(`${IFN}.18.10002`, "UPLINK dist-sw01"), vStr(`${IFN}.18.10102`, "WAN rt-borde01"));
+  // dot1dBasePort -> ifIndex y lldpLocPortTable (subtipo 5: nombre de interfaz).
+  for (const [bp, i, n] of [[1, 10001, "Gi1/0/1"], [2, 10002, "Gi1/0/2"], [10, 10010, "Gi1/0/10"], [30, 10030, "Gi1/0/30"], [46, 10046, "Gi1/0/46"], [101, 10101, "Te1/1/1"]]) {
+    rows.push(vInt(`1.3.6.1.2.1.17.1.4.1.2.${bp}`, i), vInt(`${LLDPM}.3.7.1.2.${bp}`, 5), vStr(`${LLDPM}.3.7.1.3.${bp}`, n));
+  }
+  // LLDP: el firewall en Gi1/0/10.
+  rows.push(
+    vInt(`${LLDPM}.4.1.1.4.500.10.1`, 4), vHex(`${LLDPM}.4.1.1.5.500.10.1`, "00090f000001"),
+    vInt(`${LLDPM}.4.1.1.6.500.10.1`, 5), vStr(`${LLDPM}.4.1.1.7.500.10.1`, "port1"),
+    vStr(`${LLDPM}.4.1.1.9.500.10.1`, "fw-perimetro"), vStr(`${LLDPM}.4.1.1.10.500.10.1`, "FortiGate-200F v7.4.5"),
+    vInt(`${LLDPM}.4.2.1.3.500.10.1.1.4.198.51.100.10`, 2),
+  );
+  // CDP: core-sw02 por Te1/1/1 y dist-sw01 por Gi1/0/1 y Gi1/0/2.
+  for (const [i, d, id, port, plat, ipHex] of [
+    [10101, 1, "core-sw02", "TenGigabitEthernet1/1/1", "cisco C9500-24Y4C", "c0000202"],
+    [10001, 2, "dist-sw01", "GigabitEthernet1/0/48", "cisco C9300-48P", "c000020b"],
+    [10002, 3, "dist-sw01", "GigabitEthernet1/0/47", "cisco C9300-48P", "c000020b"],
+  ])
+    rows.push(vInt(`${CDPM}.3.${i}.${d}`, 1), vHex(`${CDPM}.4.${i}.${d}`, ipHex), vStr(`${CDPM}.6.${i}.${d}`, id), vStr(`${CDPM}.7.${i}.${d}`, port), vStr(`${CDPM}.8.${i}.${d}`, plat));
+  // OSPF y eBGP con rt-borde01 por Te1/1/2 (198.51.100.4/30).
+  rows.push(
+    vIp("1.3.6.1.2.1.14.10.1.3.198.51.100.6.0", "192.0.2.40"), vInt("1.3.6.1.2.1.14.10.1.6.198.51.100.6.0", 8),
+    vInt("1.3.6.1.2.1.15.3.1.2.198.51.100.6", 6), vInt("1.3.6.1.2.1.15.3.1.9.198.51.100.6", 65010),
+    vInt("1.3.6.1.2.1.4.20.1.2.198.51.100.5", 10102), vIp("1.3.6.1.2.1.4.20.1.3.198.51.100.5", "255.255.255.252"),
+    vInt("1.3.6.1.2.1.4.20.1.2.192.0.2.1", 10), vIp("1.3.6.1.2.1.4.20.1.3.192.0.2.1", "255.255.255.0"),
+  );
+  // Tabla MAC (Q-BRIDGE, FID 10) y ARP: gateway HSRP y un equipo Huawei sin LLDP.
+  rows.push(
+    vInt("1.3.6.1.2.1.17.7.1.2.2.1.2.10.0.0.12.7.172.10", 46), vInt("1.3.6.1.2.1.17.7.1.2.2.1.3.10.0.0.12.7.172.10", 3),
+    vInt("1.3.6.1.2.1.17.7.1.2.2.1.2.10.0.224.252.18.52.86", 30), vInt("1.3.6.1.2.1.17.7.1.2.2.1.3.10.0.224.252.18.52.86", 3),
+    vHex("1.3.6.1.2.1.4.35.1.4.10.1.4.192.0.2.254", "00000c07ac0a"), vInt("1.3.6.1.2.1.4.35.1.6.10.1.4.192.0.2.254", 3),
+    vHex("1.3.6.1.2.1.4.35.1.4.10.1.4.192.0.2.30", "00e0fc123456"), vInt("1.3.6.1.2.1.4.35.1.6.10.1.4.192.0.2.30", 3),
+  );
+  return rows;
+}
+function snmpTopoRead({ target, gets = [], walks = [] }) {
+  const host = target?.host;
+  const ifs = SNMP_IFS[host];
+  if (!ifs) throw `Sin respuesta de ${host}:161 (timeout 2000 ms, 1 reintentos). Revisa IP, puerto, usuario, ACL del agente y que UDP 161 esté permitido.`;
+  const all = host === "192.0.2.1" ? coreSnmpRows() : ifs.map(([i, n]) => vStr(`${IFN}.1.${i}`, n));
+  const byIdx = new Map(ifs.map(([i, , sp, inB, outB], k) => [String(i), { sp, inB, outB, k }]));
+  const getRows = gets.map((oid) => {
+    if (oid === "1.3.6.1.2.1.1.5.0") return vStr(oid, SNMP_NAMES[host]);
+    if (oid === "1.3.6.1.2.1.15.2.0") return vInt(oid, 65000);
+    if (oid === "1.3.6.1.2.1.14.1.1.0" || oid === "1.3.6.1.2.1.15.4.0") return vIp(oid, "192.0.2.1");
+    const m = oid.match(/^(.*)\.(\d+)$/);
+    const d = m && byIdx.get(m[2]);
+    if (d && m[1] === `${IFN}.6`) return { oid, type: "Counter64", value: octetsAt(d.inB, d.k) };
+    if (d && m[1] === `${IFN}.10`) return { oid, type: "Counter64", value: octetsAt(d.outB, d.k + 1) };
+    if (d && m[1] === `${IFN}.15`) return vGauge(oid, d.sp);
+    return { oid, type: "noSuchInstance", value: "No existe la instancia" };
+  });
+  const walkRows = walks.map((root) => ({ oid: root, rows: all.filter((r) => r.oid.startsWith(`${root}.`)), truncated: false, timedOut: false, error: null }));
+  return new Promise((r) => setTimeout(() => r({ gets: getRows, getError: null, walks: walkRows, ms: 640 + walks.length * 35 }), 250));
+}
+handlers.snmp_topo_read = snmpTopoRead;
+if (TOPO_SNMP_SCENE) {
+  settings.snmpProfiles = [
+    ...settings.snmpProfiles,
+    { id: "pcore2", name: "core-sw02", host: "192.0.2.2", port: 161, version: "3", user: "monitoreo", level: "authPriv", authProto: "sha256", privProto: "aes", context: "", timeoutMs: 2000, retries: 1, saved: true },
+    { id: "pdist", name: "dist-sw01", host: "192.0.2.11", port: 161, version: "2c", user: "", level: "authPriv", authProto: "sha256", privProto: "aes", context: "", timeoutMs: 2000, retries: 1, saved: true },
+  ];
+  if (topoScene === "topology-snmp") {
+    settings.topology = { nodes: [], links: [] };
+    settings.topoSources = { routing: true, mac: true };
+  } else {
+    // Más separación que el diagrama base: cada enlace lleva su tasa.
+    settings.topology = { nodes: topology.nodes.map((n) => ({ ...n, x: 480 + (n.x - 480) * 1.35, y: n.y * 1.2 })), links: topology.links.map((l) => ({ ...l })) };
+    settings.topoSources = {};
+  }
+  const q = new URLSearchParams(location.search);
+  const ui = JSON.parse(localStorage.getItem("topoUi") ?? "{}");
+  Object.assign(ui, { mode: topoScene === "topology-snmp" ? "snmp" : "cli", snmpProfile: "pcore", interval: 15, anim: q.get("anim") !== "0" });
+  localStorage.setItem("topoUi", JSON.stringify(ui));
+}
+
 // ---- Modo video (?video=1, scripts/video): la terminal responde a lo que se escribe o envía,
 // las sesiones nuevas se guardan y ?update=1 simula una versión nueva. Las capturas no lo usan.
 if (new URLSearchParams(location.search).has("video")) {
@@ -1067,6 +1194,19 @@ Object.assign(scenes, {
     await tool("Topología")();
     await svgNode("dist-sw01");
     await wait(300);
+  },
+  // Descubrimiento con un perfil SNMP (LLDP, CDP, OSPF/BGP y tabla MAC simulados).
+  "topology-snmp": async () => {
+    await tool("Topología")();
+    await wait(300);
+    await click("Descubrir por SNMP");
+    await wait(900);
+  },
+  // Tráfico en enlaces por SNMP: la tasa aparece desde la segunda lectura (15 s).
+  "topology-traffic": async () => {
+    await tool("Topología")();
+    await wait(300);
+    await click("Mostrar el tráfico de los enlaces (opciones en el panel)");
   },
   "t-subnet": tool("Subredes"),
   "t-perf": tool("Velocidad"),
