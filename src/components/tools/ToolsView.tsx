@@ -168,11 +168,12 @@ export const ToolsView = memo(function ToolsView({ active, settings, update, mon
         {enabled.length === 0 && <p className="p-2 text-[12px] text-muted">Activa módulos en Ajustes › Módulos.</p>}
       </nav>
       <div className="flex-1 min-w-0 overflow-y-auto">
-        <div className="max-w-[1200px] mx-auto p-5">
+        {/* Topología ocupa todo el ancho y alto disponibles; el resto mantiene el ancho de lectura. */}
+        <div className={current === "topology" ? "h-full p-4" : "max-w-[1200px] mx-auto p-5"}>
           {enabled
             .filter((n) => visited.has(n.id))
             .map((n) => (
-              <div key={n.id} hidden={n.id !== current}>
+              <div key={n.id} hidden={n.id !== current} className={n.id === "topology" ? "h-full" : undefined}>
                 {pane(n.id)}
               </div>
             ))}

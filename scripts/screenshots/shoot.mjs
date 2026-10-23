@@ -19,7 +19,7 @@ const SHOTS = [
   ["monitoreo", "monitor", "light"],
   ["topologia", "topology", "light"],
   ["topologia-cambios", "compare", "light"],
-  ["topologia-fuentes", "topology-mac", "light"],
+  ["topologia-fuentes", "topology-mac", "light", { query: "&topoOpen=fuentes,sugerencias" }],
   ["comandos-so", "oscmds", "light"],
   ["subredes", "subnet", "light"],
   ["velocidad", "speed", "light"],

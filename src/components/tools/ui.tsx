@@ -1,6 +1,6 @@
-import { useState } from "react";
+import { useId, useState } from "react";
 import { writeText } from "@tauri-apps/plugin-clipboard-manager";
-import { Check, Copy } from "lucide-react";
+import { Check, ChevronRight, Copy } from "lucide-react";
 
 export function Section({ title, hint, children, right }: { title: string; hint?: string; children: React.ReactNode; right?: React.ReactNode }) {
   return (
@@ -14,6 +14,75 @@ export function Section({ title, hint, children, right }: { title: string; hint?
       </header>
       <div className="px-4 pb-4">{children}</div>
     </section>
+  );
+}
+
+/**
+ * Sección plegable con el mismo aspecto que Section. El encabezado es un botón (patrón acordeón de
+ * WAI-ARIA): aria-expanded, aria-controls y operable con teclado. El contenido queda montado aunque
+ * esté plegado, para no perder formularios a medio llenar.
+ */
+export function Collapsible({
+  title,
+  summary,
+  badge,
+  open,
+  onToggle,
+  right,
+  children,
+}: {
+  title: string;
+  /** Resumen visible en el encabezado (también con la sección plegada). */
+  summary?: string;
+  /** Contador junto al título, p. ej. cantidad de sugerencias. */
+  badge?: number;
+  open: boolean;
+  onToggle: (open: boolean) => void;
+  /** Acciones a la derecha del encabezado (fuera del botón que pliega). */
+  right?: React.ReactNode;
+  children: React.ReactNode;
+}) {
+  const bodyId = useId();
+  return (
+    <section className="rounded-xl border border-line bg-panel">
+      <header className="flex items-center gap-2 pr-2">
+        <h3 className="flex-1 min-w-0">
+          <button
+            type="button"
+            aria-expanded={open}
+            aria-controls={bodyId}
+            onClick={() => onToggle(!open)}
+            className="w-full flex items-start gap-2 pl-3 pr-1 py-2.5 text-left rounded-xl hover:bg-hover"
+          >
+            <ChevronRight size={14} aria-hidden className={`mt-0.5 shrink-0 text-muted transition-transform ${open ? "rotate-90" : ""}`} />
+            <span className="min-w-0 flex-1">
+              <span className="flex items-center gap-1.5 text-[13px] font-semibold">
+                <span className="truncate">{title}</span>
+                {badge !== undefined && badge > 0 && <CountBadge n={badge} />}
+              </span>
+              {summary && (
+                <span className="block text-[11.5px] font-normal text-muted truncate" title={summary}>
+                  {summary}
+                </span>
+              )}
+            </span>
+          </button>
+        </h3>
+        {right}
+      </header>
+      <div id={bodyId} hidden={!open} className="px-4 pb-4">
+        {children}
+      </div>
+    </section>
+  );
+}
+
+/** Contador redondo con el color de acento (contraste AA en ambos temas). */
+export function CountBadge({ n }: { n: number }) {
+  return (
+    <span className="inline-flex items-center justify-center min-w-5 h-5 px-1.5 rounded-full bg-accent text-accent-fg text-[11px] font-semibold leading-none tabular-nums">
+      {n}
+    </span>
   );
 }
 

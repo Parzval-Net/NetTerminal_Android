@@ -318,6 +318,17 @@ const TOPO_SCENES = {
   "topology-mac": [topoMac, { routing: true, descriptions: true, mac: true }],
 };
 if (TOPO_SCENES[topoScene]) [settings.topology, settings.topoSources] = TOPO_SCENES[topoScene];
+// Estado visual de Topología (panel y secciones) para cada captura, sin arrastrar el de la anterior:
+// &topoPanel=0 oculta el panel; &topoOpen=fuentes,sugerencias,leyenda abre esas secciones.
+if (/topology|compare/.test(topoScene ?? "")) {
+  const q = new URLSearchParams(location.search);
+  const open = (q.get("topoOpen") ?? "").split(",").filter(Boolean);
+  const sec = { fuentes: false, sugerencias: false, detalle: true, ruta: true, manual: false, snapshots: false, leyenda: false };
+  for (const k of open) sec[k] = true;
+  try {
+    localStorage.setItem("topoUi", JSON.stringify({ panel: q.get("topoPanel") !== "0", sec }));
+  } catch {}
+}
 
 
 // Respaldos de configuración (Herramientas › Respaldos): dos versiones previas de core-sw01.
@@ -1007,7 +1018,7 @@ Object.assign(scenes, {
   "t-diag": tool("Diagnóstico"),
   "t-topology": tool("Topología"),
   // Fuentes de descubrimiento activadas y apagadas (mismo diagrama), solo ruteo y manual.
-  "topology-sources": async () => { await tool("Topología")(); await wait(300); document.querySelector('[aria-label="Leyenda de enlaces"]')?.scrollIntoView({ block: "end" }); },
+  "topology-sources": async () => { await tool("Topología")(); await wait(300); },
   "topology-sources-off": async () => { await tool("Topología")(); await svgNode("rt-borde01"); },
   "topology-ospf": async () => { await tool("Topología")(); await svgNode("rt-borde01"); },
   "topology-manual": async () => { await tool("Topología")(); await svgNode("ap-bodega"); },
@@ -1016,8 +1027,6 @@ Object.assign(scenes, {
     await tool("Topología")();
     await svgNode("dist-sw01");
     await wait(300);
-    const h = document.evaluate("//*[text()='Fuentes de descubrimiento']", document, null, XPathResult.FIRST_ORDERED_NODE_TYPE, null).singleNodeValue;
-    h?.scrollIntoView({ block: "start" });
   },
   "t-subnet": tool("Subredes"),
   "t-perf": tool("Velocidad"),
