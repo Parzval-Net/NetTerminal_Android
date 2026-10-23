@@ -532,5 +532,306 @@ assert.match(T.toMermaid({ nodes: [{ id: "a", name: "#60;img src=x#62;", explore
 // Fuentes: apagadas o con valores que no son true, no hay sugerencias ni consultas de ruteo.
 for (const s of [undefined, {}, { routing: false }, { routing: "true" }, { routing: 1 }]) assert.equal(T.sourceOn(s, "routing"), false, JSON.stringify(s));
 assert.deepEqual(T.collectSuggestions(s0, { descriptions: "true" }), [], "solo true habilita");
+{
+// ---------- Sugerencias por MAC/fabricante (OUI) ----------
+
+const O = await import("../../src/lib/oui.ts");
+const { lookupOui } = O;
+
+// Comandos de la fuente: todos de consulta, y Fortinet sin comandos (no verificado).
+const macCmds = Object.values(T.MAC_COMMANDS).flat();
+assert.deepEqual(macCmds.sort(), ["display arp", "display mac-address", "show arp no-resolve", "show ethernet-switching table", "show ip arp", "show mac address-table"].sort());
+for (const cmd of macCmds) assert.equal(computeRisk(cmd), "read", cmd);
+assert.deepEqual(T.MAC_COMMANDS.fortinet, []);
+
+// Datos OUI: compactos, con fecha de la copia del registro y solo fabricantes curados.
+const { statSync } = await import("node:fs");
+const ouiBytes = statSync(new URL("../../src/lib/ouiData.ts", import.meta.url)).size;
+assert.ok(ouiBytes < 60 * 1024, `ouiData.ts pesa ${ouiBytes} bytes`);
+assert.match(O.OUI_SNAPSHOT, /^\d{4}-\d{2}-\d{2}$/);
+assert.deepEqual(lookupOui("00:00:0c:12:34:56"), { vendor: "Cisco", kind: "net" });
+assert.deepEqual(lookupOui("00e0-fc12-3456"), { vendor: "Huawei", kind: "net" });
+assert.deepEqual(lookupOui("0050.56aa.0001"), { vendor: "VMware", kind: "host" });
+assert.deepEqual(lookupOui("001b.2100.0001"), { vendor: "Intel", kind: "host" });
+assert.equal(lookupOui("0000.5e00.0101"), undefined, "IANA (VRRP) no es un fabricante");
+assert.equal(lookupOui("zz"), undefined);
+
+// MAC: formato, multicast/broadcast y bit de administración local (0x02 del primer octeto).
+assert.equal(T.normMac("00:E0:FC:12:34:56"), "00e0.fc12.3456");
+assert.equal(T.normMac("00e0-fc12-3456"), "00e0.fc12.3456");
+assert.equal(T.normMac("00e0.fc12.345"), null);
+assert.ok(T.isMulticastMac("0100.5e00.0001") && T.isMulticastMac("ffff.ffff.ffff") && T.isMulticastMac("3333.0000.0001"));
+assert.ok(!T.isMulticastMac("00e0.fc12.3456"));
+for (const m of ["0223.e957.6a3a", "5254.0012.3456", "da:a1:19:00:00:01", "x2:00".replace("x", "f") + ":00:00:00:01"]) assert.ok(T.isLocalMac(m), m);
+for (const m of ["00e0.fc12.3456", "0000.0c07.ac0a", "3c8a.b000.0001", "f8bc.1200.0001"]) assert.ok(!T.isLocalMac(m), m);
+
+// HSRP v1/v2 y VRRP IPv4/IPv6 (RFC 5798, sección 7.3).
+assert.equal(T.fhrpOf("0000.0c07.ac0a"), "HSRP v1 grupo 10");
+assert.equal(T.fhrpOf("00:00:0c:9f:f0:14"), "HSRP v2 grupo 20");
+assert.equal(T.fhrpOf("0000.0c9f.ffff"), "HSRP v2 grupo 4095");
+assert.equal(T.fhrpOf("0000-5e00-0105"), "VRRP grupo 5");
+assert.equal(T.fhrpOf("0000.5e00.0201"), "VRRP IPv6 grupo 1");
+assert.equal(T.fhrpOf("0000.0c07.ad00"), undefined);
+assert.equal(T.fhrpOf("0000.0c12.3456"), undefined);
+assert.equal(T.fhrpOf("0000.5e00.0301"), undefined);
+
+// Cisco IOS/IOS-XE: entradas CPU, SVI propia (Vl10) y multicast fuera.
+const iosMac = `acc-sw01#show mac address-table
+          Mac Address Table
+-------------------------------------------
+
+Vlan    Mac Address       Type        Ports
+----    -----------       --------    -----
+ All    0100.0ccc.cccc    STATIC      CPU
+ All    0180.c200.0000    STATIC      CPU
+ All    ffff.ffff.ffff    STATIC      CPU
+  10    706b.b929.f751    STATIC      Vl10
+  10    0011.2233.4455    DYNAMIC     Gi1/0/1
+  10    0000.0c07.ac0a    DYNAMIC     Gi1/0/48
+  10    0000.0c9f.f014    DYNAMIC     Gi1/0/47
+  10    00e0.fc12.3456    DYNAMIC     Gi1/0/10
+  10    5254.0012.3456    DYNAMIC     Gi1/0/11
+  10    0050.56aa.0001    DYNAMIC     Gi1/0/12
+  10    0050.56aa.0002    DYNAMIC     Gi1/0/12
+  20    3c8a.b000.0001    DYNAMIC     Gi1/0/13
+  20    001b.2100.0013    DYNAMIC     Gi1/0/13
+  20    001b.2100.0001    DYNAMIC     Gi1/0/20
+  20    3c07.5400.0001    DYNAMIC     Gi1/0/20
+  20    f8bc.1200.0001    DYNAMIC     Gi1/0/20
+  20    0050.56aa.0003    DYNAMIC     Gi1/0/20
+  20    0100.5e00.0001    DYNAMIC     Gi1/0/5
+  20    00e0.fc00.0abc    DYNAMIC     Po1
+Total Mac Addresses for this criterion: 19
+acc-sw01#`;
+const iosRows = T.parseMacTable(iosMac);
+assert.ok(!iosRows.some((r) => /cpu|vl10/i.test(r.port)), "sin CPU ni SVI propia");
+assert.deepEqual(iosRows[0], { mac: "0011.2233.4455", port: "Gi1/0/1", vlan: "10" });
+assert.equal(iosRows.length, 15);
+const iosArp = `acc-sw01#show ip arp
+Protocol  Address          Age (min)  Hardware Addr   Type   Interface
+Internet  192.0.2.1               -   706b.b929.f751  ARPA   Vlan10
+Internet  192.0.2.254             3   0000.0c07.ac0a  ARPA   Vlan10
+Internet  192.0.2.30             12   00e0.fc12.3456  ARPA   Vlan10
+Internet  192.0.2.40              0   Incomplete      ARPA
+acc-sw01#`;
+assert.deepEqual(T.parseArpTable(iosArp), [
+  { mac: "706b.b929.f751", ip: "192.0.2.1", self: true },
+  { mac: "0000.0c07.ac0a", ip: "192.0.2.254", self: false },
+  { mac: "00e0.fc12.3456", ip: "192.0.2.30", self: false },
+]);
+
+// NX-OS: G (Gateway MAC), sup-eth1(R) y vPC Peer-Link fuera.
+const nxMac = `Legend:
+        * - primary entry, G - Gateway MAC, (R) - Routed MAC, O - Overlay MAC
+        age - seconds since last seen,+ - primary entry using vPC Peer-Link,
+        (T) - True, (F) - False, C - ControlPlane MAC, ~ - vsan
+   VLAN     MAC Address      Type      age     Secure NTFY Ports
+---------+-----------------+--------+---------+------+----+------------------
+*  150     0223.e957.6a3a   dynamic  0         F      F    Po21
+G  150     5254.0011.2233   static   -         F      F    sup-eth1(R)
++  150     0000.0c9f.f096   dynamic  0         F      F    vPC Peer-Link
+*  150     00e0.fc00.0001   dynamic  0         F      F    Eth1/5
+`;
+assert.deepEqual(T.parseMacTable(nxMac), [
+  { mac: "0223.e957.6a3a", port: "Po21", vlan: "150" },
+  { mac: "00e0.fc00.0001", port: "Eth1/5", vlan: "150" },
+]);
+const nxArp = `IP ARP Table for context default
+Total number of entries: 1
+Address         Age       MAC Address     Interface       Flags
+192.0.2.100     00:01:07  0223.e957.6a3a  Vlan150
+`;
+assert.deepEqual(T.parseArpTable(nxArp), [{ mac: "0223.e957.6a3a", ip: "192.0.2.100", self: false }]);
+
+// Huawei VRP: blackhole fuera; en ARP, TYPE "I" es la propia interfaz.
+const hwMac = `<agg-hw01>display mac-address
+-------------------------------------------------------------------------------
+MAC Address          VLAN/VSI/BD                 Learned-From        Type
+-------------------------------------------------------------------------------
+0000-5e00-0101       100/-/-                     GE0/0/1             dynamic
+0019-e200-0001       100/-/-                     GE0/0/2             dynamic
+00e0-fc99-0001       100/-/-                     GE0/0/9             static
+0000-0000-0001       200/-/-                     GE0/0/3             blackhole
+-------------------------------------------------------------------------------
+Total items displayed = 4
+<agg-hw01>`;
+assert.deepEqual(T.parseMacTable(hwMac), [
+  { mac: "0000.5e00.0101", port: "GE0/0/1", vlan: "100" },
+  { mac: "0019.e200.0001", port: "GE0/0/2", vlan: "100" },
+  { mac: "00e0.fc99.0001", port: "GE0/0/9", vlan: "100" },
+]);
+const hwArp = `<agg-hw01>display arp
+IP ADDRESS      MAC ADDRESS     EXPIRE(M) TYPE        INTERFACE   VPN-INSTANCE
+                                          VLAN/CEVLAN(SIP/DIP)
+------------------------------------------------------------------------------
+192.0.2.30      00e0-fc99-0001            I -         Vlanif100
+192.0.2.1       0000-5e00-0101  20        D-0         GE0/0/1
+                                          100/-
+192.0.2.20      0019-e200-0001  19        D-0         GE0/0/2
+                                          100/-
+------------------------------------------------------------------------------
+Total:3         Dynamic:2       Static:0     Interface:1
+<agg-hw01>`;
+assert.deepEqual(T.parseArpTable(hwArp).map((a) => [a.ip, a.self]), [["192.0.2.30", true], ["192.0.2.1", false], ["192.0.2.20", false]]);
+const hwPorts = T.buildMacPorts([{ cmd: "display mac-address", out: hwMac }, { cmd: "display arp", out: hwArp }], lookupOui);
+assert.deepEqual(Object.keys(hwPorts).sort(), ["gi0/0/1", "gi0/0/2"], "la MAC propia (ARP tipo I) no cuenta aunque figure en la tabla");
+assert.equal(hwPorts["gi0/0/1"].macs[0].fhrp, "VRRP grupo 1");
+assert.equal(hwPorts["gi0/0/1"].macs[0].ip, "192.0.2.1");
+assert.deepEqual(T.classifyMacPort(hwPorts["gi0/0/2"]), { confidence: "media", reason: "Posible equipo de red (Juniper)", rep: hwPorts["gi0/0/2"].macs[0] });
+
+// Junos: formato clásico (Router, All-members) y ELS (vtep fuera); ARP con IRB.
+const junosMac = `user@acc-ex01> show ethernet-switching table
+Ethernet-switching table: 5 entries, 2 learned
+  VLAN              MAC address       Type         Age Interfaces
+  v100              *                 Flood          - All-members
+  v100              00:19:e2:50:7d:e0 Static         - Router
+  v100              00:00:5e:00:01:09 Learn          0 ge-0/0/44.0
+  v100              00:50:56:aa:00:03 Learn          0 ge-0/0/45.0
+`;
+assert.deepEqual(T.parseMacTable(junosMac), [
+  { mac: "0000.5e00.0109", port: "ge-0/0/44.0" },
+  { mac: "0050.56aa.0003", port: "ge-0/0/45.0" },
+]);
+const junosEls = `MAC flags (S - static MAC, D - dynamic MAC, L - locally learned, P - Persistent static
+           SE - statistics enabled, NM - non configured MAC, R - remote PE MAC)
+Ethernet switching table : 2 entries, 2 learned
+Routing instance : default-switch
+    Vlan                MAC                 MAC         Age    Logical
+    name                address             flags              interface
+    VLAN1                00:00:00:ff:ff:ff   D             -   vtep.12345
+    VLAN1                3c:8a:b0:00:00:02   D         -       xe-0/0/0.0
+`;
+assert.deepEqual(T.parseMacTable(junosEls), [{ mac: "3c8a.b000.0002", port: "xe-0/0/0.0" }]);
+const junosArp = `user@acc-ex01> show arp no-resolve
+MAC Address       Address         Interface                Flags
+00:00:5e:00:01:09 192.0.2.9       irb.100 [ge-0/0/44.0]    none
+3c:8a:b0:00:00:02 192.0.2.12      xe-0/0/0.0               none
+Total entries: 2
+`;
+assert.deepEqual(T.parseArpTable(junosArp), [
+  { mac: "0000.5e00.0109", ip: "192.0.2.9", self: false },
+  { mac: "3c8a.b000.0002", ip: "192.0.2.12", self: false },
+]);
+const jPorts = T.buildMacPorts([
+  { cmd: "show ethernet-switching table", out: junosMac + junosEls },
+  { cmd: "show arp no-resolve", out: junosArp },
+], lookupOui);
+assert.deepEqual(Object.entries(jPorts).map(([k, p]) => [k, p.port, p.total]), [
+  ["ge-0/0/44", "ge-0/0/44", 1],
+  ["ge-0/0/45", "ge-0/0/45", 1],
+  ["xe-0/0/0", "xe-0/0/0", 1],
+]);
+assert.equal(jPorts["xe-0/0/0"].macs[0].ip, "192.0.2.12");
+// Error del equipo (sin tabla de switching): sin puertos ni excepción.
+assert.deepEqual(T.buildMacPorts([{ cmd: "show ethernet-switching table", out: "error: syntax error, expecting <command>: ethernet-switching" }], lookupOui), {});
+
+// Cisco completo: agrupación por puerto, IP desde ARP y fabricante.
+const iosPorts = T.buildMacPorts([{ cmd: "show mac address-table", out: iosMac }, { cmd: "show ip arp", out: iosArp }], lookupOui);
+assert.ok(!iosPorts["gi1/0/5"], "multicast fuera");
+assert.equal(iosPorts["gi1/0/12"].total, 2);
+assert.equal(iosPorts["gi1/0/10"].macs[0].ip, "192.0.2.30");
+assert.equal(iosPorts["gi1/0/48"].macs[0].ip, "192.0.2.254");
+assert.equal(iosPorts["gi1/0/48"].macs[0].vendor, undefined, "la MAC HSRP no se atribuye a Cisco");
+const verdict = (k) => {
+  const v = T.classifyMacPort(iosPorts[k]);
+  return v && [v.confidence, v.reason];
+};
+assert.deepEqual(verdict("gi1/0/48"), ["alta", "HSRP v1 grupo 10: gateway/router presente"]);
+assert.deepEqual(verdict("gi1/0/47"), ["alta", "HSRP v2 grupo 20: gateway/router presente"]);
+assert.deepEqual(verdict("gi1/0/10"), ["media", "Posible equipo de red (Huawei)"]);
+assert.deepEqual(verdict("gi1/0/11"), ["baja", "MAC administrada localmente o aleatoria: no se puede presumir"]);
+assert.equal(verdict("gi1/0/12"), null, "solo máquinas virtuales: sin sugerencia");
+assert.deepEqual(verdict("gi1/0/13"), ["baja", "Posible equipo de red (Juniper) con 1 MAC más"]);
+assert.deepEqual(verdict("gi1/0/20"), ["media", "4 MAC en el puerto: switch u otro equipo aguas abajo"]);
+// Umbral: 3 MAC de PC no sugieren; la cuarta sí.
+const hostPort = (n) => ({ port: "Gi1/0/30", total: n, macs: Array.from({ length: n }, (_, i) => ({ mac: `001b.2100.00${String(i).padStart(2, "0")}`, vendor: "Intel", kind: "host" })) });
+assert.equal(T.MANY_MACS, 4);
+assert.equal(T.classifyMacPort(hostPort(3)), null);
+assert.equal(T.classifyMacPort(hostPort(T.MANY_MACS)).confidence, "media");
+assert.deepEqual(T.macVendors(iosPorts["gi1/0/20"]), ["Intel", "Apple", "Dell", "VMware"]);
+
+// Sugerencias: puertos con CDP (o el Port-channel de miembros con CDP) quedan fuera.
+let mt = T.mergeNeighbors(
+  { nodes: [], links: [] },
+  { name: "acc-sw01", ip: "192.0.2.1", ports: { "gi1/0/49": { group: "Po1" } }, macs: iosPorts },
+  [
+    { name: "dist-sw01", localPort: "GigabitEthernet1/0/1", remotePort: "Gi1/0/24", proto: "CDP" },
+    { name: "dist-sw02", localPort: "GigabitEthernet1/0/49", remotePort: "Gi1/0/24", proto: "LLDP" },
+  ],
+);
+assert.ok(iosPorts["gi1/0/1"] && iosPorts["po1"], "la tabla sí trae Gi1/0/1 y Po1");
+let ms = T.collectSuggestions(mt, { mac: true });
+assert.deepEqual(
+  ms.map((s) => [s.aPort, s.confidence, s.proto, s.source]).sort(),
+  [
+    ["Gi1/0/10", "media", "MAC/OUI", "mac"],
+    ["Gi1/0/11", "baja", "MAC/OUI", "mac"],
+    ["Gi1/0/13", "baja", "MAC/OUI", "mac"],
+    ["Gi1/0/20", "media", "MAC/OUI", "mac"],
+    ["Gi1/0/47", "alta", "MAC/OUI", "mac"],
+    ["Gi1/0/48", "alta", "MAC/OUI", "mac"],
+  ],
+  "sin Gi1/0/1 (CDP), Po1 (miembro con LLDP) ni Gi1/0/12 (solo hosts)",
+);
+assert.deepEqual(T.collectSuggestions(mt, {}), [], "fuente apagada por defecto: sin sugerencias");
+assert.equal(T.TOPO_SOURCES.find((s) => s.id === "mac")?.label, "Sugerencias por MAC/fabricante (OUI)");
+assert.equal(mt.links.length, 2, "nunca se dibujan solas");
+const hsrp = ms.find((s) => s.aPort === "Gi1/0/48");
+assert.equal(hsrp.target, "Gateway HSRP 192.0.2.254");
+assert.deepEqual(hsrp.detail, { vendors: ["HSRP"], macs: 1, ip: "192.0.2.254" });
+const many = ms.find((s) => s.aPort === "Gi1/0/20");
+assert.equal(many.target, "Aguas abajo de Gi1/0/20");
+assert.equal(many.node.ip, undefined, "muchas MAC: el equipo sugerido no hereda la IP de un host");
+assert.equal(ms.find((s) => s.aPort === "Gi1/0/11").target, "MAC local 5254.0012.3456");
+// Confirmar: equipo nuevo (vendor + IP) con IP para seguir la ruta, y enlace MAC/OUI.
+const hwSug = ms.find((s) => s.aPort === "Gi1/0/10");
+assert.equal(hwSug.target, "Huawei 192.0.2.30");
+let ma = T.acceptSuggestion(mt, hwSug);
+assert.ok(ma.topo, ma.error);
+const hwNode = ma.topo.nodes.find((n) => n.id === "mac-00e0.fc12.3456");
+assert.ok(hwNode.manual && !hwNode.explored && hwNode.ip === "192.0.2.30", "nodo con IP: 'Conectar y seguir la ruta' disponible");
+assert.equal(hwNode.name, "Huawei 192.0.2.30");
+assert.deepEqual(ma.topo.links.at(-1), { a: "acc-sw01", aPort: "Gi1/0/10", b: "mac-00e0.fc12.3456", bPort: "", proto: "MAC/OUI" });
+assert.ok(T.isUserProto("MAC/OUI"), "editable y borrable como los manuales");
+assert.equal(T.collectSuggestions(ma.topo, { mac: true }).length, ms.length - 1, "confirmada ya no se sugiere");
+// La misma MAC vista desde otro switch reutiliza el equipo.
+ma = { topo: T.mergeNeighbors(ma.topo, { name: "acc-sw02", macs: { "gi0/1": { port: "Gi0/1", total: 1, macs: [iosPorts["gi1/0/10"].macs[0]] } } }, []) };
+const again = T.collectSuggestions(ma.topo, { mac: true }).find((s) => s.a === "acc-sw02");
+ma = T.acceptSuggestion(ma.topo, again);
+assert.equal(ma.topo.nodes.filter((n) => n.id === "mac-00e0.fc12.3456").length, 1);
+// Al explorar ese equipo (misma IP), se fusiona con su nombre real.
+const explored = T.mergeNeighbors(ma.topo, { name: "agg-hw01", ip: "192.0.2.30" }, []);
+assert.ok(!explored.nodes.some((n) => n.id === "mac-00e0.fc12.3456"), "absorbido por el equipo explorado");
+assert.ok(explored.links.some((l) => l.proto === "MAC/OUI" && l.b === "agg-hw01"));
+// Descartar.
+assert.equal(T.collectSuggestions(mt, { mac: true }, new Set([hsrp.id])).length, ms.length - 1);
+
+// Exportaciones: fabricante con caracteres especiales escapado; estilo propio y leyenda.
+const evilLookup = (m) => (m.startsWith("00e0") ? { vendor: '=cmd|"<b>&', kind: "net" } : undefined);
+const evilPorts = T.buildMacPorts([{ cmd: "show mac address-table", out: " 10    00e0.fc12.3456    DYNAMIC     Gi1/0/10" }, { cmd: "show ip arp", out: iosArp }], evilLookup);
+let ev = T.mergeNeighbors({ nodes: [], links: [] }, { name: "acc-sw09", macs: evilPorts }, []);
+const evs = T.collectSuggestions(ev, { mac: true });
+assert.equal(evs[0].target, '=cmd|"<b>& 192.0.2.30');
+ev = T.acceptSuggestion(ev, evs[0]).topo;
+const evCsv = T.toCsv(ev);
+assert.match(evCsv, /"'=cmd\|""<b>& 192\.0\.2\.30"/, "CSV: fórmula neutralizada y comillas duplicadas");
+assert.match(evCsv, /"MAC\/OUI"$/m);
+const evMer = T.toMermaid(ev);
+assert.ok(!/<b>|"<|cmd\|"/.test(evMer), "Mermaid sin HTML ni comillas");
+assert.match(evMer, /n1\["=cmd\|'#lt;b#gt;& 192\.0\.2\.30<br\/>192\.0\.2\.30"\]/);
+assert.match(evMer, /n0 -\.-\|"Gi1\/0\/10 ↔ \? \(MAC\/OUI\)"\| n1/);
+assert.match(evMer, /^ {2}linkStyle 0 stroke-dasharray:12 3 2 3 2 3$/m);
+const evDio = T.toDrawio(ev);
+assert.ok(!/<b>/.test(evDio), "draw.io escapado");
+assert.match(evDio, /value="=cmd\|&quot;&lt;b&gt;&amp; 192\.0\.2\.30&#xa;192\.0\.2\.30"/);
+assert.match(evDio, /dashed=1;dashPattern=12 3 2 3 2 3;/);
+const evSvg = T.toSvg(ev);
+assert.ok(!/<b>/.test(evSvg), "SVG escapado");
+assert.match(evSvg, /=cmd\|&quot;&lt;b&gt;&amp; 192\.0\.2\.30/);
+assert.match(evSvg, /stroke-dasharray="12 3 2 3 2 3"/);
+assert.match(evSvg, />MAC\/OUI<\/text>/, "leyenda en el SVG exportado");
+assert.ok(T.LINK_LEGEND.some(([t, s]) => t === "MAC/OUI" && T.linkDash(s) === "12 3 2 3 2 3"));
+assert.equal(new Set(T.LINK_LEGEND.map(([, s]) => T.linkDash(s))).size, T.LINK_LEGEND.length, "cada estilo es distinto");
+}
 
 console.log("topology: ok");

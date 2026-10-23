@@ -1,15 +1,15 @@
 /**
  * Topología desde CDP/LLDP y vecinos de ruteo (OSPF, EIGRP, BGP): comandos por fabricante,
- * lectura de salidas, grafo, elementos manuales y sugerencias desde descripciones.
+ * lectura de salidas, grafo, elementos manuales y sugerencias desde descripciones y tablas MAC.
  */
 
 /** Origen de un enlace. */
-export type LinkProto = "CDP" | "LLDP" | "OSPF" | "EIGRP" | "BGP" | "manual" | "descripción";
+export type LinkProto = "CDP" | "LLDP" | "OSPF" | "EIGRP" | "BGP" | "manual" | "descripción" | "MAC/OUI";
 
 export const isPhysicalProto = (p: string) => p === "CDP" || p === "LLDP";
 export const isRoutingProto = (p: string) => p === "OSPF" || p === "EIGRP" || p === "BGP";
 /** Enlaces que el usuario puede editar o borrar (no vienen de un equipo). */
-export const isUserProto = (p: string) => p === "manual" || p === "descripción";
+export const isUserProto = (p: string) => p === "manual" || p === "descripción" || p === "MAC/OUI";
 /** Confianza del origen: un enlace descubierto reemplaza a uno manual en el mismo puerto. */
 const protoRank = (p: string) => (isPhysicalProto(p) ? 3 : isRoutingProto(p) ? 2 : p === "manual" ? 1 : 0);
 
@@ -56,6 +56,8 @@ export interface TopoNode {
   addrOnly?: boolean;
   /** Agregado a mano por el usuario (se puede editar y borrar). */
   manual?: boolean;
+  /** Tabla MAC por interfaz local (clave canonPort), leída con la fuente MAC/OUI. */
+  macs?: Record<string, MacPort>;
 }
 
 export interface TopoLink {
@@ -746,7 +748,7 @@ function dedupeLinks(links: TopoLink[]): TopoLink[] {
  */
 export function mergeNeighbors(
   t: Topology,
-  device: { name: string; ip?: string; platform?: string; ports?: Record<string, PortInfo>; addrs?: string[] },
+  device: { name: string; ip?: string; platform?: string; ports?: Record<string, PortInfo>; addrs?: string[]; macs?: Record<string, MacPort> },
   neighbors: Neighbor[],
 ): Topology {
   // Todo lo que informa el equipo se limpia aquí, antes de guardarse, exportarse o copiarse.
@@ -795,6 +797,8 @@ export function mergeNeighbors(
   };
   const self = ensure(device.name, { ip: device.ip, platform: device.platform, explored: true });
   if (device.ports) self.ports = { ...self.ports, ...device.ports };
+  // La tabla MAC es una foto del momento: una lectura nueva reemplaza la anterior.
+  if (device.macs) self.macs = device.macs;
   if (device.addrs?.length) self.addrs = unionAddrs(self.addrs, device.addrs);
   absorb(self, [device.ip, ...(device.addrs ?? [])]);
   const selfAddrs = new Set(knownAddrs(self));
@@ -951,6 +955,7 @@ export function linkDash(l: Pick<TopoLink, "proto" | "logical">): string | undef
   if (isRoutingProto(l.proto)) return "8 5";
   if (l.proto === "manual") return "1.5 4";
   if (l.proto === "descripción") return "9 4 2 4";
+  if (l.proto === "MAC/OUI") return "12 3 2 3 2 3";
   return "4 4";
 }
 
@@ -961,6 +966,7 @@ export const LINK_LEGEND: [string, Pick<TopoLink, "proto" | "logical">][] = [
   ["Sesión BGP lógica", { proto: "BGP", logical: true }],
   ["Manual", { proto: "manual" }],
   ["Descripción", { proto: "descripción" }],
+  ["MAC/OUI", { proto: "MAC/OUI" }],
 ];
 
 /** Clave de un enlace independiente del sentido y de la nomenclatura de puertos. */
@@ -999,16 +1005,23 @@ export function toMermaid(t: Topology): string {
   const idx = new Map(t.nodes.map((n, i) => [n.id, `n${i}`]));
   const lines = ["graph TD"];
   for (const n of t.nodes) lines.push(`  ${idx.get(n.id)}["${safe(n.name)}${n.ip ? `<br/>${safe(n.ip)}` : ""}"]`);
+  /** Índice de cada arista dibujada (linkStyle cuenta en orden de definición). */
+  const macEdges: number[] = [];
+  let edge = 0;
   for (const l of t.links) {
     const s = idx.get(l.a);
     const d = idx.get(l.b);
     if (!s || !d) continue;
+    if (l.proto === "MAC/OUI") macEdges.push(edge);
+    edge++;
     const g = linkGroup(t, l);
     const extra = [g, isPhysicalProto(l.proto) ? "" : protoLabel(l)].filter(Boolean).map((x) => safe(x!)).join(", ");
     // Línea punteada para lo que no es un enlace CDP/LLDP (ruteo, manual, descripción).
-    const edge = isPhysicalProto(l.proto) ? "---" : "-.-";
-    lines.push(`  ${s} ${edge}|"${safe(l.aPort || "?")} ↔ ${safe(l.bPort || "?")}${extra ? ` (${extra})` : ""}"| ${d}`);
+    const line = isPhysicalProto(l.proto) ? "---" : "-.-";
+    lines.push(`  ${s} ${line}|"${safe(l.aPort || "?")} ↔ ${safe(l.bPort || "?")}${extra ? ` (${extra})` : ""}"| ${d}`);
   }
+  // Enlaces sugeridos por MAC/OUI y confirmados: trazo propio para distinguirlos del resto.
+  if (macEdges.length) lines.push(`  linkStyle ${macEdges.join(",")} stroke-dasharray:12 3 2 3 2 3`);
   return lines.join("\n");
 }
 
@@ -1144,7 +1157,7 @@ export function toSvg(t: Topology, W = 170, H = 54): string {
     if (grp && g.pair.length > 1 && !groups.has(gk)) {
       groups.add(gk);
       parts.push(label(g.mid, `${grp} ×${g.pair.length}`, 600));
-    } else if (isRoutingProto(g.l.proto)) parts.push(label(g.mid, protoLabel(g.l), 600, "#636b78"));
+    } else if (isRoutingProto(g.l.proto) || g.l.proto === "MAC/OUI") parts.push(label(g.mid, protoLabel(g.l), 600, "#636b78"));
   }
   for (const n of t.nodes) {
     parts.push(
@@ -1293,7 +1306,7 @@ export function deleteManualLink(t: Topology, old: TopoLink): TopoResult {
  * Para sumar una fuente: agrega su id aquí, su definición en TOPO_SOURCES y, si propone
  * enlaces, un generador en SUGGESTERS que devuelva LinkSuggestion con su `source`.
  */
-export type TopoSourceId = "routing" | "descriptions";
+export type TopoSourceId = "routing" | "descriptions" | "mac";
 export type TopoSources = Partial<Record<TopoSourceId, boolean>>;
 
 export interface TopoSourceDef {
@@ -1302,7 +1315,10 @@ export interface TopoSourceDef {
   /** Nombre corto para rotular sugerencias. */
   short: string;
   hint: string;
-  /** discovery: ejecuta comandos al descubrir; suggestions: solo propone enlaces por confirmar. */
+  /**
+   * discovery: ejecuta comandos al descubrir (y puede proponer enlaces en SUGGESTERS);
+   * suggestions: no ejecuta comandos, solo propone enlaces por confirmar.
+   */
   kind: "discovery" | "suggestions";
 }
 
@@ -1320,6 +1336,13 @@ export const TOPO_SOURCES: TopoSourceDef[] = [
     short: "Descripción",
     hint: "Propone enlaces desde descripciones como \"UPLINK a dist-sw01 Gi1/0/48\" (requiere Estado de puertos). Tú confirmas cada uno.",
     kind: "suggestions",
+  },
+  {
+    id: "mac",
+    label: "Sugerencias por MAC/fabricante (OUI)",
+    short: "MAC/OUI",
+    hint: "Lee tablas MAC y ARP al descubrir y propone enlaces en puertos sin CDP/LLDP (HSRP/VRRP, fabricante, cantidad de MAC). Tú confirmas cada uno.",
+    kind: "discovery",
   },
 ];
 
@@ -1342,6 +1365,10 @@ export interface LinkSuggestion {
   bPort: string;
   /** Texto que la originó (por ejemplo, la descripción de la interfaz). */
   reason: string;
+  /** Resumen del puerto (fuente MAC/OUI): fabricantes, cantidad de MAC e IP según ARP. */
+  detail?: { vendors: string[]; macs: number; ip?: string };
+  /** Equipo que se crea al confirmar, con id propio (fuente MAC/OUI). */
+  node?: { id: string; name: string; ip?: string; platform?: string };
 }
 
 const HOST_RE = String.raw`([A-Za-z][\w.-]{1,62}|\d{1,3}(?:\.\d{1,3}){3})`;
@@ -1418,9 +1445,310 @@ export function suggestFromDescriptions(t: Topology): LinkSuggestion[] {
   return res;
 }
 
+// ---------- Sugerencias por MAC/fabricante (OUI) ----------
+
+/**
+ * Tablas MAC y ARP (solo consulta). Se ejecutan al descubrir únicamente con la fuente "mac" activa.
+ * Formatos verificados en la documentación de cada fabricante:
+ * - Cisco IOS/IOS-XE "show mac address-table" (Vlan, Mac Address, Type, Ports; la MAC propia de
+ *   una SVI aparece STATIC en "Vl100"): Cisco, "Troubleshoot Mac Address Table Manager on Catalyst
+ *   9000 Switches", Document ID 222060,
+ *   https://www.cisco.com/c/en/us/support/docs/switches/catalyst-9300-series-switches/222060-troubleshoot-mac-address-table-manager-o.html
+ * - Cisco IOS "show ip arp" (Protocol, Address, Age (min), Hardware Addr, Type, Interface; "a hyphen
+ *   (-) means the address is local"): Cisco IOS Command Reference, "show ip arp",
+ *   https://www.cisco.com/E-Learning/bulk/public/tac/cim/cib/using_cisco_ios_software/cmdrefs/show_ip_arp.htm
+ * - Cisco NX-OS "show mac address-table" (leyenda "G - Gateway MAC, (R) - Routed MAC"; VLAN, MAC
+ *   Address, Type, age, Secure, NTFY, Ports) y "show ip arp" (Address, Age, MAC Address, Interface,
+ *   Flags): Cisco, "Verify Nexus 9000 Series ARP and MAC Table Sync Behavior", Document ID 213962,
+ *   https://www.cisco.com/c/en/us/support/docs/switches/nexus-9000-series-switches/213962-nexus-9000-arp-mac-table-sync-behavio.html
+ * - Huawei VRP "display mac-address" (MAC Address, VLAN/VSI/BD, Learned-From, Type) y "display arp"
+ *   (IP ADDRESS, MAC ADDRESS, EXPIRE(M), TYPE, INTERFACE; TYPE "I" = MAC de la propia interfaz):
+ *   Huawei, S1720, S2700, S5700, and S6720 V200R011C10 Command Reference, capítulos "MAC Address
+ *   Table Configuration Commands" y "ARP Configuration Commands",
+ *   https://support.huawei.com/enterprise/en/doc/EDOC1000178165/7404084d/mac-address-table-configuration-commands
+ *   https://support.huawei.com/enterprise/en/doc/EDOC1000178165/bbf12ab5/arp-configuration-commands
+ * - Junos "show ethernet-switching table": formato clásico de EX (VLAN, MAC address, Type, Age,
+ *   Interfaces; la MAC propia figura como "Router") y formato ELS (Vlan name, MAC address, MAC
+ *   flags, Age, Logical interface):
+ *   https://juniper.net/documentation/en_US/junos13.2/topics/reference/command-summary/show-ethernet-switching-table-bridging-ex-series.html
+ *   https://www.juniper.net/documentation/us/en/software/junos/ovsdb-vxlan/topics/task/vxlan-mac-learning-qfx-series.html
+ * - Junos "show arp no-resolve" (MAC Address, Address, Interface, Flags; en IRB la interfaz física
+ *   va entre corchetes): https://www.juniper.net/documentation/us/en/software/junos/cli-reference/topics/ref/command/show-arp.html
+ * FortiOS queda fuera: no hay un comando de consulta equivalente verificado para la tabla MAC del
+ * FortiGate.
+ */
+export const MAC_COMMANDS: Record<TopoVendor, string[]> = {
+  cisco: ["show mac address-table", "show ip arp"],
+  huawei: ["display mac-address", "display arp"],
+  juniper: ["show ethernet-switching table", "show arp no-resolve"],
+  fortinet: [],
+};
+
+/** Fabricante de un OUI (prefijo de 24 bits) según el registro MA-L del IEEE. */
+export interface OuiInfo {
+  vendor: string;
+  /** net: equipo de red o infraestructura; host: tarjeta de PC, servidor o máquina virtual. */
+  kind: "net" | "host";
+}
+export type OuiLookup = (mac: string) => OuiInfo | undefined;
+
+/** Una MAC vista en un puerto local. */
+export interface MacEntry {
+  /** Formato aaaa.bbbb.cccc en minúsculas. */
+  mac: string;
+  vlan?: string;
+  /** IP según la tabla ARP del mismo equipo. */
+  ip?: string;
+  vendor?: string;
+  kind?: OuiInfo["kind"];
+  /** MAC virtual de HSRP o VRRP (descripción legible). */
+  fhrp?: string;
+}
+
+export interface MacPort {
+  /** Interfaz como la informa el equipo, abreviada (Gi1/0/5, GE0/0/1, ge-0/0/3). */
+  port: string;
+  /** MAC únicas vistas en el puerto (puede ser mayor que las guardadas). */
+  total: number;
+  /** Primero las FHRP, luego las de equipos de red, el resto hasta MAX_MACS_PER_PORT. */
+  macs: MacEntry[];
+}
+
+/** Desde cuántas MAC en un puerto se presume un switch u otro equipo aguas abajo. */
+export const MANY_MACS = 4;
+/** Límites de lo que se guarda con el diagrama (una tabla de miles de MAC no infla los datos). */
+const MAX_MACS_PER_PORT = 16;
+const MAX_MAC_PORTS = 256;
+
+/** MAC en cualquier formato a aaaa.bbbb.cccc; null si no son 12 dígitos hexadecimales. */
+export function normMac(s: string): string | null {
+  const hex = s.replace(/[.:-]/g, "").toLowerCase();
+  if (!/^[0-9a-f]{12}$/.test(hex)) return null;
+  return `${hex.slice(0, 4)}.${hex.slice(4, 8)}.${hex.slice(8)}`;
+}
+
+const firstOctet = (mac: string) => parseInt(mac.replace(/[^0-9a-f]/gi, "").slice(0, 2), 16);
+/** Bit I/G (0x01 del primer octeto): multicast o broadcast (IEEE Std 802, sección 8.2). */
+export const isMulticastMac = (mac: string) => (firstOctet(mac) & 0x01) === 0x01;
+/** Bit U/L (0x02 del primer octeto): administrada localmente o aleatoria (IEEE Std 802, sección 8.2). */
+export const isLocalMac = (mac: string) => (firstOctet(mac) & 0x02) === 0x02;
+
+/**
+ * MAC virtual de un protocolo de redundancia de gateway:
+ * - HSRP v1 0000.0c07.acXX y v2 0000.0c9f.fXXX (XX/XXX = grupo). Fuente: Cisco, "Configuring HSRP",
+ *   https://www.cisco.com/en/US/docs/switches/datacenter/nexus3000/sw/unicast/l3_hsrp.html
+ * - VRRP IPv4 0000.5e00.01XX e IPv6 0000.5e00.02XX (XX = VRID). Fuente: RFC 5798, sección 7.3,
+ *   https://www.rfc-editor.org/rfc/rfc5798#section-7.3
+ */
+export function fhrpOf(mac: string): string | undefined {
+  const m = normMac(mac);
+  if (!m) return undefined;
+  const hex = m.replace(/\./g, "");
+  if (hex.startsWith("00000c07ac")) return `HSRP v1 grupo ${parseInt(hex.slice(10), 16)}`;
+  if (hex.startsWith("00000c9ff")) return `HSRP v2 grupo ${parseInt(hex.slice(9), 16)}`;
+  if (hex.startsWith("00005e0001")) return `VRRP grupo ${parseInt(hex.slice(10), 16)}`;
+  if (hex.startsWith("00005e0002")) return `VRRP IPv6 grupo ${parseInt(hex.slice(10), 16)}`;
+  return undefined;
+}
+
+const MAC_ANY = /(?:^|\s)([0-9a-f]{4}\.[0-9a-f]{4}\.[0-9a-f]{4}|[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}|[0-9a-f]{2}(?::[0-9a-f]{2}){5})(?=\s|$)/i;
+/** Token con forma de interfaz: al menos dos letras y un dígito (Gi1/0/1, GE0/0/1, ge-0/0/1.0). */
+const IFACE_TOKEN = /^[A-Za-z]{2}[\w\-/.:()]*\d/;
+/** Entradas del propio equipo: CPU, SVI, supervisor, IRB, túneles de overlay. */
+const SELF_PORT = /^(cpu|router|switch|drop|sup-eth|vl\d|vlan\d|vlanif|irb|vtep|vme|lo\d|null|all-members)|\(R\)$/i;
+
+export interface MacRow {
+  mac: string;
+  port: string;
+  vlan?: string;
+}
+
+/**
+ * Tabla MAC de Cisco (IOS, IOS-XE, NX-OS), Huawei o Junos: una fila por MAC con su puerto.
+ * Se omiten las entradas propias (CPU, SVI, "Router", sup-eth, G = Gateway MAC de NX-OS),
+ * las blackhole y las aprendidas por el peer-link de vPC.
+ */
+export function parseMacTable(out: string): MacRow[] {
+  const rows: MacRow[] = [];
+  for (const line of out.split(/\r?\n/)) {
+    const m = line.match(MAC_ANY);
+    if (!m) continue;
+    // NX-OS: "G" marca la MAC del propio equipo; "vPC Peer-Link" no es un puerto de acceso.
+    if (/^\s*G\s/.test(line) || /Peer-Link/i.test(line) || /\bblackhole\b/i.test(line)) continue;
+    const mac = normMac(m[1]);
+    if (!mac) continue;
+    const at = (m.index ?? 0) + m[0].length;
+    const before = line.slice(0, m.index).trim().split(/\s+/).filter(Boolean);
+    const after = line.slice(at).trim().split(/\s+/).filter(Boolean);
+    const port = after.find((x) => IFACE_TOKEN.test(x));
+    if (!port || SELF_PORT.test(port)) continue;
+    // VLAN: antes de la MAC en Cisco/Junos; después en Huawei ("100/-/-").
+    const last = before.at(-1) ?? "";
+    const vlan = /^\d{1,4}$/.test(last) ? last : after[0]?.match(/^(\d{1,4})(?:\/|$)/)?.[1];
+    rows.push(vlan ? { mac, port, vlan } : { mac, port });
+  }
+  return rows;
+}
+
+export interface ArpRow {
+  mac: string;
+  ip: string;
+  /** Dirección del propio equipo (edad "-" en IOS, tipo "I" en Huawei). */
+  self: boolean;
+}
+
+/** Tabla ARP de Cisco (IOS, NX-OS), Huawei o Junos ("no-resolve"). */
+export function parseArpTable(out: string): ArpRow[] {
+  const rows: ArpRow[] = [];
+  for (const line of out.split(/\r?\n/)) {
+    const m = line.match(MAC_ANY);
+    const ipm = line.match(new RegExp(String.raw`(?:^|\s)(${IP_RE})(?=\s|$)`));
+    if (!m || !ipm || !isIpv4(ipm[1])) continue;
+    const mac = normMac(m[1]);
+    if (!mac) continue;
+    const ipEnd = (ipm.index ?? 0) + ipm[0].length;
+    const macAt = m.index ?? 0;
+    const between = ipEnd <= macAt ? line.slice(ipEnd, macAt).trim() : "";
+    const after = line.slice(macAt + m[0].length).trim().split(/\s+/).filter(Boolean);
+    const type = after.find((x) => !/^\d+$/.test(x));
+    rows.push({ mac, ip: ipm[1], self: between === "-" || type === "I" });
+  }
+  return rows;
+}
+
+/** Fabricantes de las MAC de un puerto, sin repetir; sin OUI conocido: "MAC local" u "otro". */
+export function macVendors(mp: MacPort): string[] {
+  const v = mp.macs.map((e) => e.fhrp?.split(" ")[0] ?? e.vendor ?? (isLocalMac(e.mac) ? "MAC local" : "otro"));
+  return [...new Set(v)];
+}
+
+/**
+ * Agrupa por interfaz local las salidas de MAC_COMMANDS (el parser se elige por el comando).
+ * Excluye las MAC del propio equipo, multicast y broadcast; completa IP (ARP) y fabricante (OUI).
+ */
+export function buildMacPorts(results: CommandOutput[], lookup: OuiLookup): Record<string, MacPort> {
+  const rows: MacRow[] = [];
+  const arp: ArpRow[] = [];
+  for (const { cmd, out } of results) {
+    if (!out || isCliError(out)) continue;
+    if (/\barp\b/i.test(cmd)) arp.push(...parseArpTable(out));
+    else rows.push(...parseMacTable(out));
+  }
+  const selfMacs = new Set(arp.filter((a) => a.self).map((a) => a.mac));
+  const ipOf = new Map<string, string>();
+  for (const a of arp) if (!a.self && !ipOf.has(a.mac)) ipOf.set(a.mac, a.ip);
+  const byPort = new Map<string, { port: string; macs: Map<string, MacEntry> }>();
+  for (const r of rows) {
+    if (isMulticastMac(r.mac) || selfMacs.has(r.mac)) continue;
+    const k = canonPort(r.port);
+    let p = byPort.get(k);
+    if (!p) {
+      if (byPort.size >= MAX_MAC_PORTS) continue;
+      p = { port: shortPort(r.port), macs: new Map() };
+      byPort.set(k, p);
+    }
+    if (p.macs.has(r.mac)) continue;
+    const fhrp = fhrpOf(r.mac);
+    // La MAC virtual usa el OUI de Cisco o de IANA: no indica el fabricante del equipo.
+    const oui = fhrp ? undefined : lookup(r.mac);
+    const e: MacEntry = { mac: r.mac };
+    if (r.vlan) e.vlan = r.vlan;
+    const ip = ipOf.get(r.mac);
+    if (ip) e.ip = ip;
+    if (oui) Object.assign(e, { vendor: oui.vendor, kind: oui.kind });
+    if (fhrp) e.fhrp = fhrp;
+    p.macs.set(r.mac, e);
+  }
+  const rank = (e: MacEntry) => (e.fhrp ? 0 : e.kind === "net" ? 1 : isLocalMac(e.mac) ? 2 : e.kind === "host" ? 4 : 3);
+  const res: Record<string, MacPort> = {};
+  for (const [k, p] of byPort) {
+    const macs = [...p.macs.values()].sort((a, b) => rank(a) - rank(b));
+    res[k] = { port: p.port, total: macs.length, macs: macs.slice(0, MAX_MACS_PER_PORT) };
+  }
+  return res;
+}
+
+/** Interfaz local con algún enlace (de cualquier origen), también si es el agregado de uno. */
+export function macPortLinked(t: Topology, n: TopoNode, k: string): boolean {
+  const mine = t.links.flatMap((l) => [l.a === n.id ? l.aPort : "", l.b === n.id ? l.bPort : ""]).filter(Boolean);
+  return mine.some((p) => {
+    const c = canonPort(p);
+    // La tabla MAC informa el Port-channel/Eth-Trunk/ae; CDP/LLDP, sus miembros.
+    const g = n.ports?.[c]?.group;
+    return c === k || (!!g && canonPort(g) === k);
+  });
+}
+
+export interface MacVerdict {
+  confidence: SuggestionConfidence;
+  reason: string;
+  /** MAC que da nombre al equipo sugerido (ninguna si son muchas sin equipo de red). */
+  rep?: MacEntry;
+}
+
+/**
+ * Clasificación de un puerto sin enlace:
+ * - alta: MAC virtual HSRP/VRRP (gateway o router presente);
+ * - media: MANY_MACS o más MAC (switch u otro equipo aguas abajo), o una sola MAC de un fabricante
+ *   de red (posible equipo de red);
+ * - baja: MAC de red junto a pocas MAC más (puede ser un teléfono con un PC detrás), o MAC
+ *   administrada localmente o aleatoria (no se puede presumir);
+ * - sin sugerencia: solo PC, servidores, máquinas virtuales u OUI no incluidos (quedan en el detalle).
+ */
+export function classifyMacPort(mp: MacPort): MacVerdict | null {
+  const fh = mp.macs.find((e) => e.fhrp);
+  if (fh) return { confidence: "alta", reason: `${fh.fhrp}: gateway/router presente`, rep: fh };
+  const net = mp.macs.find((e) => e.kind === "net");
+  if (mp.total >= MANY_MACS) return { confidence: "media", reason: `${mp.total} MAC en el puerto: switch u otro equipo aguas abajo`, rep: net };
+  if (net && mp.total === 1) return { confidence: "media", reason: `Posible equipo de red (${net.vendor})`, rep: net };
+  if (net) return { confidence: "baja", reason: `Posible equipo de red (${net.vendor}) con ${mp.total - 1} MAC más`, rep: net };
+  const local = mp.macs.find((e) => isLocalMac(e.mac));
+  if (local) return { confidence: "baja", reason: "MAC administrada localmente o aleatoria: no se puede presumir", rep: local };
+  return null;
+}
+
+/** Sugerencias desde las tablas MAC y ARP ya leídas (no ejecuta comandos). */
+export function suggestFromMacs(t: Topology): LinkSuggestion[] {
+  const res: LinkSuggestion[] = [];
+  for (const n of t.nodes) {
+    for (const [k, mp] of Object.entries(n.macs ?? {})) {
+      if (macPortLinked(t, n, k)) continue;
+      const v = classifyMacPort(mp);
+      if (!v) continue;
+      const rep = v.rep;
+      // Con muchas MAC solo la FHRP identifica a un equipo; si no, el equipo es "lo que cuelga" del puerto.
+      const single = rep && (rep.fhrp || mp.total < MANY_MACS) ? rep : undefined;
+      const label = single?.fhrp ? `Gateway ${single.fhrp.split(" ")[0]}` : single?.vendor ?? "MAC local";
+      const name = (single ? `${label} ${single.ip ?? single.mac}` : `Aguas abajo de ${mp.port}`).slice(0, LIMITS.name);
+      const vendors = macVendors(mp);
+      res.push({
+        id: `mac|${n.id}|${k}`,
+        source: "mac",
+        proto: "MAC/OUI",
+        confidence: v.confidence,
+        a: n.id,
+        aPort: mp.port,
+        target: name,
+        bPort: "",
+        reason: v.reason,
+        detail: { vendors, macs: mp.total, ...(single?.ip ? { ip: single.ip } : {}) },
+        // Una MAC concreta identifica al equipo aunque se vea desde otro switch; muchas, solo el puerto.
+        node: {
+          id: single ? `mac-${single.mac}` : `mac-${n.id}-${k}`,
+          name,
+          ...(single?.ip ? { ip: single.ip } : {}),
+          platform: single?.fhrp ?? `${vendors.join(", ")} (por OUI)`,
+        },
+      });
+    }
+  }
+  return res;
+}
+
 /** Generadores de sugerencias por fuente (solo leen el diagrama; no ejecutan comandos). */
 export const SUGGESTERS: Partial<Record<TopoSourceId, (t: Topology) => LinkSuggestion[]>> = {
   descriptions: suggestFromDescriptions,
+  mac: suggestFromMacs,
 };
 
 /** Sugerencias de las fuentes activas, sin las descartadas. */
@@ -1433,6 +1761,7 @@ export function collectSuggestions(t: Topology, sources: TopoSources | undefined
 
 /** Confirma una sugerencia: crea el equipo si no existe (como manual) y el enlace con su origen. */
 export function acceptSuggestion(t: Topology, s: LinkSuggestion): TopoResult {
+  if (s.node) return acceptNodeSuggestion(t, s, s.node);
   let topo = t;
   if (!findNode(topo, s.target)) {
     const r = addManualNode(topo, isIpv4(s.target) ? { name: s.target, ip: s.target } : { name: s.target });
@@ -1441,5 +1770,23 @@ export function acceptSuggestion(t: Topology, s: LinkSuggestion): TopoResult {
   }
   const target = findNode(topo, s.target);
   if (!target) return { error: "No se pudo crear el equipo" };
+  return addManualLink(topo, { a: s.a, aPort: s.aPort, b: target.id, bPort: s.bPort }, s.proto);
+}
+
+/**
+ * Confirma una sugerencia que trae su propio equipo (MAC/OUI): se reutiliza si ya existe por id o
+ * por IP; si no, se crea como manual. Con IP queda además como "conocido por dirección" para que,
+ * al explorarlo, se fusione con su nombre real (igual que un vecino de ruteo).
+ */
+function acceptNodeSuggestion(t: Topology, s: LinkSuggestion, spec: NonNullable<LinkSuggestion["node"]>): TopoResult {
+  let topo = t;
+  let target = topo.nodes.find((n) => n.id === spec.id) ?? (spec.ip ? topo.nodes.find((n) => knownAddrs(n).includes(spec.ip!)) : undefined);
+  if (!target) {
+    const node: TopoNode = { id: spec.id, name: spec.name, explored: false, manual: true, x: 0, y: 0 };
+    if (spec.ip) Object.assign(node, { ip: spec.ip, addrs: [spec.ip], addrOnly: true });
+    if (spec.platform) node.platform = spec.platform;
+    topo = layout({ ...topo, nodes: [...topo.nodes, node] });
+    target = node;
+  }
   return addManualLink(topo, { a: s.a, aPort: s.aPort, b: target.id, bPort: s.bPort }, s.proto);
 }
