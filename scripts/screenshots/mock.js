@@ -160,6 +160,12 @@ localStorage.clear();
 settings.appTheme = new URLSearchParams(location.search).get("theme") ?? "dark";
 if (location.search.includes("big=")) settings.confirmClose = false;
 if (location.search.includes("autolegacy=1")) settings.autoLegacySsh = true;
+// ?scene=suggest: sugerencias de comandos (beta) activas y core-sw01 con plataforma IOS-XE
+// (con &video=1 la terminal hace eco de lo que se escribe).
+if (location.search.includes("scene=suggest")) {
+  settings.commandSuggest = true;
+  sessions[0].platform = "iosxe";
+}
 if (location.search.includes("scene=vertical") || location.search.includes("layout=vertical")) settings.tabLayout = "vertical";
 // ?toast=1: una alerta por palabra clave activa que dispara un aviso (toast) y marca la primera pestaña.
 if (location.search.includes("toast=1")) {
@@ -1034,6 +1040,7 @@ Object.assign(scenes, {
   "t-syslog": tool("Syslog"),
   "t-backup": scenes.backup,
   "t-plugins": tool("Plugins"),
+  suggest: async () => { await open("core-sw01"); },
 });
 // Acceso para el script de QA (CDP): pasos adicionales sobre una escena.
 window.__demo = { click, open, wait, svgNode, emit, find, setVal };
