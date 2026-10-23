@@ -379,13 +379,13 @@ export function SettingsModal({
                 </Item>
                 <Item
                   label="Sugerencias de comandos"
-                  hint="En sesiones remotas con plataforma detectada o fijada en el catálogo, muestra en gris el resto de un comando de consulta, también si lo escribes abreviado (sh ip int br). Flecha derecha lo acepta, Ctrl+→ u Option+→ acepta una palabra y la tecla de lista abre hasta 8 comandos. Tab sigue yendo al equipo y nunca se envía Enter; los comandos con riesgo solo aparecen en la lista y piden confirmación. No funciona en la terminal local"
+                  hint="En sesiones remotas con plataforma detectada o fijada en el catálogo, muestra en gris el resto de un comando de consulta, también si lo escribes abreviado (sh ip int br). Flecha derecha lo acepta, Ctrl+→ u Option+→ acepta una palabra y la tecla de lista abre hasta 8 comandos. Tab sigue yendo al equipo y nunca se envía Enter; los comandos con riesgo solo aparecen en la lista y piden confirmación. En modo configuración solo sugiere tras do (Cisco) o run (Junos). No funciona en la terminal local"
                 >
                   <Switch checked={s.commandSuggest} onChange={(v) => onChange({ commandSuggest: v, commandSuggestSet: true })} />
                 </Item>
                 {s.commandSuggest && (
                   <>
-                    <Item label="Tecla para abrir la lista" hint="Ctrl+Espacio choca con el cambio de fuente de entrada de macOS; Ctrl+. no lo usa ni la terminal ni el sistema">
+                    <Item label="Tecla para abrir la lista" hint="Ctrl+Espacio choca con el cambio de fuente de entrada de macOS. En Linux con IBus, Ctrl+. puede abrir el selector de emojis: usa Alt+/ (tecla física de la barra en el teclado US, la del guion en el latinoamericano)">
                       <select
                         className="field !w-40"
                         value={s.suggestListKey}

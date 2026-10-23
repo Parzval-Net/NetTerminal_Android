@@ -26,8 +26,10 @@ import {
   PROMPT,
   type SuggestEntry,
   type SuggestIndex,
+  configHint,
   endsWithTyped,
   getIndex,
+  ghostColor,
   ghostFor,
   lookup,
   matchExecuted,
@@ -39,6 +41,7 @@ import {
   saveUsageSoon,
   suggestAllowed,
   suggestKey,
+  suggestQuery,
   usageStore,
 } from "../lib/suggest";
 
@@ -99,6 +102,8 @@ interface SuggestList {
   sel: number;
   /** Lo tecleado al abrir: si cambia, la lista se cierra. */
   buf: string;
+  /** Lo que se buscó (sin el escape `do `/`run ` del modo configuración). */
+  q: string;
   left: number;
   top?: number;
   bottom?: number;
@@ -177,7 +182,7 @@ export const TerminalView = memo(function TerminalView({ id, session, active, vi
   const hintRef = useRef<HTMLDivElement>(null);
   const [suggestList, setSuggestList] = useState<SuggestList | null>(null);
   const listRef = useRef<SuggestList | null>(null);
-  const [suggestAsk, setSuggestAsk] = useState<{ entry: SuggestEntry; buf: string } | null>(null);
+  const [suggestAsk, setSuggestAsk] = useState<{ entry: SuggestEntry; buf: string; q: string } | null>(null);
   const suggestRef = useRef<{ refresh: () => void; reset: () => void; pick: (e: SuggestEntry, buf: string, confirmed: boolean) => void } | null>(null);
   const listId = useId();
 
@@ -499,10 +504,16 @@ export const TerminalView = memo(function TerminalView({ id, session, active, vi
     const visibleConnected = () =>
       focusRef.current && activeRef.current && statusRef.current === "connected" && term.buffer.active.type !== "alternate";
     const usable = () => tracker.active && visibleConnected();
+    /**
+     * Lo que se busca según el modo del prompt: en configuración solo tras `do `/`run ` (o con
+     * `display`/`show` completo según el fabricante); si no, null y no se sugiere nada.
+     */
+    const queryFor = (idx: SuggestIndex, buf: string) => suggestQuery(buf, tracker.prompt, idx);
     const currentGhost = () => {
       if (listRef.current || !usable()) return null;
       const idx = suggestIndex();
-      const g = idx ? ghostFor(idx, tracker.buf, weightsFor(idx)) : null;
+      const q = idx && queryFor(idx, tracker.buf);
+      const g = idx && q !== null ? ghostFor(idx, q, weightsFor(idx)) : null;
       return g && lineMatches(tracker.buf) ? g : null;
     };
     /**
@@ -527,19 +538,24 @@ export const TerminalView = memo(function TerminalView({ id, session, active, vi
       const el = hintRef.current;
       if (el && el.style.display !== "none") el.style.display = "none";
     };
-    /** Plataforma desconocida: un aviso discreto la primera vez que se escribe en un prompt. */
-    const maybeHint = () => {
-      if (hinted || !catalogRef.current || !usable() || queryOf(tracker.buf).length < 2 || !lineMatches(tracker.buf)) return;
+    /** Aviso discreto junto al cursor (no toma el foco ni las teclas). */
+    const showHint = (text: string, ms: number) => {
       const el = hintRef.current;
       const box = cursorBox();
-      if (!el || !box) return;
-      hinted = true;
-      el.textContent = `Detecta la plataforma para activar sugerencias: Comandos (${modLabel}L) › Detectar`;
+      if (!el || !box) return false;
+      window.clearTimeout(hintTimer);
+      el.textContent = text;
       const st = el.style;
       st.left = `${Math.max(4, Math.min(box.left - queryOf(tracker.buf).length * box.w, box.wrapW - 400))}px`;
       st.top = box.wrapH - (box.top + box.h) >= 40 ? `${box.top + box.h + 4}px` : `${box.top - 30}px`;
       st.display = "block";
-      hintTimer = window.setTimeout(hideHint, 6000);
+      hintTimer = window.setTimeout(hideHint, ms);
+      return true;
+    };
+    /** Plataforma desconocida: un aviso discreto la primera vez que se escribe en un prompt. */
+    const maybeHint = () => {
+      if (hinted || !catalogRef.current || !usable() || queryOf(tracker.buf).length < 2 || !lineMatches(tracker.buf)) return;
+      if (showHint(`Detecta la plataforma para activar sugerencias: Comandos (${modLabel}L) › Detectar`, 6000)) hinted = true;
     };
     const renderSuggest = () => {
       suggestFrame = 0;
@@ -573,7 +589,8 @@ export const TerminalView = memo(function TerminalView({ id, session, active, vi
       shown = { buf: tracker.buf, insert: g.insert };
       const o = term.options;
       const font = `${o.fontSize}px ${o.fontFamily}`;
-      const color = o.theme?.foreground ?? "";
+      // Mezcla del texto con el fondo con al menos 3:1 de contraste en todos los temas.
+      const color = ghostColor(o.theme?.foreground, o.theme?.background) ?? "";
       const key = `${g.rest}|${box.left}|${box.top}|${box.w}|${box.h}|${box.max}|${font}|${color}`;
       if (key !== ghostKey) {
         ghostKey = key;
@@ -587,7 +604,8 @@ export const TerminalView = memo(function TerminalView({ id, session, active, vi
         st.maxWidth = `${box.max}px`;
         st.font = font;
         st.letterSpacing = `${box.w - charWidth(font)}px`;
-        st.color = color;
+        st.color = color || (o.theme?.foreground ?? "");
+        st.opacity = color ? "1" : "0.45";
       }
       if (perfLog && keyAt) {
         perfLog.push(performance.now() - keyAt);
@@ -608,13 +626,16 @@ export const TerminalView = memo(function TerminalView({ id, session, active, vi
     const openList = () => {
       const idx = suggestIndex();
       if (!idx || !usable() || !lineMatches(tracker.buf)) return;
-      const items = lookup(idx, tracker.buf, 8, { weights: weightsFor(idx) });
+      const q = queryFor(idx, tracker.buf);
+      // Modo configuración sin escape: se explica cómo pedir sugerencias en vez de no hacer nada.
+      if (q === null) return void showHint(configHint(idx), 4000);
+      const items = lookup(idx, q, 8, { weights: weightsFor(idx) });
       const box = cursorBox();
       if (!items.length || !box) return;
       // Alineada con el inicio de lo tecleado; abajo del cursor o arriba si no cabe.
       const left = Math.max(0, Math.min(box.left - queryOf(tracker.buf).length * box.w, box.wrapW - 360));
       const below = box.wrapH - (box.top + box.h) >= 300 || box.top < box.wrapH / 2;
-      setList({ items, sel: 0, buf: tracker.buf, left, ...(below ? { top: box.top + box.h + 2 } : { bottom: box.wrapH - box.top + 2 }) });
+      setList({ items, sel: 0, buf: tracker.buf, q, left, ...(below ? { top: box.top + box.h + 2 } : { bottom: box.wrapH - box.top + 2 }) });
       scheduleSuggest();
     };
     const pickSuggestion = (entry: SuggestEntry, buf: string, confirmed: boolean) => {
@@ -622,10 +643,11 @@ export const TerminalView = memo(function TerminalView({ id, session, active, vi
       scheduleSuggest();
       const idx = suggestIndex();
       if (!idx || !tracker.active || tracker.buf !== buf) return;
-      const rest = remainderToInsert(entry, buf);
-      if (!rest) return;
+      const q = queryFor(idx, buf);
+      const rest = q === null ? "" : remainderToInsert(entry, q);
+      if (!rest || q === null) return;
       // Lo que cambia configuración o puede cortar servicio se confirma antes de escribirlo.
-      if (entry.risk !== "read" && !confirmed) return setSuggestAsk({ entry, buf });
+      if (entry.risk !== "read" && !confirmed) return setSuggestAsk({ entry, buf, q });
       typeInsert(rest);
       remember(idx, entry);
     };
@@ -707,8 +729,9 @@ export const TerminalView = memo(function TerminalView({ id, session, active, vi
           hideHint();
           // Historial: la plantilla del catálogo que corresponde a la línea ejecutada.
           const idx = tracker.active ? suggestIndex() : null;
-          const entry = idx && matchExecuted(idx, tracker.buf);
-          if (entry) remember(idx, entry);
+          const q = idx && queryFor(idx, tracker.buf);
+          const entry = idx && q ? matchExecuted(idx, q) : null;
+          if (idx && entry) remember(idx, entry);
         }
         if (perfLog) keyAt = performance.now();
         tracker.input(data);
@@ -937,6 +960,20 @@ export const TerminalView = memo(function TerminalView({ id, session, active, vi
   useEffect(() => {
     suggestRef.current?.refresh();
   }, [active, visible, settings.commandSuggest, session.platform, catalog, theme, settings.fontFamily, settings.fontSize, settings.lineHeight]);
+  // Lista abierta: el foco sigue en la terminal (su textarea), así que es ella la que anuncia
+  // la opción activa a los lectores de pantalla (patrón combobox de ARIA 1.2).
+  useEffect(() => {
+    const ta = termRef.current?.textarea;
+    if (!ta) return;
+    if (!suggestList) {
+      for (const a of ["aria-activedescendant", "aria-controls", "aria-expanded", "aria-autocomplete"]) ta.removeAttribute(a);
+      return;
+    }
+    ta.setAttribute("aria-autocomplete", "list");
+    ta.setAttribute("aria-controls", listId);
+    ta.setAttribute("aria-expanded", "true");
+    ta.setAttribute("aria-activedescendant", `${listId}-${suggestList.sel}`);
+  }, [suggestList, listId]);
 
   const findNext = (back = false) => {
     if (!query) return;
@@ -967,7 +1004,7 @@ export const TerminalView = memo(function TerminalView({ id, session, active, vi
     >
       <div ref={hostRef} className="w-full h-full" />
       {/* Texto gris de la sugerencia: solo visual, lo dibuja la terminal (sin render por tecla). */}
-      <div ref={ghostRef} aria-hidden="true" className="absolute z-[5] pointer-events-none whitespace-pre overflow-hidden opacity-45" style={{ display: "none" }} />
+      <div ref={ghostRef} aria-hidden="true" className="absolute z-[5] pointer-events-none whitespace-pre overflow-hidden" style={{ display: "none" }} />
       {/* Aviso de plataforma desconocida (una vez por pestaña): lo muestra la terminal. */}
       <div ref={hintRef} role="status" className="absolute z-[6] pointer-events-none rounded-md border border-line bg-panel px-2 py-1 text-[11px] text-muted shadow-pop whitespace-nowrap" style={{ display: "none" }} />
       {suggestList && (
@@ -981,7 +1018,7 @@ export const TerminalView = memo(function TerminalView({ id, session, active, vi
       {suggestAsk && (
         <ConfirmDialog
           title={suggestAsk.entry.risk === "disruptive" ? "Este comando puede cortar servicio" : "Este comando cambia configuración o estado"}
-          message={`${riskLabel[suggestAsk.entry.risk]} en ${session.name}. Se escribe en la línea sin ejecutarlo (sin Enter):\n\n${suggestAsk.buf.trimStart()}${remainderToInsert(suggestAsk.entry, suggestAsk.buf)}`}
+          message={`${riskLabel[suggestAsk.entry.risk]} en ${session.name}. Se escribe en la línea sin ejecutarlo (sin Enter):\n\n${suggestAsk.buf.trimStart()}${remainderToInsert(suggestAsk.entry, suggestAsk.q)}`}
           confirmLabel="Insertar"
           danger={suggestAsk.entry.risk === "disruptive"}
           onCancel={() => {
@@ -1071,7 +1108,7 @@ function SuggestPopup({ list, listId, fontFamily, onPick }: { list: SuggestList;
       // Clic sin quitar el foco a la terminal.
       onMouseDown={(e) => e.preventDefault()}
     >
-      <ul role="listbox" id={listId} aria-label="Sugerencias de comandos" aria-activedescendant={`${listId}-${list.sel}`} tabIndex={-1} className="max-h-64 overflow-y-auto py-1">
+      <ul role="listbox" id={listId} aria-label="Sugerencias de comandos" className="max-h-64 overflow-y-auto py-1">
         {list.items.map((it, i) => (
           <li
             key={it.cmd}
@@ -1084,7 +1121,7 @@ function SuggestPopup({ list, listId, fontFamily, onPick }: { list: SuggestList;
           >
             <div className="flex items-center gap-2 min-w-0">
               <span className="truncate whitespace-pre" style={{ fontFamily }}>
-                {matchSpans(it, list.buf).map((p, j) => (p.hit ? <span key={j} className="font-semibold">{p.text}</span> : p.text))}
+                {matchSpans(it, list.q).map((p, j) => (p.hit ? <span key={j} className="font-semibold">{p.text}</span> : p.text))}
               </span>
               {it.risk !== "read" && (
                 <span className="ml-auto shrink-0 rounded px-1.5 text-[10.5px] font-medium bg-danger text-danger-fg">{riskLabel[it.risk]}</span>
