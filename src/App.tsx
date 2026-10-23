@@ -1335,14 +1335,14 @@ function EmptyState({
   onTools: () => void;
 }) {
   const items: [React.ReactNode, string, () => void][] = [
-    ["Buscar sesión o conexión rápida por texto", `${modLabel}K`, onPalette],
     [
       <span key="q" className="flex items-center gap-1.5">
-        <QuickBolt size={14} /> Conexión rápida (SSH, Telnet, Serial) sin guardar
+        <QuickBolt size={14} /> Conexión rápida sin guardar
       </span>,
-      "",
+      `${modLabel}O`,
       onQuick,
     ],
+    ["Buscar sesión", `${modLabel}K`, onPalette],
     ["Nueva sesión guardada", `${modLabel}N`, onNew],
     ["Terminal local", `${modLabel}T`, onLocal],
     ["Herramientas de red", `${modLabel}E`, onTools],
