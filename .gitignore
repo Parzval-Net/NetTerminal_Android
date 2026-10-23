@@ -32,4 +32,4 @@ sessions.json
 
 # Herramientas locales del asistente (worktrees)
 .claude/
-videos/
+/videos/

@@ -8,6 +8,8 @@ Construido con [Tauri 2](https://tauri.app) (backend en Rust) y xterm.js. Usa el
 
 **Ficha del producto:** [página](https://parzval-net.github.io/Net_Terminal/) · [PDF para compartir](docs/NetTerminal-ficha.pdf) · [Descargar la última versión](https://github.com/Parzval-Net/Net_Terminal/releases/latest)
 
+**Tutoriales en video:** [Tutorial completo (13:32)](https://parzval-net.github.io/Net_Terminal/#como-usar) · [Scripts y plugins (9:25)](https://parzval-net.github.io/Net_Terminal/#como-usar) · [Ejemplos](docs/ejemplos)
+
 ## Capturas
 
 > Capturas en modo claro con datos ficticios (IPs de documentación RFC 5737 y nombres genéricos). La app también tiene modo oscuro y 17 temas de terminal.

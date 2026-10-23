@@ -96,6 +96,21 @@
     .features { grid-template-columns: 1fr; }
     header.hero { padding-top: 44px; }
   }
+  .videos { display: grid; grid-template-columns: repeat(2, 1fr); gap: 22px; }
+  .video { background: var(--panel); border: 1px solid var(--line); border-radius: 14px; overflow: hidden; box-shadow: var(--shadow); }
+  .video video { width: 100%; display: block; background: #0e1116; aspect-ratio: 16 / 9; }
+  .video .body { padding: 16px 20px 20px; }
+  .video h3 { margin: 0 0 4px; font-size: 16.5px; }
+  .video .meta { color: var(--muted); font-size: 13.5px; margin: 0 0 10px; }
+  .chapters { list-style: none; margin: 0; padding: 0; display: grid; grid-template-columns: 1fr 1fr; gap: 2px 14px; font-size: 13.5px; }
+  .chapters button { all: unset; cursor: pointer; display: flex; gap: 8px; padding: 3px 0; color: var(--fg, inherit); }
+  .chapters button:hover span { text-decoration: underline; }
+  .chapters button:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; border-radius: 4px; }
+  .chapters time { color: var(--accent); font-variant-numeric: tabular-nums; min-width: 40px; }
+  .steps { counter-reset: paso; display: grid; grid-template-columns: repeat(3, 1fr); gap: 16px; margin-top: 26px; }
+  .steps .feat { counter-increment: paso; }
+  .steps .feat h3::before { content: counter(paso) ". "; color: var(--accent); }
+  @media (max-width: 860px) { .videos, .steps, .chapters { grid-template-columns: 1fr; } }
 </style>
 </head>
 <body>
@@ -114,6 +129,10 @@
         <a class="btn" href="https://github.com/Parzval-Net/Net_Terminal">
           <svg width="18" height="18" viewBox="0 0 24 24" fill="currentColor"><path d="M12 .5a11.5 11.5 0 0 0-3.64 22.41c.58.1.79-.25.79-.56v-2c-3.2.7-3.88-1.37-3.88-1.37-.53-1.33-1.29-1.69-1.29-1.69-1.05-.72.08-.7.08-.7 1.16.08 1.77 1.19 1.77 1.19 1.03 1.77 2.71 1.26 3.37.96.1-.75.4-1.26.73-1.55-2.55-.29-5.24-1.28-5.24-5.69 0-1.26.45-2.29 1.19-3.1-.12-.29-.52-1.46.11-3.05 0 0 .97-.31 3.17 1.18a11 11 0 0 1 5.77 0c2.2-1.49 3.17-1.18 3.17-1.18.63 1.59.23 2.76.11 3.05.74.81 1.19 1.84 1.19 3.1 0 4.42-2.69 5.39-5.25 5.68.41.36.78 1.06.78 2.14v3.17c0 .31.21.67.8.56A11.5 11.5 0 0 0 12 .5z"/></svg>
           Código en GitHub
+        </a>
+        <a class="btn" href="#como-usar">
+          <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="10"/><path d="M10 8l6 4-6 4z"/></svg>
+          Ver tutoriales
         </a>
       </div>
       <p class="os">macOS (Intel y Apple Silicon) · Windows 10/11 · Linux (AppImage y .deb) · Portable sin instalar</p>
@@ -151,6 +170,64 @@
       <div class="feat"><div class="ic"><svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M5 12a7 7 0 0 1 14 0M8.5 12a3.5 3.5 0 0 1 7 0"/><circle cx="12" cy="12" r="1.2"/><path d="M12 13v8"/></svg></div><h3>Cliente SNMP</h3><p>v1, v2c y v3 con GET, GETNEXT, WALK y GETBULK, conjuntos de OIDs y receptor de traps. Solo lectura, SHA-256 + AES-128 por defecto y secretos atados a cada equipo.</p></div>
       <div class="feat"><div class="ic"><svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M14 3H6v18h12V7z"/><path d="M14 3v4h4M9 13h6M9 17h4"/></svg></div><h3>Generador de configuración SNMP</h3><p>Agente de solo lectura para Cisco IOS-XE, NX-OS, Huawei VRP, Junos, FortiOS y net-snmp, con marcadores para los secretos y avisos donde la sintaxis depende de la versión.</p></div>
       <div class="feat"><div class="ic"><svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M13 2L4 14h7l-1 8 9-12h-7z"/></svg></div><h3>Conexión rápida y transferencias</h3><p>Conecta sin guardar la sesión con el rayo. FTP/FTPS, SFTP con OpenSSH y servidor FTP de solo lectura para pasar firmware a los equipos.</p></div>
+    </div>
+  </section>
+
+  <section id="como-usar">
+    <div class="kicker">Cómo usar</div>
+    <h2>Aprende NetTerminal en video</h2>
+    <p class="sub">Dos tutoriales narrados en español con subtítulos. Haz clic en un capítulo para saltar a esa parte. Todo lo que se ve usa datos ficticios.</p>
+    <div class="videos">
+      <div class="video">
+        <video controls preload="metadata" playsinline poster="videos/NetTerminal-tutorial.jpg">
+          <source src="videos/NetTerminal-tutorial.mp4" type="video/mp4">
+        </video>
+        <div class="body">
+          <h3>Tutorial completo</h3>
+          <p class="meta">13:32 · Todas las funciones, cómo usarlas y cómo configurarlas</p>
+          <ol class="chapters">
+            <li><button data-t="0"><time>00:00</time><span>Introducción</span></button></li>
+            <li><button data-t="37"><time>00:37</time><span>Sesiones, carpetas e importación</span></button></li>
+            <li><button data-t="112"><time>01:52</time><span>Conexión rápida</span></button></li>
+            <li><button data-t="154"><time>02:34</time><span>SSH, Telnet y Serial</span></button></li>
+            <li><button data-t="223"><time>03:43</time><span>Pestañas y vista dividida</span></button></li>
+            <li><button data-t="270"><time>04:30</time><span>Enviar a varias sesiones</span></button></li>
+            <li><button data-t="311"><time>05:11</time><span>Notas y notas protegidas</span></button></li>
+            <li><button data-t="373"><time>06:13</time><span>Catálogo y packs de comandos</span></button></li>
+            <li><button data-t="431"><time>07:11</time><span>Topología</span></button></li>
+            <li><button data-t="475"><time>07:55</time><span>Herramientas de red</span></button></li>
+            <li><button data-t="579"><time>09:39</time><span>Logs y alertas</span></button></li>
+            <li><button data-t="627"><time>10:27</time><span>Contraseñas guardadas</span></button></li>
+            <li><button data-t="670"><time>11:10</time><span>Apariencia y temas</span></button></li>
+            <li><button data-t="709"><time>11:49</time><span>Recorrido por Ajustes</span></button></li>
+            <li><button data-t="761"><time>12:41</time><span>Actualizaciones</span></button></li>
+            <li><button data-t="791"><time>13:11</time><span>Cierre</span></button></li>
+          </ol>
+        </div>
+      </div>
+      <div class="video">
+        <video controls preload="metadata" playsinline poster="videos/NetTerminal-scripts-y-plugins.jpg">
+          <source src="videos/NetTerminal-scripts-y-plugins.mp4" type="video/mp4">
+        </video>
+        <div class="body">
+          <h3>Scripts y plugins</h3>
+          <p class="meta">9:25 · Automatización, packs de comandos y plugins. <a href="https://github.com/Parzval-Net/Net_Terminal/tree/main/docs/ejemplos">Ejemplos para descargar</a></p>
+          <ol class="chapters">
+            <li><button data-t="0"><time>00:00</time><span>Introducción</span></button></li>
+            <li><button data-t="30"><time>00:30</time><span>Scripts y macros</span></button></li>
+            <li><button data-t="193"><time>03:13</time><span>Comandos al conectar</span></button></li>
+            <li><button data-t="230"><time>03:50</time><span>Packs de comandos</span></button></li>
+            <li><button data-t="308"><time>05:08</time><span>Plugins</span></button></li>
+            <li><button data-t="482"><time>08:02</time><span>Buenas prácticas</span></button></li>
+            <li><button data-t="540"><time>09:00</time><span>Cierre</span></button></li>
+          </ol>
+        </div>
+      </div>
+    </div>
+    <div class="steps">
+      <div class="feat"><h3>Instala</h3><p>Descarga el instalador de tu sistema desde <a href="#descargas">Descargas</a> o usa la versión portable. Las versiones instaladas se actualizan solas desde Ajustes › Acerca de.</p></div>
+      <div class="feat"><h3>Conéctate</h3><p>Usa <b>Conexión rápida</b> (⌘O o Ctrl+Shift+O) para entrar sin guardar, o crea una sesión con el <b>+</b> de la barra lateral. También puedes importar tus sesiones desde otros clientes.</p></div>
+      <div class="feat"><h3>Trabaja</h3><p>Abre el catálogo de comandos (⌘L o Ctrl+Shift+L), las notas (⌘J) y las herramientas de red (⌘E). Busca cualquier sesión o acción con ⌘K o Ctrl+Shift+K.</p></div>
     </div>
   </section>
 
@@ -263,5 +340,13 @@
   </div>
 </footer>
 
+<script>
+  // Capítulos: salta al minuto indicado en el video de la misma tarjeta.
+  document.querySelectorAll(".chapters button").forEach((b) => b.addEventListener("click", () => {
+    const v = b.closest(".video").querySelector("video");
+    v.currentTime = Number(b.dataset.t);
+    v.play().catch(() => {});
+  }));
+</script>
 </body>
 </html>
