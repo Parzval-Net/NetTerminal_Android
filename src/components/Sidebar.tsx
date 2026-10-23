@@ -11,11 +11,12 @@ import {
   Pencil,
   Play,
   Plus,
+  Zap,
   Search,
   Trash2,
 } from "lucide-react";
 import { ConnStatus, Session, sessionTarget } from "../types";
-import { QuickBolt, SessionIcon } from "./SessionIcon";
+import { SessionIcon } from "./SessionIcon";
 import { modLabel } from "../lib/platform";
 import {
   FolderNode,
@@ -392,7 +393,7 @@ export const Sidebar = memo(function Sidebar(p: Props) {
         </HeadBtn>
         {p.onQuickConnect && (
           <HeadBtn title={`Conexión rápida sin guardar (${modLabel}O)`} aria-label="Conexión rápida sin guardar" onClick={p.onQuickConnect}>
-            <QuickBolt size={15} />
+            <Zap size={15} />
           </HeadBtn>
         )}
         <HeadBtn title="Nueva carpeta" onClick={() => createFolder(target ?? "")}>
