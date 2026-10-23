@@ -13,7 +13,7 @@
       "id": "win11",
       "label": "Windows 11",
       "detect": "Windows 11",
-      "note": "WMIC removido desde 24H2; usar Get-CimInstance. Incluye cmdlets DoH (DnsClientDohServerAddress)."
+      "note": "WMIC deshabilitado por defecto desde 23H2/24H2 y removido de las versiones soportadas (ya no es característica a petición); usar Get-CimInstance. Incluye cmdlets DoH (Get-DnsClientDohServerAddress)."
     },
     {
       "id": "winserver",
@@ -100,7 +100,7 @@
       "desc": "Muestra el estado de sincronización de hora: fuente, stratum y última sincronización. Un desfase mayor a 5 minutos rompe la autenticación Kerberos.",
       "cat": "Sistema",
       "risk": "read",
-      "note": "Funciona en PowerShell y CMD.",
+      "note": "Funciona en PowerShell y CMD. La documentación de w32tm indica que la herramienta exige pertenecer a Administradores locales.",
       "source": "https://learn.microsoft.com/en-us/windows-server/networking/windows-time-service/windows-time-service-tools-and-settings"
     },
     {
@@ -108,7 +108,7 @@
       "desc": "Muestra la fuente de hora que usa el equipo.",
       "cat": "Sistema",
       "risk": "read",
-      "note": "Funciona en PowerShell y CMD.",
+      "note": "Funciona en PowerShell y CMD. La documentación de w32tm indica que la herramienta exige pertenecer a Administradores locales.",
       "source": "https://learn.microsoft.com/en-us/windows-server/networking/windows-time-service/windows-time-service-tools-and-settings"
     },
     {
@@ -116,7 +116,7 @@
       "desc": "Lista los servidores de hora configurados y su estado.",
       "cat": "Sistema",
       "risk": "read",
-      "note": "Funciona en PowerShell y CMD.",
+      "note": "Funciona en PowerShell y CMD. La documentación de w32tm indica que la herramienta exige pertenecer a Administradores locales.",
       "source": "https://learn.microsoft.com/en-us/windows-server/networking/windows-time-service/windows-time-service-tools-and-settings"
     },
     {
@@ -124,7 +124,7 @@
       "desc": "Muestra la configuración del servicio de hora (tipo de cliente, NtpServer, intervalos).",
       "cat": "Sistema",
       "risk": "read",
-      "note": "Funciona en PowerShell y CMD.",
+      "note": "Funciona en PowerShell y CMD. La documentación de w32tm indica que la herramienta exige pertenecer a Administradores locales.",
       "source": "https://learn.microsoft.com/en-us/windows-server/networking/windows-time-service/windows-time-service-tools-and-settings"
     },
     {
@@ -132,7 +132,7 @@
       "desc": "Mide el desfase de hora contra un servidor NTP específico.",
       "cat": "Sistema",
       "risk": "read",
-      "note": "Funciona en PowerShell y CMD.",
+      "note": "Funciona en PowerShell y CMD. La documentación de w32tm indica que la herramienta exige pertenecer a Administradores locales.",
       "source": "https://learn.microsoft.com/en-us/windows-server/networking/windows-time-service/windows-time-service-tools-and-settings"
     },
     {
@@ -145,7 +145,7 @@
     },
     {
       "cmd": "Get-NetAdapterHardwareInfo",
-      "desc": "Muestra la ubicación PCI (bus, slot, función) y el ancho de enlace PCIe de cada adaptador físico.",
+      "desc": "Muestra la información de hardware de cada adaptador físico: ubicación PCI, capacidades PCI y MSI.",
       "cat": "Hardware",
       "risk": "read",
       "note": "PowerShell.",
@@ -209,7 +209,7 @@
     },
     {
       "cmd": "Get-NetIPConfiguration -Detailed",
-      "desc": "Igual que Get-NetIPConfiguration pero agrega MTU, estado de la interfaz, perfil de red y estado NetBIOS.",
+      "desc": "Igual que Get-NetIPConfiguration pero agrega MTU, DHCP, perfil de red y datos del adaptador por interfaz.",
       "cat": "Interfaces",
       "risk": "read",
       "note": "PowerShell.",
@@ -308,7 +308,7 @@
       "desc": "Lista la configuración IP por adaptador vía CIM. Reemplaza a wmic nicconfig, que está deprecado.",
       "cat": "Interfaces",
       "risk": "read",
-      "note": "PowerShell. WMIC está deprecado y fue removido en Windows 11 24H2 y posteriores (ya no disponible como característica a petición).",
+      "note": "PowerShell. WMIC está deprecado: deshabilitado por defecto en Windows 11 23H2 y 24H2, y removido de las versiones soportadas de Windows 11 (ya no está disponible como característica a petición). Get-CimInstance no se ve afectado.",
       "source": "https://learn.microsoft.com/en-us/windows/win32/cimwin32prov/win32-networkadapterconfiguration"
     },
     {
@@ -388,7 +388,7 @@
       "source": "https://learn.microsoft.com/en-us/windows-server/administration/windows-commands/netsh-wlan"
     },
     {
-      "cmd": "netsh wlan show profiles name=\"{{ssid}}\"",
+      "cmd": "netsh wlan show profiles name=\"{{perfil}}\"",
       "desc": "Muestra la configuración de un perfil Wi-Fi (seguridad, conexión automática) sin mostrar la clave.",
       "cat": "Interfaces",
       "risk": "read",
@@ -396,7 +396,7 @@
         "win10",
         "win11"
       ],
-      "note": "Funciona en PowerShell y CMD. En Server requiere la característica Wireless LAN Service. No agregar key=clear en sesiones compartidas porque muestra la clave en texto plano.",
+      "note": "Funciona en PowerShell y CMD. En Server requiere la característica Wireless LAN Service. No agregar key=clear en sesiones compartidas porque muestra la clave en texto plano. Sintaxis no confirmada en documentación oficial para Windows 10/11 (parámetro name= de show profiles); verificar.",
       "source": "https://learn.microsoft.com/en-us/previous-versions/windows/it-pro/windows-server-2008-R2-and-2008/cc755301(v=ws.10)"
     },
     {
@@ -424,15 +424,15 @@
       "source": "https://learn.microsoft.com/en-us/windows-server/administration/windows-commands/netsh-wlan"
     },
     {
-      "cmd": "netsh wlan connect name=\"{{ssid}}\"",
-      "desc": "Conecta la interfaz Wi-Fi usando un perfil guardado.",
+      "cmd": "netsh wlan connect name=\"{{perfil}}\"",
+      "desc": "Conecta la interfaz Wi-Fi usando un perfil guardado. Si ya está conectada a otra red, la desconecta antes de conectar a la nueva.",
       "cat": "Interfaces",
-      "risk": "change",
+      "risk": "disruptive",
       "platforms": [
         "win10",
         "win11"
       ],
-      "note": "Funciona en PowerShell y CMD. En Server requiere la característica Wireless LAN Service.",
+      "note": "Funciona en PowerShell y CMD. En Server requiere la característica Wireless LAN Service. name es el nombre del perfil, que suele coincidir con el SSID. Con más de una interfaz Wi-Fi hay que agregar interface=.",
       "source": "https://learn.microsoft.com/en-us/windows-server/administration/windows-commands/netsh-wlan"
     },
     {
@@ -621,7 +621,7 @@
     },
     {
       "cmd": "ipconfig /registerdns",
-      "desc": "Fuerza el re-registro dinámico de los nombres e IP del equipo en DNS y renueva las concesiones DHCP.",
+      "desc": "Fuerza el registro dinámico manual de los nombres e IP del equipo en DNS. Sirve para resolver fallas de registro sin reiniciar.",
       "cat": "DNS",
       "risk": "change",
       "note": "Funciona en PowerShell y CMD. Requiere consola elevada (administrador).",
@@ -629,17 +629,17 @@
     },
     {
       "cmd": "Set-DnsClientServerAddress -InterfaceAlias \"{{interfaz}}\" -ServerAddresses (\"{{dns1}}\",\"{{dns2}}\")",
-      "desc": "Configura manualmente los servidores DNS de una interfaz.",
+      "desc": "Configura manualmente los servidores DNS de una interfaz. Un DNS incorrecto interrumpe la resolución de nombres.",
       "cat": "DNS",
-      "risk": "change",
+      "risk": "disruptive",
       "note": "PowerShell. Requiere consola elevada (administrador).",
       "source": "https://learn.microsoft.com/en-us/powershell/module/dnsclient/set-dnsclientserveraddress"
     },
     {
       "cmd": "Set-DnsClientServerAddress -InterfaceAlias \"{{interfaz}}\" -ResetServerAddresses",
-      "desc": "Elimina los DNS manuales y vuelve a los entregados por DHCP.",
+      "desc": "Elimina los DNS manuales y vuelve a los entregados por DHCP. Si el DHCP no entrega DNS, se pierde la resolución de nombres.",
       "cat": "DNS",
-      "risk": "change",
+      "risk": "disruptive",
       "note": "PowerShell. Requiere consola elevada (administrador).",
       "source": "https://learn.microsoft.com/en-us/powershell/module/dnsclient/set-dnsclientserveraddress"
     },
@@ -708,7 +708,7 @@
       "source": "https://learn.microsoft.com/en-us/windows-server/administration/windows-commands/netsh-interface"
     },
     {
-      "cmd": "Get-NetTCPSetting | Select-Object SettingName,CongestionProvider,AutoTuningLevelLocal,InitialRto",
+      "cmd": "Get-NetTCPSetting | Select-Object SettingName,CongestionProvider,AutoTuningLevelLocal,InitialRtoMs",
       "desc": "Muestra los perfiles de configuración TCP: algoritmo de congestión, autotuning y RTO inicial.",
       "cat": "Configuración",
       "risk": "read",
@@ -736,7 +736,7 @@
       "desc": "Muestra el proxy WinHTTP usado por servicios del sistema (Windows Update, agentes). Es independiente del proxy del navegador.",
       "cat": "Configuración",
       "risk": "read",
-      "note": "Funciona en PowerShell y CMD.",
+      "note": "Funciona en PowerShell y CMD. La documentación marca show proxy como obsoleto en favor de show advproxy; verificar disponibilidad en tu versión.",
       "source": "https://learn.microsoft.com/en-us/windows/win32/winhttp/netsh-exe-commands"
     },
     {
@@ -853,9 +853,9 @@
     },
     {
       "cmd": "route delete {{red}}",
-      "desc": "Elimina una ruta de la tabla de enrutamiento.",
+      "desc": "Elimina una ruta de la tabla de enrutamiento. Puede cortar el tráfico que dependía de esa ruta.",
       "cat": "Enrutamiento",
-      "risk": "change",
+      "risk": "disruptive",
       "note": "Funciona en PowerShell y CMD. Requiere consola elevada (administrador). Borrar la ruta por defecto corta la conectividad remota.",
       "source": "https://learn.microsoft.com/en-us/windows-server/administration/windows-commands/route_ws2008"
     },
@@ -869,10 +869,10 @@
     },
     {
       "cmd": "Remove-NetRoute -DestinationPrefix {{prefijo}} -Confirm:$false",
-      "desc": "Elimina una ruta estática usando PowerShell.",
+      "desc": "Elimina una ruta estática usando PowerShell. Puede cortar el tráfico que dependía de esa ruta.",
       "cat": "Enrutamiento",
-      "risk": "change",
-      "note": "PowerShell. Requiere consola elevada (administrador).",
+      "risk": "disruptive",
+      "note": "PowerShell. Requiere consola elevada (administrador). Borrar la ruta por defecto corta la conectividad remota.",
       "source": "https://learn.microsoft.com/en-us/powershell/module/nettcpip/remove-netroute"
     },
     {
@@ -917,10 +917,10 @@
     },
     {
       "cmd": "arp -d {{ip}}",
-      "desc": "Elimina una entrada de la tabla ARP; usar * en lugar de la IP para vaciarla completa.",
+      "desc": "Elimina una entrada de la tabla ARP para forzar una nueva resolución.",
       "cat": "Capa 2",
       "risk": "change",
-      "note": "Funciona en PowerShell y CMD. Requiere consola elevada (administrador).",
+      "note": "Funciona en PowerShell y CMD. Requiere consola elevada (administrador). Con * en lugar de la IP se vacía toda la tabla ARP, lo que sí es disruptivo: no usarlo en sesión remota.",
       "source": "https://learn.microsoft.com/en-us/windows-server/administration/windows-commands/arp"
     },
     {
@@ -1160,7 +1160,7 @@
       "desc": "Hace ping usando una IP de origen específica del equipo.",
       "cat": "Diagnóstico",
       "risk": "read",
-      "note": "Funciona en PowerShell y CMD.",
+      "note": "Funciona en PowerShell y CMD. Sintaxis no confirmada en documentación oficial para IPv4 (la página de ping indica -S solo para IPv6); verificar.",
       "source": "https://learn.microsoft.com/en-us/windows-server/administration/windows-commands/ping"
     },
     {
@@ -1264,7 +1264,7 @@
       "desc": "Combina traceroute con estadísticas de pérdida por salto durante un periodo. Ubica en qué salto se produce la pérdida.",
       "cat": "Diagnóstico",
       "risk": "read",
-      "note": "Funciona en PowerShell y CMD. Tarda varios minutos (unos 25 segundos por salto).",
+      "note": "Funciona en PowerShell y CMD. Tarda varios minutos: tras listar la ruta calcula estadísticas por salto (el ejemplo oficial muestra 125 segundos).",
       "source": "https://learn.microsoft.com/en-us/windows-server/administration/windows-commands/pathping"
     },
     {
@@ -1393,7 +1393,7 @@
       "cat": "Seguridad",
       "risk": "read",
       "note": "Funciona en PowerShell y CMD.",
-      "source": "https://learn.microsoft.com/en-us/troubleshoot/windows-server/networking/netsh-advfirewall-firewall-control-firewall-behavior"
+      "source": "https://learn.microsoft.com/en-us/windows-server/administration/windows-commands/netsh-advfirewall"
     },
     {
       "cmd": "netsh advfirewall show currentprofile",
@@ -1401,7 +1401,7 @@
       "cat": "Seguridad",
       "risk": "read",
       "note": "Funciona en PowerShell y CMD.",
-      "source": "https://learn.microsoft.com/en-us/troubleshoot/windows-server/networking/netsh-advfirewall-firewall-control-firewall-behavior"
+      "source": "https://learn.microsoft.com/en-us/windows-server/administration/windows-commands/netsh-advfirewall"
     },
     {
       "cmd": "Get-NetFirewallRule -Enabled True -Direction Inbound | Select-Object DisplayName,Profile,Action",
@@ -1449,7 +1449,7 @@
       "cat": "Seguridad",
       "risk": "read",
       "note": "Funciona en PowerShell y CMD.",
-      "source": "https://learn.microsoft.com/en-us/troubleshoot/windows-server/networking/netsh-advfirewall-firewall-control-firewall-behavior"
+      "source": "https://learn.microsoft.com/en-us/windows-server/administration/windows-commands/netsh-advfirewall"
     },
     {
       "cmd": "netsh advfirewall firewall show rule name=\"{{nombre}}\" verbose",
@@ -1457,7 +1457,7 @@
       "cat": "Seguridad",
       "risk": "read",
       "note": "Funciona en PowerShell y CMD.",
-      "source": "https://learn.microsoft.com/en-us/troubleshoot/windows-server/networking/netsh-advfirewall-firewall-control-firewall-behavior"
+      "source": "https://learn.microsoft.com/en-us/windows-server/administration/windows-commands/netsh-advfirewall"
     },
     {
       "cmd": "Get-NetConnectionProfile",
@@ -1472,7 +1472,7 @@
       "desc": "Cambia la categoría de red de la interfaz, lo que cambia el perfil de firewall aplicado.",
       "cat": "Seguridad",
       "risk": "change",
-      "note": "PowerShell. Requiere consola elevada (administrador). No permite asignar DomainAuthenticated manualmente.",
+      "note": "PowerShell. Requiere consola elevada (administrador). No permite asignar DomainAuthenticated manualmente. Cambiar el perfil modifica las reglas de firewall aplicadas y puede bloquear accesos entrantes.",
       "source": "https://learn.microsoft.com/en-us/powershell/module/netconnection/set-netconnectionprofile"
     },
     {
@@ -1512,7 +1512,7 @@
       "desc": "Lista las conexiones SMB activas del cliente con servidor, recurso y dialecto negociado.",
       "cat": "Otros",
       "risk": "read",
-      "note": "PowerShell. Requiere consola elevada (administrador).",
+      "note": "PowerShell. La documentación no indica requisito de consola elevada.",
       "source": "https://learn.microsoft.com/en-us/powershell/module/smbshare/get-smbconnection"
     },
     {
@@ -1544,7 +1544,7 @@
       "desc": "Lista las sesiones SMB de clientes conectados a este equipo.",
       "cat": "Otros",
       "risk": "read",
-      "note": "PowerShell. Requiere consola elevada (administrador).",
+      "note": "PowerShell. Suele requerir consola elevada; la documentación no lo precisa.",
       "source": "https://learn.microsoft.com/en-us/powershell/module/smbshare/get-smbsession"
     },
     {
@@ -1552,7 +1552,7 @@
       "desc": "Muestra qué versiones de SMB acepta el servidor y si exige firma o cifrado.",
       "cat": "Otros",
       "risk": "read",
-      "note": "PowerShell. Requiere consola elevada (administrador).",
+      "note": "PowerShell. Puede requerir consola elevada; la documentación no lo precisa.",
       "source": "https://learn.microsoft.com/en-us/powershell/module/smbshare/get-smbserverconfiguration"
     },
     {
@@ -1592,7 +1592,7 @@
       "desc": "Devuelve True si el canal seguro con el dominio está sano.",
       "cat": "Otros",
       "risk": "read",
-      "note": "Windows PowerShell 5.1. No existe en PowerShell 7.",
+      "note": "Windows PowerShell 5.1 (la documentación solo existe para esa versión). La documentación indica ejecutar como administrador. Solo funciona en equipos miembros de dominio; en controladores de dominio da falsos positivos, usar nltest o netdom.",
       "source": "https://learn.microsoft.com/en-us/powershell/module/microsoft.powershell.management/test-computersecurechannel?view=powershell-5.1"
     },
     {
