@@ -532,6 +532,134 @@ const handlers = {
   },
 };
 
+// ---- Modo video (?video=1, scripts/video): la terminal responde a lo que se escribe o envía,
+// las sesiones nuevas se guardan y ?update=1 simula una versión nueva. Las capturas no lo usan.
+if (new URLSearchParams(location.search).has("video")) {
+  notes["plantilla-vlan.txt"] = notes["plantilla-vlan.txt"].replace("(variables con {{...}})", "(variables entre llaves dobles)");
+  notes["cambio-descripcion.txt"] = "show clock\nconfigure terminal\ninterface GigabitEthernet1/0/7\n description CAMARA PISO 2\nend";
+  const out = (id, t) => {
+    const ch = channels.get(id);
+    if (ch) cbs.get(ch.data)?.({ index: ch.index++, message: enc.encode(t).buffer });
+  };
+  const lineBuf = new Map();
+  const modes = new Map();
+  const promptOf = (id) => {
+    const s = connSessions.get(id) ?? {};
+    if (s.type === "local") return "\x1b[32muser@laptop\x1b[0m:\x1b[34m~\x1b[0m$ ";
+    if (s.highlight === "huawei") return `<${s.name}>`;
+    const m = modes.get(id);
+    return `${s.name}${m ? `(${m})` : ""}#`;
+  };
+  const IPBRIEF = CISCO.split("\n").slice(4, 14).join("\n");
+  const reply = (id, raw) => {
+    const s = connSessions.get(id) ?? {};
+    return `\r\n${respond(id, s, raw)}`;
+  };
+  // Respuesta de ejemplo a un comando (texto con \r\n al final o vacío).
+  const respond = (id, s, raw) => {
+    const [cmd, filter] = raw.trim().split(/\s*\|\s*(?:include|i)\s+/);
+    const c = cmd.toLowerCase();
+    let body = "";
+    if (s.type === "local") {
+      if (/^(ifconfig|ip a)/.test(c)) body = "en0: flags=8863<UP,BROADCAST,RUNNING,MULTICAST> mtu 1500\n\tinet 192.0.2.250 netmask 0xffffff00 broadcast 192.0.2.255";
+      else if (/^(ping|traceroute)/.test(c)) body = "PING 192.0.2.1: 56 data bytes\n64 bytes from 192.0.2.1: icmp_seq=0 ttl=255 time=1.92 ms";
+    } else if (s.highlight === "huawei") {
+      if (/^dis(play)? ver/.test(c)) body = "Huawei Versatile Routing Platform Software\nVRP (R) software, Version 8.220 (AR6100 V300R022C10SPC100)";
+      else if (/^dis(play)? clock/.test(c)) body = "2026-10-21 10:42:17\nWednesday";
+      else if (/^dis(play)? int(erface)? br/.test(c)) body = HUAWEI.split("\n").slice(3, 15).join("\n");
+    } else if (/^sh(ow)? clock/.test(c)) body = "*10:42:17.385 UTC Wed Oct 21 2026";
+    else if (/^sh(ow)? ver/.test(c)) body = `Cisco IOS XE Software, Version 17.12.04\nCisco IOS Software [Dublin], Catalyst L3 Switch Software (CAT9K_IOSXE)\n${s.name} uptime is 47 weeks, 17 hours, 30 minutes`;
+    else if (/^sh(ow)? ip int(erface)? br/.test(c)) body = IPBRIEF;
+    else if (/^sh(ow)? (cdp|lldp) nei/.test(c)) body = "Device ID        Local Intrfce     Holdtme    Capability  Platform  Port ID\ncore-sw02        Ten 1/1/1         142             R S I  C9500-24Y Ten 1/1/1\ndist-sw01        Gig 1/0/1         131             R S I  C9300-48P Gig 1/0/48";
+    else if (/^sh(ow)? int(erfaces?)? status/.test(c)) body = "Port      Name               Status       Vlan       Duplex  Speed Type\nGi1/0/1   UPLINK dist-sw01   connected    trunk      a-full a-1000 10/100/1000BaseTX\nGi1/0/3                      notconnect   10           auto   auto 10/100/1000BaseTX\nGi1/0/7   CAMARA PISO 2      connected    30         a-full a-1000 10/100/1000BaseTX";
+    else if (/^conf(igure)? t/.test(c)) (body = "Enter configuration commands, one per line.  End with CNTL/Z."), modes.set(id, "config");
+    else if (/^int(erface)? /.test(c) && modes.get(id)) modes.set(id, "config-if");
+    else if (/^vlan \d/.test(c) && modes.get(id)) modes.set(id, "config-vlan");
+    else if (c === "end") modes.delete(id);
+    else if (c === "exit") modes.get(id) === "config" ? modes.delete(id) : modes.get(id) && modes.set(id, "config");
+    else if (/^(write|wr)( mem)?/.test(c)) body = "Building configuration...\n[OK]";
+    if (filter) body = body.split("\n").filter((l) => l.includes(filter)).join("\n");
+    body = body.replace(/\n/g, "\r\n");
+    return body ? body + "\r\n" : "";
+  };
+  // Detectar plataforma y otras consultas por la vía de herramientas (device_run).
+  const deviceRun = handlers.device_run;
+  handlers.device_run = (args) => {
+    if (/running-config|current-configuration/.test(args.command)) return deviceRun(args);
+    const s = connSessions.get(args.conn) ?? {};
+    const job = `job-${nextId++}`;
+    const prompt = s.highlight === "huawei" ? `<${s.name}>` : `${s.name}#`;
+    const output = `${prompt}${args.command}\r\n${respond(args.conn, s, args.command)}${prompt}`;
+    setTimeout(() => {
+      emit("tool-job", { job, kind: "result", text: "", data: { ok: true, output } });
+      emit("tool-job", { job, kind: "done", text: "" });
+    }, 500);
+    return job;
+  };
+  // Pausa entre equipos al enviar a varias sesiones: se ve el avance y el botón Detener.
+  localStorage.setItem("broadcastDelay", "3000");
+  // Eco y respuestas en orden, con una pausa breve por línea como un equipo real.
+  const queues = new Map();
+  const later = (id, fn, ms) => {
+    const at = Math.max(Date.now(), queues.get(id) ?? 0) + ms;
+    queues.set(id, at);
+    setTimeout(fn, at - Date.now());
+  };
+  handlers.write = ({ id, data }) => {
+    let buf = lineBuf.get(id) ?? "";
+    let echo = "";
+    for (const ch of data) {
+      if (ch === "\r" || ch === "\n") {
+        if (ch === "\n" && data.includes("\r\n")) continue;
+        const line = buf;
+        const e = echo;
+        later(id, () => e && out(id, e), 0);
+        later(id, () => out(id, reply(id, line) + promptOf(id)), 200);
+        buf = "";
+        echo = "";
+      } else if (ch === "\x7f") {
+        if (buf) (buf = buf.slice(0, -1)), (echo += "\b \b");
+      } else if (ch >= " ") (buf += ch), (echo += ch);
+    }
+    if (echo) {
+      const e = echo;
+      later(id, () => out(id, e), 0);
+    }
+    lineBuf.set(id, buf);
+    return null;
+  };
+  handlers.save_session = ({ session }) => {
+    const saved = { ...session, id: session.id || `v${Date.now()}`, created_at: session.created_at || new Date().toISOString() };
+    const i = sessions.findIndex((x) => x.id === saved.id);
+    i >= 0 ? (sessions[i] = saved) : sessions.push(saved);
+    return { ...saved };
+  };
+  handlers.delete_session = ({ id }) => {
+    const i = sessions.findIndex((x) => x.id === id);
+    if (i >= 0) sessions.splice(i, 1);
+    return null;
+  };
+  if (location.search.includes("update=1")) {
+    // La revisión automática al abrir no encuentra nada; "Buscar ahora" encuentra la 0.9.2.
+    let checks = 0;
+    handlers.update_check = () => ({
+      current: "0.9.1", latest: "0.9.2", newer: checks++ > 0, supported: true, reason: null, published: new Date(now).toISOString(),
+      url: "https://github.com/Parzval-Net/Net_Terminal/releases/latest",
+      notes: "- Vista dividida: selector de pestaña más rápido\n- Cliente SNMP: exportación CSV de traps\n- Catálogo: nuevos comandos de diagnóstico",
+    });
+    handlers.update_install = () =>
+      new Promise(() => {
+        const total = 8_400_000;
+        let done = 0;
+        const t = setInterval(() => {
+          done = Math.min(total, done + 350_000);
+          emit("update-progress", { downloaded: done, total });
+          if (done >= total) clearInterval(t);
+        }, 200);
+      });
+  }
+}
+
 const vaultPortable = location.search.includes("vault=portable");
 const vault = { backend: vaultPortable ? "vault" : "keychain", exists: !vaultPortable, unlocked: !vaultPortable, portable: vaultPortable };
 const vaultIds = new Set(["s6"]);
