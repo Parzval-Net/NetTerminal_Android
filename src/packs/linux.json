@@ -124,7 +124,7 @@
         "ubuntu",
         "arch"
       ],
-      "note": "Solo aplica si el servicio activo es systemd-timesyncd (default en Debian y Arch). Requiere systemd 239 o superior.",
+      "note": "Solo aplica si el servicio activo es systemd-timesyncd (default en Debian y en Ubuntu hasta 25.04; en Arch viene en systemd pero no está habilitado por defecto). Requiere systemd 239 o superior.",
       "source": "https://man7.org/linux/man-pages/man1/timedatectl.1.html"
     },
     {
@@ -132,7 +132,7 @@
       "desc": "Muestra el estado de sincronización de chrony: servidor de referencia, stratum y offset del reloj local.",
       "cat": "Sistema",
       "risk": "read",
-      "note": "Paquete chrony. Default en RHEL, Fedora y SUSE; opcional en Debian, Ubuntu (default desde 25.10, verificar en tu versión), Arch y Alpine.",
+      "note": "Paquete chrony. Default en RHEL, Fedora y SUSE; en Ubuntu es el default desde 25.10 en instalaciones nuevas; opcional en Debian, Arch y Alpine.",
       "source": "https://chrony-project.org/doc/4.6/chronyc.html"
     },
     {
@@ -172,6 +172,7 @@
         "suse",
         "arch"
       ],
+      "note": "Es el backend habitual de netplan en Ubuntu Server. Sintaxis no confirmada en documentación oficial para RHEL; verificar. RHEL gestiona la red con NetworkManager y puede no incluir systemd-networkd.",
       "source": "https://man7.org/linux/man-pages/man1/systemctl.1.html"
     },
     {
@@ -187,6 +188,7 @@
         "suse",
         "arch"
       ],
+      "note": "Requiere el paquete systemd-resolved en distros que lo separan. Sintaxis no confirmada en documentación oficial para RHEL; verificar. systemd-resolved no viene instalado por defecto en RHEL 10.",
       "source": "https://man7.org/linux/man-pages/man1/systemctl.1.html"
     },
     {
@@ -206,7 +208,7 @@
           "cmd": "rc-service networking status"
         }
       ],
-      "note": "En Alpine el servicio es de OpenRC.",
+      "note": "En Alpine el servicio es de OpenRC. En Ubuntu solo existe si está instalado ifupdown (por defecto usa netplan).",
       "source": "https://man7.org/linux/man-pages/man1/systemctl.1.html"
     },
     {
@@ -307,7 +309,7 @@
       "desc": "Lista todas las interfaces de red del kernel y si son físicas o virtuales según su ruta en /sys.",
       "cat": "Hardware",
       "risk": "read",
-      "source": "https://man7.org/linux/man-pages/man8/ip-link.8.html"
+      "source": "https://www.kernel.org/doc/Documentation/ABI/testing/sysfs-class-net"
     },
     {
       "cmd": "ip -br addr",
@@ -424,7 +426,7 @@
       "desc": "Muestra todas las interfaces con direcciones y contadores en formato clásico.",
       "cat": "Interfaces",
       "risk": "read",
-      "note": "Paquete net-tools, considerado obsoleto (deprecated) y ausente por defecto en RHEL, Fedora y Arch. Preferir iproute2. En Alpine existe como applet de BusyBox.",
+      "note": "Paquete net-tools, deprecado en favor de iproute2. No se instala por defecto en RHEL, Fedora, Arch ni SUSE (en SUSE está en net-tools-deprecated). En Alpine existe como applet de BusyBox.",
       "source": "https://man7.org/linux/man-pages/man8/ifconfig.8.html"
     },
     {
@@ -531,7 +533,7 @@
         "suse",
         "arch"
       ],
-      "note": "Solo muestra estado de configuración en enlaces gestionados por systemd-networkd (Ubuntu Server con netplan, Arch con networkd).",
+      "note": "Solo muestra estado de configuración en enlaces gestionados por systemd-networkd (Ubuntu Server con netplan, Arch con networkd). Sintaxis no confirmada en documentación oficial para RHEL; verificar. RHEL gestiona la red con NetworkManager y puede no incluir systemd-networkd.",
       "source": "https://man7.org/linux/man-pages/man1/networkctl.1.html"
     },
     {
@@ -547,11 +549,12 @@
         "suse",
         "arch"
       ],
+      "note": "Sintaxis no confirmada en documentación oficial para RHEL; verificar. RHEL gestiona la red con NetworkManager y puede no incluir systemd-networkd.",
       "source": "https://man7.org/linux/man-pages/man1/networkctl.1.html"
     },
     {
       "cmd": "netplan get",
-      "desc": "Muestra la configuración netplan consolidada de todos los YAML de /etc/netplan.",
+      "desc": "Muestra la configuración netplan consolidada de los YAML de /etc, /lib y /run.",
       "cat": "Interfaces",
       "risk": "read",
       "platforms": [
@@ -590,8 +593,8 @@
       "platforms": [
         "suse"
       ],
-      "note": "SLES 15 y openSUSE Leap 15. SLES 16 usa NetworkManager.",
-      "source": "https://documentation.suse.com/sles/15-SP6/html/SLES-all/cha-network.html"
+      "note": "SLES 15 y openSUSE Leap 15. SLES 16 usa NetworkManager. No requiere root.",
+      "source": "https://manpages.opensuse.org/Leap-15.6/wicked/wicked.8.en.html"
     },
     {
       "cmd": "wicked ifstatus all",
@@ -601,8 +604,8 @@
       "platforms": [
         "suse"
       ],
-      "note": "SLES 15 y openSUSE Leap 15.",
-      "source": "https://documentation.suse.com/sles/15-SP6/html/SLES-all/cha-network.html"
+      "note": "SLES 15 y openSUSE Leap 15. Requiere root (lee también la configuración del sistema).",
+      "source": "https://manpages.opensuse.org/Leap-15.6/wicked/wicked.8.en.html"
     },
     {
       "cmd": "ifquery --state",
@@ -613,7 +616,7 @@
         "debian",
         "ubuntu"
       ],
-      "note": "Paquete ifupdown. En Alpine se usa ifupdown-ng, con opciones distintas; verificar en tu versión.",
+      "note": "Paquete ifupdown. En Alpine ifupdown-ng usa ifquery -r/--running para listar las interfaces activas; verificar en tu versión.",
       "source": "https://manpages.debian.org/bookworm/ifupdown/ifup.8.en.html"
     },
     {
@@ -646,7 +649,7 @@
       "cat": "Interfaces",
       "risk": "read",
       "note": "Paquete iw.",
-      "source": "https://wiki.archlinux.org/title/Network_configuration/Wireless"
+      "source": "https://sources.debian.org/src/iw/5.19-1/reg.c"
     },
     {
       "cmd": "nmcli device wifi list",
@@ -661,6 +664,7 @@
         "debian",
         "arch"
       ],
+      "note": "Puede disparar un nuevo escaneo Wi-Fi si el último es antiguo (--rescan auto por defecto).",
       "source": "https://networkmanager.dev/docs/api/latest/nmcli.html"
     },
     {
@@ -689,7 +693,7 @@
       "desc": "Muestra la tabla ARP sin resolver nombres, en formato clásico.",
       "cat": "Capa 2",
       "risk": "read",
-      "note": "Paquete net-tools, considerado obsoleto (deprecated) y ausente por defecto en RHEL, Fedora y Arch. Preferir iproute2.",
+      "note": "Paquete net-tools, deprecado en favor de iproute2. No se instala por defecto en RHEL, Fedora, Arch ni SUSE (en SUSE está en net-tools-deprecated). En Alpine existe como applet de BusyBox.",
       "source": "https://man7.org/linux/man-pages/man8/arp.8.html"
     },
     {
@@ -704,7 +708,7 @@
       "desc": "Lista los puertos de cada bridge Linux con su estado STP.",
       "cat": "Capa 2",
       "risk": "read",
-      "note": "Paquete iproute2 (en Alpine, iproute2-bridge; verificar en tu versión).",
+      "note": "Paquete iproute2. En Alpine el comando bridge viene en iproute2 (no en iproute2-minimal).",
       "source": "https://man7.org/linux/man-pages/man8/bridge.8.html"
     },
     {
@@ -767,12 +771,12 @@
         "suse",
         "arch"
       ],
-      "note": "Requiere systemd-networkd con LLDP habilitado en el archivo .network.",
+      "note": "Requiere systemd-networkd con LLDP habilitado en el archivo .network. Sintaxis no confirmada en documentación oficial para RHEL; verificar. RHEL gestiona la red con NetworkManager y puede no incluir systemd-networkd.",
       "source": "https://man7.org/linux/man-pages/man1/networkctl.1.html"
     },
     {
       "cmd": "ip neigh flush dev {{interfaz}}",
-      "desc": "Limpia las entradas ARP/ND de la interfaz para forzar nuevo aprendizaje.",
+      "desc": "Limpia las entradas ARP/ND dinámicas de la interfaz (conserva las permanent) para forzar nuevo aprendizaje.",
       "cat": "Capa 2",
       "risk": "change",
       "note": "Requiere root o sudo. Puede causar pérdida breve de tráfico.",
@@ -848,7 +852,7 @@
       "desc": "Muestra la tabla de rutas IPv4 sin resolver nombres, en formato clásico.",
       "cat": "Enrutamiento",
       "risk": "read",
-      "note": "Paquete net-tools, considerado obsoleto (deprecated) y ausente por defecto en RHEL, Fedora y Arch. Preferir iproute2.",
+      "note": "Paquete net-tools, deprecado en favor de iproute2. No se instala por defecto en RHEL, Fedora, Arch ni SUSE (en SUSE está en net-tools-deprecated). En Alpine existe como applet de BusyBox.",
       "source": "https://man7.org/linux/man-pages/man8/route.8.html"
     },
     {
@@ -856,7 +860,7 @@
       "desc": "Muestra la tabla de rutas sin resolver nombres.",
       "cat": "Enrutamiento",
       "risk": "read",
-      "note": "Paquete net-tools, considerado obsoleto (deprecated) y ausente por defecto en RHEL, Fedora y Arch. Preferir iproute2. En Alpine existe como applet de BusyBox.",
+      "note": "Paquete net-tools, deprecado en favor de iproute2. No se instala por defecto en RHEL, Fedora, Arch ni SUSE (en SUSE está en net-tools-deprecated). En Alpine existe como applet de BusyBox.",
       "source": "https://man7.org/linux/man-pages/man8/netstat.8.html"
     },
     {
@@ -891,9 +895,9 @@
     },
     {
       "cmd": "ip route del {{red}}",
-      "desc": "Elimina una ruta de la tabla principal en tiempo de ejecución.",
+      "desc": "Elimina una ruta de la tabla principal en tiempo de ejecución. Borrar la ruta por defecto o la de gestión corta el acceso.",
       "cat": "Enrutamiento",
-      "risk": "change",
+      "risk": "disruptive",
       "note": "Requiere root o sudo. Si es la ruta de la sesión SSH, se pierde el acceso.",
       "source": "https://man7.org/linux/man-pages/man8/ip-route.8.html"
     },
@@ -910,7 +914,7 @@
       "desc": "Habilita el reenvío IPv4 en tiempo de ejecución. No persiste al reiniciar.",
       "cat": "Enrutamiento",
       "risk": "change",
-      "note": "Requiere root o sudo. Para persistir, usar un archivo en /etc/sysctl.d/.",
+      "note": "Requiere root o sudo. Convierte el equipo en router y cambia su postura de seguridad. Para persistir, usar un archivo en /etc/sysctl.d/.",
       "source": "https://man7.org/linux/man-pages/man8/sysctl.8.html"
     },
     {
@@ -933,7 +937,7 @@
       "desc": "Muestra las SA IPsec del kernel (SPI, algoritmos, contadores). Incluye material de llaves.",
       "cat": "MPLS / VPN",
       "risk": "read",
-      "note": "Requiere root o sudo. La salida contiene llaves de cifrado; no compartirla.",
+      "note": "Requiere root o sudo. La salida contiene llaves de cifrado; no compartirla (ip xfrm state list nokeys las oculta).",
       "source": "https://man7.org/linux/man-pages/man8/ip-xfrm.8.html"
     },
     {
@@ -966,7 +970,7 @@
       "cat": "MPLS / VPN",
       "risk": "read",
       "note": "Requiere el módulo mpls_router cargado; poco común en servidores.",
-      "source": "https://man7.org/linux/man-pages/man8/ip-route.8.html"
+      "source": "https://man7.org/linux/man-pages/man8/ip.8.html"
     },
     {
       "cmd": "nft list ruleset",
@@ -989,7 +993,7 @@
       "desc": "Lista las reglas de la tabla filter con contadores de paquetes y bytes, sin resolver nombres.",
       "cat": "Seguridad",
       "risk": "read",
-      "note": "Requiere root o sudo. En distros modernas iptables usa el backend nf_tables (iptables-nft).",
+      "note": "Requiere root o sudo. En distros modernas iptables usa el backend nf_tables (iptables-nft); en RHEL y Fedora el comando viene en el paquete iptables-nft.",
       "source": "https://man7.org/linux/man-pages/man8/iptables.8.html"
     },
     {
@@ -1198,7 +1202,7 @@
       "desc": "Abre una sesión TLS y muestra la cadena de certificados, protocolo y cifrado negociado.",
       "cat": "Seguridad",
       "risk": "read",
-      "note": "Paquete openssl.",
+      "note": "Paquete openssl. La sesión queda abierta esperando datos; cerrar con Ctrl+C o agregar </dev/null.",
       "source": "https://docs.openssl.org/3.0/man1/openssl-s_client/"
     },
     {
@@ -1232,8 +1236,8 @@
         "rhel",
         "fedora"
       ],
-      "note": "Paquete teamd. Teaming está deprecado en RHEL 9 y eliminado en RHEL 10; preferir bonding.",
-      "source": "https://manpages.debian.org/bookworm/libteam-utils/teamdctl.8.en.html"
+      "note": "Paquete teamd (libteam-utils en Debian). Teaming fue eliminado en RHEL 10; preferir bonding.",
+      "source": "https://docs.redhat.com/en/documentation/red_hat_enterprise_linux/10/html/considerations_in_adopting_rhel_10/networking"
     },
     {
       "cmd": "systemctl status keepalived",
@@ -1288,7 +1292,7 @@
       "desc": "Muestra las colas y estadísticas de una interfaz específica.",
       "cat": "QoS",
       "risk": "read",
-      "note": "Paquete iproute2.",
+      "note": "Paquete iproute2 (en Alpine, iproute2-tc).",
       "source": "https://man7.org/linux/man-pages/man8/tc.8.html"
     },
     {
@@ -1296,7 +1300,7 @@
       "desc": "Muestra las clases de tráfico (HTB, etc.) con tasas y contadores.",
       "cat": "QoS",
       "risk": "read",
-      "note": "Paquete iproute2.",
+      "note": "Paquete iproute2 (en Alpine, iproute2-tc).",
       "source": "https://man7.org/linux/man-pages/man8/tc.8.html"
     },
     {
@@ -1304,12 +1308,12 @@
       "desc": "Muestra los filtros de clasificación de tráfico en la interfaz.",
       "cat": "QoS",
       "risk": "read",
-      "note": "Paquete iproute2.",
+      "note": "Paquete iproute2 (en Alpine, iproute2-tc).",
       "source": "https://man7.org/linux/man-pages/man8/tc.8.html"
     },
     {
       "cmd": "tc qdisc del dev {{interfaz}} root",
-      "desc": "Elimina la qdisc raíz configurada y vuelve a la cola por defecto. Quita shaping o políticas aplicadas.",
+      "desc": "Elimina la qdisc raíz con todas sus clases y filtros, y vuelve a la cola por defecto. Quita shaping o políticas aplicadas.",
       "cat": "QoS",
       "risk": "change",
       "note": "Requiere root o sudo.",
@@ -1379,7 +1383,15 @@
       "desc": "Traza la ruta con sondas TCP SYN a un puerto, útil cuando firewalls bloquean UDP o ICMP.",
       "cat": "Diagnóstico",
       "risk": "read",
-      "note": "Paquete traceroute (implementación de Dmitry Butskoy). Requiere root.",
+      "platforms": [
+        "debian",
+        "ubuntu",
+        "rhel",
+        "fedora",
+        "suse",
+        "arch"
+      ],
+      "note": "Paquete traceroute (implementación de Dmitry Butskoy). Suele requerir root. No disponible en el traceroute de BusyBox (Alpine).",
       "source": "https://manpages.debian.org/bookworm/traceroute/traceroute.1.en.html"
     },
     {
@@ -1387,7 +1399,7 @@
       "desc": "Traza la ruta usando sondas ICMP echo.",
       "cat": "Diagnóstico",
       "risk": "read",
-      "note": "Paquete traceroute. Requiere root.",
+      "note": "Paquete traceroute. Puede requerir root según el kernel (net.ipv4.ping_group_range). BusyBox también lo soporta.",
       "source": "https://manpages.debian.org/bookworm/traceroute/traceroute.1.en.html"
     },
     {
@@ -1411,12 +1423,12 @@
       "desc": "Prueba si un puerto TCP acepta conexiones sin enviar datos.",
       "cat": "Diagnóstico",
       "risk": "read",
-      "note": "Paquete netcat-openbsd (Debian/Ubuntu/Alpine) o nmap-ncat (RHEL/Fedora). Las opciones varían entre implementaciones.",
+      "note": "Paquete netcat-openbsd (Debian/Ubuntu/Alpine) o nmap-ncat (RHEL/Fedora). Las opciones varían entre implementaciones; el nc de BusyBox puede no soportar -z.",
       "source": "https://manpages.debian.org/bookworm/netcat-openbsd/nc.1.en.html"
     },
     {
       "cmd": "nc -vzu {{host}} {{puerto}}",
-      "desc": "Prueba un puerto UDP. El resultado no es concluyente si el servicio no responde.",
+      "desc": "Prueba un puerto UDP. No es concluyente: con -u -z puede informar éxito aunque el servicio no esté activo.",
       "cat": "Diagnóstico",
       "risk": "read",
       "note": "Paquete netcat-openbsd o nmap-ncat.",
@@ -1427,6 +1439,7 @@
       "desc": "Realiza una petición HTTPS mostrando resolución, conexión, handshake TLS y cabeceras.",
       "cat": "Diagnóstico",
       "risk": "read",
+      "note": "Paquete curl. No viene en Alpine ni en instalaciones mínimas de Debian.",
       "source": "https://curl.se/docs/manpage.html"
     },
     {
@@ -1434,6 +1447,7 @@
       "desc": "Obtiene solo las cabeceras HTTP de la respuesta.",
       "cat": "Diagnóstico",
       "risk": "read",
+      "note": "Paquete curl. No viene en Alpine ni en instalaciones mínimas de Debian.",
       "source": "https://curl.se/docs/manpage.html"
     },
     {
@@ -1441,6 +1455,7 @@
       "desc": "Mide los tiempos de DNS, TCP, TLS, primer byte y total de una petición HTTP.",
       "cat": "Diagnóstico",
       "risk": "read",
+      "note": "Paquete curl. No viene en Alpine ni en instalaciones mínimas de Debian.",
       "source": "https://curl.se/docs/manpage.html"
     },
     {
@@ -1448,6 +1463,7 @@
       "desc": "Prueba un servidor específico forzando la IP para un hostname, sin tocar DNS.",
       "cat": "Diagnóstico",
       "risk": "read",
+      "note": "Paquete curl. No viene en Alpine ni en instalaciones mínimas de Debian.",
       "source": "https://curl.se/docs/manpage.html"
     },
     {
@@ -1499,10 +1515,10 @@
     },
     {
       "cmd": "tcpdump -ni {{interfaz}} -c 1000 -w /tmp/captura.pcap",
-      "desc": "Guarda 1000 paquetes en un archivo pcap para analizar en Wireshark.",
+      "desc": "Guarda 1000 paquetes en un archivo pcap en disco para analizar en Wireshark.",
       "cat": "Diagnóstico",
-      "risk": "read",
-      "note": "Paquete tcpdump. Requiere root o sudo. Cuidar espacio en disco y datos sensibles en la captura.",
+      "risk": "change",
+      "note": "Paquete tcpdump. Requiere root o sudo. Escribe un archivo: cuidar espacio en disco y datos sensibles en la captura. Si tcpdump baja privilegios (-Z), el usuario debe poder escribir en la ruta.",
       "source": "https://www.tcpdump.org/manpages/tcpdump.1.html"
     },
     {
@@ -1518,7 +1534,7 @@
       "desc": "Captura 100 paquetes con el motor de disección de Wireshark en consola.",
       "cat": "Diagnóstico",
       "risk": "read",
-      "note": "Paquete tshark (Debian/Ubuntu) o wireshark-cli (RHEL/Fedora). Requiere root o sudo.",
+      "note": "Paquete tshark (Debian/Ubuntu/Alpine), wireshark-cli (RHEL/Fedora/Arch) o wireshark (SUSE). Requiere root o sudo.",
       "source": "https://www.wireshark.org/docs/man-pages/tshark.html"
     },
     {
@@ -1549,6 +1565,7 @@
         "suse",
         "arch"
       ],
+      "note": "Sintaxis no confirmada en documentación oficial para RHEL; verificar. RHEL gestiona la red con NetworkManager y puede no incluir systemd-networkd.",
       "source": "https://man7.org/linux/man-pages/man1/journalctl.1.html"
     },
     {
@@ -1564,6 +1581,7 @@
         "suse",
         "arch"
       ],
+      "note": "Sintaxis no confirmada en documentación oficial para RHEL; verificar. systemd-resolved no viene instalado por defecto en RHEL 10.",
       "source": "https://man7.org/linux/man-pages/man1/journalctl.1.html"
     },
     {
@@ -1630,7 +1648,15 @@
       "desc": "Filtra mensajes del kernel de subidas y caídas de enlace con fecha legible. Útil para detectar flaps.",
       "cat": "Logs",
       "risk": "read",
-      "note": "Puede requerir root (kernel.dmesg_restrict). En BusyBox dmesg no existe -T.",
+      "variants": [
+        {
+          "platforms": [
+            "alpine"
+          ],
+          "cmd": "dmesg | grep -iE 'link (is )?(up|down)|carrier'"
+        }
+      ],
+      "note": "Puede requerir root (kernel.dmesg_restrict). En Alpine (BusyBox) dmesg no tiene -T y se usa la variante sin esa opción.",
       "source": "https://man7.org/linux/man-pages/man1/dmesg.1.html"
     },
     {
@@ -1690,8 +1716,8 @@
         "debian",
         "arch"
       ],
-      "note": "Requiere root. En RHEL 9 y posteriores el formato por defecto es keyfile.",
-      "source": "https://docs.redhat.com/en/documentation/red_hat_enterprise_linux/9/html/configuring_and_managing_networking/index"
+      "note": "Leer el contenido de los perfiles requiere root (pueden incluir claves Wi-Fi o VPN). Desde RHEL 9.0 el formato por defecto es keyfile.",
+      "source": "https://docs.redhat.com/en/documentation/red_hat_enterprise_linux/10/html/considerations_in_adopting_rhel_10/networking"
     },
     {
       "cmd": "ls -l /etc/sysconfig/network-scripts/",
@@ -1701,8 +1727,8 @@
       "platforms": [
         "rhel"
       ],
-      "note": "Formato ifcfg deprecado en RHEL 9 y no soportado en RHEL 10.",
-      "source": "https://docs.redhat.com/en/documentation/red_hat_enterprise_linux/9/html/configuring_and_managing_networking/index"
+      "note": "Formato ifcfg: el paquete network-scripts ya no existe en RHEL 9 y el soporte ifcfg se eliminó en RHEL 10.",
+      "source": "https://docs.redhat.com/en/documentation/red_hat_enterprise_linux/10/html/considerations_in_adopting_rhel_10/networking"
     },
     {
       "cmd": "cat /etc/sysconfig/network/ifcfg-{{interfaz}}",
@@ -1779,7 +1805,7 @@
     },
     {
       "cmd": "nmcli connection modify {{conexion}} ipv4.dns {{ip}}",
-      "desc": "Modifica el DNS de un perfil. Se aplica al reactivar la conexión.",
+      "desc": "Reemplaza la lista de DNS de un perfil (+ipv4.dns agrega sin reemplazar). Se aplica al reactivar la conexión.",
       "cat": "Configuración",
       "risk": "change",
       "platforms": [
@@ -1801,7 +1827,7 @@
       "platforms": [
         "ubuntu"
       ],
-      "note": "Requiere root o sudo.",
+      "note": "Requiere root o sudo. Aplica la configuración de inmediato y revierte si no se confirma con Enter.",
       "source": "https://netplan.readthedocs.io/en/stable/netplan-try/"
     },
     {
@@ -1839,7 +1865,7 @@
         "suse",
         "arch"
       ],
-      "note": "Requiere root o sudo.",
+      "note": "Requiere root o sudo. Si cambió algún .network, reconfigura las interfaces afectadas. Sintaxis no confirmada en documentación oficial para RHEL; verificar. RHEL gestiona la red con NetworkManager y puede no incluir systemd-networkd.",
       "source": "https://man7.org/linux/man-pages/man1/networkctl.1.html"
     },
     {
@@ -1855,7 +1881,7 @@
         "suse",
         "arch"
       ],
-      "note": "Requiere root o sudo.",
+      "note": "Requiere root o sudo. Sintaxis no confirmada en documentación oficial para RHEL; verificar. RHEL gestiona la red con NetworkManager y puede no incluir systemd-networkd.",
       "source": "https://man7.org/linux/man-pages/man1/networkctl.1.html"
     },
     {
@@ -1866,8 +1892,8 @@
       "platforms": [
         "suse"
       ],
-      "note": "Requiere root o sudo.",
-      "source": "https://documentation.suse.com/sles/15-SP6/html/SLES-all/cha-network.html"
+      "note": "Requiere root o sudo. SLES 15 y openSUSE Leap 15.",
+      "source": "https://manpages.opensuse.org/Leap-15.6/wicked/wicked.8.en.html"
     },
     {
       "cmd": "systemctl restart NetworkManager",
@@ -1898,7 +1924,7 @@
         "suse",
         "arch"
       ],
-      "note": "Requiere root o sudo.",
+      "note": "Requiere root o sudo. Sintaxis no confirmada en documentación oficial para RHEL; verificar. RHEL gestiona la red con NetworkManager y puede no incluir systemd-networkd.",
       "source": "https://man7.org/linux/man-pages/man1/systemctl.1.html"
     },
     {
@@ -1929,7 +1955,7 @@
         "debian",
         "alpine"
       ],
-      "note": "Requiere root o sudo.",
+      "note": "Requiere root o sudo. Paquete ifupdown (Debian) o ifupdown-ng (Alpine). Si ifup falla tras ifdown se pierde la interfaz; alto riesgo si es la de gestión.",
       "source": "https://manpages.debian.org/bookworm/ifupdown/ifup.8.en.html"
     },
     {
@@ -1982,7 +2008,7 @@
     },
     {
       "cmd": "dhclient -r {{interfaz}}",
-      "desc": "Libera la concesión DHCP de la interfaz y la deja sin IP.",
+      "desc": "Libera la concesión DHCP de la interfaz y detiene dhclient, dejándola sin IP.",
       "cat": "Configuración",
       "risk": "disruptive",
       "platforms": [
@@ -2040,7 +2066,7 @@
         "suse",
         "arch"
       ],
-      "note": "systemd-resolved es default en Ubuntu y Fedora; opcional en Debian, RHEL, SUSE y Arch.",
+      "note": "systemd-resolved es default en Ubuntu y Fedora; opcional en Debian, SUSE y Arch. Sintaxis no confirmada en documentación oficial para RHEL; verificar. systemd-resolved no viene instalado por defecto en RHEL 10.",
       "source": "https://man7.org/linux/man-pages/man1/resolvectl.1.html"
     },
     {
@@ -2056,6 +2082,7 @@
         "suse",
         "arch"
       ],
+      "note": "Requiere systemd-resolved activo. Sintaxis no confirmada en documentación oficial para RHEL; verificar. systemd-resolved no viene instalado por defecto en RHEL 10.",
       "source": "https://man7.org/linux/man-pages/man1/resolvectl.1.html"
     },
     {
@@ -2071,6 +2098,7 @@
         "suse",
         "arch"
       ],
+      "note": "Requiere systemd-resolved activo. Sintaxis no confirmada en documentación oficial para RHEL; verificar. systemd-resolved no viene instalado por defecto en RHEL 10.",
       "source": "https://man7.org/linux/man-pages/man1/resolvectl.1.html"
     },
     {
@@ -2086,7 +2114,7 @@
         "suse",
         "arch"
       ],
-      "note": "Disponible en versiones recientes de systemd; verificar en tu versión.",
+      "note": "Requiere systemd 255 o superior (Ubuntu 24.04, Debian 13, Fedora 40). Sintaxis no confirmada en documentación oficial para RHEL; verificar. systemd-resolved no viene instalado por defecto en RHEL 10.",
       "source": "https://man7.org/linux/man-pages/man1/resolvectl.1.html"
     },
     {
@@ -2102,18 +2130,18 @@
         "suse",
         "arch"
       ],
-      "note": "Requiere root o sudo.",
+      "note": "Requiere root o sudo y systemd-resolved activo. Sintaxis no confirmada en documentación oficial para RHEL; verificar. systemd-resolved no viene instalado por defecto en RHEL 10.",
       "source": "https://man7.org/linux/man-pages/man1/resolvectl.1.html"
     },
     {
       "cmd": "systemd-resolve --status",
-      "desc": "Nombre legado de resolvectl status en versiones antiguas de systemd.",
+      "desc": "Nombre legado de resolvectl status, de systemd anterior a 239.",
       "cat": "DNS",
       "risk": "read",
       "platforms": [
         "ubuntu"
       ],
-      "note": "Solo en Ubuntu 18.04 y anteriores; en versiones nuevas usar resolvectl.",
+      "note": "Es el comando original en Ubuntu 18.04; en versiones más nuevas puede existir solo como alias obsoleto de resolvectl o no existir. Usar resolvectl; verificar en tu versión.",
       "source": "https://manpages.ubuntu.com/manpages/bionic/man1/systemd-resolve.1.html"
     },
     {
@@ -2263,7 +2291,7 @@
       "desc": "Lista las conexiones TCP establecidas con el proceso asociado.",
       "cat": "Conexiones y tráfico",
       "risk": "read",
-      "note": "Paquete iproute2.",
+      "note": "Paquete iproute2 (en Alpine, iproute2-ss).",
       "source": "https://man7.org/linux/man-pages/man8/ss.8.html"
     },
     {
@@ -2271,7 +2299,7 @@
       "desc": "Muestra un resumen de sockets por protocolo y estado.",
       "cat": "Conexiones y tráfico",
       "risk": "read",
-      "note": "Paquete iproute2.",
+      "note": "Paquete iproute2 (en Alpine, iproute2-ss).",
       "source": "https://man7.org/linux/man-pages/man8/ss.8.html"
     },
     {
@@ -2279,7 +2307,7 @@
       "desc": "Lista conexiones TCP con sus timers (retransmisión, keepalive, time-wait).",
       "cat": "Conexiones y tráfico",
       "risk": "read",
-      "note": "Paquete iproute2.",
+      "note": "Paquete iproute2 (en Alpine, iproute2-ss).",
       "source": "https://man7.org/linux/man-pages/man8/ss.8.html"
     },
     {
@@ -2287,7 +2315,7 @@
       "desc": "Muestra información interna TCP (RTT, cwnd, retransmisiones) de conexiones hacia un destino.",
       "cat": "Conexiones y tráfico",
       "risk": "read",
-      "note": "Paquete iproute2.",
+      "note": "Paquete iproute2 (en Alpine, iproute2-ss).",
       "source": "https://man7.org/linux/man-pages/man8/ss.8.html"
     },
     {
@@ -2295,7 +2323,7 @@
       "desc": "Filtra las conexiones TCP hacia un puerto remoto específico.",
       "cat": "Conexiones y tráfico",
       "risk": "read",
-      "note": "Paquete iproute2.",
+      "note": "Paquete iproute2 (en Alpine, iproute2-ss).",
       "source": "https://man7.org/linux/man-pages/man8/ss.8.html"
     },
     {
@@ -2303,7 +2331,7 @@
       "desc": "Cuenta las conexiones en TIME-WAIT, útil ante agotamiento de puertos efímeros.",
       "cat": "Conexiones y tráfico",
       "risk": "read",
-      "note": "Incluye la línea de encabezado.",
+      "note": "Paquete iproute2 (en Alpine, iproute2-ss). Incluye la línea de encabezado.",
       "source": "https://man7.org/linux/man-pages/man8/ss.8.html"
     },
     {
@@ -2311,7 +2339,7 @@
       "desc": "Lista todos los sockets UDP con proceso.",
       "cat": "Conexiones y tráfico",
       "risk": "read",
-      "note": "Paquete iproute2.",
+      "note": "Paquete iproute2 (en Alpine, iproute2-ss).",
       "source": "https://man7.org/linux/man-pages/man8/ss.8.html"
     },
     {
@@ -2319,7 +2347,7 @@
       "desc": "Lista sockets en escucha con su proceso en formato clásico.",
       "cat": "Conexiones y tráfico",
       "risk": "read",
-      "note": "Paquete net-tools, considerado obsoleto (deprecated) y ausente por defecto en RHEL, Fedora y Arch. Preferir iproute2.",
+      "note": "Paquete net-tools, deprecado en favor de iproute2. No se instala por defecto en RHEL, Fedora, Arch ni SUSE (en SUSE está en net-tools-deprecated). En Alpine existe como applet de BusyBox.",
       "source": "https://man7.org/linux/man-pages/man8/netstat.8.html"
     },
     {
@@ -2327,7 +2355,7 @@
       "desc": "Muestra estadísticas por protocolo (IP, ICMP, TCP, UDP) acumuladas.",
       "cat": "Conexiones y tráfico",
       "risk": "read",
-      "note": "Paquete net-tools, considerado obsoleto (deprecated) y ausente por defecto en RHEL, Fedora y Arch. Preferir iproute2.",
+      "note": "Paquete net-tools, deprecado en favor de iproute2. No se instala por defecto en RHEL, Fedora, Arch ni SUSE (en SUSE está en net-tools-deprecated). En Alpine existe como applet de BusyBox.",
       "source": "https://man7.org/linux/man-pages/man8/netstat.8.html"
     },
     {
@@ -2335,7 +2363,7 @@
       "desc": "Muestra todos los contadores SNMP y extendidos del kernel (retransmisiones, drops), incluyendo los en cero.",
       "cat": "Conexiones y tráfico",
       "risk": "read",
-      "note": "Paquete iproute2.",
+      "note": "Paquete iproute2 (en Alpine, el paquete iproute2 completo y no iproute2-minimal).",
       "source": "https://man7.org/linux/man-pages/man8/nstat.8.html"
     },
     {
@@ -2373,7 +2401,7 @@
       "desc": "Lista la tabla de seguimiento de conexiones de netfilter, incluyendo NAT.",
       "cat": "Conexiones y tráfico",
       "risk": "read",
-      "note": "Paquete conntrack (Debian/Ubuntu) o conntrack-tools (RHEL/SUSE/Arch). Requiere root.",
+      "note": "Paquete conntrack (Debian/Ubuntu) o conntrack-tools (RHEL, Fedora, SUSE, Arch, Alpine). Requiere root.",
       "source": "https://manpages.debian.org/bookworm/conntrack/conntrack.8.en.html"
     },
     {
