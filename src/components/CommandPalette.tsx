@@ -1,14 +1,28 @@
 import { useEffect, useMemo, useState } from "react";
 import { invoke } from "@tauri-apps/api/core";
-import { History, Search } from "lucide-react";
+import { History, ListX, Search } from "lucide-react";
 import { Session, sessionTarget } from "../types";
 import { QuickBolt, SessionIcon, typeLabel } from "./SessionIcon";
+
+/** Acción de la app en la paleta (p. ej. "Cerrar todas las sesiones"). */
+export interface PaletteAction {
+  label: string;
+  detail: string;
+  shortcut?: string;
+  run: () => void;
+}
 
 interface Props {
   sessions: Session[];
   onClose: () => void;
   onOpen: (s: Session) => void;
+  actions?: PaletteAction[];
 }
+
+type Item = { session: Session; quick: boolean; recent: boolean; action?: undefined } | { action: PaletteAction };
+
+/** Coincidencia sin mayúsculas ni tildes: "cerrar todas" encuentra "Cerrar todas las sesiones". */
+const fold = (v: string) => v.normalize("NFD").replace(/[\u0300-\u036f]/g, "").toLowerCase();
 
 /**
  * Interpreta conexiones rápidas:
@@ -51,7 +65,7 @@ export function quickTarget(s: Session): string {
   return `${s.type} ${s.username ? `${s.username}@` : ""}${s.host ?? ""} ${s.port ?? ""}`.trim();
 }
 
-export function CommandPalette({ sessions, onClose, onOpen }: Props) {
+export function CommandPalette({ sessions, onClose, onOpen, actions = [] }: Props) {
   const [query, setQuery] = useState("");
   const [index, setIndex] = useState(0);
   // Últimos destinos de conexión rápida (archivo en la carpeta de datos, máx. 20).
@@ -60,8 +74,13 @@ export function CommandPalette({ sessions, onClose, onOpen }: Props) {
     invoke<string[]>("recent_targets").then(setRecent).catch(() => {});
   }, []);
 
-  const items = useMemo(() => {
+  const items = useMemo((): Item[] => {
     const q = query.trim().toLowerCase();
+    // Con texto, las acciones que coinciden van primero; sin texto, al final de la lista.
+    const words = fold(q).split(/\s+/).filter(Boolean);
+    const acts = actions
+      .filter((a) => words.every((w) => fold(a.label).includes(w)))
+      .map((action) => ({ action }));
     const recents = q
       ? []
       : recent
@@ -75,14 +94,19 @@ export function CommandPalette({ sessions, onClose, onOpen }: Props) {
       .slice(0, 50)
       .map((s) => ({ session: s, quick: false, recent: false }));
     const quick = parseQuick(query).map((s) => ({ session: s, quick: true, recent: false }));
-    return [...recents, ...saved, ...quick];
-  }, [query, sessions, recent]);
+    return q ? [...acts, ...recents, ...saved, ...quick] : [...recents, ...saved, ...quick, ...acts];
+  }, [query, sessions, recent, actions]);
 
   useEffect(() => setIndex(0), [query]);
 
   const choose = (i: number) => {
     const item = items[i];
     if (!item) return;
+    if (item.action) {
+      onClose();
+      item.action.run();
+      return;
+    }
     if (item.quick) invoke("recent_target_add", { target: quickTarget(item.session) }).catch(() => {});
     onOpen(item.session);
     onClose();
@@ -142,7 +166,27 @@ export function CommandPalette({ sessions, onClose, onOpen }: Props) {
               </button>
             </li>
           )}
-          {items.map(({ session: s, quick, recent: isRecent }, i) => (
+          {items.map((item, i) => {
+            if (item.action) {
+              const a = item.action;
+              return (
+                <li
+                  key={`action-${a.label}`}
+                  onMouseMove={() => setIndex(i)}
+                  onClick={() => choose(i)}
+                  className={`flex items-center gap-3 px-3 h-11 rounded-lg ${i === index ? "bg-selected" : ""}`}
+                >
+                  <ListX size={15} className="text-danger shrink-0" />
+                  <div className="min-w-0 flex-1 leading-tight">
+                    <div className="truncate">{a.label}</div>
+                    <div className="truncate text-[11.5px] text-muted">{a.detail}</div>
+                  </div>
+                  {a.shortcut && <kbd className="text-[11px] text-muted font-sans">{a.shortcut}</kbd>}
+                </li>
+              );
+            }
+            const { session: s, quick, recent: isRecent } = item;
+            return (
             <li
               key={isRecent ? `recent-${i}` : quick ? `quick-${s.type}` : s.id}
               onMouseMove={() => setIndex(i)}
@@ -167,7 +211,8 @@ export function CommandPalette({ sessions, onClose, onOpen }: Props) {
               </div>
               <span className="text-[10.5px] font-medium text-muted uppercase">{typeLabel[s.type]}</span>
             </li>
-          ))}
+            );
+          })}
           {items.length === 0 && (
             <li className="px-3 py-6 text-center text-muted text-[12px]">
               Sin resultados. Prueba con <code>ssh user@host</code> o <code>telnet host 23</code>.

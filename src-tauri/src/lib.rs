@@ -790,16 +790,31 @@ fn data_dir(state: State<'_, AppState>) -> String {
 /// Los ajustes son de la UI: el backend solo los persiste como JSON opaco.
 #[tauri::command(async)]
 fn get_settings(state: State<'_, AppState>) -> serde_json::Value {
-    let path = state.data_dir.join("settings.json");
-    let Ok(content) = std::fs::read_to_string(&path) else {
-        return serde_json::Value::Null;
+    load_settings(&state.data_dir.join("settings.json"))
+}
+
+/// Lee settings.json. Null si no existe o no sirve; en ese caso la app usa los valores por
+/// defecto y los guarda en el próximo cambio.
+fn load_settings(path: &std::path::Path) -> serde_json::Value {
+    let bytes = match std::fs::read(path) {
+        Ok(b) => b,
+        Err(e) if e.kind() == std::io::ErrorKind::NotFound => return serde_json::Value::Null,
+        Err(_) => {
+            // Existe pero no se lee (permisos, disco): se intenta respaldar igual que uno dañado.
+            session_store::backup_corrupt(path);
+            return serde_json::Value::Null;
+        }
     };
-    serde_json::from_str(&content).unwrap_or_else(|_| {
-        // Ajustes ilegibles: se respaldan antes de que la app los reemplace por los valores
-        // por defecto, para no perder macros, monitores ni el token MCP.
-        session_store::backup_corrupt(&path);
-        serde_json::Value::Null
-    })
+    match serde_json::from_slice::<serde_json::Value>(&bytes) {
+        Ok(v) if v.is_object() => v,
+        // Ajustes ilegibles (JSON inválido, bytes que no son UTF-8 o algo que no es un objeto):
+        // se respaldan antes de que la app los reemplace por los valores por defecto, para no
+        // perder macros, monitores ni el token MCP.
+        _ => {
+            session_store::backup_corrupt(path);
+            serde_json::Value::Null
+        }
+    }
 }
 
 #[tauri::command]
@@ -1028,6 +1043,47 @@ mod tests {
             "name": "t", "type": "ssh", "host": "noc@[2001:DB8::1]", "jump_host": jump, "ssh_args": args
         }))
         .unwrap()
+    }
+
+    fn temp_dir(tag: &str) -> PathBuf {
+        let d = std::env::temp_dir().join(format!("nt-{tag}-{}", uuid::Uuid::new_v4()));
+        std::fs::create_dir_all(&d).unwrap();
+        d
+    }
+
+    fn backups(dir: &std::path::Path, prefix: &str) -> usize {
+        std::fs::read_dir(dir)
+            .unwrap()
+            .flatten()
+            .filter(|e| e.file_name().to_string_lossy().starts_with(prefix))
+            .count()
+    }
+
+    /// Arranque con settings.json ausente, dañado, con bytes que no son UTF-8 o que no es un
+    /// objeto: nunca falla, devuelve Null (valores por defecto) y respalda lo que había.
+    #[test]
+    fn settings_load_tolerates_missing_and_corrupt_files() {
+        let d = temp_dir("settings");
+        let path = d.join("settings.json");
+        assert!(load_settings(&path).is_null());
+        assert_eq!(backups(&d, "settings.corrupt-"), 0, "sin archivo no hay nada que respaldar");
+
+        std::fs::write(&path, r#"{"fontSize": 15, "futuro": true}"#).unwrap();
+        assert_eq!(load_settings(&path)["fontSize"], 15);
+        assert_eq!(backups(&d, "settings.corrupt-"), 0);
+
+        let cases: [&[u8]; 4] = [br#"{"fontSize": 1"#, b"[1, 2]", b"null", &[0xff, 0xfe, b'{']];
+        for (i, bad) in cases.into_iter().enumerate() {
+            let sub = d.join(format!("c{i}"));
+            std::fs::create_dir_all(&sub).unwrap();
+            let p = sub.join("settings.json");
+            std::fs::write(&p, bad).unwrap();
+            assert!(load_settings(&p).is_null(), "caso {i}");
+            assert_eq!(backups(&sub, "settings.corrupt-"), 1, "caso {i}");
+            // El original sigue intacto hasta que la app guarde.
+            assert_eq!(std::fs::read(&p).unwrap(), bad);
+        }
+        std::fs::remove_dir_all(&d).unwrap();
     }
 
     #[test]

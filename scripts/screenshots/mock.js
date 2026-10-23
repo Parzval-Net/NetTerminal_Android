@@ -1003,6 +1003,40 @@ Object.assign(scenes, {
     document.body.dispatchEvent(new MouseEvent("mousedown", { bubbles: true }));
     [...document.querySelectorAll("button")].find((b) => /⇧Enter|Shift\+Enter/.test(b.title))?.click();
   },
+  // Cerrar varias pestañas: conectadas, rápida sin guardar, local, desconectada, log y vista dividida.
+  "closeall-setup": async () => {
+    await quickTo("192.0.2.77");
+    for (const n of ["core-sw01", "ar-wan01", "dist-sw01", "fw-perimetro", "sw-acceso-norte", "sw-acceso-sur", "router-antiguo", "Shell local"]) await open(n);
+    await wait(600);
+    document.querySelector('[title^="core-sw01"]')?.dispatchEvent(new MouseEvent("mousedown", { bubbles: true, button: 0 }));
+    await wait(300);
+    await click("Grabar la sesión en un archivo de texto");
+    await click("Vista dividida: ver 2 o 4 pestañas a la vez");
+    await click("2 lado a lado");
+    await wait(400);
+  },
+  closeall: async () => {
+    await scenes["closeall-setup"]();
+    window.dispatchEvent(new KeyboardEvent("keydown", { key: "W", code: "KeyW", metaKey: true, shiftKey: true, bubbles: true, cancelable: true }));
+    await wait(300);
+  },
+  "closeall-menu": async () => {
+    for (const n of ["core-sw01", "ar-wan01", "dist-sw01", "Shell local"]) await open(n);
+    await wait(400);
+    const sel = location.search.includes("layout=vertical") ? '[role="tab"][data-id="t2"]' : '[data-tab="t2"]';
+    const el = document.querySelector(sel);
+    const r = el?.getBoundingClientRect();
+    el?.dispatchEvent(new MouseEvent("contextmenu", { bubbles: true, cancelable: true, clientX: (r?.left ?? 300) + 30, clientY: (r?.top ?? 60) + 14 }));
+    await wait(300);
+  },
+  "closeall-palette": async () => {
+    for (const n of ["core-sw01", "ar-wan01"]) await open(n);
+    await wait(300);
+    key("k");
+    await wait(300);
+    typeInto(document.querySelector('[role="dialog"] input'), "cerrar");
+    await wait(300);
+  },
   "t-monitor": tool("Monitoreo"),
   "t-diag": tool("Diagnóstico"),
   "t-topology": tool("Topología"),

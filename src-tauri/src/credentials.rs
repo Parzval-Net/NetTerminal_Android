@@ -597,6 +597,27 @@ mod tests {
         std::fs::remove_dir_all(&d).unwrap();
     }
 
+    /// Bóveda truncada o ajena al abrir la app: nada entra en pánico y el archivo no se
+    /// reemplaza al guardar otra contraseña (se podría recuperar desde un respaldo).
+    #[test]
+    fn corrupt_vault_at_startup_is_not_overwritten() {
+        for (garbage, keyring) in [(&b"NTVAULT"[..], true), (&b"no es una boveda"[..], false), (&[0u8; 200][..], true)] {
+            let d = dir();
+            let path = d.join("credentials.vault");
+            std::fs::write(&path, garbage).unwrap();
+            let keys = MemKeys(Default::default(), !keyring);
+            let c = Credentials::with(&d, false, Box::new(keys), FAST);
+            let st = c.status();
+            assert!(st.exists && !st.unlocked);
+            assert!(c.get("s1").is_none());
+            assert!(c.has("s1").is_err());
+            assert!(c.set("s1", "x", &[]).is_err());
+            assert!(c.unlock("maestra-larga").is_err());
+            assert_eq!(std::fs::read(&path).unwrap(), garbage, "la bóveda dañada no se reescribe");
+            std::fs::remove_dir_all(&d).unwrap();
+        }
+    }
+
     #[test]
     fn without_keyring_falls_back_to_master() {
         let d = dir();

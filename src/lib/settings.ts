@@ -185,14 +185,30 @@ export function newToken(): string {
   return Array.from(bytes, (b) => b.toString(16).padStart(2, "0")).join("");
 }
 
+/**
+ * Ajustes leídos del disco sobre los valores por defecto. Un valor de otro tipo que el
+ * predeterminado (settings.json editado a mano o de otra versión) se reemplaza por este:
+ * un `"alertRules": null` dejaba la ventana en blanco. Las claves desconocidas se conservan.
+ */
+export function mergeSettings(loaded: unknown): Settings {
+  const out: Record<string, unknown> = { ...defaultSettings };
+  if (!loaded || typeof loaded !== "object" || Array.isArray(loaded)) return out as unknown as Settings;
+  const defaults = defaultSettings as unknown as Record<string, unknown>;
+  for (const [k, v] of Object.entries(loaded)) {
+    const d = defaults[k];
+    if (d === undefined || (v !== null && typeof v === typeof d && Array.isArray(v) === Array.isArray(d))) out[k] = v;
+  }
+  return out as unknown as Settings;
+}
+
 /** Carga los ajustes desde el backend y los guarda (con debounce) en cada cambio. */
 export function useSettings() {
   const [settings, setSettings] = useState<Settings | null>(null);
   const timer = useRef<number | undefined>(undefined);
 
   useEffect(() => {
-    invoke<Partial<Settings> | null>("get_settings")
-      .then((s) => setSettings({ ...defaultSettings, ...(s ?? {}) }))
+    invoke<unknown>("get_settings")
+      .then((s) => setSettings(mergeSettings(s)))
       .catch(() => setSettings(defaultSettings));
   }, []);
 

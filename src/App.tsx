@@ -1,4 +1,4 @@
-import { Suspense, lazy, useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { type ReactNode, Suspense, lazy, useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { invoke } from "@tauri-apps/api/core";
 import { Sidebar } from "./components/Sidebar";
 import { TabBar, type TabBarProps } from "./components/TabBar";
@@ -9,6 +9,8 @@ import { CredChange, SessionModal } from "./components/SessionModal";
 import { CommandPalette } from "./components/CommandPalette";
 import { QuickConnectDialog } from "./components/QuickConnectDialog";
 import { ConfirmDialog } from "./components/ConfirmDialog";
+import { CloseManyMessage } from "./components/CloseManyMessage";
+import { CloseScope, summarizeClose, tabsToClose } from "./lib/closeAll";
 import { NotesPanel } from "./components/NotesPanel";
 import { CommandsPanel } from "./components/CommandsPanel";
 import { vendorFor } from "./lib/commands";
@@ -30,12 +32,12 @@ import { openUrl } from "@tauri-apps/plugin-opener";
 import { Sparkles, X as XIcon } from "lucide-react";
 import { listen } from "@tauri-apps/api/event";
 import { ConnStatus, Session, Tab, TabState, historyKey, tabTitle } from "./types";
-import { localOsVendor, modLabel, shortcutFor } from "./lib/platform";
+import { closeAllLabel, localOsVendor, modLabel, shortcutFor } from "./lib/platform";
 import { resolvePreset, useSystemDark } from "./lib/theme";
 import { Settings, logOptions, useSettings } from "./lib/settings";
 import { useAlerts } from "./lib/alerts";
 import { BroadcastBar, BroadcastDialog } from "./components/BroadcastDialog";
-import { Resolved, isBroadcastRunning, publishWorkspace, resolveTargets, runBroadcast, targetLabel, useBroadcastTarget, useWorkspace } from "./lib/broadcast";
+import { Resolved, getBroadcastRun, isBroadcastRunning, publishWorkspace, stopBroadcast, resolveTargets, runBroadcast, targetLabel, useBroadcastTarget, useWorkspace } from "./lib/broadcast";
 import { SplitPanes } from "./components/SplitPanes";
 import { SplitLayout, SplitState, fillPanes, paneRect } from "./lib/split";
 import logo from "./assets/logo.svg";
@@ -113,9 +115,10 @@ function Workspace({
   }, []);
   const [confirm, setConfirm] = useState<{
     title: string;
-    message: string;
+    message: ReactNode;
     label: string;
     danger?: boolean;
+    defaultCancel?: boolean;
     action: () => void;
   } | null>(null);
   const [template, setTemplate] = useState<{ text: string; then: (filled: string) => void } | null>(null);
@@ -183,12 +186,13 @@ function Workspace({
   }, []);
 
   // Carpeta de logs elegida por el usuario: el backend la valida y la usa para los logs nuevos.
+  // Si no está disponible (pendrive o unidad de red sin montar al abrir) se usa la
+  // predeterminada solo en esta ejecución: el ajuste se conserva para la próxima vez.
   useEffect(() => {
-    invoke("logs_dir_set", { path: settings.logsDir || null }).catch((e) => {
-      toast(`Carpeta de logs: ${e}. Se usa la predeterminada.`, "error");
-      update({ logsDir: "" });
-    });
-  }, [settings.logsDir, toast, update]);
+    invoke("logs_dir_set", { path: settings.logsDir || null }).catch((e) =>
+      toast(`Carpeta de logs: ${e}. En esta ejecución se usa la predeterminada.`, "error"),
+    );
+  }, [settings.logsDir, toast]);
 
   useEffect(() => {
     invoke<Session[]>("list_sessions").then(setSessions).catch(console.error);
@@ -435,6 +439,60 @@ function Workspace({
   const visibleKey = splitOn ? split!.panes.filter(Boolean).join(",") : null;
   const visiblePanes = useMemo(() => (visibleKey === null ? null : visibleKey.split(",").filter(Boolean)), [visibleKey]);
 
+  // ---------- Cerrar varias pestañas ----------
+  /**
+   * Cierra en tandas de 6 por cuadro: cada pestaña se libera igual que con closeTab (al
+   * desmontarse TerminalView corta la conexión, cierra el log y libera xterm), sin congelar
+   * la interfaz con decenas de terminales a la vez. Herramientas no se toca.
+   */
+  const closeMany = (scope: CloseScope, ids: string[], refId?: string) => {
+    if (!ids.length) return;
+    const gone = new Set(ids);
+    // La pestaña de referencia (o Herramientas, o ninguna) queda activa antes de empezar,
+    // así closeTab no salta de una pestaña que se va a cerrar a otra.
+    const keep = scope === "all" ? (toolsOpen ? "tools" : null) : (refId ?? null);
+    setActiveId((cur) => (cur && !gone.has(cur) ? cur : keep));
+    if (lastTermRef.current && gone.has(lastTermRef.current)) lastTermRef.current = scope === "all" ? null : (refId ?? null);
+    if (scope === "all") {
+      setSplit(null);
+      if (isBroadcastRunning()) stopBroadcast();
+    }
+    const queue = [...ids];
+    const step = () => {
+      queue.splice(0, 6).forEach(closeTab);
+      if (queue.length) window.setTimeout(step, 16);
+    };
+    step();
+  };
+
+  /** Avisa qué se corta antes de cerrar varias pestañas; sin nada conectado y sin "Confirmar al cerrar", cierra directo. */
+  const requestCloseMany = (scope: CloseScope, refId?: string) => {
+    const list = tabsToClose(tabs, scope, refId);
+    if (!list.length) return;
+    const ids = list.map((t) => t.id);
+    const summary = summarizeClose(list, states);
+    const run = () => closeMany(scope, ids, refId);
+    if (!settings.confirmClose && summary.connected.length === 0 && summary.transfers === 0) return run();
+    const bc = getBroadcastRun();
+    const broadcast =
+      !!bc?.running && bc.items.some((x) => (x.status === "pending" || x.status === "sending") && ids.includes(x.tabId));
+    const inSplit = !!split && split.panes.some((id) => id && ids.includes(id));
+    const n = list.length;
+    setConfirm({
+      title:
+        scope === "all"
+          ? "¿Cerrar todas las pestañas?"
+          : scope === "others"
+            ? "¿Cerrar las demás pestañas?"
+            : `¿Cerrar las pestañas ${settings.tabLayout === "vertical" ? "de abajo" : "de la derecha"}?`,
+      message: <CloseManyMessage scope={scope} summary={summary} broadcast={broadcast} split={inSplit} toolsOpen={toolsOpen} />,
+      label: `Cerrar ${n} ${n === 1 ? "pestaña" : "pestañas"}`,
+      danger: true,
+      defaultCancel: true,
+      action: run,
+    });
+  };
+
   // ---------- Difusión (envío a varias sesiones) ----------
   const bcTarget = useBroadcastTarget();
   const broadcastMode = bcTarget.mode !== "current";
@@ -675,6 +733,8 @@ function Workspace({
           return newLocal();
         case "closeTab":
           return activeId && requestClose(activeId);
+        case "closeAll":
+          return requestCloseMany("all");
         case "settings":
           return setSettingsOpen(true);
         case "notes":
@@ -855,6 +915,7 @@ function Workspace({
     updateSessions,
     setExtraFolders: (extraFolders: string[]) => update({ extraFolders }),
     requestClose,
+    requestCloseMany,
     toggleSidebar: () => setSidebarOpen((o) => !o),
     setTabLayout: (tabLayout: Settings["tabLayout"]) => update({ tabLayout }),
     renameTab: (id: string, title: string | undefined) => setTabs((ts) => ts.map((t) => (t.id === id ? { ...t, title } : t))),
@@ -970,6 +1031,7 @@ function Workspace({
     activeId,
     onSelect: setActiveId,
     onClose: h.requestClose,
+    onCloseMany: h.requestCloseMany,
     onNew: newLocal,
     onQuickConnect: h.openQuick,
     onNewSession: h.newSession,
@@ -1219,6 +1281,7 @@ function Workspace({
           message={confirm.message}
           confirmLabel={confirm.label}
           danger={confirm.danger}
+          defaultCancel={confirm.defaultCancel}
           onCancel={() => setConfirm(null)}
           onConfirm={() => {
             confirm.action();
@@ -1313,7 +1376,23 @@ function Workspace({
         </Suspense>
       )}
       {paletteOpen && (
-        <CommandPalette sessions={sessions} onClose={() => setPaletteOpen(false)} onOpen={openTab} />
+        <CommandPalette
+          sessions={sessions}
+          onClose={() => setPaletteOpen(false)}
+          onOpen={openTab}
+          actions={
+            tabs.length
+              ? [
+                  {
+                    label: "Cerrar todas las sesiones",
+                    detail: `${tabs.length} ${tabs.length === 1 ? "pestaña abierta" : "pestañas abiertas"}; pide confirmación si hay conexiones activas`,
+                    shortcut: closeAllLabel,
+                    run: () => requestCloseMany("all"),
+                  },
+                ]
+              : []
+          }
+        />
       )}
       {quickOpen && <QuickConnectDialog onClose={() => setQuickOpen(false)} onOpen={openTab} />}
     </div>

@@ -76,6 +76,7 @@ export const publishWorkspace = (ws: WorkspaceSnapshot) => workspaceStore.set(ws
 
 export const useBroadcastRun = () => useSyncExternalStore(runStore.subscribe, runStore.get);
 export const isBroadcastRunning = () => !!runStore.get()?.running;
+export const getBroadcastRun = runStore.get;
 export const stopBroadcast = () => {
   stopFlag = true;
 };
