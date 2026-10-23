@@ -970,10 +970,6 @@
    "desc": "Interfaces con MPLS habilitado y su estado.",
    "cat": "MPLS / VPN",
    "risk": "read",
-   "platforms": [
-    "junos",
-    "junos-evo"
-   ],
    "source": "https://www.juniper.net/documentation/us/en/software/junos/cli-reference/topics/ref/command/show-mpls-interface.html"
   },
   {
@@ -981,10 +977,6 @@
    "desc": "LSPs RSVP ingress, transit y egress con estado.",
    "cat": "MPLS / VPN",
    "risk": "read",
-   "platforms": [
-    "junos",
-    "junos-evo"
-   ],
    "source": "https://www.juniper.net/documentation/us/en/software/junos/cli-reference/topics/ref/command/show-mpls-lsp.html"
   },
   {
@@ -992,10 +984,6 @@
    "desc": "Detalle de LSPs ingress: ERO, path activo, historial y razones de falla.",
    "cat": "MPLS / VPN",
    "risk": "read",
-   "platforms": [
-    "junos",
-    "junos-evo"
-   ],
    "source": "https://www.juniper.net/documentation/us/en/software/junos/cli-reference/topics/ref/command/show-mpls-lsp.html"
   },
   {
@@ -1003,10 +991,6 @@
    "desc": "Contadores de tráfico por LSP.",
    "cat": "MPLS / VPN",
    "risk": "read",
-   "platforms": [
-    "junos",
-    "junos-evo"
-   ],
    "source": "https://www.juniper.net/documentation/us/en/software/junos/cli-reference/topics/ref/command/show-mpls-lsp.html"
   },
   {
@@ -1014,10 +998,6 @@
    "desc": "Vecinos LDP descubiertos por interfaz.",
    "cat": "MPLS / VPN",
    "risk": "read",
-   "platforms": [
-    "junos",
-    "junos-evo"
-   ],
    "source": "https://www.juniper.net/documentation/us/en/software/junos/cli-reference/topics/ref/command/show-ldp-neighbor.html"
   },
   {
@@ -1025,10 +1005,6 @@
    "desc": "Sesiones LDP con estado y conexiones.",
    "cat": "MPLS / VPN",
    "risk": "read",
-   "platforms": [
-    "junos",
-    "junos-evo"
-   ],
    "source": "https://www.juniper.net/documentation/us/en/software/junos/cli-reference/topics/ref/command/show-ldp-session.html"
   },
   {
@@ -1036,10 +1012,6 @@
    "desc": "Interfaces con LDP habilitado.",
    "cat": "MPLS / VPN",
    "risk": "read",
-   "platforms": [
-    "junos",
-    "junos-evo"
-   ],
    "source": "https://www.juniper.net/documentation/us/en/software/junos/cli-reference/topics/ref/command/show-ldp-interface.html"
   },
   {
@@ -1047,10 +1019,6 @@
    "desc": "Bindings de etiquetas LDP enviados y recibidos.",
    "cat": "MPLS / VPN",
    "risk": "read",
-   "platforms": [
-    "junos",
-    "junos-evo"
-   ],
    "source": "https://www.juniper.net/documentation/us/en/software/junos/cli-reference/topics/ref/command/show-ldp-database.html"
   },
   {
@@ -1058,10 +1026,6 @@
    "desc": "Parámetros globales y estado de LDP.",
    "cat": "MPLS / VPN",
    "risk": "read",
-   "platforms": [
-    "junos",
-    "junos-evo"
-   ],
    "source": "https://www.juniper.net/documentation/us/en/software/junos/cli-reference/topics/ref/command/show-ldp-overview.html"
   },
   {
@@ -1069,10 +1033,6 @@
    "desc": "Sesiones RSVP-TE (ingress, transit, egress).",
    "cat": "MPLS / VPN",
    "risk": "read",
-   "platforms": [
-    "junos",
-    "junos-evo"
-   ],
    "source": "https://www.juniper.net/documentation/us/en/software/junos/cli-reference/topics/ref/command/show-rsvp-session.html"
   },
   {
@@ -1080,10 +1040,6 @@
    "desc": "Interfaces RSVP con ancho de banda reservado y disponible.",
    "cat": "MPLS / VPN",
    "risk": "read",
-   "platforms": [
-    "junos",
-    "junos-evo"
-   ],
    "source": "https://www.juniper.net/documentation/us/en/software/junos/cli-reference/topics/ref/command/show-rsvp-interface.html"
   },
   {
@@ -1091,10 +1047,6 @@
    "desc": "Vecinos RSVP y su estado.",
    "cat": "MPLS / VPN",
    "risk": "read",
-   "platforms": [
-    "junos",
-    "junos-evo"
-   ],
    "source": "https://www.juniper.net/documentation/us/en/software/junos/cli-reference/topics/ref/command/show-rsvp-neighbor.html"
   },
   {
@@ -1102,10 +1054,6 @@
    "desc": "Tabla de etiquetas MPLS (LFIB) con acciones push, swap y pop.",
    "cat": "MPLS / VPN",
    "risk": "read",
-   "platforms": [
-    "junos",
-    "junos-evo"
-   ],
    "source": "https://www.juniper.net/documentation/us/en/software/junos/cli-reference/topics/ref/command/show-route-table.html"
   },
   {
@@ -1113,10 +1061,6 @@
    "desc": "Tabla inet.3 con los next-hops LSP usados para resolver BGP next-hop en L3VPN.",
    "cat": "MPLS / VPN",
    "risk": "read",
-   "platforms": [
-    "junos",
-    "junos-evo"
-   ],
    "source": "https://www.juniper.net/documentation/us/en/software/junos/cli-reference/topics/ref/command/show-route-table.html"
   },
   {
@@ -1124,10 +1068,6 @@
    "desc": "Rutas VPNv4 recibidas por MP-BGP con RD y route targets.",
    "cat": "MPLS / VPN",
    "risk": "read",
-   "platforms": [
-    "junos",
-    "junos-evo"
-   ],
    "source": "https://www.juniper.net/documentation/us/en/software/junos/cli-reference/topics/ref/command/show-route-table.html"
   },
   {
@@ -1575,7 +1515,7 @@
   },
   {
    "cmd": "request chassis cluster failover reset redundancy-group {{rg}}",
-   "desc": "Deshace el failover manual y devuelve el redundancy group a sus valores originales, lo que puede mover el grupo de nodo.",
+   "desc": "Deshace el failover manual y devuelve el redundancy group a su configuración original; según prioridades y preempt, el grupo puede volver a cambiar de nodo.",
    "cat": "Alta disponibilidad",
    "risk": "disruptive",
    "platforms": [
@@ -2022,7 +1962,7 @@
    "desc": "En modo configuración, deja la interfaz administrativamente abajo. Al hacer commit corta el servicio.",
    "cat": "Configuración",
    "risk": "disruptive",
-   "note": "Modo configuración. Requiere commit. Para retirar una interfaz la documentación recomienda deactivate en vez de disable.",
+   "note": "Modo configuración. Requiere commit. Apaga la interfaz sin quitar su configuración.",
    "source": "https://juniper.net/documentation/en_US/junos13.2/topics/usage-guidelines/interfaces-disabling-a-physical-interface.html"
   },
   {

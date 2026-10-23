@@ -83,7 +83,7 @@
       "desc": "Muestra fecha y hora del equipo. Clave para correlacionar logs entre dispositivos.",
       "cat": "Sistema",
       "risk": "read",
-      "source": "https://www.cisco.com/c/en/us/td/docs/ios-xml/ios/fundamentals/command/cf_command_ref/show_through_show_fm_summary.html"
+      "source": "https://www.cisco.com/c/en/us/td/docs/ios-xml/ios/bsm/command/bsm-cr-book/bsm-cr-n1.html"
     },
     {
       "cmd": "show users",
@@ -96,7 +96,7 @@
         "nxos",
         "iosxr"
       ],
-      "source": "https://www.cisco.com/c/en/us/td/docs/ios-xml/ios/fundamentals/command/cf_command_ref/show_protocols_through_showmon.html"
+      "source": "https://www.cisco.com/c/en/us/td/docs/ios-xml/ios/security/s1/sec-s1-cr-book/sec-cr-s5.html"
     },
     {
       "cmd": "show processes cpu sorted",
@@ -862,7 +862,8 @@
       "risk": "change",
       "platforms": [
         "ios",
-        "iosxe"
+        "iosxe",
+        "iosxr"
       ],
       "variants": [
         {
@@ -870,15 +871,9 @@
             "nxos"
           ],
           "cmd": "clear counters interface {{interfaz}}"
-        },
-        {
-          "platforms": [
-            "iosxr"
-          ],
-          "cmd": "clear counters interface {{interfaz}}"
         }
       ],
-      "note": "Pide confirmación en IOS. No afecta el tráfico. En IOS-XR (ASR 9000) la palabra interface es obligatoria; en NCS 5500 la referencia documenta clear counters {{interfaz}}; verificar en tu versión.",
+      "note": "Pide confirmación en IOS. No afecta el tráfico. En IOS-XR la sintaxis es clear counters <interfaz> (o all); la referencia de ASR 9000 documenta además clear interface <interfaz>.",
       "source": "https://www.cisco.com/c/en/us/td/docs/ios-xml/ios/interface/command/ir-cr-book/ir-c1.html"
     },
     {
@@ -989,7 +984,7 @@
         "nxos"
       ],
       "note": "En IOS 12.1/12.2 antiguo (Catalyst 2950/3550) la sintaxis es show mac-address-table.",
-      "source": "https://www.cisco.com/c/en/us/td/docs/switches/lan/catalyst9400/software/release/17-16/command_reference/b_1716_9400_cr/layer_2_3_commands.html"
+      "source": "https://www.cisco.com/c/en/us/td/docs/switches/lan/catalyst9400/software/release/17-16/command_reference/b_1716_9400_cr/system_management_commands.html"
     },
     {
       "cmd": "show mac-address-table",
@@ -1000,7 +995,7 @@
         "ios"
       ],
       "note": "Reemplazada por show mac address-table en releases posteriores; verificar en tu versión.",
-      "source": "https://www.cisco.com/c/en/us/td/docs/switches/lan/catalyst9400/software/release/17-16/command_reference/b_1716_9400_cr/layer_2_3_commands.html"
+      "source": "https://www.cisco.com/c/en/us/td/docs/switches/lan/catalyst9400/software/release/17-16/command_reference/b_1716_9400_cr/system_management_commands.html"
     },
     {
       "cmd": "show mac address-table address {{mac}}",
@@ -1012,7 +1007,7 @@
         "iosxe",
         "nxos"
       ],
-      "source": "https://www.cisco.com/c/en/us/td/docs/switches/lan/catalyst9400/software/release/17-16/command_reference/b_1716_9400_cr/layer_2_3_commands.html"
+      "source": "https://www.cisco.com/c/en/us/td/docs/switches/lan/catalyst9400/software/release/17-16/command_reference/b_1716_9400_cr/system_management_commands.html"
     },
     {
       "cmd": "show mac address-table interface {{interfaz}}",
@@ -1024,7 +1019,7 @@
         "iosxe",
         "nxos"
       ],
-      "source": "https://www.cisco.com/c/en/us/td/docs/switches/lan/catalyst9400/software/release/17-16/command_reference/b_1716_9400_cr/layer_2_3_commands.html"
+      "source": "https://www.cisco.com/c/en/us/td/docs/switches/lan/catalyst9400/software/release/17-16/command_reference/b_1716_9400_cr/system_management_commands.html"
     },
     {
       "cmd": "show mac address-table count",
@@ -1036,7 +1031,7 @@
         "iosxe",
         "nxos"
       ],
-      "source": "https://www.cisco.com/c/en/us/td/docs/switches/lan/catalyst9400/software/release/17-16/command_reference/b_1716_9400_cr/layer_2_3_commands.html"
+      "source": "https://www.cisco.com/c/en/us/td/docs/switches/lan/catalyst9400/software/release/17-16/command_reference/b_1716_9400_cr/system_management_commands.html"
     },
     {
       "cmd": "clear mac address-table dynamic",
@@ -1049,7 +1044,7 @@
         "nxos"
       ],
       "note": "Provoca flooding unicast temporal y puede afectar el tráfico mientras se reaprenden las MAC. Preferir acotar con vlan o interface.",
-      "source": "https://www.cisco.com/c/en/us/td/docs/switches/lan/catalyst9400/software/release/17-16/command_reference/b_1716_9400_cr/layer_2_3_commands.html"
+      "source": "https://www.cisco.com/c/en/us/td/docs/switches/lan/catalyst9400/software/release/17-16/command_reference/b_1716_9400_cr/security_commands.html"
     },
     {
       "cmd": "show spanning-tree summary",
@@ -1231,7 +1226,7 @@
         "iosxr"
       ],
       "note": "LLDP debe estar habilitado (lldp run en IOS/IOS-XE, feature lldp en NX-OS, lldp en XR).",
-      "source": "https://www.cisco.com/c/en/us/td/docs/switches/lan/catalyst9400/software/release/17-16/command_reference/b_1716_9400_cr/layer_2_3_commands.html"
+      "source": "https://www.cisco.com/c/en/us/td/docs/ios-xml/ios/cether/command/ce-cr-book/ce-s1.html"
     },
     {
       "cmd": "show lldp neighbors detail",
@@ -1244,7 +1239,7 @@
         "nxos",
         "iosxr"
       ],
-      "source": "https://www.cisco.com/c/en/us/td/docs/switches/lan/catalyst9400/software/release/17-16/command_reference/b_1716_9400_cr/layer_2_3_commands.html"
+      "source": "https://www.cisco.com/c/en/us/td/docs/ios-xml/ios/cether/command/ce-cr-book/ce-s1.html"
     },
     {
       "cmd": "show vtp status",
@@ -1255,7 +1250,7 @@
         "ios",
         "iosxe"
       ],
-      "source": "https://www.cisco.com/c/en/us/td/docs/switches/lan/catalyst9400/software/release/17-16/command_reference/b_1716_9400_cr/layer_2_3_commands.html"
+      "source": "https://www.cisco.com/c/en/us/td/docs/switches/lan/catalyst9400/software/release/17-16/command_reference/b_1716_9400_cr/vlan_commands.html"
     },
     {
       "cmd": "show udld neighbors",
@@ -1369,7 +1364,7 @@
         "nxos"
       ],
       "note": "Nexus 5k/7k/9k con FEX.",
-      "source": "https://www.cisco.com/c/en/us/td/docs/dcn/nx-os/nexus9000/102x/command-reference/show/b_n9k_show_commands_1021/m_f_showcmds.html"
+      "source": "https://www.cisco.com/c/en/us/td/docs/switches/datacenter/nexus9000/sw/93x/fex/configuration/guide/b-cisco-nexus-2000-nx-os-fabric-extender-configuration-guide-for-nexus-9000-switches-93x/b-cisco-nexus-2000-nx-os-fabric-extender-configuration-guide-for-nexus-9000-switches-93x_chapter_011.html"
     },
     {
       "cmd": "show ip route",
@@ -1395,7 +1390,7 @@
           "cmd": "show route"
         }
       ],
-      "source": "https://www.cisco.com/c/en/us/td/docs/ios-xml/ios/iproute_pi/command/Cisco_IOS_IP_Routing_Protocol-Independent_Command_Reference/IP_Routing_Protocol-Independent_Commands_S_through_T.html"
+      "source": "https://www.cisco.com/c/en/us/td/docs/ios-xml/ios/iproute_pi/command/iri-cr-book/iri-cr-s1.html"
     },
     {
       "cmd": "show ip route {{ip}}",
@@ -1421,7 +1416,7 @@
           "cmd": "show route {{ip}}"
         }
       ],
-      "source": "https://www.cisco.com/c/en/us/td/docs/ios-xml/ios/iproute_pi/command/Cisco_IOS_IP_Routing_Protocol-Independent_Command_Reference/IP_Routing_Protocol-Independent_Commands_S_through_T.html"
+      "source": "https://www.cisco.com/c/en/us/td/docs/ios-xml/ios/iproute_pi/command/iri-cr-book/iri-cr-s1.html"
     },
     {
       "cmd": "show ip route vrf {{vrf}}",
@@ -1441,7 +1436,7 @@
           "cmd": "show route vrf {{vrf}}"
         }
       ],
-      "source": "https://www.cisco.com/c/en/us/td/docs/ios-xml/ios/iproute_pi/command/Cisco_IOS_IP_Routing_Protocol-Independent_Command_Reference/IP_Routing_Protocol-Independent_Commands_S_through_T.html"
+      "source": "https://www.cisco.com/c/en/us/td/docs/ios-xml/ios/iproute_pi/command/iri-cr-book/iri-cr-s1.html"
     },
     {
       "cmd": "show ip route summary",
@@ -1461,7 +1456,7 @@
           "cmd": "show route summary"
         }
       ],
-      "source": "https://www.cisco.com/c/en/us/td/docs/ios-xml/ios/iproute_pi/command/Cisco_IOS_IP_Routing_Protocol-Independent_Command_Reference/IP_Routing_Protocol-Independent_Commands_S_through_T.html"
+      "source": "https://www.cisco.com/c/en/us/td/docs/ios-xml/ios/iproute_pi/command/iri-cr-book/iri-cr-s1.html"
     },
     {
       "cmd": "show ipv6 route",
@@ -1525,7 +1520,7 @@
           "cmd": "show protocols"
         }
       ],
-      "source": "https://www.cisco.com/c/en/us/td/docs/ios-xml/ios/iproute_pi/command/Cisco_IOS_IP_Routing_Protocol-Independent_Command_Reference/IP_Routing_Protocol-Independent_Commands_S_through_T.html"
+      "source": "https://www.cisco.com/c/en/us/td/docs/ios-xml/ios/iproute_pi/command/iri-cr-book/iri-cr-s1.html"
     },
     {
       "cmd": "show ip ospf neighbor",
@@ -1935,8 +1930,8 @@
           "cmd": "show vrf all"
         }
       ],
-      "note": "En IOS clásico también existe show ip vrf (forma documentada en la referencia MPLS). Sintaxis no confirmada en documentación oficial para ios/iosxe (show vrf); verificar.",
-      "source": "https://www.cisco.com/c/en/us/td/docs/ios-xml/ios/mpls/command/mp-cr-book/mp-s2.html"
+      "note": "En IOS clásico también existe show ip vrf (forma heredada documentada en la misma referencia MPLS).",
+      "source": "https://www.cisco.com/c/en/us/td/docs/ios-xml/ios/mpls/command/mp-cr-book/mp-s3.html"
     },
     {
       "cmd": "show vrf detail {{vrf}}",
@@ -1944,15 +1939,10 @@
       "cat": "Enrutamiento",
       "risk": "read",
       "platforms": [
+        "ios",
         "iosxe"
       ],
       "variants": [
-        {
-          "platforms": [
-            "ios"
-          ],
-          "cmd": "show ip vrf detail {{vrf}}"
-        },
         {
           "platforms": [
             "nxos"
@@ -1966,8 +1956,7 @@
           "cmd": "show vrf {{vrf}} detail"
         }
       ],
-      "note": "Sintaxis no confirmada en documentación oficial para iosxe (show vrf detail); verificar. La referencia MPLS documenta show ip vrf detail.",
-      "source": "https://www.cisco.com/c/en/us/td/docs/ios-xml/ios/mpls/command/mp-cr-book/mp-s2.html"
+      "source": "https://www.cisco.com/c/en/us/td/docs/ios-xml/ios/mpls/command/mp-cr-book/mp-s3.html"
     },
     {
       "cmd": "show ip vrf interfaces",
@@ -2007,7 +1996,7 @@
           "cmd": "show rpl prefix-set"
         }
       ],
-      "source": "https://www.cisco.com/c/en/us/td/docs/ios-xml/ios/iproute_pi/command/Cisco_IOS_IP_Routing_Protocol-Independent_Command_Reference/IP_Routing_Protocol-Independent_Commands_S_through_T.html"
+      "source": "https://www.cisco.com/c/en/us/td/docs/ios-xml/ios/iproute_bgp/command/irg-cr-book/bgp-s1.html"
     },
     {
       "cmd": "show route-map",
@@ -2028,7 +2017,7 @@
         }
       ],
       "note": "IOS-XR usa RPL (route-policy) en lugar de route-map.",
-      "source": "https://www.cisco.com/c/en/us/td/docs/ios-xml/ios/iproute_pi/command/Cisco_IOS_IP_Routing_Protocol-Independent_Command_Reference/IP_Routing_Protocol-Independent_Commands_S_through_T.html"
+      "source": "https://www.cisco.com/c/en/us/td/docs/ios-xml/ios/iproute_pi/command/iri-cr-book/iri-cr-s1.html"
     },
     {
       "cmd": "show bfd neighbors",
@@ -2068,7 +2057,7 @@
           "cmd": "show pim neighbor"
         }
       ],
-      "source": "https://www.cisco.com/c/en/us/td/docs/ios-xml/ios/ipmulti/command/imc-cr-book/imc_s1.html"
+      "source": "https://www.cisco.com/c/en/us/td/docs/switches/lan/c9000/multicast/multicast-configuration-guide/pim.html"
     },
     {
       "cmd": "show ip mroute",
@@ -2088,7 +2077,7 @@
           "cmd": "show mrib route"
         }
       ],
-      "source": "https://www.cisco.com/c/en/us/td/docs/ios-xml/ios/ipmulti/command/imc-cr-book/imc_s1.html"
+      "source": "https://www.cisco.com/c/en/us/td/docs/switches/lan/catalyst9400/software/release/17-16/command_reference/b_1716_9400_cr/ip_multicast_routing.html"
     },
     {
       "cmd": "show ip nat translations",
@@ -2292,7 +2281,7 @@
       "platforms": [
         "iosxr"
       ],
-      "source": "https://www.cisco.com/c/en/us/td/docs/routers/asr9000/software/lxvpn/command/reference/b-lxvpn-cr-asr9000.pdf"
+      "source": "https://www.cisco.com/c/en/us/td/docs/routers/asr9000/software/lxvpn/command/reference/b-lxvpn-cr-asr9000/multipoint-layer-2-services-commands.html"
     },
     {
       "cmd": "show bgp l2vpn evpn summary",
@@ -2637,7 +2626,7 @@
         "ios",
         "iosxe"
       ],
-      "source": "https://www.cisco.com/c/en/us/td/docs/ios-xml/ios/security/s1/sec-s1-cr-book/sec-s1-cr-book_CLT_chapter.html"
+      "source": "https://www.cisco.com/c/en/us/td/docs/ios-xml/ios/qos_plcshp/configuration/15-mt/qos-plcshp-15-mt-book/qos-plcshp-cpp.html"
     },
     {
       "cmd": "show snmp user",
@@ -2780,7 +2769,7 @@
         }
       ],
       "note": "En IOS clásico aplica a chasis con doble supervisora (Cat4500/6500).",
-      "source": "https://www.cisco.com/c/en/us/td/docs/ios-xml/ios/ha/command/ha-cr-book.pdf"
+      "source": "https://www.cisco.com/c/en/us/td/docs/ios-xml/ios/ha/command/ha-cr-book/show_call-home_through_vrrp_sso.html"
     },
     {
       "cmd": "show redundancy states",
@@ -2791,7 +2780,7 @@
         "ios",
         "iosxe"
       ],
-      "source": "https://www.cisco.com/c/en/us/td/docs/ios-xml/ios/ha/command/ha-cr-book.pdf"
+      "source": "https://www.cisco.com/c/en/us/td/docs/ios-xml/ios/ha/command/ha-cr-book/show_call-home_through_vrrp_sso.html"
     },
     {
       "cmd": "show switch",
@@ -2825,8 +2814,8 @@
         "ios",
         "iosxe"
       ],
-      "note": "En Catalyst 9000 con StackWise Virtual el comando es show stackwise-virtual. Sintaxis no confirmada en documentación oficial para ios/iosxe (show switch virtual); verificar.",
-      "source": "https://www.cisco.com/c/en/us/td/docs/switches/lan/catalyst9500/software/release/17-3/command_reference/b_173_9500_cr/high_availability_commands.html"
+      "note": "En Catalyst 9000 con StackWise Virtual el comando es show stackwise-virtual. Documentado en la Cisco IOS Virtual Switch Command Reference (Catalyst 6500/4500 VSS).",
+      "source": "https://www.cisco.com/c/en/us/td/docs/ios/vswitch/command/reference/vs_book.pdf"
     },
     {
       "cmd": "show vpc",
@@ -2892,7 +2881,7 @@
         }
       ],
       "note": "Validar antes STANDBY HOT. Usar solo en ventana de mantenimiento.",
-      "source": "https://www.cisco.com/c/en/us/td/docs/ios-xml/ios/ha/command/ha-cr-book.pdf"
+      "source": "https://www.cisco.com/c/en/us/td/docs/ios-xml/ios/ha/command/ha-cr-book/ha-mail-server-through-service.html"
     },
     {
       "cmd": "show failover",
@@ -2939,7 +2928,7 @@
         "iosxe",
         "nxos"
       ],
-      "source": "https://www.cisco.com/c/en/us/td/docs/ios-xml/ios/qos/command/qos-cr-book.pdf"
+      "source": "https://www.cisco.com/c/en/us/td/docs/ios-xml/ios/qos/command/qos-cr-book/qos-s2.html"
     },
     {
       "cmd": "show policy-map control-plane",
@@ -3283,7 +3272,7 @@
         "ios",
         "iosxe"
       ],
-      "source": "https://www.cisco.com/c/en/us/td/docs/ios-xml/ios/fundamentals/command/cf_command_ref/show_through_show_fm_summary.html"
+      "source": "https://www.cisco.com/c/en/us/td/docs/switches/lan/catalyst9400/software/release/17-16/command_reference/b_1716_9400_cr/system_management_commands.html"
     },
     {
       "cmd": "terminal monitor",
@@ -3349,7 +3338,7 @@
         "iosxe"
       ],
       "note": "Todo debug puede saturar la CPU y dejar el equipo inutilizable (Cisco lo advierte). Usar con acceso por consola y detener con undebug all.",
-      "source": "https://www.cisco.com/c/en/us/td/docs/ios-xml/ios/debug/command/i1/db-i1-cr-book.pdf"
+      "source": "https://www.cisco.com/c/en/us/td/docs/ios-xml/ios/debug/command/i1/db-i1-cr-book/db-i2.html"
     },
     {
       "cmd": "debug ip bgp {{ip}} updates",
@@ -3373,7 +3362,7 @@
         "iosxe"
       ],
       "note": "Solo ve tráfico dirigido a la CPU, pero igual consume CPU en equipos cargados. Detener con undebug all.",
-      "source": "https://www.cisco.com/c/en/us/td/docs/ios-xml/ios/debug/command/i1/db-i1-cr-book.pdf"
+      "source": "https://www.cisco.com/c/en/us/td/docs/ios-xml/ios/debug/command/i1/db-i1-cr-book/db-i2.html"
     },
     {
       "cmd": "undebug all",
