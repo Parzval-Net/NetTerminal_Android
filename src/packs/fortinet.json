@@ -293,7 +293,8 @@
       "desc": "Configuración de una interfaz: IP, VLAN, allowaccess, rol y alias.",
       "cat": "Interfaces",
       "risk": "read",
-      "source": "https://docs.fortinet.com/document/fortigate/7.4.9/cli-reference"
+      "source": "https://docs.fortinet.com/document/fortigate/7.4.9/cli-reference",
+      "note": "Con VDOM habilitado, las interfaces son objeto global: ejecútalo dentro de config global."
     },
     {
       "cmd": "diagnose netlink interface list {{puerto}}",
@@ -1631,10 +1632,11 @@
     },
     {
       "cmd": "show",
-      "desc": "Muestra la configuración del contexto actual (solo valores distintos al default).",
+      "desc": "Muestra la configuración del contexto actual, solo valores distintos al default. Es el equivalente FortiOS de show running-config de Cisco: en FortiOS no existe show configuration ni show running-config.",
       "cat": "Configuración",
       "risk": "read",
-      "source": "https://community.fortinet.com/fortigate-3/technical-tip-fortigate-routing-debug-commands-177121"
+      "source": "https://docs.fortinet.com/document/fortigate/7.4.9/cli-reference",
+      "note": "Con VDOM habilitado, el resultado depende del contexto: config global para objetos globales o config vdom / edit <vdom> para una VDOM."
     },
     {
       "cmd": "show full-configuration",
@@ -1649,7 +1651,8 @@
       "desc": "Muestra la configuración filtrando por texto, conservando el bloque que lo contiene.",
       "cat": "Configuración",
       "risk": "read",
-      "source": "https://docs.fortinet.com/document/fortigate/7.4.9/cli-reference"
+      "source": "https://community.fortinet.com/fortigate-3/troubleshooting-tip-using-grep-and-session-list-for-session-statistics-93700",
+      "note": "La opción -f muestra el bloque config completo que contiene el texto. La ayuda de algunas versiones 7.x no la lista; si no la acepta, usa grep -A, -B o -C para ver líneas de contexto."
     },
     {
       "cmd": "execute backup config tftp {{archivo}} {{ip}}",
