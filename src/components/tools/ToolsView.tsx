@@ -101,6 +101,8 @@ export const ToolsView = memo(function ToolsView({ active, settings, update, mon
             onSnapshots={(topoSnapshots) => update({ topoSnapshots })}
             sources={settings.topoSources ?? {}}
             onSources={(topoSources) => update({ topoSources })}
+            snmpProfiles={settings.snmpProfiles ?? []}
+            visible={active && current === "topology"}
             onOpenSession={onOpenSession}
           />
         );

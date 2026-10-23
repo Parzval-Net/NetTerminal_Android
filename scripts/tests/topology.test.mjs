@@ -834,4 +834,405 @@ assert.ok(T.LINK_LEGEND.some(([t, s]) => t === "MAC/OUI" && T.linkDash(s) === "1
 assert.equal(new Set(T.LINK_LEGEND.map(([, s]) => T.linkDash(s))).size, T.LINK_LEGEND.length, "cada estilo es distinto");
 }
 
+{
+// ---------- Descubrimiento por SNMP: OIDs permitidos y varbinds sintéticos ----------
+
+const S = await import("../../src/lib/topoSnmp.ts");
+const R = await import("../../src/lib/topoTraffic.ts");
+const { lookupOui } = await import("../../src/lib/oui.ts");
+const { readFileSync } = await import("node:fs");
+
+// La lista del backend (snmp.rs) y la del frontend son la misma, y todo lo que se pide está en ella.
+const rust = readFileSync(new URL("../../src-tauri/src/snmp.rs", import.meta.url), "utf8");
+const rustList = (name) => {
+  const body = rust.slice(rust.indexOf(`pub const ${name}:`), rust.indexOf("];", rust.indexOf(`pub const ${name}:`)));
+  return [...body.matchAll(/\("([\d.]+)", "\w+"\)/g)].map((m) => m[1]).sort();
+};
+assert.deepEqual(rustList("TOPO_WALK_ROOTS"), [...S.WALK_ALLOWED].sort(), "WALK: snmp.rs = topoSnmp.ts");
+assert.deepEqual(rustList("TOPO_GET_COLUMNS"), [...S.GET_COLUMNS].sort(), "GET columnas: snmp.rs = topoSnmp.ts");
+assert.deepEqual(rustList("TOPO_GET_SCALARS"), [...S.GET_SCALARS].sort(), "GET escalares: snmp.rs = topoSnmp.ts");
+for (const routing of [false, true])
+  for (const mac of [false, true])
+    for (const ports of [false, true]) {
+      const plan = S.snmpDiscoveryPlan({ routing, mac, ports });
+      for (const w of plan.walks) assert.ok(S.WALK_ALLOWED.includes(w), w);
+      for (const g of plan.gets) assert.ok(S.GET_SCALARS.includes(g), g);
+      assert.ok(plan.walks.length <= 40 && new Set(plan.walks).size === plan.walks.length);
+      // LLDP y CDP siempre; ruteo y MAC solo con su fuente.
+      assert.ok(plan.walks.includes(S.OID.lldpRemSysName) && plan.walks.includes(S.OID.cdpCacheDeviceId));
+      assert.equal(plan.walks.includes(S.OID.ospfNbrState), routing);
+      assert.equal(plan.walks.includes(S.OID.dot1dTpFdbPort), mac);
+      assert.equal(plan.walks.includes(S.OID.ifAlias), ports);
+    }
+for (const w of S.ARP_FALLBACK) assert.ok(S.WALK_ALLOWED.includes(w));
+for (const o of R.counterOids([1, 10101], true).concat(R.counterOids([3], false)))
+  assert.ok(S.GET_COLUMNS.some((c) => o.startsWith(`${c}.`) && /^\d+$/.test(o.slice(c.length + 1))), o);
+assert.equal(R.counterOids(Array.from({ length: 100 }, (_, i) => i + 1), true).length, 3 * R.MAX_TRAFFIC_IFACES, "tope de interfaces");
+// OIDs verificados contra los MIB (valores literales de cada RFC / IEEE / Cisco).
+assert.equal(S.OID.lldpRemSysName, "1.0.8802.1.1.2.1.4.1.1.9");
+assert.equal(S.OID.lldpLocPortTable, "1.0.8802.1.1.2.1.3.7");
+assert.equal(S.OID.cdpCacheDeviceId, "1.3.6.1.4.1.9.9.23.1.2.1.1.6");
+assert.equal(S.OID.ospfNbrState, "1.3.6.1.2.1.14.10.1.6");
+assert.equal(S.OID.bgpPeerState, "1.3.6.1.2.1.15.3.1.2");
+assert.equal(S.OID.dot1dTpFdbPort, "1.3.6.1.2.1.17.4.3.1.2");
+assert.equal(S.OID.dot1qTpFdbPort, "1.3.6.1.2.1.17.7.1.2.2.1.2");
+assert.equal(S.OID.ipNetToPhysicalPhysAddress, "1.3.6.1.2.1.4.35.1.4");
+assert.equal(S.OID.ifHCInOctets, "1.3.6.1.2.1.31.1.1.1.6");
+assert.equal(S.OID.ifHighSpeed, "1.3.6.1.2.1.31.1.1.1.15");
+
+// Varbinds sintéticos (IPs de documentación).
+const hexOf = (s) => [...Buffer.from(s, "latin1")].map((b) => b.toString(16).padStart(2, "0").toUpperCase()).join("");
+const str = (oid, v) => ({ oid, type: "OCTET STRING", value: v, hex: hexOf(v) });
+const hex = (oid, h) => ({ oid, type: "Hex-STRING", value: h.match(/../g).join(":"), hex: h.toUpperCase() });
+const int = (oid, v) => ({ oid, type: "INTEGER", value: String(v) });
+const ip = (oid, v) => ({ oid, type: "IpAddress", value: v });
+const read = (rows, gets = []) => {
+  const walks = new Map();
+  for (const r of rows) {
+    const root = [...S.WALK_ALLOWED].filter((w) => r.oid.startsWith(`${w}.`)).sort((a, b) => b.length - a.length)[0];
+    assert.ok(root, `sin raíz permitida: ${r.oid}`);
+    walks.set(root, [...(walks.get(root) ?? []), r]);
+  }
+  return { gets, getError: null, walks: [...walks].map(([oid, rows]) => ({ oid, rows, truncated: false, timedOut: false, error: null })), ms: 120 };
+};
+const O_ = S.OID;
+const L = "1.0.8802.1.1.2.1";
+const rows = [
+  // IF-MIB: ifName por ifIndex.
+  str(`${O_.ifName}.3`, "Gi0/0"),
+  str(`${O_.ifName}.10101`, "Te1/1/1"),
+  str(`${O_.ifName}.10102`, "Gi1/0/2"),
+  str(`${O_.ifName}.10146`, "Gi1/0/46"),
+  str(`${O_.ifName}.10147`, "Gi1/0/47‮"),
+  str(`${O_.ifDescr}.10101`, "TenGigabitEthernet1/1/1"),
+  // dot1dBasePortTable: puerto del bridge -> ifIndex.
+  int(`${O_.dot1dBasePortIfIndex}.2`, 10102),
+  int(`${O_.dot1dBasePortIfIndex}.46`, 10146),
+  int(`${O_.dot1dBasePortIfIndex}.5`, 10105),
+  // lldpLocPortTable: puerto 5 con nombre (subtipo 5), puerto 6 con MAC y descripción.
+  int(`${L}.3.7.1.2.5`, 5),
+  str(`${L}.3.7.1.3.5`, "Gi1/0/1"),
+  str(`${L}.3.7.1.4.5`, "GigabitEthernet1/0/1"),
+  int(`${L}.3.7.1.2.6`, 3),
+  hex(`${L}.3.7.1.3.6`, "001122334455"),
+  str(`${L}.3.7.1.4.6`, "GigabitEthernet1/0/2"),
+  // lldpRemTable: vecino en puerto 5 visto con dos TimeMark (se usa el más reciente).
+  str(`${L}.4.1.1.9.0.5.1`, "viejo"),
+  int(`${L}.4.1.1.6.0.5.1`, 5),
+  str(`${L}.4.1.1.7.0.5.1`, "Gi9/9"),
+  str(`${L}.4.1.1.9.1200.5.1`, "dist-sw01.example.com"),
+  int(`${L}.4.1.1.6.1200.5.1`, 5),
+  str(`${L}.4.1.1.7.1200.5.1`, "Gi1/0/48"),
+  str(`${L}.4.1.1.10.1200.5.1`, "Cisco IOS XE Software\r\nCopyright"),
+  // Vecino Junos sin nombre: chassis MAC, Port ID local numérico y descripción.
+  int(`${L}.4.1.1.4.1300.6.3`, 4),
+  hex(`${L}.4.1.1.5.1300.6.3`, "00e0fc123456"),
+  int(`${L}.4.1.1.6.1300.6.3`, 7),
+  str(`${L}.4.1.1.7.1300.6.3`, "523"),
+  str(`${L}.4.1.1.8.1300.6.3`, "ge-0/0/1"),
+  // Nombre con caracteres de dirección (spoofing) y muy largo: se limpian y acotan.
+  str(`${L}.4.1.1.9.1400.5.2`, `ap‮-${"x".repeat(400)}`),
+  int(`${L}.4.1.1.6.1400.5.2`, 5),
+  str(`${L}.4.1.1.7.1400.5.2`, "eth0"),
+  // lldpRemManAddrTable: índice con la dirección (IPv4 = familia 1, largo 4).
+  int(`${L}.4.2.1.3.1200.5.1.1.4.192.0.2.11`, 2),
+  int(`${L}.4.2.1.3.1300.6.3.2.16.32.1.13.184.0.0.0.0.0.0.0.0.0.0.0.1`, 2),
+  // cdpCacheTable: dirección IP en 4 octetos (aunque parezca texto: 65.66.67.68 = "ABCD").
+  str(`${O_.cdpCacheDeviceId}.10101.1`, "core-sw02(FOC1234X)"),
+  str(`${O_.cdpCacheDevicePort}.10101.1`, "TenGigabitEthernet1/1/1"),
+  str(`${O_.cdpCachePlatform}.10101.1`, "cisco C9500-24Y4C"),
+  int(`${O_.cdpCacheAddressType}.10101.1`, 1),
+  hex(`${O_.cdpCacheAddress}.10101.1`, "c0000202"),
+  str(`${O_.cdpCacheDeviceId}.10147.2`, "fw-01"),
+  str(`${O_.cdpCacheDevicePort}.10147.2`, "port1"),
+  int(`${O_.cdpCacheAddressType}.10147.2`, 1),
+  str(`${O_.cdpCacheAddress}.10147.2`, "ABCD"),
+  // Sin interfaz local conocida: se descarta.
+  str(`${O_.cdpCacheDeviceId}.999.1`, "fantasma"),
+  str(`${O_.cdpCacheDevicePort}.999.1`, "Gi0/1"),
+  // OSPF: FULL en Gi0/0 por subred; DOWN se omite.
+  ip(`${O_.ospfNbrRtrId}.198.51.100.2.0`, "192.0.2.41"),
+  int(`${O_.ospfNbrState}.198.51.100.2.0`, 8),
+  ip(`${O_.ospfNbrRtrId}.198.51.100.6.0`, "192.0.2.42"),
+  int(`${O_.ospfNbrState}.198.51.100.6.0`, 1),
+  int(`${O_.ipAdEntIfIndex}.198.51.100.1`, 3),
+  ip(`${O_.ipAdEntNetMask}.198.51.100.1`, "255.255.255.252"),
+  int(`${O_.ipAdEntIfIndex}.192.0.2.1`, 10101),
+  ip(`${O_.ipAdEntNetMask}.192.0.2.1`, "255.255.255.0"),
+  int(`${O_.ipAdEntIfIndex}.127.0.0.1`, 1),
+  ip(`${O_.ipAdEntNetMask}.127.0.0.1`, "255.0.0.0"),
+  // BGP: eBGP directo (vecino OSPF), iBGP lógico y uno caído.
+  int(`${O_.bgpPeerState}.198.51.100.2`, 6),
+  int(`${O_.bgpPeerRemoteAs}.198.51.100.2`, 65001),
+  int(`${O_.bgpPeerState}.192.0.2.50`, 6),
+  int(`${O_.bgpPeerRemoteAs}.192.0.2.50`, 65000),
+  int(`${O_.bgpPeerState}.203.0.113.9`, 3),
+  int(`${O_.bgpPeerRemoteAs}.203.0.113.9`, 65009),
+  // FDB: dot1d (índice = MAC) y dot1q (FID + MAC); self(4) se omite; puerto sin mapeo también.
+  int(`${O_.dot1dTpFdbPort}.0.224.252.18.52.86`, 2),
+  int(`${O_.dot1dTpFdbStatus}.0.224.252.18.52.86`, 3),
+  int(`${O_.dot1dTpFdbPort}.0.17.34.51.68.85`, 2),
+  int(`${O_.dot1dTpFdbStatus}.0.17.34.51.68.85`, 4),
+  int(`${O_.dot1dTpFdbPort}.0.80.86.170.0.1`, 99),
+  int(`${O_.dot1dTpFdbStatus}.0.80.86.170.0.1`, 3),
+  int(`${O_.dot1qTpFdbPort}.10.0.0.12.7.172.10`, 46),
+  int(`${O_.dot1qTpFdbStatus}.10.0.0.12.7.172.10`, 3),
+  // ARP: IPv4 del gateway HSRP, una propia (local) y una inválida.
+  hex(`${O_.ipNetToPhysicalPhysAddress}.3.1.4.192.0.2.254`, "00000c07ac0a"),
+  int(`${O_.ipNetToPhysicalType}.3.1.4.192.0.2.254`, 3),
+  hex(`${O_.ipNetToPhysicalPhysAddress}.3.1.4.192.0.2.30`, "00e0fc123456"),
+  int(`${O_.ipNetToPhysicalType}.3.1.4.192.0.2.30`, 3),
+  hex(`${O_.ipNetToPhysicalPhysAddress}.3.1.4.192.0.2.1`, "001122334455"),
+  int(`${O_.ipNetToPhysicalType}.3.1.4.192.0.2.1`, 5),
+  hex(`${O_.ipNetToPhysicalPhysAddress}.3.1.4.192.0.2.77`, "0011223344aa"),
+  int(`${O_.ipNetToPhysicalType}.3.1.4.192.0.2.77`, 2),
+  // Estado de puertos.
+  int(`${O_.ifOperStatus}.10101`, 1),
+  { oid: `${O_.ifHighSpeed}.10101`, type: "Gauge32", value: "10000" },
+  str(`${O_.ifAlias}.10101`, "ISL core-sw02"),
+  int(`${O_.ifOperStatus}.3`, 2),
+];
+const gets = [
+  str(O_.sysName, "core-sw01.example.com"),
+  ip(O_.ospfRouterId, "192.0.2.40"),
+  int(O_.bgpLocalAs, 65000),
+  ip(O_.bgpIdentifier, "192.0.2.40"),
+];
+const all = { routing: true, mac: true, ports: true };
+const d = S.parseSnmpDiscovery(read(rows, gets), all);
+assert.equal(d.name, "core-sw01.example.com");
+assert.ok(!d.l2Empty);
+const nb = (name) => d.neighbors.find((n) => n.name === name);
+assert.deepEqual(
+  [nb("dist-sw01.example.com").localPort, nb("dist-sw01.example.com").remotePort, nb("dist-sw01.example.com").ip, nb("dist-sw01.example.com").platform, nb("dist-sw01.example.com").proto],
+  ["Gi1/0/1", "Gi1/0/48", "192.0.2.11", "Cisco IOS XE Software", "LLDP"],
+);
+assert.ok(!d.neighbors.some((n) => n.name === "viejo"), "TimeMark antiguo descartado");
+assert.deepEqual([nb("00e0.fc12.3456").localPort, nb("00e0.fc12.3456").remotePort, nb("00e0.fc12.3456").ip], ["GigabitEthernet1/0/2", "ge-0/0/1", undefined], "chassis MAC, Port ID numérico -> descripción, IPv6 no es IPv4");
+const evil = d.neighbors.find((n) => n.remotePort === "eth0");
+assert.ok(!/[‮]/.test(evil.name) && evil.name.length <= 255, "nombre limpio y acotado");
+assert.deepEqual([nb("core-sw02(FOC1234X)").localPort, nb("core-sw02(FOC1234X)").remotePort, nb("core-sw02(FOC1234X)").ip, nb("core-sw02(FOC1234X)").proto], ["Te1/1/1", "TenGigabitEthernet1/1/1", "192.0.2.2", "CDP"]);
+assert.equal(nb("fw-01").ip, "65.66.67.68", "IP desde el hex aunque parezca texto");
+assert.equal(nb("fw-01").localPort, "Gi1/0/47", "ifName con bidi limpiado");
+assert.ok(!nb("fantasma"), "CDP sin interfaz local conocida");
+// Ruteo: OSPF por subred, BGP directo por el vecino OSPF, iBGP lógico, caídos fuera.
+const rt = (name, proto) => d.routing.find((n) => n.name === name && n.proto === proto);
+assert.deepEqual([rt("192.0.2.41", "OSPF").localPort, rt("192.0.2.41", "OSPF").ip, rt("192.0.2.41", "OSPF").addrs], ["Gi0/0", "198.51.100.2", ["192.0.2.41", "198.51.100.2"]]);
+assert.ok(!rt("192.0.2.42", "OSPF"), "OSPF down omitido");
+assert.deepEqual([rt("198.51.100.2", "BGP").localPort, rt("198.51.100.2", "BGP").logical], ["Gi0/0", false]);
+assert.deepEqual([rt("192.0.2.50", "BGP").localPort, rt("192.0.2.50", "BGP").logical], ["Te1/1/1", false], "por SNMP la subred propia ubica la interfaz");
+assert.ok(!rt("203.0.113.9", "BGP"), "BGP no establecido omitido");
+assert.deepEqual(d.addrs.sort(), ["192.0.2.1", "192.0.2.40", "198.51.100.1"], "sin 127/8; con router-id");
+// Puertos.
+assert.deepEqual(d.ports["te1/1/1"], { status: "up", speed: "10G", desc: "ISL core-sw02" });
+assert.deepEqual(d.ports["gi0/0"], { status: "down" });
+// FDB y ARP -> sugerencias MAC/OUI con HSRP y fabricante.
+assert.deepEqual(d.macRows.map((r) => [r.mac, r.port]).sort(), [["0000.0c07.ac0a", "Gi1/0/46"], ["00e0.fc12.3456", "Gi1/0/2"]], "self y puerto sin mapeo fuera");
+assert.deepEqual(
+  d.arpRows.map((r) => [r.ip, r.self]).sort(),
+  [["192.0.2.1", true], ["192.0.2.254", false], ["192.0.2.30", false]],
+);
+const macs = T.macPortsFromRows(d.macRows, d.arpRows, lookupOui);
+assert.equal(macs["gi1/0/46"].macs[0].fhrp, "HSRP v1 grupo 10");
+assert.equal(macs["gi1/0/46"].macs[0].ip, "192.0.2.254");
+assert.equal(macs["gi1/0/2"].macs[0].vendor, "Huawei");
+// ifIndex por interfaz para los contadores.
+assert.equal(d.ifIndex.get("te1/1/1"), 10101);
+assert.equal(d.ifIndex.get(T.canonPort("TenGigabitEthernet1/1/1")), 10101);
+// Fusión con las estructuras de siempre: enlaces, nodos limpios y sugerencias.
+let st = T.mergeNeighbors({ nodes: [], links: [] }, { name: d.name, ip: "192.0.2.1", ports: d.ports, addrs: d.addrs, macs }, [...d.neighbors, ...d.routing]);
+assert.ok(st.nodes.find((n) => n.id === "core-sw01").explored);
+assert.ok(st.links.some((l) => l.a === "core-sw01" && l.aPort === "Gi1/0/1" && l.b === "dist-sw01" && l.bPort === "Gi1/0/48" && l.proto === "LLDP"));
+assert.ok(st.links.some((l) => l.b === "core-sw02" && l.aPort === "Te1/1/1" && l.proto === "CDP"));
+assert.ok(st.links.some((l) => l.proto === "OSPF" && l.aPort === "Gi0/0"));
+assert.ok(T.collectSuggestions(st, { mac: true }).some((s) => s.aPort === "Gi1/0/46" && s.confidence === "alta"));
+assert.ok(st.nodes.every((n) => !/[‮\u0000-\u001f]/.test(n.name)));
+// Tablas vacías: LLDP/CDP apagado; avisos de tiempo, tope y error.
+const empty = S.parseSnmpDiscovery(read([str(`${O_.ifName}.1`, "Gi0/1")]), all);
+assert.ok(empty.l2Empty && !empty.neighbors.length);
+const partial = {
+  gets: [], getError: "El equipo respondió noSuchName (varbind 1)",
+  walks: [
+    { oid: O_.lldpRemSysName, rows: [], truncated: false, timedOut: true, error: null },
+    { oid: O_.dot1dTpFdbPort, rows: [], truncated: true, timedOut: false, error: null },
+    { oid: O_.ospfNbrState, rows: [], truncated: false, timedOut: false, error: "Sin respuesta‮" },
+  ],
+  ms: 20000,
+};
+const notes = S.walkNotes(partial);
+assert.match(notes[0], /^lldpRemSysName: tiempo agotado, resultado parcial/);
+assert.match(notes[1], /^dot1dTpFdbPort: tope de 10\.000 filas/);
+assert.equal(notes[2], "ospfNbrState: Sin respuesta", "error del backend limpio");
+assert.match(notes[3], /^GET: /);
+assert.ok(S.needsArpFallback(read([str(`${O_.ifName}.1`, "Gi0/1")])));
+// ipNetToMediaTable (alternativa): índice ifIndex.IPv4.
+const media = S.arpFromSnmp(read([hex(`${O_.ipNetToMediaPhysAddress}.3.192.0.2.9`, "001b21000001"), int(`${O_.ipNetToMediaType}.3.192.0.2.9`, 3), hex(`${O_.ipNetToMediaPhysAddress}.3.192.0.2.1`, "001122334455")]), new Set(["192.0.2.1"]));
+assert.deepEqual(media, [{ mac: "001b.2100.0001", ip: "192.0.2.9", self: false }, { mac: "0011.2233.4455", ip: "192.0.2.1", self: true }]);
+// Hostil: índices malformados, noSuchObject, "__proto__" como interfaz y miles de filas sin bloquear.
+const hostile = read([
+  str(`${O_.ifName}.7`, "__proto__"),
+  { oid: `${O_.ifName}.8`, type: "noSuchInstance", value: "" },
+  int(`${O_.ifOperStatus}.7`, 1),
+  str(`${L}.4.1.1.9.1.2`, "corto"),
+  int(`${O_.dot1dTpFdbPort}.1.2.3`, 1),
+  int(`${O_.dot1dBasePortIfIndex}.1`, 7),
+  int(`${O_.dot1dTpFdbPort}.0.17.34.51.68.86`, 1),
+]);
+const hd = S.parseSnmpDiscovery(hostile, all);
+assert.equal(Object.getPrototypeOf(hd.ports), Object.prototype);
+assert.equal({}.status, undefined, "Object.prototype intacto");
+assert.equal(T.macPortsFromRows(hd.macRows, [], lookupOui).__proto__, Object.prototype);
+assert.ok(!hd.neighbors.length, "índice LLDP malformado descartado");
+const bigRead = read(Array.from({ length: 10000 }, (_, i) => str(`${L}.4.1.1.9.${i}.${i % 50}.${i}`, `sw${i}`)).concat(Array.from({ length: 10000 }, (_, i) => int(`${O_.dot1dTpFdbPort}.0.17.${(i >> 16) & 255}.${(i >> 8) & 255}.${i & 255}.1`, 1))));
+fast("SNMP con 20.000 filas", 1500, () => S.parseSnmpDiscovery(bigRead, all));
+
+// ---------- Tráfico: tasas, vueltas de 32 bits, reinicios y umbrales ----------
+
+const W32 = 2n ** 32n;
+assert.deepEqual(R.counterDelta(100n, 350n, 64), { d: 250n, wrapped: false });
+assert.deepEqual(R.counterDelta(W32 - 1000n, 500n, 32), { d: 1500n, wrapped: true }, "vuelta de 32 bits");
+assert.equal(R.counterDelta(5_000_000n, 10n, 64), null, "64 bits hacia atrás = reinicio");
+assert.equal(R.counterDelta(W32 + 5n, 10n, 32), null, "fuera de rango de 32 bits = reinicio");
+// 1.500 octetos en 1 s = 12.000 b/s.
+assert.equal(R.rateBps(W32 - 1000n, 500n, 32, 1), 12000);
+// Reinicio de un contador de 32 bits que parece vuelta: tasa imposible para la velocidad, se descarta.
+assert.equal(R.rateBps(1000n, 10n, 32, 30, 1e6), null);
+assert.equal(R.rateBps(100n, 200n, 64, 0), null, "sin tiempo transcurrido");
+assert.equal(R.rateBps(0n, 3_750_000_000n, 64, 30, 1e9), 1e9, "100 % de 1 Gb/s");
+const s0_ = { inOctets: 1_000n, outOctets: 2_000n, bits: 64, speed: 1e9, ts: 0 };
+const s1_ = { inOctets: 1_000n + 131_250_000n, outOctets: 2_000n + 450_000_000n, bits: 64, speed: 1e9, ts: 30_000 };
+assert.deepEqual(R.portRate(undefined, s1_), { inBps: null, outBps: null, speed: 1e9, ts: 30_000 }, "primera lectura sin tasa");
+assert.deepEqual(R.portRate(s0_, s1_), { inBps: 35e6, outBps: 120e6, speed: 1e9, ts: 30_000 });
+assert.equal(R.portRate({ ...s0_, bits: 32 }, s1_).inBps, null, "cambio de 32 a 64 bits: sin tasa");
+const reset = R.portRate(s1_, { ...s1_, inOctets: 10n, ts: 60_000 });
+assert.equal(reset.inBps, null, "clear counters / reinicio");
+assert.equal(reset.outBps, 0);
+// Por enlace: A→B = salida de A (o entrada de B si A no se lee); velocidad menor; utilización máxima.
+const lk = { a: "core", aPort: "Gi1/0/1", b: "dist", bPort: "GigabitEthernet1/0/48", proto: "CDP" };
+const rates = new Map([["core", new Map([["gi1/0/1", { inBps: 35e6, outBps: 120e6, speed: 1e9, ts: 1 }]])]]);
+assert.deepEqual(R.linkTraffic(lk, rates), { ab: 120e6, ba: 35e6, speed: 1e9, util: 0.12, ts: 1 });
+const onlyB = new Map([["dist", new Map([["gi1/0/48", { inBps: 800e6, outBps: 10e6, speed: 1e9, ts: 2 }]])]]);
+assert.deepEqual(R.linkTraffic(lk, onlyB), { ab: 800e6, ba: 10e6, speed: 1e9, util: 0.8, ts: 2 });
+assert.equal(R.linkTraffic(lk, new Map([["core", new Map([["gi1/0/1", { inBps: null, outBps: null, ts: 1 }]])]])), null, "sin segunda lectura");
+assert.equal(R.linkTraffic(lk, new Map([["core", new Map([["gi1/0/1", { inBps: 5, outBps: 6, ts: 1 }]])]])).util, undefined, "sin velocidad");
+// Umbrales: verde, amarillo desde 70 %, rojo desde 90 %.
+assert.deepEqual([0, 0.69, 0.7, 0.899, 0.9, 1.2, undefined, NaN].map(T.utilLevel), ["ok", "ok", "warn", "warn", "crit", "crit", "none", "none"]);
+assert.deepEqual([0, 950, 999_499, 35e6, 120e6, 1.2e9, null, -1].map(T.fmtBps), ["0 b/s", "950 b/s", "999 kb/s", "35 Mb/s", "120 Mb/s", "1.2 Gb/s", "?", "?"]);
+assert.equal(T.trafficLabel({ ab: 120e6, ba: 35e6, speed: 1e9, util: 0.12, ts: 0 }), "↑ 120 Mb/s ↓ 35 Mb/s · 12 %");
+assert.equal(T.trafficLabel({ ab: 120e6, ba: null, ts: 0 }), "↑ 120 Mb/s ↓ ?");
+// GET de contadores: 64 bits, 32 bits y agente sin ifXTable.
+const hcRows = [
+  { oid: `${O_.ifHCInOctets}.10101`, type: "Counter64", value: "18446744073709551000" },
+  { oid: `${O_.ifHCOutOctets}.10101`, type: "Counter64", value: "42" },
+  { oid: `${O_.ifHighSpeed}.10101`, type: "Gauge32", value: "10000" },
+  { oid: `${O_.ifHCInOctets}.3`, type: "noSuchInstance", value: "" },
+];
+const g64 = R.parseCounterGets(hcRows, [10101, 3], true, 5);
+assert.deepEqual(g64.samples.get(10101), { inOctets: 18446744073709551000n, outOctets: 42n, bits: 64, speed: 1e10, ts: 5 }, "Counter64 sin perder precisión");
+assert.ok(!g64.samples.has(3) && !g64.hcMissing);
+assert.ok(R.parseCounterGets([{ oid: `${O_.ifHCInOctets}.1`, type: "noSuchObject", value: "" }], [1], true, 0).hcMissing, "sin ifXTable: pedir 32 bits");
+const g32 = R.parseCounterGets([{ oid: `${O_.ifInOctets}.1`, type: "Counter32", value: "4294967295" }, { oid: `${O_.ifOutOctets}.1`, type: "Counter32", value: "7" }, { oid: `${O_.ifSpeed}.1`, type: "Gauge32", value: "100000000" }], [1], false, 0);
+assert.deepEqual(g32.samples.get(1), { inOctets: 4294967295n, outOctets: 7n, bits: 32, speed: 1e8, ts: 0 });
+assert.equal(R.parseCounterGets([{ oid: `${O_.ifInOctets}.1`, type: "OCTET STRING", value: "1e9" }, { oid: `${O_.ifOutOctets}.1`, type: "Counter32", value: "-5" }], [1], false, 0).samples.size, 0, "valores no numéricos descartados");
+
+// ---------- Tráfico por consola ----------
+
+const iosIf = `core-sw01#show interfaces
+GigabitEthernet1/0/1 is up, line protocol is up (connected)
+  Hardware is Gigabit Ethernet, address is 0011.2233.4401 (bia 0011.2233.4401)
+  Description: UPLINK dist-sw01
+  MTU 1500 bytes, BW 1000000 Kbit/sec, DLY 10 usec,
+  5 minute input rate 35000000 bits/sec, 2900 packets/sec
+     123456 packets input, 987654321 bytes, 0 no buffer
+     654321 packets output, 1234567890123 bytes, 0 underruns
+TenGigabitEthernet1/1/1 is administratively down, line protocol is down (disabled)
+  MTU 1500 bytes, BW 10000000 Kbit/sec, DLY 10 usec,
+     0 packets input, 0 bytes, 0 no buffer
+     0 packets output, 0 bytes, 0 underruns
+core-sw01#`;
+const ios = R.parseCliCounters(iosIf);
+assert.deepEqual(ios.get("gi1/0/1"), { name: "GigabitEthernet1/0/1", inOctets: 987654321n, outOctets: 1234567890123n, speed: 1e9 });
+assert.equal(ios.get("te1/1/1").speed, 1e10);
+const nxIf = `Ethernet1/49 is up
+admin state is up, Dedicated Interface
+  MTU 9216 bytes, BW 100000000 Kbit , DLY 10 usec
+  RX
+    1000 unicast packets  0 multicast packets  0 broadcast packets
+    1000 input packets  64000 bytes
+  TX
+    2000 unicast packets  0 multicast packets  0 broadcast packets
+    2000 output packets  128000 bytes
+`;
+assert.deepEqual(R.parseCliCounters(nxIf).get("eth1/49"), { name: "Ethernet1/49", inOctets: 64000n, outOctets: 128000n, speed: 1e11 });
+const hwIf = `<ar-wan01>display interface
+GigabitEthernet0/0/1 current state : UP
+Line protocol current state : UP
+Description:WAN
+Speed : 100,  Loopback: NONE
+Duplex: FULL,  Negotiation: ENABLE
+Input:  3697368 packets, 264104568 bytes
+Output:  1234 packets, 99999 bytes
+<ar-wan01>`;
+assert.deepEqual(R.parseCliCounters(hwIf).get("gi0/0/1"), { name: "GigabitEthernet0/0/1", inOctets: 264104568n, outOctets: 99999n, speed: 1e8 });
+const jnIf = `user@mx> show interfaces extensive
+Physical interface: ge-0/0/1, Enabled, Physical link is Up
+  Link-level type: Ethernet, MTU: 1514, Speed: 1000mbps, BPDU Error: None,
+  Traffic statistics:
+   Input  bytes  :          5000000000          35000000 bps
+   Output bytes  :          7000000000         120000000 bps
+  Logical interface ge-0/0/1.0 (Index 70)
+    Traffic statistics:
+     Input  bytes  :                   1
+     Output bytes  :                   2
+Physical interface: xe-0/1/0, Enabled, Physical link is Up
+  Link-level type: Ethernet, MTU: 1514, Speed: 10Gbps,
+  Traffic statistics:
+   Input  bytes  :                  10
+   Output bytes  :                  20
+`;
+const jn = R.parseCliCounters(jnIf);
+assert.deepEqual(jn.get("gi0/0/1") ?? jn.get(T.canonPort("ge-0/0/1")), { name: "ge-0/0/1", inOctets: 5000000000n, outOctets: 7000000000n, speed: 1e9 }, "solo la interfaz física");
+assert.equal(jn.get(T.canonPort("xe-0/1/0")).speed, 1e10);
+assert.equal(R.parseCliCounters("% Invalid input detected at '^' marker.").size, 0);
+fast("contadores con línea enorme", 300, () => R.parseCliCounters(`Gi1 is up\n${"1 packets input, ".repeat(BIG / 16)}x`));
+fast("contadores con miles de interfaces", 1500, () => R.parseCliCounters(Array.from({ length: 5000 }, (_, i) => `Gi1/0/${i} is up\n 1 packets input, 2 bytes\n 3 packets output, 4 bytes`).join("\n")));
+
+// Riesgo: todo comando de contadores (y su alternativa NX-OS) es de consulta.
+const trafficCmds = [...Object.values(R.TRAFFIC_COMMANDS).filter(Boolean), ...Object.values(R.TRAFFIC_FALLBACK)];
+assert.deepEqual(trafficCmds.sort(), ["display interface", "show interface", "show interfaces", "show interfaces extensive"]);
+for (const cmd of trafficCmds) assert.equal(computeRisk(cmd), "read", cmd);
+assert.equal(R.TRAFFIC_COMMANDS.fortinet, undefined);
+
+// ---------- Exportaciones con tráfico ----------
+
+const tt = {
+  nodes: [
+    { id: "a", name: '=cmd|"<b>&', ip: "192.0.2.1", explored: true, x: 100, y: 100 },
+    { id: "b", name: "b<x>", explored: true, x: 400, y: 100 },
+    { id: "c", name: "c", explored: false, x: 250, y: 300 },
+  ],
+  links: [
+    { a: "a", aPort: "Gi1/0/1", b: "b", bPort: "Gi0/1", proto: "CDP" },
+    { a: "a", aPort: "Gi1/0/2", b: "c", bPort: "", proto: "LLDP" },
+  ],
+};
+const tmap = new Map([[T.linkKey(tt.links[0]), { ab: 950e6, ba: 35e6, speed: 1e9, util: 0.95, ts: Date.UTC(2026, 9, 23, 12) }]]);
+const tsvg = T.toSvg(tt, 170, 54, tmap);
+assert.ok(!/<b>|<x>/.test(tsvg), "SVG escapado");
+assert.match(tsvg, />↑ 950 Mb\/s ↓ 35 Mb\/s · 95 %<\/text>/);
+assert.match(tsvg, /stroke="#cf222e" stroke-width="4\.8"/, "rojo desde 90 %");
+assert.match(tsvg, /Utilización de 90 % o más/);
+assert.match(tsvg, /↑ de A hacia B, ↓ de B hacia A/);
+assert.equal((tsvg.match(/↑ /g) ?? []).length, 2, "solo el enlace con datos lleva etiqueta (más la leyenda)");
+assert.ok(!/Utilización/.test(T.toSvg(tt, 170, 54)), "sin tráfico, sin leyenda de tráfico");
+const tcsv = T.toCsv(tt, tmap).split("\n");
+assert.match(tcsv[0], /,protocolo,trafico_a_b_bps,trafico_b_a_bps,velocidad_enlace_bps,utilizacion_pct,lectura$/);
+assert.match(tcsv[1], /^"'=cmd\|""<b>&",/, "fórmula neutralizada");
+assert.match(tcsv[1], /,"CDP","950000000","35000000","1000000000","95\.0","2026-10-23T12:00:00\.000Z"$/);
+assert.match(tcsv[2], /,"LLDP","","","","",""$/, "enlace sin datos: celdas vacías");
+assert.equal(T.toCsv(tt).split("\n")[0].split(",").length, 14, "sin tráfico, columnas de siempre");
+assert.equal(T.toMermaid(tt), T.toMermaid(tt), "Mermaid no cambia");
+assert.ok(!/↑/.test(T.toMermaid(tt)));
+}
+
 console.log("topology: ok");
