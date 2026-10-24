@@ -464,8 +464,14 @@ pub fn run(
             label: m.name.clone(),
             path: root.join(&m.entry),
             cwd: root.clone(),
-            conn: if allow_session { conn } else { None },
+            // Un plugin opera sobre la pestaña activa, con el mismo control de riesgo.
+            targets: if allow_session {
+                conn.map(|c| vec![crate::scripts::TargetReq { conn: c, platform: None }]).unwrap_or_default()
+            } else {
+                vec![]
+            },
             allow_session,
+            options: crate::scripts::RunOptions::default(),
             env: vec![("NT_ACTION".into(), action.into()), ("NT_PLUGIN_DIR".into(), root.to_string_lossy().into())],
         },
         data,

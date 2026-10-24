@@ -26,6 +26,8 @@ import { useMonitors } from "./lib/monitors";
 import { ButtonBar } from "./components/ButtonBar";
 import { MacroModal } from "./components/MacroModal";
 import { ApprovalDialog, ApprovalRequest } from "./components/ApprovalDialog";
+import { ScriptPrompts } from "./components/ScriptPrompts";
+import { ScriptLaunch, ScriptLaunchDialog } from "./components/ScriptLaunchDialog";
 import type { Section } from "./components/SettingsModal";
 import type { Macro, UpdateInfo } from "./lib/settings";
 import { openUrl } from "@tauri-apps/plugin-opener";
@@ -103,7 +105,10 @@ function Workspace({
   const [settingsOpen, setSettingsOpen] = useState(false);
   const [settingsSection, setSettingsSection] = useState<Section | undefined>();
   const [macroEdit, setMacroEdit] = useState<Macro | null | undefined>(undefined);
-  const [scriptRun, setScriptRun] = useState<{ run: string; script: string } | null>(null);
+  const [scriptRun, setScriptRun] = useState<{ run: string; script: string; targets: number } | null>(null);
+  const scriptRunRef = useRef(scriptRun);
+  scriptRunRef.current = scriptRun;
+  const [scriptLaunch, setScriptLaunch] = useState<string | null>(null);
   const [approvals, setApprovals] = useState<ApprovalRequest[]>([]);
   const [mcpStatus, setMcpStatus] = useState("");
   const [toasts, setToasts] = useState<{ id: number; text: string; kind: "info" | "error" | "ai" }[]>([]);
@@ -236,10 +241,11 @@ function Workspace({
           toast(`IA · ${ok ? "" : "rechazado: "}${detail.split("\n")[0]}${target ? ` → ${target}` : ""}`, "ai");
       }),
       listen<{ run: string; script: string; kind: string; message: string }>("script-event", (e) => {
-        const { kind, message, script } = e.payload;
+        const { kind, message, script, run } = e.payload;
         if (kind === "log") toast(`${script}: ${message}`);
         else {
-          setScriptRun(null);
+          // Los plugins usan el mismo evento: solo el fin del script lanzado libera el botón.
+          if (scriptRunRef.current?.run === run) setScriptRun(null);
           toast(`${script}: ${message}`, kind === "error" ? "error" : "info");
         }
       }),
@@ -545,13 +551,27 @@ function Workspace({
   );
 
   /** Envía texto de Notas a la sesión activa, confirmando bloques en equipos remotos. */
-  const runScript = async (script: string) => {
-    const ctrl = activeCtrl();
-    if (!ctrl || !ctrl.isConnected()) return toast("Conecta una sesión antes de ejecutar el script", "error");
+  /** Abre el diálogo para elegir destinos y modo del script. */
+  const runScript = (script: string) => {
+    if (scriptRun) return toast(`Ya se está ejecutando ${scriptRun.script}`, "error");
+    setScriptLaunch(script);
+  };
+
+  const startScript = async (script: string, l: ScriptLaunch) => {
+    setScriptLaunch(null);
+    const targets = l.targets.flatMap((t) => {
+      const ctrl = controllers.current.get(t.id);
+      return ctrl && ctrl.isConnected() ? [{ conn: ctrl.connId(), platform: t.session.platform ?? null }] : [];
+    });
+    if (!targets.length) return toast("Conecta una sesión antes de ejecutar el script", "error");
     try {
-      const run = await invoke<string>("run_script", { id: ctrl.connId(), script });
-      setScriptRun({ run, script });
-      toast(`Ejecutando ${script}`);
+      const run = await invoke<string>("run_script", {
+        script,
+        targets,
+        options: { allowChanges: l.allowChanges, parallel: l.parallel, maxMinutes: l.maxMinutes },
+      });
+      setScriptRun({ run, script, targets: targets.length });
+      toast(`Ejecutando ${script}${targets.length > 1 ? ` en ${targets.length} sesiones` : ""}${l.allowChanges ? " (permite cambios)" : ""}`);
     } catch (e) {
       toast(String(e), "error");
     }
@@ -1313,6 +1333,10 @@ function Workspace({
           onCancel={h.cancelBroadcast}
           onConfirm={h.startBroadcast}
         />
+      )}
+      <ScriptPrompts toast={toast} />
+      {scriptLaunch && (
+        <ScriptLaunchDialog script={scriptLaunch} onCancel={() => setScriptLaunch(null)} onRun={(l) => startScript(scriptLaunch, l)} />
       )}
       {approvals[0] && (
         <ApprovalDialog

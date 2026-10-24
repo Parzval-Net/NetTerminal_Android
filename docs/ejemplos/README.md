@@ -7,7 +7,7 @@ Ejemplos de solo lectura usados en los videos tutoriales de scripts y plugins (v
 | `scripts/resumen_equipo.py` | Script con la API `import netterminal as nt`: versión, interfaces y ping | Cópialo a la carpeta `scripts/` de la app (barra de botones › Scripts › Abrir carpeta de scripts) y ejecútalo con una sesión conectada |
 | `scripts/primer_script.py` | Primer script: datos de la sesión (`nt.session`) y `nt.run` | Igual que el anterior |
 | `scripts/ping_destinos.py` | `clear`, `sendline`, `wait_for` y `read`, con manejo de `nt.ScriptTimeout` | Igual que el anterior |
-| `scripts/inventario_csv.py` | Inventario de switches Cisco IOS / IOS-XE (`show version`, `show interfaces status`) a `<carpeta de datos>/reportes/inventario.csv`, una fila por equipo | Ejecútalo en cada pestaña: cada ejecución agrega o actualiza la fila de ese equipo |
+| `scripts/inventario_csv.py` | Inventario de switches Cisco IOS / IOS-XE (`show version`, `show interfaces status`) a `<carpeta de datos>/reportes/inventario.csv`, una fila por equipo, con `nt.for_each` | Lánzalo con varias sesiones como destino (pestañas elegidas, una carpeta o paneles): recorre cada una. Con una versión anterior de la app, ejecútalo en cada pestaña |
 | `plugins/diagnostico-basico/` | Plugin 1.1.0 con tres acciones: versión, interfaces y ping | Herramientas › Plugins › Desde carpeta, revisa permisos y código, e instala |
 | `plugins/revision-puertos/` | Plugin 1.0.0 de dos archivos (`main.py` + `analisis.py`), permisos `session` y `files`: resumen de puertos, puertos con errores y exportación a CSV | Igual que el anterior |
 | `packs/consultas-campus.json` | Pack de comandos (`netterminal-commands` v1) | Catálogo (⌘L) › Packs de comandos › Importar pack |
@@ -17,7 +17,8 @@ Ejemplos de solo lectura usados en los videos tutoriales de scripts y plugins (v
 Validación (Node 22.6+ y Python 3; en Node anterior a 22.18 agrega `--experimental-strip-types`):
 
 - `node scripts/video/plugins/probar-ejemplos.mjs`: `resumen_equipo.py`, `diagnostico-basico` y `consultas-campus.json`.
-- `node scripts/video/v2/v3-automatizacion/probar-ejemplos.mjs`: los scripts del video 3, cada acción de `revision-puertos`, `turno-puertos.json` y la plantilla, contra un campus simulado de cinco equipos (incluidos un router sin `show interfaces status` y un equipo que no responde). Revisa también el CSV que se escribe.
+- `node scripts/video/v2/v3-automatizacion/probar-ejemplos.mjs`: los scripts del video 3, cada acción de `revision-puertos`, `turno-puertos.json` y la plantilla, contra un campus simulado de cinco equipos (incluidos un router sin `show interfaces status` y un equipo que no responde). El inventario corre con los cinco equipos como destino (dos en paralelo), con uno solo y con el `netterminal.py` anterior. Revisa también el CSV que se escribe.
+- `node scripts/tests/scripts-api.test.mjs`: la API de varias sesiones, el control de riesgo (consulta, cambio, corte, rechazo), `ask_secret`, "Detener script" y los tiempos máximos.
 
 Ambas pruebas ejecutan los archivos reales con Python y el `netterminal.py` de la app, con el mismo protocolo que `scripts.rs`, y clasifican cada comando enviado con el motor de riesgo de la app. La revisión de instalación de los plugins la cubre el test de Rust `plugins::tests::example_plugins_pass_review`.
 

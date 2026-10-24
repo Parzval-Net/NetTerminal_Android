@@ -51,7 +51,7 @@ Construido con [Tauri 2](https://tauri.app) (backend en Rust) y xterm.js. Usa el
 | Plantillas | Variables `{{nombre}}` en Notas: al enviar se piden los valores (se recuerdan los últimos, salvo las que parecen contraseñas o claves, que se piden ocultas y no se guardan). |
 | Sesiones | Carpetas y subcarpetas ilimitadas, arrastrar y soltar, menú contextual (conectar todas, nueva sesión aquí, renombrar, duplicar), indicador de sesiones abiertas. |
 | Contraseñas | Opcional por sesión (SSH, Telnet, TCP y Serial): se guarda en una bóveda cifrada de la app (`credentials.vault`) y se completa sola en el primer pedido de contraseña al conectar; en Telnet/Serial también envía el usuario. Campo solo de escritura (nunca se muestra), llave en el llavero del sistema o contraseña maestra en modo portable (Ajustes › Credenciales). |
-| Botones y scripts | Barra de comandos rápidos (texto con `{{variables}}` o script). Scripts Python con API mínima `import netterminal as nt` (`run`, `send`, `wait_for`, `read`), similar a `crt.Screen` de SecureCRT. Incluye ejemplo de respaldo de configuración. |
+| Botones y scripts | Barra de comandos rápidos (texto con `{{variables}}` o script). Scripts Python con API mínima `import netterminal as nt` (`run`, `send`, `wait_for`, `expect`, `read`), similar a `crt.Screen` de SecureCRT, en una o varias sesiones elegidas al lanzarlo, de solo lectura por defecto y con "Detener script". Incluye ejemplo de respaldo de configuración. Ver [Scripts Python](#scripts-python). |
 | Agentes IA (MCP) | Servidor MCP local para Claude Code, Claude Desktop, Gemini CLI y Codex: listar sesiones, leer salida, ejecutar comandos con aprobación del usuario y modo solo lectura. Apagado por defecto. |
 | Topología | Diagrama de vecinos CDP/LLDP (Cisco, Huawei, Juniper, Fortinet) por consola o por SNMP con un perfil v2c/v3 (LLDP-MIB, CISCO-CDP-MIB y, según las fuentes, OSPF-MIB, BGP4-MIB, BRIDGE/Q-BRIDGE-MIB e IP-MIB), vecinos OSPF/EIGRP/BGP opcionales, equipos y enlaces manuales, sugerencias desde descripciones y desde la tabla MAC (HSRP/VRRP y fabricante por OUI), con estado de puertos y Port-channel, tráfico por sentido en cada enlace (opcional, por SNMP o por consola, con color por utilización), ruta entre dos equipos, snapshots para comparar antes y después de un cambio, y exportación a SVG, draw.io, CSV o Mermaid. |
 | Comandos (⌘L) | Catálogo de 1.776 comandos verificados con fuente oficial. Equipos de red: Cisco (IOS, IOS-XE, NX-OS, IOS-XR, ASA), Juniper (Junos, Evolved, EX sin ELS), Fortinet (FortiOS 6.4 a 7.6), Huawei (VRP5, VRP8, YunShan OS en AR5700/AR6700/AR8000), Check Point (R80.40 a R82, clish y expert) y WatchGuard (Fireware 12.x y 2025+). Sistemas operativos (consultas de red: interfaces, DNS, rutas, ARP, conexiones, tráfico, Wi-Fi, firewall): Windows 10/11/Server (PowerShell), macOS 12 a 27 y Linux (Debian, Ubuntu, RHEL/Rocky/Alma, Fedora, SUSE, Arch, Alpine). Sintaxis por plataforma detectada, nivel de riesgo, favoritos, comandos propios y packs importables. En la terminal local se abre el catálogo del sistema del PC. |
@@ -160,6 +160,9 @@ Auditoría del binario con REA (Ghidra y utilidades nativas de macOS) y revisió
 | Túneles SSH: puertos y direcciones validados, escucha en 127.0.0.1 por defecto, aviso al usar 0.0.0.0 o túneles remotos, y doble validación con las reglas de argumentos extra | Con tests |
 | Alertas: expresiones con el motor lineal de Rust (sin ReDoS), sin respuestas automáticas, límite de avisos por regla | Con tests |
 | Envío desde Notas y botones: pasa por el mismo motor de riesgo que el catálogo; lo que puede cortar servicio se confirma siempre | Código |
+| Scripts y plugins: solo alcanzan las sesiones elegidas al lanzarlos (`sessions()` sin usuarios ni contraseñas); cada línea que envían se arma como en el CLI del equipo (retroceso, Ctrl-U, Ctrl-W) y pasa por `computeRisk` antes de su Enter: las consultas pasan, un cambio se confirma salvo en modo "permitir cambios" y lo que puede cortar servicio, o una línea con Tab, `?`, Esc o Ctrl-D, se confirma siempre, una vez por comando en cada ejecución y mostrando los destinos; rechazar o no responder en 2 minutos detiene el script sin enviar la línea | Con tests (Rust y Node) |
+| Scripts: los destinos quedan tomados mientras corre (lo tecleado, la difusión, MCP y las herramientas se rechazan en esas pestañas); máximo 4 sesiones en paralelo; tiempo máximo por ejecución; "Detener script" corta también una espera en curso y cierra los diálogos pendientes | Con tests (Rust y Node) |
+| Secretos de scripts: `ask_secret` usa un campo de contraseña que no pasa por el estado de la interfaz; el valor viaja solo al stdin del script y se enmascara en sus mensajes, errores y confirmaciones; no queda en logs ni historial. Los scripts no tienen acceso a la bóveda | Con tests (Rust y Node) |
 | Reconexión automática con espera creciente (5 s a 60 s) para no gatillar bloqueos de cuenta en TACACS/RADIUS; "Conectar todas" abre en tandas de 5 | Código |
 | Pegado: un bloque de varias líneas en un equipo remoto pide confirmación con vista previa (también con Cmd+V del menú nativo) | Código |
 | TFTP: la escritura se habilita solo durante una extracción, máx. 16 sesiones simultáneas, retransmisiones descartadas, tope de 8 GB por archivo y temporales únicos | Código |
@@ -273,6 +276,48 @@ Herramientas › Topología lee los vecinos del equipo conectado y dibuja el dia
 - **Exportar**: SVG (imagen), draw.io (editable), CSV (enlaces con estado, velocidad, descripción y agregado; con tráfico activo, también las últimas tasas por sentido, la velocidad del enlace y la utilización) o Mermaid.
 - Check Point y WatchGuard no tienen descubrimiento: no hay comandos LLDP documentados y verificables para Gaia ni Fireware. Aparecen cuando otro equipo los reporta como vecinos.
 
+## Scripts Python
+
+Los scripts viven en la carpeta `scripts/` de la app (barra de botones › Scripts › Abrir carpeta de scripts) y usan `import netterminal as nt`, que la app mantiene al día en esa carpeta. Al ejecutar un script (menú Scripts o un botón de tipo script) se eligen:
+
+- **Destino**: el mismo selector de la difusión (pestaña actual, pestañas elegidas, una carpeta o los paneles visibles). Se omiten terminales locales y pestañas desconectadas. El script solo puede usar esas sesiones; la pestaña activa, si está entre ellas, es la principal.
+- **Modo**: solo lectura por defecto. Con "permitir cambios" los comandos que cambian configuración se envían sin preguntar; lo que puede cortar servicio se confirma igual.
+- **En paralelo** (1 a 4) y **tiempo máximo** (5 a 120 minutos).
+
+API:
+
+| Función | Qué hace |
+| --- | --- |
+| `run(cmd, prompt, timeout=30)` | Envía el comando y devuelve su salida, sin el eco ni el prompt final |
+| `send(texto)`, `sendline(texto="")` | Envía texto tal cual, o con Enter |
+| `wait_for(regex, timeout=10, return_match_only=False)` | Espera hasta que la salida coincida. Devuelve **todo lo acumulado** hasta ese momento, incluido lo que llegó después de la coincidencia en el mismo fragmento. Con `return_match_only=True` devuelve solo hasta el final de la coincidencia y deja el resto para la próxima lectura. Si vence, lanza `nt.ScriptTimeout` con lo recibido en `.output` |
+| `expect(regex, timeout=10)` | Igual a `wait_for(..., return_match_only=True)` |
+| `read(idle=1, timeout=10)`, `clear()` | Lee hasta que el equipo deja de enviar; descarta lo pendiente |
+| `log(msg)`, `print(...)` | Mensaje en la app |
+| `session`, `data_dir` | Datos de la sesión principal y carpeta de datos de la app |
+| `sessions()` | Destinos elegidos: `name`, `type`, `host`, `port`, `platform`. Nunca usuarios ni contraseñas |
+| `on(nombre)` | Objeto con `run`, `send`, `sendline`, `wait_for`, `expect`, `read` y `clear` ligados a esa sesión |
+| `for_each(fn, parallel=None)` | Llama `fn(sesion)` en cada destino, de a uno o en paralelo hasta el tope elegido al lanzar. Devuelve `{nombre: resultado}`; si `fn` falló en una sesión, el resultado es la excepción |
+| `ask_secret(etiqueta)` | Pide un secreto en un diálogo de contraseña y lo devuelve. La app lo enmascara en los mensajes del script y en las confirmaciones. Cancelar lanza `nt.ScriptDenied` |
+| `allow_changes`, `max_parallel` | Lo que el usuario eligió al lanzar |
+
+```python
+import netterminal as nt
+
+def version(s):
+    s.run("terminal length 0")
+    return s.run("show version").splitlines()[0]
+
+for nombre, r in nt.for_each(version).items():
+    print(nombre, r)
+```
+
+Control de riesgo: cada línea que el script envía pasa por el motor de riesgo de la app antes de su Enter. Las consultas pasan sin preguntar; un cambio pide confirmación (salvo con "permitir cambios"); lo que puede cortar servicio, y las líneas con Tab, `?`, Esc o Ctrl-D (el equipo completa o recupera historial, así que no se sabe qué ejecuta), se confirman siempre. Cada línea se pregunta una vez por ejecución y el diálogo muestra todos los destinos. Rechazar, o no responder en 2 minutos, detiene el script y la línea no llega al equipo (`nt.ScriptDenied`). Mientras el script corre, lo que escribas en sus pestañas no se envía; "Detener script" en la barra de botones lo corta en cualquier momento, incluso durante una espera. Los plugins pasan por el mismo control.
+
+Contraseñas guardadas: los scripts no pueden leer la bóveda. Para un secreto que el script necesita (enable, una clave de un equipo intermedio), usa `ask_secret`. El enmascarado reemplaza el texto exacto: si el script lo transforma (codifica, invierte) o lo envía como parte de un comando que el equipo repite, el eco aparece en la terminal como si lo hubieras tecleado. Python corre con los permisos de tu usuario: el control de riesgo cubre lo que el script envía por la API, no lo que haga por su cuenta. Revisa los scripts antes de ejecutarlos.
+
+Pruebas: `node scripts/tests/scripts-api.test.mjs` (varias sesiones, riesgo, secretos, cancelación y tiempos con el `netterminal.py` real) y `cargo test scripts::` (protocolo, armado de líneas y control de riesgo en Rust).
+
 ## Crear un plugin
 
 ```
@@ -281,7 +326,7 @@ mi-plugin/
   main.py       import netterminal as nt; os.environ["NT_ACTION"] indica la acción
 ```
 
-Permisos: `session` (leer y enviar comandos a la sesión), `network`, `files`. Son declarativos y se muestran al instalar. Ejemplo completo en [plugins/ejemplo-inventario](plugins/ejemplo-inventario). En [docs/ejemplos](docs/ejemplos) hay un script, un plugin y un pack de solo lectura, validados con `node scripts/video/plugins/probar-ejemplos.mjs`.
+Permisos: `session` (leer y enviar comandos a la sesión activa, con el mismo control de riesgo que los scripts), `network`, `files`. Son declarativos y se muestran al instalar. Ejemplo completo en [plugins/ejemplo-inventario](plugins/ejemplo-inventario). En [docs/ejemplos](docs/ejemplos) hay un script, un plugin y un pack de solo lectura, validados con `node scripts/video/plugins/probar-ejemplos.mjs`.
 
 ## Publicar una versión
 
@@ -339,4 +384,5 @@ src-tauri/src/
   snmp.rs                 Cliente SNMP v1/v2c/v3 y receptor de traps (con tests)
   credentials.rs, seal.rs Bóveda cifrada y notas protegidas (XChaCha20-Poly1305, Argon2id)
   plugins.rs, updates.rs  Plugins con verificación SHA-256, aviso de versiones y actualización firmada
+  scripts.rs, netterminal.py Scripts Python: destinos, control de riesgo, secretos y API (con tests)
 ```

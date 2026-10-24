@@ -360,6 +360,10 @@ fn call_tool(app: &AppHandle, cfg: &McpConfig, name: &str, args: &Value) -> Resu
             let command = visible_command(args["command"].as_str().unwrap_or(""))?;
             let command = command.as_str();
             let (info, session) = state.conns.info(id).ok_or("Conexión no encontrada. Usa list_connections.")?;
+            if state.scripts.owner(id).is_some() {
+                activity(&info.name, command, false);
+                return Err(crate::scripts::BUSY.into());
+            }
             let local = session.session_type == crate::models::SessionType::Local;
             if (cfg.require_approval || local) && !state.mcp.ask(app, name, &info.name, command) {
                 activity(&info.name, command, false);

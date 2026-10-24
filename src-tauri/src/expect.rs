@@ -1,22 +1,46 @@
 //! Espera de salida al estilo "expect": hasta un patrón o hasta que el equipo deja de
-//! enviar datos. Lo usan los scripts y las herramientas MCP.
+//! enviar datos. Lo usan los scripts (con cancelación) y las herramientas MCP.
 
 use regex::Regex;
 use std::sync::mpsc::{Receiver, RecvTimeoutError};
 use std::time::{Duration, Instant};
 
-/// Acumula salida hasta que `re` coincide. Error con lo recibido si vence el plazo.
-pub fn wait_for(rx: &Receiver<String>, re: &Regex, timeout: Duration, buf: &mut String) -> Result<String, String> {
+/// Por qué terminó una espera sin coincidencia. Cada variante lleva lo recibido.
+#[derive(Debug, PartialEq)]
+pub enum WaitEnd {
+    Timeout(String),
+    /// La sesión se cerró.
+    Closed(String),
+    /// `cancel` devolvió true (script detenido).
+    Cancelled(String),
+}
+
+/// Cada cuánto una espera revisa `cancel`.
+const CHECK: Duration = Duration::from_millis(200);
+
+/// Acumula salida hasta que `re` coincide y la devuelve completa (el búfer queda vacío).
+/// Sin coincidencia devuelve lo recibido según la causa: plazo vencido, sesión cerrada o
+/// `cancel`.
+pub fn wait_for(
+    rx: &Receiver<String>,
+    re: &Regex,
+    timeout: Duration,
+    buf: &mut String,
+    cancel: &dyn Fn() -> bool,
+) -> Result<String, WaitEnd> {
     let deadline = Instant::now() + timeout;
     loop {
         if re.is_match(buf) {
             return Ok(std::mem::take(buf));
         }
+        if cancel() {
+            return Err(WaitEnd::Cancelled(std::mem::take(buf)));
+        }
         let left = deadline.saturating_duration_since(Instant::now());
         if left.is_zero() {
-            return Err(std::mem::take(buf));
+            return Err(WaitEnd::Timeout(std::mem::take(buf)));
         }
-        match rx.recv_timeout(left) {
+        match rx.recv_timeout(left.min(CHECK)) {
             Ok(chunk) => {
                 buf.push_str(&chunk);
                 // Lo que ya está en cola se agrega antes de buscar: un PTY entrega a menudo
@@ -25,8 +49,8 @@ pub fn wait_for(rx: &Receiver<String>, re: &Regex, timeout: Duration, buf: &mut 
                     buf.push_str(&more);
                 }
             }
-            Err(RecvTimeoutError::Timeout) => return Err(std::mem::take(buf)),
-            Err(RecvTimeoutError::Disconnected) => return Err(std::mem::take(buf)),
+            Err(RecvTimeoutError::Timeout) => {}
+            Err(RecvTimeoutError::Disconnected) => return Err(WaitEnd::Closed(std::mem::take(buf))),
         }
     }
 }
@@ -69,7 +93,7 @@ mod tests {
         });
         let re = Regex::new(r"[#>]\s*$").unwrap();
         let mut buf = String::new();
-        let out = wait_for(&rx, &re, Duration::from_secs(2), &mut buf).unwrap();
+        let out = wait_for(&rx, &re, Duration::from_secs(2), &mut buf, &|| false).unwrap();
         assert!(out.ends_with("Router#"));
     }
 
@@ -88,7 +112,7 @@ mod tests {
             let re = Regex::new(pat).unwrap();
             let mut buf = String::new();
             let t = Instant::now();
-            let out = wait_for(&rx, &re, Duration::from_secs(120), &mut buf).unwrap();
+            let out = wait_for(&rx, &re, Duration::from_secs(120), &mut buf, &|| false).unwrap();
             println!("wait_for {name}: {} fragmentos, {} KB en {:?}", n + 1, out.len() / 1024, t.elapsed());
         }
     }
@@ -99,8 +123,8 @@ mod tests {
         tx.send("parcial".to_string()).unwrap();
         let re = Regex::new("nunca").unwrap();
         let mut buf = String::new();
-        let err = wait_for(&rx, &re, Duration::from_millis(80), &mut buf).unwrap_err();
-        assert_eq!(err, "parcial");
+        let err = wait_for(&rx, &re, Duration::from_millis(80), &mut buf, &|| false).unwrap_err();
+        assert_eq!(err, WaitEnd::Timeout("parcial".into()));
         drop(tx);
     }
 

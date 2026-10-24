@@ -20,8 +20,6 @@ export const BroadcastTargetPicker = memo(function BroadcastTargetPicker() {
   // Posición fija (sobre el botón): la barra de botones recorta lo que se sale de ella.
   const [open, setOpen] = useState<{ right: number; bottom: number } | null>(null);
   const ref = useRef<HTMLDivElement>(null);
-  const folders = useMemo(() => openFolders(ws), [ws]);
-  const remote = ws.tabs.filter((t) => t.session.type !== "local");
 
   const count = useMemo(() => {
     if (target.mode === "current") return null;
@@ -52,19 +50,6 @@ export const BroadcastTargetPicker = memo(function BroadcastTargetPicker() {
   const multi = target.mode !== "current";
   const shortLabel =
     target.mode === "folder" ? target.folder.split("/").pop() || "Carpeta" : target.mode === "panes" ? "Paneles" : "Pestañas";
-  const option = (mode: TargetMode, label: string, disabled = false, hint?: string) => (
-    <label className={`flex items-center gap-2 px-2 h-7 rounded-md text-[12px] ${disabled ? "opacity-40" : "hover:bg-hover"}`} title={hint}>
-      <input
-        type="radio"
-        name="bc-mode"
-        className="accent-[var(--accent)]"
-        checked={target.mode === mode}
-        disabled={disabled}
-        onChange={() => setBroadcastTarget({ mode })}
-      />
-      {label}
-    </label>
-  );
 
   return (
     <div ref={ref} className="relative shrink-0">
@@ -90,51 +75,81 @@ export const BroadcastTargetPicker = memo(function BroadcastTargetPicker() {
           role="dialog"
           aria-label="Destino del envío"
         >
-          {option("current", "Pestaña actual")}
-          {option("tabs", "Pestañas elegidas", remote.length === 0)}
-          {target.mode === "tabs" && (
-            <div className="ml-6 mb-1 max-h-40 overflow-y-auto">
-              {remote.map((t) => (
-                <label key={t.id} className="flex items-center gap-2 px-1 h-6 text-[12px] hover:bg-hover rounded">
-                  <input
-                    type="checkbox"
-                    className="accent-[var(--accent)]"
-                    checked={target.tabIds.includes(t.id)}
-                    onChange={(e) =>
-                      setBroadcastTarget({
-                        tabIds: e.target.checked ? [...target.tabIds, t.id] : target.tabIds.filter((x) => x !== t.id),
-                      })
-                    }
-                  />
-                  <span className="truncate flex-1">{t.title}</span>
-                  {t.status !== "connected" && <span className="text-[10.5px] text-muted">desconectada</span>}
-                </label>
-              ))}
-            </div>
-          )}
-          {option("folder", "Todas las de una carpeta", folders.length === 0)}
-          {target.mode === "folder" && (
-            <select
-              className="field !h-7 !text-[12px] ml-6 mb-1 !w-[calc(100%-1.5rem)]"
-              value={target.folder}
-              onChange={(e) => setBroadcastTarget({ folder: e.target.value })}
-              aria-label="Carpeta de sesiones"
-            >
-              <option value="">Elige una carpeta…</option>
-              {folders.map((f) => (
-                <option key={f} value={f}>
-                  {f}
-                </option>
-              ))}
-            </select>
-          )}
-          {option("panes", "Paneles visibles (vista dividida)", !ws.panes, "Activa la vista dividida desde la barra de pestañas")}
+          <TargetOptions />
           <p className="px-2 pt-1.5 pb-0.5 text-[11px] text-muted leading-snug border-t border-line mt-1">
-            Antes de enviar se confirma la lista de equipos. Se omiten terminales locales y pestañas desconectadas. Scripts y
-            "Escribir" van solo a la pestaña actual.
+            Antes de enviar se confirma la lista de equipos. Se omiten terminales locales y pestañas desconectadas. Los scripts
+            usan este destino al lanzarse; "Escribir" va solo a la pestaña actual.
           </p>
         </div>
       )}
     </div>
   );
 });
+
+/**
+ * Opciones de destino (pestaña actual, pestañas elegidas, carpeta, paneles). Las usan el
+ * selector de la barra y el diálogo para lanzar scripts: el destino es uno solo para toda
+ * la app.
+ */
+export function TargetOptions() {
+  const target = useBroadcastTarget();
+  const ws = useWorkspace();
+  const folders = useMemo(() => openFolders(ws), [ws]);
+  const remote = ws.tabs.filter((t) => t.session.type !== "local");
+  const option = (mode: TargetMode, label: string, disabled = false, hint?: string) => (
+    <label className={`flex items-center gap-2 px-2 h-7 rounded-md text-[12px] ${disabled ? "opacity-40" : "hover:bg-hover"}`} title={hint}>
+      <input
+        type="radio"
+        name="bc-mode"
+        className="accent-[var(--accent)]"
+        checked={target.mode === mode}
+        disabled={disabled}
+        onChange={() => setBroadcastTarget({ mode })}
+      />
+      {label}
+    </label>
+  );
+  return (
+    <>
+      {option("current", "Pestaña actual")}
+      {option("tabs", "Pestañas elegidas", remote.length === 0)}
+      {target.mode === "tabs" && (
+        <div className="ml-6 mb-1 max-h-40 overflow-y-auto">
+          {remote.map((t) => (
+            <label key={t.id} className="flex items-center gap-2 px-1 h-6 text-[12px] hover:bg-hover rounded">
+              <input
+                type="checkbox"
+                className="accent-[var(--accent)]"
+                checked={target.tabIds.includes(t.id)}
+                onChange={(e) =>
+                  setBroadcastTarget({
+                    tabIds: e.target.checked ? [...target.tabIds, t.id] : target.tabIds.filter((x) => x !== t.id),
+                  })
+                }
+              />
+              <span className="truncate flex-1">{t.title}</span>
+              {t.status !== "connected" && <span className="text-[10.5px] text-muted">desconectada</span>}
+            </label>
+          ))}
+        </div>
+      )}
+      {option("folder", "Todas las de una carpeta", folders.length === 0)}
+      {target.mode === "folder" && (
+        <select
+          className="field !h-7 !text-[12px] ml-6 mb-1 !w-[calc(100%-1.5rem)]"
+          value={target.folder}
+          onChange={(e) => setBroadcastTarget({ folder: e.target.value })}
+          aria-label="Carpeta de sesiones"
+        >
+          <option value="">Elige una carpeta…</option>
+          {folders.map((f) => (
+            <option key={f} value={f}>
+              {f}
+            </option>
+          ))}
+        </select>
+      )}
+      {option("panes", "Paneles visibles (vista dividida)", !ws.panes, "Activa la vista dividida desde la barra de pestañas")}
+    </>
+  );
+}

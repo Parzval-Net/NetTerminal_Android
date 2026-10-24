@@ -235,7 +235,12 @@ async fn connect(
 }
 
 #[tauri::command]
-fn write(id: String, data: String, state: State<'_, AppState>) -> Result<(), String> {
+fn write(id: String, data: String, app: tauri::AppHandle, state: State<'_, AppState>) -> Result<(), String> {
+    // Una sesión tomada por un script no recibe lo tecleado: se mezclaría con el script.
+    if state.scripts.owner(&id).is_some() {
+        let _ = app.emit("script-input-blocked", &id);
+        return Err(scripts::BUSY.into());
+    }
     state.conns.write(&id, data.as_bytes())
 }
 
@@ -464,8 +469,21 @@ fn list_scripts(state: State<'_, AppState>) -> Vec<String> {
 }
 
 #[tauri::command(async)]
-fn run_script(id: String, script: String, app: tauri::AppHandle, state: State<'_, AppState>) -> Result<String, String> {
-    state.scripts.run(app.clone(), id, script, &state.data_dir)
+fn run_script(
+    script: String,
+    targets: Vec<scripts::TargetReq>,
+    options: Option<scripts::RunOptions>,
+    app: tauri::AppHandle,
+    state: State<'_, AppState>,
+) -> Result<String, String> {
+    state.scripts.run(app.clone(), script, targets, options.unwrap_or_default(), &state.data_dir)
+}
+
+/// Respuesta del usuario a un diálogo de un script: confirmación de un comando o secreto.
+/// El secreto no se registra en ningún lado: viaja solo al stdin del script.
+#[tauri::command]
+fn script_prompt_reply(run: String, id: String, approve: bool, value: Option<String>, state: State<'_, AppState>) {
+    state.scripts.answer(&run, &id, approve, value)
 }
 
 #[tauri::command]
@@ -641,6 +659,9 @@ fn tftp_delete(name: String, state: State<'_, AppState>) -> Result<(), String> {
 
 #[tauri::command]
 fn device_run(conn: String, command: String, timeout_secs: u64, app: tauri::AppHandle) -> Result<String, String> {
+    if app.state::<AppState>().scripts.owner(&conn).is_some() {
+        return Err(scripts::BUSY.into());
+    }
     filexfer::run(app, conn, command, timeout_secs)
 }
 
@@ -957,6 +978,7 @@ pub fn run() {
             list_scripts,
             run_script,
             stop_script,
+            script_prompt_reply,
             mcp_configure,
             mcp_decide,
             monitor_start,

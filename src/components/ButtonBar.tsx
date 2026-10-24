@@ -8,7 +8,7 @@ import { BroadcastTargetPicker } from "./BroadcastTarget";
 interface Props {
   macros: Macro[];
   connected: boolean;
-  running: { run: string; script: string } | null;
+  running: { run: string; script: string; targets: number } | null;
   onRun: (m: Macro) => void;
   onRunScript: (script: string) => void;
   onStopScript: () => void;
@@ -63,7 +63,7 @@ export const ButtonBar = memo(function ButtonBar(p: Props) {
               ],
             });
           }}
-          title={`${m.kind === "script" ? `Script: ${m.script}` : m.text}\nClic derecho para editar`}
+          title={`${m.kind === "script" ? `Script: ${m.script}\nAl ejecutarlo eliges los destinos y el modo` : m.text}\nClic derecho para editar`}
           className="shrink-0 flex items-center gap-1.5 px-2.5 h-6 rounded-md border border-line text-[12px] hover:bg-hover disabled:opacity-40 disabled:hover:bg-transparent"
         >
           {m.kind === "script" && <FileCode2 size={12} className="text-muted" />}
@@ -83,11 +83,13 @@ export const ButtonBar = memo(function ButtonBar(p: Props) {
         {p.running ? (
           <button
             onClick={p.onStopScript}
-            title="Detener script"
+            title={`Detener script${p.running.targets > 1 ? ` (${p.running.targets} sesiones)` : ""}`}
+            aria-label={`Detener script ${p.running.script}`}
             className="flex items-center gap-1.5 px-2 h-6 rounded-md text-[12px] text-warn hover:bg-hover"
           >
             <Square size={11} fill="currentColor" />
-            {p.running.script}
+            Detener {p.running.script}
+            {p.running.targets > 1 && <span className="text-muted">· {p.running.targets}</span>}
           </button>
         ) : (
           <button

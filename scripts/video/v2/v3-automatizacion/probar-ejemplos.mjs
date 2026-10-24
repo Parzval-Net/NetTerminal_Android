@@ -79,13 +79,28 @@ try {
   ]);
   console.log("ping_destinos.py:", s2.logs.join(" | "));
 
-  // 3. Inventario a CSV: una ejecución por pestaña, mismo archivo.
+  // 3. Inventario a CSV.
   const inv = `${EJ}scripts/inventario_csv.py`;
-  for (const n of ["core-sw01", "acc-sw01", "acc-sw02", "rtr-borde01", "sw-lab09", "acc-sw01"]) {
-    const r = await correr(inv, n);
-    enviados.push(...r.commands);
-    console.log(`inventario_csv.py en ${n}:`, r.logs.join(" | "));
-  }
+  // 3a. Una ejecución con cinco destinos (API de varias sesiones), dos a la vez.
+  const todos = ["core-sw01", "acc-sw01", "acc-sw02", "rtr-borde01", "sw-lab09"];
+  const multi = await correr(inv, "core-sw01", { sesiones: todos.map(sesion), sessionInfo: undefined, paralelo: 2 });
+  enviados.push(...multi.commands);
+  assert.equal(multi.estado, "ok");
+  assert.deepEqual(multi.confirmaciones, [], "Un inventario de solo lectura no pide confirmaciones");
+  assert.ok(multi.enVueloMax <= 2, `más de 2 sesiones a la vez: ${multi.enVueloMax}`);
+  for (const n of todos.slice(0, 4)) assert.ok(multi.porSesion[n].includes("show version"), `${n} no recibió show version`);
+  // sw-lab09 no responde: se corta en el primer comando y el resto de los equipos sigue.
+  assert.deepEqual(multi.porSesion["sw-lab09"], ["terminal length 0"]);
+  console.log(`inventario_csv.py en ${todos.length} sesiones:`, multi.logs.join(" | "));
+  // 3b. Una sola sesión: vuelve a escribir la fila de ese equipo en el mismo archivo.
+  const uno = await correr(inv, "acc-sw01");
+  enviados.push(...uno.commands);
+  assert.deepEqual(uno.porSesion, { "acc-sw01": ["terminal length 0", "show version", "show interfaces status"] });
+  // 3c. netterminal.py anterior (sin for_each ni ids): el script usa la sesión activa.
+  const viejo = await correr(inv, "acc-sw02", { helperDir: `${ROOT}scripts/tests/fixtures/legacy` });
+  enviados.push(...viejo.commands);
+  assert.deepEqual(viejo.commands, ["terminal length 0", "show version", "show interfaces status"]);
+  console.log("inventario_csv.py con la API anterior en acc-sw02:", viejo.logs.join(" | "));
   const csv = leerCsv(join(datos, "reportes", "inventario.csv"));
   assert.deepEqual(csv.map((r) => r.equipo), ["acc-sw01", "acc-sw02", "core-sw01", "rtr-borde01", "sw-lab09"]);
   const fila = (n) => csv.find((r) => r.equipo === n);
