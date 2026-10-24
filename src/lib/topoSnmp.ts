@@ -543,7 +543,7 @@ export function walkNotes(r: TopoRead): string[] {
   const seen = new Set<string>();
   for (const w of r.walks) {
     const name = oidLabel(w.oid);
-    if (w.timedOut) notes.push(`${name}: tiempo agotado, resultado parcial (${w.rows.length} filas)`);
+    if (w.timedOut) notes.push(`${name}: tiempo agotado, resultado parcial (${w.rows.length} ${w.rows.length === 1 ? "fila" : "filas"})`);
     else if (w.truncated) notes.push(`${name}: tope de 10.000 filas, resultado parcial`);
     else if (w.error && !seen.has(w.error)) {
       seen.add(w.error);

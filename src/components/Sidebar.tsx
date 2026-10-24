@@ -32,6 +32,7 @@ import {
   sessionsWithin,
 } from "../lib/folders";
 
+import { plural } from "../lib/plural";
 export interface ConfirmRequest {
   title: string;
   message: string;
@@ -158,7 +159,7 @@ export const Sidebar = memo(function Sidebar(p: Props) {
     if (!inside.length) return remove();
     p.onConfirm({
       title: `¿Eliminar la carpeta "${baseName(path)}"?`,
-      message: `Sus ${inside.length} sesiones y subcarpetas pasan a ${up || "la raíz"}. No se elimina ninguna sesión.`,
+      message: `${inside.length === 1 ? "Su sesión o subcarpeta pasa" : `Sus ${inside.length} sesiones y subcarpetas pasan`} a ${up || "la raíz"}. No se elimina ninguna sesión.`,
       label: "Eliminar carpeta",
       danger: true,
       action: remove,
@@ -170,7 +171,7 @@ export const Sidebar = memo(function Sidebar(p: Props) {
     if (!list.length) return;
     if (list.length <= 5) return p.onOpenMany(list);
     p.onConfirm({
-      title: `¿Conectar ${list.length} sesiones?`,
+      title: `¿Conectar ${plural(list.length, "sesión", "sesiones")}?`,
       message: `Se abrirá una pestaña por cada equipo de "${baseName(path)}".`,
       label: "Conectar todas",
       action: () => p.onOpenMany(list),

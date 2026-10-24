@@ -117,6 +117,7 @@ import { Btn, Collapsible, CountBadge, Label, Toggle } from "./ui";
 import { ContextMenu } from "../Sidebar";
 import type { MenuItem } from "../tabMenu";
 
+import { plural } from "../../lib/plural";
 type Menu = { x: number; y: number; items: MenuItem[] };
 
 const W = 170;
@@ -474,7 +475,7 @@ export function TopologyTool({
       onTopo((t) => mergeNeighbors(t, { name, ip: term.host, ports, addrs, macs }, [...neighbors, ...routing]));
       setSelected(nodeId(name));
       const parts = [
-        `${neighbors.length} vecinos CDP/LLDP`,
+        `${plural(neighbors.length, "vecino", "vecinos")} CDP/LLDP`,
         routingOn && ROUTING_COMMANDS[vendor].length ? `${routing.length} de ruteo` : "",
         macs ? `${Object.keys(macs).length} puertos con MAC` : "",
       ].filter(Boolean);
@@ -529,7 +530,7 @@ export function TopologyTool({
       setSelected(nodeId(name));
       traffic.prime(nodeId(name), p.id, d.ifIndex);
       const parts = [
-        `${d.neighbors.length} vecinos CDP/LLDP`,
+        `${plural(d.neighbors.length, "vecino", "vecinos")} CDP/LLDP`,
         routingOn ? `${d.routing.length} de ruteo` : "",
         macs ? `${Object.keys(macs).length} puertos con MAC` : "",
       ].filter(Boolean);
@@ -829,7 +830,7 @@ export function TopologyTool({
     ? "Apagado"
     : !visible
       ? "En pausa (herramienta oculta)"
-      : `Cada ${ui.interval} s · ${linkRates.size} enlaces con datos${trafficCli ? " · también por consola" : ""}`;
+      : `Cada ${ui.interval} s · ${plural(linkRates.size, "enlace", "enlaces")} con datos${trafficCli ? " · también por consola" : ""}`;
   const diffCount = diff ? diff.addedLinks.length + diff.removedLinks.length + diff.addedNodes.length + diff.removedNodes.length : 0;
   const hint = "Descubre los vecinos del equipo conectado y sigue la ruta salto a salto: clic en un vecino y 'Conectar'. Solo usa comandos de consulta.";
 

@@ -1,5 +1,6 @@
 import { useEffect, useState } from "react";
 import { useDragResize } from "../lib/useDragResize";
+import { isSecretVar } from "../lib/templateSecrets";
 
 export const TEMPLATE_VAR = /\{\{\s*([\w.-]+)\s*\}\}/g;
 
@@ -13,8 +14,6 @@ export function fillTemplate(text: string, values: Record<string, string>): stri
 
 const STORE = "templateValues";
 
-/** Variables con secretos: no se guardan en el almacenamiento local ni se muestran. */
-const SECRET_VAR = /pass|pwd|secret|clave|contrase|key|token|psk|community|auth/i;
 
 function remembered(): Record<string, string> {
   try {
@@ -35,7 +34,7 @@ export function TemplateDialog({ text, onSubmit, onCancel }: Props) {
   const names = templateVars(text);
   const [values, setValues] = useState<Record<string, string>>(() => {
     const prev = remembered();
-    return Object.fromEntries(names.map((n) => [n, SECRET_VAR.test(n) ? "" : (prev[n] ?? "")]));
+    return Object.fromEntries(names.map((n) => [n, isSecretVar(n) ? "" : (prev[n] ?? "")]));
   });
 
   useEffect(() => {
@@ -46,14 +45,14 @@ export function TemplateDialog({ text, onSubmit, onCancel }: Props) {
 
   const win = useDragResize<HTMLFormElement>("templateWindow");
   const missing = names.filter((n) => !values[n]?.trim());
-  const masked = Object.fromEntries(names.map((n) => [n, SECRET_VAR.test(n) && values[n] ? "••••••" : (values[n] ?? "")]));
+  const masked = Object.fromEntries(names.map((n) => [n, isSecretVar(n) && values[n] ? "••••••" : (values[n] ?? "")]));
   const preview = fillTemplate(text, masked).split("\n").slice(0, 6).join("\n");
 
   const submit = () => {
     if (missing.length) return;
     try {
       // Se descartan además secretos guardados por versiones anteriores.
-      const keep = Object.entries({ ...remembered(), ...values }).filter(([n]) => !SECRET_VAR.test(n));
+      const keep = Object.entries({ ...remembered(), ...values }).filter(([n]) => !isSecretVar(n));
       localStorage.setItem(STORE, JSON.stringify(Object.fromEntries(keep)));
     } catch {
       /* sin almacenamiento: no se recuerdan valores */
@@ -85,7 +84,7 @@ export function TemplateDialog({ text, onSubmit, onCancel }: Props) {
               <input
                 className="field"
                 autoFocus={i === 0}
-                type={SECRET_VAR.test(n) ? "password" : "text"}
+                type={isSecretVar(n) ? "password" : "text"}
                 autoComplete="off"
                 value={values[n] ?? ""}
                 onChange={(e) => setValues((v) => ({ ...v, [n]: e.target.value }))}

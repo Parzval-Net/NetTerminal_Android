@@ -41,6 +41,8 @@ import { Resolved, getBroadcastRun, isBroadcastRunning, publishWorkspace, stopBr
 import { SplitPanes } from "./components/SplitPanes";
 import { SplitLayout, SplitState, fillPanes, paneRect } from "./lib/split";
 import logo from "./assets/logo.svg";
+import { plural } from "./lib/plural";
+import { isQuickSession } from "./components/SessionIcon";
 import "./App.css";
 
 // Vistas pesadas y de uso ocasional: se cargan aparte para aligerar el arranque.
@@ -359,11 +361,18 @@ function Workspace({
   const requestClose = (id: string) => {
     const tab = tabs.find((t) => t.id === id);
     const risky = tab && tab.session.type !== "local" && states[id]?.status === "connected";
-    if (settings.confirmClose && risky)
+    // Una conexión rápida sin guardar se pierde al cerrar: se avisa siempre, aunque "Confirmar al cerrar" esté apagado.
+    const quick = !!tab && isQuickSession(tab.session);
+    if (tab && ((settings.confirmClose && risky) || quick))
       setConfirm({
-        title: "¿Cerrar la sesión?",
-        message: `Se cortará la conexión con ${tabTitle(tab)}.`,
-        label: "Cerrar sesión",
+        title: risky ? "¿Cerrar la sesión?" : "¿Cerrar la conexión rápida?",
+        message: [
+          risky && `Se cortará la conexión con ${tabTitle(tab)}.`,
+          quick && "Es una conexión rápida sin guardar: sus datos se pierden. Para conservarla, usa «Guardar como sesión…» en el menú de la pestaña.",
+        ]
+          .filter(Boolean)
+          .join("\n\n"),
+        label: risky ? "Cerrar sesión" : "Cerrar",
         danger: true,
         action: () => closeTab(id),
       });
@@ -465,14 +474,15 @@ function Workspace({
     step();
   };
 
-  /** Avisa qué se corta antes de cerrar varias pestañas; sin nada conectado y sin "Confirmar al cerrar", cierra directo. */
+  /** Avisa qué se corta antes de cerrar varias pestañas; sin nada conectado, sin conexiones rápidas y sin "Confirmar al cerrar", cierra directo. */
   const requestCloseMany = (scope: CloseScope, refId?: string) => {
     const list = tabsToClose(tabs, scope, refId);
     if (!list.length) return;
     const ids = list.map((t) => t.id);
     const summary = summarizeClose(list, states);
     const run = () => closeMany(scope, ids, refId);
-    if (!settings.confirmClose && summary.connected.length === 0 && summary.transfers === 0) return run();
+    // Las conexiones rápidas sin guardar se avisan siempre: cerrarlas pierde su configuración.
+    if (!settings.confirmClose && summary.connected.length === 0 && summary.transfers === 0 && summary.quick === 0) return run();
     const bc = getBroadcastRun();
     const broadcast =
       !!bc?.running && bc.items.some((x) => (x.status === "pending" || x.status === "sending") && ids.includes(x.tabId));
@@ -931,7 +941,7 @@ function Workspace({
       controllers.current
         .get(id)
         ?.copyAll()
-        .then((n) => toast(`${n} líneas copiadas al portapapeles`)),
+        .then((n) => toast(`${plural(n, "línea copiada", "líneas copiadas")} al portapapeles`)),
     toolsConnId: () => {
       const c = lastTermRef.current ? controllers.current.get(lastTermRef.current) : undefined;
       return c?.isConnected() ? c.connId() : null;
@@ -1250,6 +1260,7 @@ function Workspace({
       {modal && (
         <SessionModal
           initial={modal.session}
+          title={modal.tabId ? "Guardar como sesión" : undefined}
           defaultFolder={modal.folder}
           folders={folders}
           onClose={() => setModal(null)}

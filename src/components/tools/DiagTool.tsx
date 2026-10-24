@@ -139,7 +139,7 @@ export function DiagTool({ samples }: { samples: Record<string, Sample[]> }) {
             }}
           >
             <Label text="Host">
-              <input className="field" value={portHost} placeholder="10.0.0.1" onChange={(e) => setPortHost(e.target.value)} />
+              <input className="field" value={portHost} placeholder="192.0.2.10" onChange={(e) => setPortHost(e.target.value)} />
             </Label>
             <Label text="Puertos">
               <input className="field font-mono !text-[12px]" value={portText} onChange={(e) => setPortText(e.target.value)} />

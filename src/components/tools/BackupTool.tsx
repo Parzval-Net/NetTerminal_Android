@@ -11,6 +11,7 @@ import { BACKUP_PROFILES, backupLabel, cleanConfig, configProblem, guessBackupPr
 import { diffLines, diffStats, markSecretChanges, splitLines, unifiedDiff, DiffRow, SecretMarks } from "../../lib/diff";
 import { isWithin, normPath } from "../../lib/folders";
 
+import { plural } from "../../lib/plural";
 interface BackupFile {
   name: string;
   size: number;
@@ -82,7 +83,7 @@ export default function BackupTool({ terminals }: { terminals: TerminalRef[] }) 
           const problem = configProblem(clean);
           if (problem) return set(t.connId, { state: "error", text: problem });
           const file = await invoke<string>("backup_save", { device: t.session.name, content: clean, mask });
-          set(t.connId, { state: "ok", text: `${splitLines(clean).length} líneas · ${file}` });
+          set(t.connId, { state: "ok", text: `${plural(splitLines(clean).length, "línea", "líneas")} · ${file}` });
         } catch (e) {
           set(t.connId, { state: "error", text: String(e instanceof Error ? e.message : e) });
         }

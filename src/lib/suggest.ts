@@ -267,6 +267,13 @@ export interface SuggestEntry {
   tpl: string;
   /** Posición en `entries` (para los pesos de uso). */
   pos: number;
+  /** Lleva un filtro de salida ("| include"): con igual uso pierde ante el comando sin filtro. */
+  pipe: boolean;
+  /**
+   * Desempate precalculado (menor es mejor): palabras, largo hasta el marcador y filtro "|".
+   * Un solo número para que comparar no agregue costo por tecla.
+   */
+  tie: number;
 }
 
 export interface SuggestIndex {
@@ -325,7 +332,11 @@ export function buildIndex(vendors: CatalogVendor[], platform: string): SuggestI
       starts.push(at);
       at += t.length + 1;
     }
-    entries.push({ cmd, key, toks, starts, ...insertablePart(cmd), risk, desc: c.desc, order, tpl: c.cmd, pos: 0 });
+        const part = insertablePart(cmd);
+    const pipe = key.includes("|");
+    const len = Math.min(part.placeholder ? part.insert.length : cmd.length, 0xfffff);
+    const tie = toks.length * 0x200000 + len * 2 + (pipe ? 1 : 0);
+    entries.push({ cmd, key, toks, starts, ...part, risk, desc: c.desc, order, tpl: c.cmd, pos: 0, pipe, tie });
   });
   // El espacio es menor que cualquier carácter visible: ordenar por `key` ordena por palabras.
   entries.sort((a, b) => (a.key < b.key ? -1 : a.key > b.key ? 1 : a.order - b.order));
@@ -429,12 +440,19 @@ const fits = (e: SuggestEntry, off: number) => !e.placeholder || off <= e.insert
 /** Pesos de uso por `pos` (historial y favoritos); sin pesos, todo vale 0. */
 export type Weights = ArrayLike<number> | null | undefined;
 
-/** Prefijo exacto primero, luego más uso, luego el orden del catálogo y el más corto. */
+/**
+ * Prefijo exacto primero, luego más uso (historial y favoritos). Con igual uso, el comando que
+ * termina lo tecleado con menos palabras y menos texto agregado (`sh int` → `show interfaces `
+ * antes que `show interfaces transceiver detail`; con marcador cuenta hasta el marcador), luego
+ * el que no tiene filtro `|` y al final el orden del catálogo. El desempate es un número
+ * precalculado (`tie`): no agrega costo por tecla.
+ */
 function better(a: SuggestEntry, ax: boolean, b: SuggestEntry, bx: boolean, w: Weights): boolean {
   if (ax !== bx) return ax;
   const wa = w ? w[a.pos] : 0;
   const wb = w ? w[b.pos] : 0;
   if (wa !== wb) return wa > wb;
+  if (a.tie !== b.tie) return a.tie < b.tie;
   return a.order < b.order || (a.order === b.order && a.cmd.length < b.cmd.length);
 }
 

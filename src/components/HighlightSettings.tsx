@@ -18,6 +18,7 @@ import {
 } from "../lib/highlight";
 import { fontStack } from "../lib/theme";
 
+import { plural } from "../lib/plural";
 interface Props {
   settings: Settings;
   theme: ITheme;
@@ -76,7 +77,7 @@ export function HighlightSettings({ settings: s, theme, onChange }: Props) {
 
   const exportRules = async () => {
     await writeText(JSON.stringify(rules, null, 2));
-    flash(`${rules.length} reglas copiadas al portapapeles`);
+    flash(`${plural(rules.length, "regla copiada", "reglas copiadas")} al portapapeles`);
   };
 
   const importRules = async () => {
@@ -88,7 +89,7 @@ export function HighlightSettings({ settings: s, theme, onChange }: Props) {
       );
       if (!list.length) throw new Error();
       setRules([...rules, ...list.map((r) => ({ ...r, id: newId(), name: r.name || r.pattern }))]);
-      flash(`${list.length} reglas importadas`);
+      flash(`${plural(list.length, "regla importada", "reglas importadas")}`);
     } catch {
       flash("El portapapeles no contiene reglas válidas (JSON)");
     }

@@ -131,7 +131,7 @@ export function QuickConnectDialog({ onClose, onOpen }: Props) {
                   className="field"
                   autoFocus
                   value={s.host ?? ""}
-                  placeholder="10.0.0.1 o hostname"
+                  placeholder="192.0.2.10 o hostname"
                   onChange={(e) => set("host", e.target.value)}
                 />
               </Field>

@@ -21,6 +21,7 @@ import { RemoteFile, guessProfile, parseListing, parseMd5, profiles } from "../.
 import type { Session } from "../../types";
 import { Btn, Console, Label, fmtBytes } from "./ui";
 
+import { plural } from "../../lib/plural";
 export interface TerminalRef {
   connId: string;
   name: string;
@@ -514,7 +515,7 @@ export function FileManager({ terminals, settings: s, refreshRunning, onConfirm,
               if (names.length && canPull) enqueue("pull", names);
             },
           }}
-          footer={`${local.length} archivos`}
+          footer={plural(local.length, "archivo", "archivos")}
         >
           {local.length === 0 && <Empty text="Agrega firmware o configuraciones con el botón +" />}
           {local.map(([name, size]) => (
@@ -596,9 +597,9 @@ export function FileManager({ terminals, settings: s, refreshRunning, onConfirm,
           }}
           footer={
             remote?.free != null
-              ? `${remoteFiles.length} archivos · libre ${fmtBytes(remote.free)}${remote.total ? ` de ${fmtBytes(remote.total)}` : ""}`
+              ? `${plural(remoteFiles.length, "archivo", "archivos")} · libre ${fmtBytes(remote.free)}${remote.total ? ` de ${fmtBytes(remote.total)}` : ""}`
               : remote
-                ? `${remoteFiles.length} archivos`
+                ? plural(remoteFiles.length, "archivo", "archivos")
                 : ""
           }
         >

@@ -36,6 +36,7 @@ import { Btn, Label, Section, StatusPill, Toggle } from "./ui";
 import { useLocalIp } from "./useLocalIp";
 import SnmpConfigGen from "./SnmpConfigGen";
 
+import { plural } from "../../lib/plural";
 type Op = "get" | "getnext" | "walk" | "getbulk";
 const OPS: { id: Op; label: string }[] = [
   { id: "get", label: "GET" },
@@ -334,7 +335,7 @@ function QuerySection({ target, profile }: { target: TargetFn; profile: SnmpProf
         setRows((r) => [...r, ...add]);
       } else if (e.kind === "result" && e.data) {
         const d = e.data;
-        setStatus(`${d.count} filas en ${d.ms} ms${d.cancelled ? " · detenido" : d.truncated ? " · se alcanzó el máximo de filas" : ""}`);
+        setStatus(`${plural(d.count ?? 0, "fila", "filas")} en ${d.ms} ms${d.cancelled ? " · detenido" : d.truncated ? " · se alcanzó el máximo de filas" : ""}`);
       } else if (e.kind === "error") setError(e.text);
       else if (e.kind === "done") {
         job.current = null;
@@ -361,7 +362,7 @@ function QuerySection({ target, profile }: { target: TargetFn; profile: SnmpProf
       }
       const r = await invoke<Row[]>("snmp_request", { target: target(), op: o, oids, maxRep });
       setRows(r);
-      setStatus(`${r.length} filas en ${Math.round(performance.now() - start)} ms`);
+      setStatus(`${plural(r.length, "fila", "filas")} en ${Math.round(performance.now() - start)} ms`);
     } catch (e) {
       setError(String(e));
     }
@@ -451,7 +452,7 @@ function QuerySection({ target, profile }: { target: TargetFn; profile: SnmpProf
       {(rows.length > 0 || busy || status) && (
         <div className="mt-3">
           <div className="flex items-center gap-2 mb-2">
-            <span className="text-[12px] text-muted">{busy ? `${rows.length} filas…` : status}</span>
+            <span className="text-[12px] text-muted">{busy ? `${plural(rows.length, "fila", "filas")}…` : status}</span>
             <input className="field !h-7 !w-56 ml-auto" placeholder="Filtrar OID, nombre o valor" value={filter} onChange={(e) => setFilter(e.target.value)} />
             <Btn kind="ghost" title="Copiar como CSV" disabled={!rows.length} onClick={() => writeText(rowsToCsv(shown))}>
               <ClipboardCopy size={13} />
