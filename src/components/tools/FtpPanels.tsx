@@ -34,13 +34,15 @@ export function FtpServerSection({
   const [info, setInfo] = useState<FtpInfo | null>(null);
   // Subidas: solo por esta sesión de la app, nunca quedan habilitadas al reiniciar.
   const [write, setWrite] = useState(false);
+  // Elección del usuario: sin servidor, el interruptor vuelve a esto y no a lo que dejó el gestor.
+  const userWrite = useRef(false);
   const [error, setError] = useState("");
 
   const syncInfo = () => {
     invoke<FtpInfo | null>("ftp_server_info")
       .then((i) => {
         setInfo(i);
-        if (i) setWrite(i.write);
+        setWrite(i ? i.write : userWrite.current);
       })
       .catch(() => {});
   };
@@ -54,6 +56,7 @@ export function FtpServerSection({
   // Con el servidor activo, el cambio se aplica en caliente: mismas credenciales, sin cortar transferencias.
   const changeWrite = async (v: boolean) => {
     setError("");
+    userWrite.current = v;
     setWrite(v);
     if (!on) return;
     try {

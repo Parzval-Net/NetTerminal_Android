@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import { invoke } from "@tauri-apps/api/core";
 import { listen } from "@tauri-apps/api/event";
 import { open } from "@tauri-apps/plugin-dialog";
@@ -45,6 +45,9 @@ export function TransferTool({
   // Subidas TFTP: solo por esta sesión de la app, igual que en FTP (nunca quedan habilitadas
   // al reiniciar). Con el servidor activo se aplican en caliente, sin reiniciarlo.
   const [tftpWrite, setTftpWrite] = useState(false);
+  // Lo que eligió el usuario: con el servidor detenido el interruptor vuelve a esto, no a lo que
+  // dejó el gestor de archivos durante una extracción.
+  const userWrite = useRef(false);
   const [transfers, setTransfers] = useState<Transfer[]>([]);
   const [error, setError] = useState("");
 
@@ -53,7 +56,7 @@ export function TransferTool({
   // Estado real del servidor (el gestor de archivos puede habilitar subidas durante una extracción).
   const syncWrite = useCallback(() => {
     invoke<boolean | null>("server_write", { kind: "tftp" })
-      .then((w) => w != null && setTftpWrite(w))
+      .then((w) => setTftpWrite(w ?? userWrite.current))
       .catch(() => {});
   }, []);
   useEffect(() => {
@@ -64,6 +67,7 @@ export function TransferTool({
 
   const setWrite = async (v: boolean) => {
     setError("");
+    userWrite.current = v;
     setTftpWrite(v);
     if (!running.includes("tftp")) return;
     try {
