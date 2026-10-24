@@ -1,0 +1,15 @@
+# Gestor de archivos
+
+El gestor de archivos, arriba en Transferencias, junta todo en dos paneles: tu PC a la izquierda y el equipo a la derecha. Necesita una sesión abierta.
+
+Revisa Tipo de equipo. En NX-OS elígelo a mano, porque la app propone Cisco IOS, y ahí indicas la VRF. IP de este PC se elige según la ruta hacia el equipo.
+
+Leer archivos muestra el almacenamiento y el espacio libre.
+
+Para enviar, selecciona el archivo y pulsa Enviar, o arrástralo. La app escribe el copy, responde las confirmaciones y muestra el avance. Si falta espacio o el archivo existe, avisa antes.
+
+La app inicia el servidor necesario y, para traer, habilita las subidas TFTP solo durante la operación. Al terminar, el servidor queda encendido: detenlo.
+
+Con Verificar MD5 después de enviar, compara el hash al terminar. Si no coincide, queda en rojo.
+
+Respaldar config copia la running config a la carpeta compartida, sin enmascarar. Para comparar versiones usa el módulo Respaldos.

@@ -1,0 +1,13 @@
+# FTP: servidor y cliente FTPS
+
+Algunos equipos solo copian por FTP. Para ellos está el Servidor FTP, en el puerto 21.
+
+Cada vez que pulsas Iniciar se crea una contraseña nueva para el usuario nt, y los comandos para el equipo ya la incluyen. Es solo de lectura. Para recibir archivos, activa Permitir subidas antes de iniciar.
+
+FTP no cifra: credenciales y archivos viajan en claro. En Linux, si el 21 no inicia, usa el 2121.
+
+El Cliente FTP, FTPS es distinto: conecta tu PC a un servidor FTP de la empresa para traer firmware a la carpeta compartida.
+
+Escribe servidor, usuario y contraseña, que no se guarda, y pulsa Listar. La flecha trae el archivo.
+
+FTPS explícito viene activo. Cifra con TLS y verifica el certificado con los del sistema, sin excepciones. Si falla, revisa el certificado del servidor. No desactives TLS como solución.
