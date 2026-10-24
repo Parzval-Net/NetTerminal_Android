@@ -1,0 +1,7 @@
+# Respaldos y comparación
+
+Respaldos guarda la configuración de tus sesiones abiertas con solo comandos de consulta, como show running-config. Marca los equipos, revisa su perfil y pulsa Respaldar. Respalda hasta tres a la vez.
+
+Enmascarar secretos viene activo: contraseñas, llaves y communities quedan como asteriscos. Por eso un cambio de contraseña no se ve al comparar.
+
+En Respaldos guardados eliges A y B: el mismo equipo en dos fechas, o dos equipos para revisar un estándar. Pulsa Comparar. Ves las líneas agregadas y quitadas, y lo que no cambió se pliega. El resultado se copia o se exporta para el registro del cambio.

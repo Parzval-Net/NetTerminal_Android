@@ -1,0 +1,9 @@
+# Herramientas y módulos
+
+Bienvenido al segundo tutorial de NetTerminal: herramientas de red a fondo. Verás para qué sirve cada herramienta, cuándo usarla y los errores más comunes. Todos los datos son ficticios.
+
+Las herramientas se abren con Command E en macOS, o Control Shift E en Windows y Linux.
+
+A la izquierda están los módulos. Cada uno sigue funcionando al cambiar de sección, así no pierdes un servidor encendido ni una medición. El punto verde indica un servidor activo.
+
+Los módulos que no usas se ocultan en Ajustes, Módulos. Desactivar uno no borra su configuración.
