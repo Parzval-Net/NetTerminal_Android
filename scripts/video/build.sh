@@ -1,6 +1,7 @@
 #!/bin/zsh
 # Genera el tutorial narrado de NetTerminal (MP4 1920x1080 H.264 + AAC, .srt y capítulos).
-# Requisitos: macOS (voz Paulina de `say`), Google Chrome, ffmpeg y `npm install` hecho.
+# Requisitos: Kokoro local (ver scripts/video/README.md; NT_TTS=say usa la voz Paulina de macOS),
+# Google Chrome, ffmpeg y `npm install` hecho.
 # Usa vite en el puerto 1461 y Chrome por CDP en el 9361 para no chocar con otras instancias.
 # Uso: zsh scripts/video/build.sh [prefijos de capítulo para regrabar solo esos, p. ej. 03 07]
 # Variables: OUT_DIR (salida, por defecto videos/), WORK (trabajo, videos/.build), RATE (voz, 185).
