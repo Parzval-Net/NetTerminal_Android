@@ -943,7 +943,6 @@ fn macos_menu(app: &tauri::AppHandle) -> tauri::Result<tauri::menu::Menu<tauri::
     )
 }
 
-#[cfg_attr(mobile, tauri::mobile_entry_point)]
 /// Agrega `extra` al final de `current` sin duplicar carpetas: lo que ya había mantiene su
 /// orden y prioridad.
 fn merge_path(current: &std::ffi::OsStr, extra: &[std::path::PathBuf]) -> std::ffi::OsString {
@@ -1008,6 +1007,7 @@ fn extend_path() {
     std::env::set_var("PATH", merge_path(&current, &extra));
 }
 
+#[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
     extend_path();
     let app = tauri::Builder::default()
