@@ -208,7 +208,7 @@ function loadDismissed(): DismissedMap {
   }
 }
 
-type ConfirmReq = { title: string; message: string; label: string; danger?: boolean; action: () => void };
+type ConfirmReq = { title: string; message: string; label: string; danger?: boolean; defaultCancel?: boolean; action: () => void };
 
 /** El sistema pide reducir movimiento (se respeta aunque "Animación" esté activa). */
 function useReducedMotion(): boolean {
@@ -723,6 +723,7 @@ export function TopologyTool({
         message: `Se guardan hasta ${MAX_SNAPSHOTS} snapshots. Al guardar "${name}" se elimina ${dropped.length === 1 ? "el más antiguo" : `los ${dropped.length} más antiguos`}: ${dropped.map((d) => `"${d.name}"`).join(", ")}.`,
         label: "Guardar",
         danger: true,
+        defaultCancel: true,
         action: save,
       });
     else save();
@@ -981,6 +982,7 @@ export function TopologyTool({
             message: `Se borran ${topo.nodes.length} ${topo.nodes.length === 1 ? "equipo" : "equipos"} y ${topo.links.length} ${topo.links.length === 1 ? "enlace" : "enlaces"}${manual ? `, incluidos ${manual} ${manual === 1 ? "elemento agregado" : "elementos agregados"} a mano o desde sugerencias` : ""}. Los snapshots no se tocan: guarda uno antes si quieres recuperarlo.`,
             label: "Borrar diagrama",
             danger: true,
+            defaultCancel: true,
             action: () => {
               onTopo({ nodes: [], links: [] });
               setSelected(null);
@@ -1757,6 +1759,7 @@ export function TopologyTool({
                     message: "El diagrama actual (equipos, enlaces manuales y posiciones) se pierde. Guarda un snapshot antes si lo necesitas.",
                     label: "Reemplazar",
                     danger: true,
+                    defaultCancel: true,
                     action: open,
                   });
                 }}
@@ -1773,6 +1776,7 @@ export function TopologyTool({
                     message: "No se puede deshacer. El diagrama actual no cambia.",
                     label: "Eliminar",
                     danger: true,
+                    defaultCancel: true,
                     action: () => {
                       onSnapshots(snapshots.filter((s) => s.id !== snapshot.id));
                       setCompareId("");

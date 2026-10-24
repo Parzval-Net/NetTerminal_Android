@@ -111,8 +111,8 @@ export function FileManager({ terminals, settings: s, refreshRunning, onConfirm,
     setFs(profiles.find((x) => x.id === p)!.fs);
     setRemote(null);
     if (term.host)
-      invoke<string>("source_ip", { host: term.host })
-        .then(setIp)
+      invoke<string | null>("source_ip", { host: term.host })
+        .then((v) => v && setIp(v))
         .catch(() => {});
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [connId, term?.session.platform]);

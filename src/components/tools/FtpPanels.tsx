@@ -80,7 +80,7 @@ export function FtpServerSection({
   return (
     <Section
       title="Servidor FTP"
-      hint="Usuario nt y contraseña nueva en cada inicio. Solo lectura salvo que habilites subidas (se pueden activar o quitar con el servidor en marcha)."
+      hint="Usuario nt y contraseña nueva en cada inicio. Solo lectura salvo que habilites subidas."
       right={<StatusPill state={on ? "running" : "stopped"} label={on ? `Activo · TCP ${s.ftpPort}${info?.write ? " · con subidas" : ""}` : "Detenido"} />}
     >
       <div className="flex items-end gap-3 mb-3">
