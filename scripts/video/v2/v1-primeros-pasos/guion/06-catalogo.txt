@@ -4,6 +4,6 @@ Cubre Cisco, Juniper, Fortinet, Huawei, Check Point y WatchGuard, además de Win
 Detectar ejecuta un comando de consulta en el equipo y reconoce su plataforma, por ejemplo IOS-XE.
 La plataforma queda guardada en la sesión y ajusta la sintaxis de cada comando.
 Puedes buscar por comando o por tarea, por ejemplo vecinos.
-Cada comando trae su riesgo: Consulta, Cambia config/estado o Puede cortar servicio.
+Cada comando trae su riesgo: Consulta, Cambia config o estado, o Puede cortar servicio.
 Ejecutar pide confirmación si no es una consulta, y Escribir lo deja en la línea, sin Enter.
 La estrella lo marca como favorito, y Propio agrega tus comandos. Los packs los vemos en el video de automatización.

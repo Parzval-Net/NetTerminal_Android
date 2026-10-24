@@ -1,112 +1,110 @@
 # Fuentes del guion (archivo:línea)
 
-Rutas relativas a la raíz del repositorio, verificadas sobre `c0f706d` (v0.9.5). Formato: bloque del guion → respaldo en el código.
+Rutas relativas a la raíz del repositorio, verificadas sobre `146aaa6` (v0.9.7) en la auditoría (`scripts/video/v2/AUDITORIA-GUIONES.md`). Formato: bloque del guion → respaldo en el código.
 
 ## 01 Herramientas y módulos
-- ⌘E / Ctrl+Shift+E: `src/lib/platform.ts:7-11` (modificador), `src/lib/platform.ts:81` (`"e"` → tools); botón con título en `src/components/TabBar.tsx:264`.
-- Lista de módulos: `src/components/tools/ToolsView.tsx:22-33`. Siguen vivos al cambiar de sección: `ToolsView.tsx:53-56`, `:175-181`. Punto verde "Servidor activo": `ToolsView.tsx:163-167`.
-- Ajustes › Módulos y "Desactivar un módulo no borra su configuración": `src/components/SettingsModal.tsx:38-49`, `:332-344` (texto en `:335`). Visibles por defecto: `src/lib/settings.ts:156`.
+- ⌘E / Ctrl+Shift+E: `src/lib/platform.ts:3-11` (modificador), `:89-90` (`"e"` → tools); `README.md:60`.
+- Lista de módulos: `src/components/tools/ToolsView.tsx:22-32`. Punto verde "Servidor activo": `ToolsView.tsx:167`.
+- Ajustes › Módulos, "Desactivar un módulo no borra su configuración": `src/components/SettingsModal.tsx:67`, `:353`. Visibles por defecto: `src/lib/settings.ts:156`.
 
 ## 02 Topología: vecinos
-- Comandos de vecinos Cisco: `src/lib/topology.ts:89-95`; estado de puertos: `topology.ts:130-135`; alternativas NX-OS: `topology.ts:98-105`.
-- "Descubrir con" Consola/SNMP: `src/components/tools/TopologyTool.tsx:787-792`; "Equipo (sesión conectada)" y "Fabricante": `:795-814`; fabricante desde la sesión: `:354-358`.
-- "Estado de puertos" (marcado por defecto): `TopologyTool.tsx:299`, `:829-835`; "Descubrir vecinos": `:836-839`.
-- Port-channel en enlaces paralelos: `TopologyTool.tsx:977-1029` (`grp ×n`), `src/lib/topology.ts:903`.
-- Conectar y seguir la ruta, sesión guardada por IP o nombre, datos que se copian: `TopologyTool.tsx:626-660`, botón `:1471-1479`.
-- Selector de equipo: solo cambia solo si la sesión elegida ya no existe: `TopologyTool.tsx:351-353` (por eso el guion pide elegir el equipo nuevo a mano).
-- Desde aquí / Hasta aquí / Ruta / Copiar ruta: `TopologyTool.tsx:1444-1451`, `:1492-1524`; texto de ruta `src/lib/topology.ts:947-958`.
-- Snapshot, Comparar con, verde y rojo punteado: `TopologyTool.tsx:662-668`, `:1626-1731`, `:955-979`; máximo 20: `:122`.
-- "Abrir" reemplaza el diagrama: `TopologyTool.tsx:1675-1685`. Basurero sin confirmación: `:911-923`.
-- Exportar (Imagen SVG, draw.io (editable), CSV de enlaces y puertos, Copiar como Mermaid al portapapeles): `TopologyTool.tsx:865-890`.
+- Comandos de vecinos y estado de puertos por fabricante: `README.md:232-239`; implementación en `src/lib/topology.ts`.
+- "Descubrir con" Consola/SNMP, "Equipo (sesión conectada)", "Estado de puertos", "Descubrir vecinos": `src/components/tools/TopologyTool.tsx` (panel de descubrimiento); Port-channel en enlaces paralelos: `README.md:274`.
+- "Conectar y seguir la ruta" / `Conectar con "<sesión guardada>"`: `TopologyTool.tsx:1586`. **Cambio v0.9.7**: al conectar, la sesión queda elegida sola en "Equipo": `TopologyTool.tsx:402-409` (mensaje `… conectado y elegido en "Equipo": pulsa "Descubrir vecinos"`), `README.md:272`.
+- Desde aquí / Hasta aquí / Ruta: `README.md:273`; `TopologyTool.tsx:1603` (resumen `A → B`).
+- Snapshots, Comparar con, verde y rojo punteado, máximo 20: `README.md:275`. **Cambio v0.9.7**: confirmaciones para borrar el diagrama (`TopologyTool.tsx:1017`), reemplazar por un snapshot (`:1785-1796`) y eliminar un snapshot (`:1811`); comentario en `:329`.
+- Exportar SVG, draw.io, CSV y Mermaid: `README.md:276`.
 
 ## 03 Topología sin CDP ni LLDP
-- Tres fuentes, etiquetas y textos: `src/lib/topology.ts:1410-1432`; apagadas por defecto: `topology.ts:1434`, `src/lib/settings.ts:170`; apagada no envía comandos: `TopologyTool.tsx:395-429`.
-- Comandos de ruteo: `topology.ts:111-116`; direcciones propias: `:122-127`.
-- Equipo "visto por ruteo" con borde punteado: `TopologyTool.tsx:714-715`, `:1044-1069`; leyenda "Sesión BGP lógica": `topology.ts:974-981`, tooltip "Sesión lógica: no es un enlace físico" `TopologyTool.tsx:972`; fusión al explorar: README "Vecinos de ruteo" (`README.md` sección Topología) y `topology.ts:760` (`mergeNeighbors`).
-- Descripciones (ejemplo "UPLINK a dist-sw01 Gi1/0/48", requiere Estado de puertos): `topology.ts:1420-1424`, `:1481-1498`, `:1504-1538`; aviso sin descripciones `TopologyTool.tsx:586-590`.
-- MAC/OUI: comandos `topology.ts:1565-1570`; HSRP/VRRP `:1628-1636`; umbral 4 MAC `:1603`; clasificación alta/media/baja `:1793-1804`.
-- Sugerencias nunca se dibujan solas; Confirmar / Descartar; botón Sugerencias con contador: `topology.ts:1439-1440`, `TopologyTool.tsx:902-910`, `:1283-1337`.
-- Límites del OUI (tarjeta de red, teléfono IP, MAC aleatoria, tabla que envejece): `README.md` sección "Límites de MAC/OUI"; MAC local: `topology.ts:1619`.
-- Manual (+ Equipo, + Enlace, campos): `TopologyTool.tsx:1527-1623`; "Se guardan con el diagrama, entran en snapshots, rutas y exportaciones": `:1622`. Leyenda de estilos: `topology.ts:963-981`, `TopologyTool.tsx:1111-1178`.
+- Tres fuentes (`routing`, `desc`, `mac`), apagadas por defecto y sin comandos mientras están apagadas: `src/lib/topology.ts:1409-1448`, `README.md:241-247`, `README.md:186`.
+- Vecinos de ruteo (router-id o IP, borde punteado, fusión al explorar, iBGP como sesión lógica): `README.md:249`.
+- Sugerencias por descripción (usa las descripciones de "Estado de puertos"): `README.md:246`, `README.md:250`.
+- MAC/fabricante: comandos `README.md:247`; confianza alta (HSRP/VRRP), media (4 o más MAC, o una sola de fabricante de red), baja: `README.md:251`.
+- Confirmar / Descartar; **cambio v0.9.7**: las descartadas se recuerdan por equipo: `TopologyTool.tsx:215`, `:347-349`, `src/lib/topology.ts:1863-1868`, `README.md:275`.
+- Límites del fabricante de la MAC (tarjeta de red, teléfono IP, tabla que envejece): `README.md:252`.
+- Manual (+ Equipo, + Enlace) y leyenda por origen: `README.md:253`, `README.md:268`.
 
 ## 04 Topología por SNMP y tráfico
-- Modo SNMP, perfil v2c o v3 (v1 excluido), secretos guardados: `TopologyTool.tsx:325-328`, `:460-466`, `:817-827`.
-- "Descubrir por SNMP", GETBULK solo lectura, fuentes activas: `TopologyTool.tsx:460-503`, `:840-844`; plan `src/lib/topoSnmp.ts:144`; OSPF-MIB y BGP4-MIB (no hay EIGRP por SNMP): `topoSnmp.ts:90-100`, `src-tauri/src/snmp.rs:1969` (`TOPO_WALK_ROOTS`).
-- LLDP y CDP vacíos: `TopologyTool.tsx:494-496`. Topes 10.000 filas, 20 s por tabla: `snmp.rs:2059`, `topoSnmp.ts:541-553`.
-- Botón Tráfico y sección "Tráfico en enlaces": `TopologyTool.tsx:893-901`, `:1205-1281`; apagado al abrir: `:330-332`.
-- Intervalos 15/30/60, 30 por defecto: `useTopoTraffic.ts:22-23`, `TopologyTool.tsx:163`. Solo equipos explorados y con enlace: `useTopoTraffic.ts:176-180`. Solo visible y ventana no oculta: `useTopoTraffic.ts:113`, `:172-173`, `:221-223`.
-- Perfil por IP o nombre con secretos: `useTopoTraffic.ts:55-58`. "También por consola", comandos y riesgo `read`: `TopologyTool.tsx:1233-1239`, `src/lib/topoTraffic.ts:145-151`, `useTopoTraffic.ts:150-170`.
-- Tasa desde la segunda lectura, contador reiniciado o tasa imposible descartada: `topoTraffic.ts:37-71`, `TopologyTool.tsx:1274-1276`.
-- Opciones por defecto (color, flechas, velocidad activas; animación apagada): `TopologyTool.tsx:158-168`; Animación activa también las flechas: `:1253`.
-- Umbrales 70 % y 90 %, sentido más cargado: `topology.ts:1126-1139`, `topoTraffic.ts:84-87`; grosor por carga: `TopologyTool.tsx:987`; azul = velocidad desconocida (`--accent`): `TopologyTool.tsx:192`, `:1151-1156`, `src/App.css:14`.
-- Etiqueta "↑ … ↓ …" y ↑ de A hacia B; tooltip con nombres: `topology.ts:1154-1158`, `TopologyTool.tsx:966-970`, `:1163`.
+- Modo "SNMP (perfil)", perfil v2c o v3 con secretos guardados: `README.md:254`.
+- Lectura con GETBULK, solo lectura, lista fija de OID; OSPF-MIB y BGP4-MIB (EIGRP solo por consola): `README.md:254-261`, `README.md:187`, `src/lib/topoSnmp.ts:165` (`snmpDiscoveryPlan`).
+- **Cambio v0.9.7**: LLDP-V2-MIB si LLDP-MIB vuelve vacía: `src/lib/topoSnmp.ts:11-12`, `:61`, `:88-97`, `:188`, `:380` (`lldpV2FromSnmp`); `README.md:258`.
+- **Cambio v0.9.7**: tabla MAC por VLAN en Cisco (`community@vlan` o contexto `vlan-N`, máximo 64 VLAN): `src/lib/topoSnmp.ts:126-128`, `README.md:261-263`.
+- LLDP y CDP vacíos = protocolo apagado o agente sin esas MIB: `README.md:263`.
+- Botón "Tráfico" y sección "Tráfico en enlaces"; apagado por defecto; intervalos 15/30/60 (30 por defecto); solo visible: `src/components/tools/useTopoTraffic.ts:22-23`, `:71`, `:113`, `README.md:264`.
+- Perfil por IP o nombre; "También por consola" con `show interfaces` y riesgo `read`: `README.md:264`, `README.md:187`.
+- Tasa desde la segunda lectura: `src/lib/topoTraffic.ts:66-67`.
+- Interruptores "Color por utilización", "Flechas de dirección", "Velocidad de tráfico", "Animación" (apagada): `TopologyTool.tsx:1349-1361`, `README.md:264`.
+- Umbrales 70 % y 90 %, sentido más cargado: `src/lib/topology.ts:1128-1133`. **Corrección**: el color de "velocidad desconocida" es violeta (`--util-unknown: #6e5f99` / `#a99bd6`, `src/App.css:28`, `:56`; `TopologyTool.tsx:213`, `:1259-1263`), no azul.
+- **Cambio v0.9.7**: velocidad física antes que BW; con solo BW la utilización se marca "≈" aproximada: `src/lib/topoTraffic.ts:17-20`, `:66-70`, `:91-96`, `TopologyTool.tsx:1077`, `README.md:264`.
+- **Cambio v0.9.7**: la etiqueta nombra al equipo A ("core-sw01 → 120 Mb/s · ← 35 Mb/s"); detalle con ambos nombres al pasar el mouse: `TopologyTool.tsx:1077`, `:1271`, `README.md:264`.
 
 ## 05 Transferencias: conceptos
-- Una carpeta para TFTP, HTTP y FTP (`data/tftp`): `src-tauri/src/lib.rs:562-565`, `src-tauri/src/ftpserver.rs:540`.
-- "Archivos compartidos" con IPs de este PC: `src/components/tools/TransferTool.tsx:169-200`.
-- Firewall y redes privadas; servidores escuchan solo mientras están activos: `TransferTool.tsx:113-116`.
-- TFTP sin autenticación (servidor abierto a la red): `src/components/tools/FileManager.tsx:195-196`. TFTP en paso fijo (un bloque, espera ACK): RFC 1350, sección 2 (externo); implementación `src-tauri/src/servers.rs:566-590`.
-- HTTP solo lectura, más rápido para imágenes grandes: `TransferTool.tsx:145`; solo GET/HEAD: `servers.rs:594-599`.
-- FTP en claro: `src/components/tools/FtpPanels.tsx:73-75`.
-- SCP/SFTP sobre OpenSSH: `src-tauri/src/connection.rs:866-950`.
+- Una carpeta para TFTP, HTTP y FTP: `README.md:63-64`, `src-tauri/src/ftpserver.rs:538`.
+- Sección "Archivos compartidos" y selector "IP de este PC" (`IpSelect`): `src/components/tools/TransferTool.tsx:142`, `:202-204`.
+- Firewall y redes privadas; servidores escuchan solo mientras están activos: `TransferTool.tsx:143-148`, `SECURITY.md` (Servidores integrados).
+- TFTP sin autenticación y en paso fijo (bloque + ACK): RFC 1350 sección 2; `src-tauri/src/servers.rs`.
+- HTTP solo lectura, más rápido para imágenes grandes: `TransferTool.tsx:178`.
+- FTP en claro: `src/components/tools/FtpPanels.tsx:99`.
+- SCP/SFTP sobre el OpenSSH del sistema: `src-tauri/src/connection.rs:917-954`, `README.md:63`.
 
 ## 06 Servidores TFTP y HTTP
-- Puertos por defecto 69 y 8080: `src/lib/settings.ts:158-159`. Estado "Activo · UDP 69": `TransferTool.tsx:120`.
-- Comandos copiables (copy tftp, tftp get, copy http) con primer archivo y primera IP: `TransferTool.tsx:92-93`, `:132-136`, `:154-158`. IPs ordenadas por nombre de interfaz: `src-tauri/src/nettools.rs:280-289`.
-- "Permitir subidas" (persistente, aplica al iniciar): `TransferTool.tsx:65-79`, `:126`; rechazo de escritura: `servers.rs:434-436`; `allow_write` fijado al iniciar: `servers.rs:98-121`.
-- Aviso de Linux 69 → 1069: `TransferTool.tsx:138-142`; error de privilegios: `servers.rs:287-289`.
-- Lista "Transferencias" con avance: `TransferTool.tsx:202-232`. "Agregar": `TransferTool.tsx:81-90`, `lib.rs:598-607`.
+- Puertos por defecto 69 y 8080: `src/lib/settings.ts:158-159`. Estado "Activo · UDP 69": `TransferTool.tsx:153`.
+- Comandos copiables (`copy tftp`, `tftp get`, `copy http`) con **el archivo elegido** en Archivos compartidos y la IP del selector: `TransferTool.tsx:120-122`, `:167-169`, `:189-190`.
+- **Cambio v0.9.7**: "Permitir subidas" se aplica en caliente (`server_set_write`) y no se persiste (vale solo para la sesión de la app): `TransferTool.tsx:55-75`, `src-tauri/src/servers.rs:96`, `README.md:168`.
+- Aviso de privilegios en Linux y macOS (69 → 1069): `TransferTool.tsx:171-175`. Puertos alternativos 2121 (`FtpPanels.tsx:114`), 1514 (`SyslogTool.tsx:107`) y 1162 (`SnmpTool.tsx:780`).
+- Lista "Transferencias" con avance y botón "Agregar": `TransferTool.tsx:79-91`, `:109-118`, `:207-208`.
 
 ## 07 FTP
-- Puerto 21: `settings.ts:180`. Usuario fijo `nt` y contraseña aleatoria de 10 caracteres por inicio: `ftpserver.rs:56-63`, `:75`. Comandos con credenciales: `FtpPanels.tsx:55`, `:83-88`.
-- Solo lectura; "Permitir subidas" solo por esta sesión de la app: `FtpPanels.tsx:34-35`, `:66-68`.
-- Advertencia de FTP en claro y Linux 21 → 2121: `FtpPanels.tsx:73-75`, `:89`.
-- Cliente: campos, contraseña no se guarda, Listar, traer: `FtpPanels.tsx:160-252`. FTPS explícito activo por defecto, certificados del sistema sin excepciones: `FtpPanels.tsx:107`, `:179-189`; `src-tauri/src/ftpclient.rs:1-8`, `:103-107`.
+- Puerto 21: `settings.ts:180`. Usuario fijo `nt` y contraseña aleatoria de 10 caracteres por inicio: `src-tauri/src/ftpserver.rs:76`, `:538`; texto "Usuario nt y contraseña nueva en cada inicio": `FtpPanels.tsx:84`.
+- "Permitir subidas" con el servidor en marcha, sin cambiar la contraseña: `FtpPanels.tsx:92`, `src/components/tools/FileManager.tsx:201-205`, `README.md:63`.
+- Advertencia FTP en claro y 21 → 2121: `FtpPanels.tsx:99`, `:114`.
+- Cliente FTP/FTPS: campos, Listar, traer; FTPS explícito activo; certificados del sistema sin excepciones; FTPS implícito (990) no soportado: `FtpPanels.tsx:185-212`, `README.md:63`.
 
 ## 08 SFTP y SCP
-- Usuario, puerto, llave, jump host y algoritmos legacy de la sesión: `connection.rs:866-949` (scp) y `:951-985` (sftp).
-- SFTP interactivo, Abrir SFTP, known_hosts, comandos: `FtpPanels.tsx:256-287`; directorio local = carpeta compartida: `connection.rs:954-959`.
-- SCP/SFTP desde el gestor abren pestaña con contraseña: `FileManager.tsx:300-310`, `src/App.tsx:939-954`.
-- `ip scp server enable` y `feature sftp-server`: `FileManager.tsx:437-451`. SCP clásico (`-O`) con OpenSSH 9+: `connection.rs:899-905`; SFTP exige OpenSSH 8.7+: `connection.rs:907-913`.
-- Botón MD5 (archivo seleccionado en el equipo que también existe en el PC): `FileManager.tsx:534-541`; comandos MD5: `src/lib/devicefs.ts:64`, `:82`, `:105`; hash local: `lib.rs:609-630`.
+- Usuario, puerto, llave y jump host de la sesión: `connection.rs:917-954`; SCP clásico con `-O`: `connection.rs:952-954`.
+- SFTP interactivo ("Abrir SFTP"; `ls`, `cd`, `get`, `put`, `bye`; carpeta compartida): `FtpPanels.tsx:309-328`.
+- SCP/SFTP desde el gestor abren pestaña con contraseña: `FileManager.tsx:262` (comentario), `README.md:64`.
+- `ip scp server enable` y `feature sftp-server`: `FileManager.tsx` (notas del selector de protocolo), `README.md:64`.
+- **Cambio v0.9.7**: MD5 automático al terminar SCP/SFTP con código 0, en la sesión del equipo, con reintento cada 5 s hasta 2 minutos si un script tiene tomada la sesión: `FileManager.tsx:288-296`, `:346-359`, `README.md:64`.
+- **Cambio v0.9.7**: aviso en el SFTP interactivo al cerrar la pestaña ("selecciónalo en el gestor de archivos y pulsa MD5"): `FtpPanels.tsx:287-302`, `:328`, `README.md:64`.
+- Botón MD5 y comandos de verificación (`verify /md5` en Cisco): `FileManager.tsx:636-638`, `src/lib/devicefs.ts`.
 
 ## 09 Gestor de archivos
-- Dos paneles, sesión obligatoria: `FileManager.tsx:463-602`, `:299`.
-- Perfil sugerido (nunca propone NX-OS): `devicefs.ts:141-145`; VRF en NX-OS: `devicefs.ts:74-84`, `FileManager.tsx:453-460`.
-- IP según la ruta al equipo: `FileManager.tsx:113-116`, `lib.rs:648-649`.
-- Leer archivos y espacio libre: `FileManager.tsx:178-188`, `:575-581`; `devicefs.ts:119-138`.
-- Enviar, arrastrar, confirmaciones automáticas, aviso de espacio y sobrescritura: `FileManager.tsx:298-356`, `:524-526`; `src-tauri/src/filexfer.rs:1-3`, `:38-49`.
-- Servidor iniciado según la operación y subidas TFTP temporales; el servidor queda activo: `FileManager.tsx:190-232`.
-- Verificar MD5 después de enviar (activo por defecto) y rojo si no coincide: `FileManager.tsx:88`, `:144-158`, `:293-296`, `:431-436`.
-- Respaldar config (copy running-config al PC): `devicefs.ts:63`, `:70`, `FileManager.tsx:542-549`.
-- Respaldos del módulo en `data/backups`: `src-tauri/src/backups.rs:1`.
+- Dos paneles, sesión obligatoria: `FileManager.tsx` (encabezado del componente), `TransferTool.tsx:128-131`.
+- **Corrección**: el perfil se sugiere según la plataforma detectada; NX-OS usa `bootflash:` y `vrf management` (campo "VRF (management)"): `src/lib/devicefs.ts:74-83`, `:141-146`, `FileManager.tsx:478`, `:555`, `README.md:64`.
+- IP según la ruta al equipo (por defecto la de la ruta por defecto, físicas antes que virtuales): `README.md:64`.
+- Enviar, arrastrar, confirmaciones automáticas, aviso de espacio: `FileManager.tsx:432`, `TransferTool.tsx:130`.
+- **Cambio v0.9.7**: reutiliza el servidor activo; si lo inicia, lo detiene al terminar; subidas en caliente sin reiniciar ni cambiar la contraseña FTP, y se quitan al final: `FileManager.tsx:201-260`, `TransferTool.tsx:143-148`, `README.md:64`.
+- "Verificar MD5 después de enviar" y rojo si no coincide: `FileManager.tsx:526`, `:155-168`.
+- "Respaldar config": copia sin enmascarar, fuera de Respaldos: `FileManager.tsx:644-646`, `:751`, `README.md:64`.
 
 ## 10 Cliente SNMP
-- Solo lectura, sin SET: `SnmpTool.tsx:160-163`; README fila "SNMP".
-- Valores por defecto del perfil (v3, authPriv, SHA-256, AES-128, puerto 161, 2000 ms): `src/lib/snmp.ts:26-40`. MD5/DES ocultos: `snmp.ts:54-70`, `SnmpTool.tsx:154-155`, `:279`.
-- Advertencia v2c: `snmp.ts:73-79`.
-- Bóveda y secretos atados a host y puerto: `SnmpTool.tsx:113-129`, `:280`; `src-tauri/src/snmp.rs:1747-1760`.
-- GET, GETNEXT, WALK, GETBULK; WALK con GETBULK, Máx. filas y Detener: `SnmpTool.tsx:38-44`, `:349-372`, `:381-431`.
-- Conjuntos de OIDs, Interfaces con 64 bits, Medir tasas (10 s): `snmp.ts:222-296`, `SnmpTool.tsx:48`, `:541-567`, `:609-613`.
-- Receptor de traps apagado, 127.0.0.1 por defecto, puerto 162, aviso de Linux 1162: `SnmpTool.tsx:711-770`; `settings.ts:178-179`; `snmp.rs:1862-1878`.
-- Generador: plataformas `src/lib/snmpconfig.ts:48-55`; NMS obligatorio `snmpconfig.ts:185-187`; marcadores `snmpconfig.ts:104`, `SnmpConfigGen.tsx:156-160`; comentarios "Verifica" `snmpconfig.ts:285`, `:312`, `:331`, `:380`, `:417`.
+- Solo lectura, sin SET: `README.md:61`.
+- Perfil por defecto (v3, authPriv, SHA-256, AES-128, puerto 161): `src/lib/snmp.ts:26-40`. MD5/DES solo como legado: `README.md:61`.
+- Advertencia v2c: `src/lib/snmpconfig.ts:231`, `README.md:61`.
+- Bóveda y secretos atados a host y puerto: `README.md:61`, `README.md:181`, `SECURITY.md` (SNMPv3 y localización de claves).
+- GET, GETNEXT, WALK acotado y cancelable, GETBULK: `README.md:61`.
+- Conjuntos de OIDs (interfaces con contadores de 64 bits y tasas): `README.md:61`.
+- Receptor de traps apagado; escucha en 127.0.0.1 por defecto; selector "Escuchar en"; **cambio v0.9.7**: botón "Escuchar en <IP de gestión>": `src/components/tools/SnmpTool.tsx:714`, `:743-745`, `:764-769`; aviso 162 → 1162: `SnmpTool.tsx:780`; `src/lib/settings.ts:178-179`; `SECURITY.md` (el receptor es la excepción que escucha en 127.0.0.1).
+- Generador: plataformas, NMS obligatorio para la ACL, marcadores `<AUTH_PASS>`, comentarios "Verifica": `src/lib/snmpconfig.ts:104`, `:186`, `README.md:62`.
 
 ## 11 Monitoreo, diagnóstico, velocidad, subredes y Syslog
-- Nueva sonda, ICMP/TCP, 1 s, 3 fallas, alarma al caer y al recuperarse: `MonitorTool.tsx:24-35`, `:66-86`, `:219-276`.
-- Ping continuo, Traceroute, Puertos TCP: `DiagTool.tsx:84`, `:115`, `:133-150`.
-- Speedtest Cloudflare ~95 MB; iperf3 instalado: `PerfTool.tsx:63-64`, `:188-205`, `:211-297`.
-- Subredes IPv4/IPv6 y división solo IPv4: `SubnetTool.tsx:39`, `:64-75`.
-- Syslog UDP 514, logging host, filtro, severidad, archivo diario: `settings.ts:160`, `SyslogTool.tsx:72-110`.
+- Nueva sonda, ICMP/TCP, 1 s, 3 fallas, alarma al caer y al recuperarse: `src/components/tools/MonitorTool.tsx:29-31`, `:66-68`.
+- Ping continuo, Traceroute, Puertos TCP: `src/components/tools/DiagTool.tsx:84`, `:115`, `:133`.
+- Speedtest Cloudflare ~95 MB; iperf3 instalado: `src/components/tools/PerfTool.tsx:64`, `:193-197`.
+- Subredes IPv4/IPv6 y división: `src/components/tools/SubnetTool.tsx:39`, `:65-71`.
+- Syslog UDP 514, `logging host`, filtro, severidad, archivo diario; 514 → 1514: `settings.ts:160`, `src/components/tools/SyslogTool.tsx:81-84`, `:103-107`.
 
 ## 12 Respaldos y comparación
-- Comandos de consulta por perfil: `src/lib/backup.ts:15-22`; hasta 3 a la vez: `BackupTool.tsx:27`, `:167`.
-- Enmascarar secretos activo: `BackupTool.tsx:42`, `:202`, `:265`; enmascarado en disco: `backups.rs:99-211`.
-- A y B, Comparar, agregadas/quitadas/iguales, pliegues, copiar y exportar: `BackupTool.tsx:272-345`, `DiffView.tsx:31-58`.
+- Solo comandos de consulta; hasta 3 a la vez: `src/components/tools/BackupTool.tsx:27-28`, `:167`.
+- Enmascarar secretos activo: `BackupTool.tsx:202`, `:265`.
+- **Cambio v0.9.7**: "secreto cambiado" en la comparación entre fechas del mismo equipo, con huella HMAC-SHA256 por secreto: `src/lib/diff.ts:225-233`, `src/components/tools/DiffView.tsx:74`, `BackupTool.tsx:265`, `README.md:44`.
+- A y B, Comparar, agregadas/quitadas, pliegues, copiar y exportar: `BackupTool.tsx`, `DiffView.tsx`, `README.md:44`.
 
 ## 13 Cierre
 - Resumen de lo anterior; sin afirmaciones nuevas.
 
 ## Fuentes externas
 - RFC 1350, The TFTP Protocol (Revision 2), sección 2: cada paquete de datos espera su ACK antes del siguiente. https://www.rfc-editor.org/rfc/rfc1350
-- RFC 5798 (VRRP, MAC virtual) y Cisco "Configuring HSRP" (MAC virtual), citadas en `src/lib/topology.ts:1621-1627`.
-- Velocidad de narración de los videos anteriores: `docs/index.html` (duraciones 13:32 y 9:25) y conteo de palabras de `scripts/video/guion/*.txt` y `scripts/video/plugins/guion/*.txt`.
+- RFC 5798 (VRRP, MAC virtual) y Cisco "Configuring HSRP" (MAC virtual), citadas en `README.md:251`.
+- Velocidad real de la narración: 295 palabras del capítulo 07 del video 1 sintetizadas con Kokoro (`ef_dora`, velocidad 1.0) duran 116,4 s, es decir 152 palabras por minuto con pausas incluidas (medido en la auditoría).
