@@ -11,6 +11,8 @@ export interface ScriptLaunch {
   allowChanges: boolean;
   parallel: number;
   maxMinutes: number;
+  /** Permite `type_saved_password`: la app escribe la contraseña guardada (el script no la ve). */
+  vaultType: boolean;
 }
 
 interface Props {
@@ -32,6 +34,8 @@ export function ScriptLaunchDialog({ script, onRun, onCancel }: Props) {
   const [allowChanges, setAllowChanges] = useState(false);
   const [parallel, setParallel] = useState(1);
   const [maxMinutes, setMaxMinutes] = useState(30);
+  // Por ejecución: siempre empieza sin marcar.
+  const [vaultType, setVaultType] = useState(false);
 
   const resolved = useMemo(() => {
     const tabs = ws.tabs.map((t) => ({ id: t.id, session: t.session, title: t.title }) as Tab);
@@ -64,7 +68,7 @@ export function ScriptLaunchDialog({ script, onRun, onCancel }: Props) {
         onMouseDown={(e) => e.stopPropagation()}
         onSubmit={(e) => {
           e.preventDefault();
-          if (n) onRun({ targets: resolved.targets, allowChanges, parallel: Math.min(parallel, n), maxMinutes });
+          if (n) onRun({ targets: resolved.targets, allowChanges, parallel: Math.min(parallel, n), maxMinutes, vaultType });
         }}
         className="w-[460px] max-w-full bg-panel border border-line rounded-xl shadow-pop"
       >
@@ -125,6 +129,23 @@ export function ScriptLaunchDialog({ script, onRun, onCancel }: Props) {
               </span>
             </p>
           )}
+
+          <label className="mt-3 flex items-start gap-2 cursor-pointer">
+            <input
+              type="checkbox"
+              className="mt-0.5 accent-[var(--accent)]"
+              checked={vaultType}
+              disabled={n === 0}
+              onChange={(e) => setVaultType(e.target.checked)}
+            />
+            <span>
+              Permitir que el script escriba contraseñas guardadas en: {n ? resolved.targets.map(title).join(", ") : "ninguna sesión"}
+              <span className="block text-muted">
+                Solo con nt.type_saved_password(): la app la escribe en el pedido de login del equipo y el script nunca la ve. Vale para esta
+                ejecución.
+              </span>
+            </span>
+          </label>
 
           <div className="mt-3 flex gap-4">
             <label className="flex items-center gap-2">

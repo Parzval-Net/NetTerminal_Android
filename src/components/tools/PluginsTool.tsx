@@ -35,6 +35,7 @@ const PERM_TEXT: Record<string, string> = {
   session: "Leer y enviar comandos a la sesión conectada",
   network: "Conectarse a la red por su cuenta",
   files: "Leer o escribir archivos en tu equipo",
+  "vault-type": "Pedir que la app escriba la contraseña guardada de la sesión en su pedido de login (el plugin no la ve; se aprueba en cada ejecución)",
 };
 
 export function PluginsTool({
@@ -51,6 +52,9 @@ export function PluginsTool({
   const [error, setError] = useState("");
   const [output, setOutput] = useState<string[]>([]);
   const runs = useRef(new Set<string>());
+  // Plugins con "vault-type" a los que el usuario permitió escribir la contraseña guardada en la
+  // próxima ejecución. Se desmarca al ejecutar: la aprobación es por ejecución.
+  const [vaultOk, setVaultOk] = useState<Set<string>>(new Set());
   // Intérprete que usan scripts y plugins; "Volver a detectar" evita reiniciar tras instalarlo.
   const [py, setPy] = useState<{ ok: boolean; text: string } | null>(null);
   const checkPython = useCallback((again: boolean) => {
@@ -105,8 +109,14 @@ export function PluginsTool({
     const needsSession = p.permissions.includes("session");
     const conn = needsSession ? connId() : null;
     if (needsSession && !conn) return setError(`${p.name} necesita una sesión conectada en la pestaña activa.`);
+    const vaultType = p.permissions.includes("vault-type") && vaultOk.has(p.id);
+    setVaultOk((s) => {
+      const n = new Set(s);
+      n.delete(p.id);
+      return n;
+    });
     try {
-      const id = await invoke<string>("plugin_run", { id: p.id, action: a.id, conn });
+      const id = await invoke<string>("plugin_run", { id: p.id, action: a.id, conn, vaultType });
       runs.current.add(id);
       setOutput((o) => [...o, `▶ ${p.name} · ${a.label}`]);
     } catch (e) {
@@ -284,6 +294,28 @@ export function PluginsTool({
                 </span>
               ))}
             </div>
+            {p.permissions.includes("vault-type") && (
+              <label className="mb-2 flex items-start gap-2 text-[12px] cursor-pointer">
+                <input
+                  type="checkbox"
+                  className="mt-0.5 accent-[var(--accent)]"
+                  checked={vaultOk.has(p.id)}
+                  disabled={!p.enabled}
+                  onChange={(e) =>
+                    setVaultOk((s) => {
+                      const n = new Set(s);
+                      if (e.target.checked) n.add(p.id);
+                      else n.delete(p.id);
+                      return n;
+                    })
+                  }
+                />
+                <span>
+                  Permitir que el script escriba contraseñas guardadas en: la sesión de la pestaña activa
+                  <span className="block text-muted">Solo para la próxima ejecución; el plugin nunca ve la contraseña.</span>
+                </span>
+              </label>
+            )}
             <div className="flex flex-wrap gap-1.5">
               {p.actions.map((a) => (
                 <Btn key={a.id} disabled={!p.enabled} title={a.description} onClick={() => run(p, a)}>

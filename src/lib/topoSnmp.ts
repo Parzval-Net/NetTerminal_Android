@@ -8,6 +8,9 @@
  * - IF-MIB, RFC 2863 https://www.rfc-editor.org/rfc/rfc2863
  * - LLDP-MIB, IEEE Std 802.1AB-2005 cláusula 12.1
  *   https://www.ieee802.org/1/files/public/MIBs/LLDP-MIB-200505060000Z.txt
+ * - LLDP-V2-MIB, IEEE Std 802.1AB-2009 (raíz en LLDP-V2-TC-MIB: ieee802dot1mibs = 1.3.111.2.802.1.1)
+ *   https://www.ieee802.org/1/files/public/MIBs/LLDP-V2-MIB-200906080000Z.txt
+ * - CISCO-VTP-MIB, Cisco https://github.com/cisco/cisco-mibs/blob/main/v2/CISCO-VTP-MIB.my
  * - CISCO-CDP-MIB, Cisco https://github.com/cisco/cisco-mibs/blob/main/v2/CISCO-CDP-MIB.my
  * - OSPF-MIB, RFC 4750 (y RFC 1850) https://www.rfc-editor.org/rfc/rfc4750
  * - BGP4-MIB, RFC 4273 https://www.rfc-editor.org/rfc/rfc4273
@@ -55,6 +58,7 @@ export interface TopoRead {
 const IFT = "1.3.6.1.2.1.2.2.1"; // IF-MIB ifEntry (RFC 2863)
 const IFX = "1.3.6.1.2.1.31.1.1.1"; // IF-MIB ifXEntry (RFC 2863)
 const LLDP = "1.0.8802.1.1.2.1"; // lldpObjects (IEEE 802.1AB-2005)
+const LLDP2 = "1.3.111.2.802.1.1.13.1"; // lldpV2Objects (IEEE 802.1AB-2009)
 const CDP = "1.3.6.1.4.1.9.9.23.1.2.1.1"; // cdpCacheEntry (CISCO-CDP-MIB)
 
 /** OIDs por nombre. Cada valor se verificó contra el MIB citado arriba. */
@@ -81,6 +85,16 @@ export const OID = {
   lldpRemSysName: `${LLDP}.4.1.1.9`,
   lldpRemSysDesc: `${LLDP}.4.1.1.10`,
   lldpRemManAddrIfSubtype: `${LLDP}.4.2.1.3`,
+  // LLDP-V2-MIB (IEEE 802.1AB-2009): lldpV2RemEntry { lldpV2RemTable 1 } con columnas 5 a 11 y
+  // lldpV2RemManAddrEntry { lldpV2RemManAddrTable 1 }, ambas bajo lldpV2RemoteSystemsData (4).
+  lldpV2RemChassisIdSubtype: `${LLDP2}.4.1.1.5`,
+  lldpV2RemChassisId: `${LLDP2}.4.1.1.6`,
+  lldpV2RemPortIdSubtype: `${LLDP2}.4.1.1.7`,
+  lldpV2RemPortId: `${LLDP2}.4.1.1.8`,
+  lldpV2RemPortDesc: `${LLDP2}.4.1.1.9`,
+  lldpV2RemSysName: `${LLDP2}.4.1.1.10`,
+  lldpV2RemSysDesc: `${LLDP2}.4.1.1.11`,
+  lldpV2RemManAddrIfSubtype: `${LLDP2}.4.2.1.3`,
   // CISCO-CDP-MIB: cdpCacheEntry columnas 3, 4, 6, 7 y 8.
   cdpCacheAddressType: `${CDP}.3`,
   cdpCacheAddress: `${CDP}.4`,
@@ -109,7 +123,11 @@ export const OID = {
   dot1dTpFdbStatus: "1.3.6.1.2.1.17.4.3.1.3",
   dot1qTpFdbPort: "1.3.6.1.2.1.17.7.1.2.2.1.2",
   dot1qTpFdbStatus: "1.3.6.1.2.1.17.7.1.2.2.1.3",
-  // SNMPv2-MIB (RFC 3418): sysName { system 5 }.
+  // CISCO-VTP-MIB: vtpVlanState { vtpVlanEntry 2 }, vtpVlanEntry = { vtpVlanTable 1 } bajo
+  // vlanInfo { vtpMIBObjects 3 } de ciscoVtpMIB { ciscoMgmt 46 }.
+  vtpVlanState: "1.3.6.1.4.1.9.9.46.1.3.1.1.2",
+  // SNMPv2-MIB (RFC 3418): sysObjectID { system 2 } y sysName { system 5 }.
+  sysObjectID: "1.3.6.1.2.1.1.2.0",
   sysName: "1.3.6.1.2.1.1.5.0",
 } as const;
 
@@ -127,9 +145,12 @@ export const WALK_ALLOWED: string[] = [
   OID.ipAdEntIfIndex, OID.ipAdEntNetMask, OID.ipNetToPhysicalPhysAddress, OID.ipNetToPhysicalType,
   OID.ipNetToMediaPhysAddress, OID.ipNetToMediaType,
   OID.dot1dBasePortIfIndex, OID.dot1dTpFdbPort, OID.dot1dTpFdbStatus, OID.dot1qTpFdbPort, OID.dot1qTpFdbStatus,
+  OID.lldpV2RemChassisIdSubtype, OID.lldpV2RemChassisId, OID.lldpV2RemPortIdSubtype, OID.lldpV2RemPortId,
+  OID.lldpV2RemPortDesc, OID.lldpV2RemSysName, OID.lldpV2RemSysDesc, OID.lldpV2RemManAddrIfSubtype,
+  OID.vtpVlanState,
 ];
 export const GET_COLUMNS: string[] = [OID.ifSpeed, OID.ifInOctets, OID.ifOutOctets, OID.ifHCInOctets, OID.ifHCOutOctets, OID.ifHighSpeed];
-export const GET_SCALARS: string[] = [OID.sysName, OID.ospfRouterId, OID.bgpLocalAs, OID.bgpIdentifier];
+export const GET_SCALARS: string[] = [OID.sysObjectID, OID.sysName, OID.ospfRouterId, OID.bgpLocalAs, OID.bgpIdentifier];
 
 export interface SnmpPlanOptions {
   /** Fuente "Vecinos de ruteo": OSPF-MIB, BGP4-MIB e ipAddrTable. */
@@ -142,7 +163,7 @@ export interface SnmpPlanOptions {
 
 /** OIDs a leer: LLDP y CDP siempre; el resto solo con su fuente activa. */
 export function snmpDiscoveryPlan(o: SnmpPlanOptions): { gets: string[]; walks: string[] } {
-  const gets: string[] = [OID.sysName];
+  const gets: string[] = [OID.sysObjectID, OID.sysName];
   const walks: string[] = [
     OID.ifName, OID.ifDescr,
     OID.lldpLocPortTable, OID.lldpRemChassisIdSubtype, OID.lldpRemChassisId, OID.lldpRemPortIdSubtype, OID.lldpRemPortId,
@@ -163,6 +184,18 @@ export function snmpDiscoveryPlan(o: SnmpPlanOptions): { gets: string[]; walks: 
 
 /** ARP por la tabla obsoleta, solo si ipNetToPhysicalTable no respondió (agentes antiguos). */
 export const ARP_FALLBACK = [OID.ipNetToMediaPhysAddress, OID.ipNetToMediaType];
+
+/** LLDP-V2-MIB (802.1AB-2009), solo si LLDP-MIB (2005) no trajo vecinos. */
+export const LLDP_V2_FALLBACK = [
+  OID.lldpV2RemChassisIdSubtype, OID.lldpV2RemChassisId, OID.lldpV2RemPortIdSubtype, OID.lldpV2RemPortId,
+  OID.lldpV2RemPortDesc, OID.lldpV2RemSysName, OID.lldpV2RemSysDesc, OID.lldpV2RemManAddrIfSubtype,
+];
+
+/** Lista de VLAN de Cisco (CISCO-VTP-MIB) y tablas MAC de BRIDGE-MIB que se leen por VLAN. */
+export const VLAN_LIST = [OID.vtpVlanState];
+export const VLAN_FDB_WALKS = [OID.dot1dBasePortIfIndex, OID.dot1dTpFdbPort, OID.dot1dTpFdbStatus];
+/** Máximo de VLAN que se leen una por una. */
+export const MAX_VLAN_READS = 64;
 
 // ---------- Lectura de varbinds ----------
 
@@ -295,38 +328,90 @@ export function lldpFromSnmp(r: TopoRead, names: Map<number, string>, basePortIf
   };
   const res: Neighbor[] = [];
   for (const [key, { suffix }] of latest) {
-    const chSub = int(cols.chSub.get(suffix));
-    const chRow = cols.ch.get(suffix);
-    const chassis =
-      chSub === CHASSIS_MAC
-        ? macOf(chRow)
-        : chSub === CHASSIS_NET
-          ? ((b) => (b && b[0] === 1 ? ipv4Of(b.slice(1)) : undefined))(octets(chRow))
-          : text(chRow, 64);
-    const name = text(cols.sys.get(suffix), 255) ?? chassis;
-    if (!name) continue;
-    const ptSub = int(cols.ptSub.get(suffix));
-    const ptRow = cols.pt.get(suffix);
-    const ptText = text(ptRow, 64);
-    const ptDesc = text(cols.ptDesc.get(suffix), 64);
-    const remote =
-      ptSub === PORT_IFNAME || (ptSub === PORT_LOCAL && ptText && !/^\d+$/.test(ptText))
-        ? ptText
-        : ptSub === PORT_MAC
-          ? ptDesc ?? macOf(ptRow)
-          : ptSub === PORT_ALIAS
-            ? ptDesc ?? ptText
-            : ptDesc ?? ptText;
-    const localPort = localName(Number(key.split(".")[0]));
-    res.push({
-      name,
-      localPort,
-      remotePort: remote ?? "",
-      ip: man.get(key),
-      // Primera línea de lldpRemSysDesc (antes de limpiar: los saltos de línea también se quitan).
-      platform: ((row) => (row ? text({ ...row, value: row.value.split(/\r?\n/)[0] }, 255) : undefined))(cols.desc.get(suffix)),
-      proto: "LLDP",
-    });
+    const n = lldpNeighbor(cols, suffix, localName(Number(key.split(".")[0])), man.get(key));
+    if (n) res.push(n);
+  }
+  return res;
+}
+
+type LldpCols = Record<"chSub" | "ch" | "ptSub" | "pt" | "ptDesc" | "sys" | "desc", Map<string, TopoRow>>;
+
+/** Un vecino LLDP desde las columnas de lldpRemTable o lldpV2RemTable (mismos subtipos). */
+function lldpNeighbor(cols: LldpCols, suffix: string, localPort: string, ip: string | undefined): Neighbor | undefined {
+  const chSub = int(cols.chSub.get(suffix));
+  const chRow = cols.ch.get(suffix);
+  const chassis =
+    chSub === CHASSIS_MAC
+      ? macOf(chRow)
+      : chSub === CHASSIS_NET
+        ? ((b) => (b && b[0] === 1 ? ipv4Of(b.slice(1)) : undefined))(octets(chRow))
+        : text(chRow, 64);
+  const name = text(cols.sys.get(suffix), 255) ?? chassis;
+  if (!name) return undefined;
+  const ptSub = int(cols.ptSub.get(suffix));
+  const ptRow = cols.pt.get(suffix);
+  const ptText = text(ptRow, 64);
+  const ptDesc = text(cols.ptDesc.get(suffix), 64);
+  const remote =
+    ptSub === PORT_IFNAME || (ptSub === PORT_LOCAL && ptText && !/^\d+$/.test(ptText))
+      ? ptText
+      : ptSub === PORT_MAC
+        ? ptDesc ?? macOf(ptRow)
+        : ptSub === PORT_ALIAS
+          ? ptDesc ?? ptText
+          : ptDesc ?? ptText;
+  return {
+    name,
+    localPort,
+    remotePort: remote ?? "",
+    ip,
+    // Primera línea de lldpRemSysDesc (antes de limpiar: los saltos de línea también se quitan).
+    platform: ((row) => (row ? text({ ...row, value: row.value.split(/\r?\n/)[0] }, 255) : undefined))(cols.desc.get(suffix)),
+    proto: "LLDP",
+  };
+}
+
+/**
+ * Vecinos LLDP desde LLDP-V2-MIB (IEEE 802.1AB-2009), para agentes que no publican LLDP-MIB de
+ * 2005. El índice de lldpV2RemTable es lldpV2RemTimeMark.lldpV2RemLocalIfIndex.
+ * lldpV2RemLocalDestMACAddress.lldpV2RemIndex: el puerto local ya es un ifIndex. Los subtipos
+ * de chassis y puerto tienen los mismos valores que en 2005 (LLDP-V2-TC-MIB).
+ */
+export function lldpV2FromSnmp(r: TopoRead, names: Map<number, string>): Neighbor[] {
+  const cols = {
+    chSub: column(r, OID.lldpV2RemChassisIdSubtype),
+    ch: column(r, OID.lldpV2RemChassisId),
+    ptSub: column(r, OID.lldpV2RemPortIdSubtype),
+    pt: column(r, OID.lldpV2RemPortId),
+    ptDesc: column(r, OID.lldpV2RemPortDesc),
+    sys: column(r, OID.lldpV2RemSysName),
+    desc: column(r, OID.lldpV2RemSysDesc),
+  };
+  // Clave ifIndex.destino.remIndex -> sufijo con el TimeMark más reciente.
+  const latest = new Map<string, { tm: number; suffix: string; ifIndex: number }>();
+  for (const m of Object.values(cols)) {
+    for (const suffix of m.keys()) {
+      const p = nums(suffix);
+      if (p.length !== 4 || p.some((x) => !Number.isInteger(x))) continue;
+      const key = `${p[1]}.${p[2]}.${p[3]}`;
+      const cur = latest.get(key);
+      if (!cur || p[0] > cur.tm) latest.set(key, { tm: p[0], suffix, ifIndex: p[1] });
+    }
+  }
+  const man = new Map<string, string>();
+  for (const suffix of column(r, OID.lldpV2RemManAddrIfSubtype).keys()) {
+    // TimeMark.IfIndex.Destino.RemIndex.Subtype(1 = IPv4).Largo.Bytes
+    const p = nums(suffix);
+    if (p.length >= 10 && p[4] === 1 && p[5] === 4) {
+      const ip = ipv4Of(p.slice(6, 10));
+      const key = `${p[1]}.${p[2]}.${p[3]}`;
+      if (ip && isIpv4(ip) && ip !== "0.0.0.0" && !man.has(key)) man.set(key, ip);
+    }
+  }
+  const res: Neighbor[] = [];
+  for (const [key, { suffix, ifIndex }] of latest) {
+    const n = lldpNeighbor(cols, suffix, portName(names, ifIndex) ?? `puerto ${ifIndex}`, man.get(key));
+    if (n) res.push(n);
   }
   return res;
 }
@@ -554,16 +639,84 @@ export function walkNotes(r: TopoRead): string[] {
   return notes;
 }
 
-/** Convierte una lectura SNMP a las estructuras de la topología. */
-export function parseSnmpDiscovery(r: TopoRead, o: SnmpPlanOptions): SnmpDiscovery {
-  const names = ifNames(r);
-  const basePortIf = new Map<number, number>();
+/** dot1dBasePortTable: puerto del bridge -> ifIndex. */
+function basePorts(r: TopoRead): Map<number, number> {
+  const res = new Map<number, number>();
   for (const [suffix, row] of column(r, OID.dot1dBasePortIfIndex)) {
     const bp = Number(suffix);
     const i = int(row);
-    if (Number.isInteger(bp) && i !== undefined) basePortIf.set(bp, i);
+    if (Number.isInteger(bp) && i !== undefined) res.set(bp, i);
   }
-  const lldp = lldpFromSnmp(r, names, basePortIf);
+  return res;
+}
+
+/** Agente de Cisco: sysObjectID bajo enterprises.cisco (1.3.6.1.4.1.9, SNMPv2-SMI y CISCO-SMI). */
+export function isCiscoAgent(r: TopoRead): boolean {
+  const id = scalar(r, OID.sysObjectID);
+  return !!id && id.type === "OID" && /^\.?1\.3\.6\.1\.4\.1\.9(\.|$)/.test(id.value);
+}
+
+/**
+ * En Cisco la tabla MAC de BRIDGE-MIB es por VLAN: sin indicar la VLAN (community@vlan o
+ * contexto v3 vlan-N) dot1dTpFdbTable vuelve vacía o solo con la VLAN 1. Se lee por VLAN cuando
+ * el agente es Cisco y la tabla general no trajo filas.
+ */
+export const needsVlanFdb = (r: TopoRead) => isCiscoAgent(r) && column(r, OID.dot1dTpFdbPort).size === 0;
+
+/** VLAN 1002 a 1005: las de FDDI y Token Ring que Cisco crea por defecto, sin tabla MAC útil. */
+const VLAN_DEFAULT_LEGACY = new Set([1002, 1003, 1004, 1005]);
+/** vtpVlanState operational(1) (CISCO-VTP-MIB). */
+const VLAN_OPERATIONAL = 1;
+
+/**
+ * VLAN activas desde vtpVlanState (índice managementDomainIndex.vtpVlanIndex), sin repetir, en
+ * orden y con el tope MAX_VLAN_READS. `total` es cuántas había antes del tope.
+ */
+export function activeVlans(r: TopoRead): { vlans: number[]; total: number } {
+  const set = new Set<number>();
+  for (const [suffix, row] of column(r, OID.vtpVlanState)) {
+    const p = nums(suffix);
+    const v = p[1];
+    if (p.length !== 2 || !Number.isInteger(v) || v < 1 || v > 4094 || VLAN_DEFAULT_LEGACY.has(v)) continue;
+    if (int(row) === VLAN_OPERATIONAL) set.add(v);
+  }
+  const all = [...set].sort((a, b) => a - b);
+  return { vlans: all.slice(0, MAX_VLAN_READS), total: all.length };
+}
+
+/** Lectura de la tabla MAC de una VLAN (snmp_topo_read con `vlan`). */
+export interface VlanRead {
+  vlan: number;
+  read: TopoRead;
+}
+
+/**
+ * Filas MAC de las lecturas por VLAN. Cada contexto trae su propia dot1dBasePortTable (los
+ * puertos de esa VLAN); si no vino, se usa la general.
+ */
+export function vlanFdbRows(reads: VlanRead[], names: Map<number, string>, fallback: Map<number, number>): MacRow[] {
+  const seen = new Set<string>();
+  const rows: MacRow[] = [];
+  for (const { read } of reads) {
+    const own = basePorts(read);
+    for (const row of fdbFromSnmp(read, names, own.size ? own : fallback)) {
+      const k = `${row.mac} ${row.port}`;
+      if (!seen.has(k)) {
+        seen.add(k);
+        rows.push(row);
+      }
+    }
+  }
+  return rows;
+}
+
+/** Convierte una lectura SNMP a las estructuras de la topología. */
+export function parseSnmpDiscovery(r: TopoRead, o: SnmpPlanOptions, vlanReads: VlanRead[] = []): SnmpDiscovery {
+  const names = ifNames(r);
+  const basePortIf = basePorts(r);
+  // LLDP-V2-MIB solo si LLDP-MIB de 2005 no trajo vecinos (agentes que solo publican la de 2009).
+  const lldp1 = lldpFromSnmp(r, names, basePortIf);
+  const lldp = lldp1.length ? lldp1 : lldpV2FromSnmp(r, names);
   const cdp = cdpFromSnmp(r, names);
   const own = ownAddrs(r);
   const routing = o.routing ? routingFromSnmp(r, names, own) : [];
@@ -576,13 +729,16 @@ export function parseSnmpDiscovery(r: TopoRead, o: SnmpPlanOptions): SnmpDiscove
     routing,
     ports: o.ports ? portsFromSnmp(r, names) : undefined,
     addrs,
-    macRows: o.mac ? fdbFromSnmp(r, names, basePortIf) : [],
+    macRows: o.mac ? [...fdbFromSnmp(r, names, basePortIf), ...vlanFdbRows(vlanReads, names, basePortIf)] : [],
     arpRows: o.mac ? arpFromSnmp(r, self) : [],
     ifIndex: ifIndexByPort(names),
     l2Empty: !lldp.length && !cdp.length,
-    notes: walkNotes(r),
+    notes: [...walkNotes(r), ...vlanReads.flatMap((v) => walkNotes(v.read).map((n) => `VLAN ${v.vlan}: ${n}`))],
   };
 }
+
+/** LLDP-MIB (2005) sin vecinos: se pide LLDP-V2-MIB (2009). */
+export const needsLldpV2Fallback = (r: TopoRead) => column(r, OID.lldpRemSysName).size === 0 && column(r, OID.lldpRemChassisId).size === 0;
 
 /** ipNetToPhysicalTable vacía: se pide la tabla obsoleta ipNetToMediaTable. */
 export const needsArpFallback = (r: TopoRead) => column(r, OID.ipNetToPhysicalPhysAddress).size === 0;

@@ -38,6 +38,11 @@ struct Mirror {
     /// Autocompletado de contraseña: solo en sesiones con contraseña guardada y hasta
     /// que responde o se descarta (luego se suelta y la contraseña se borra de memoria).
     autofill: Option<(AutoFill, Sender<Outgoing>)>,
+    /// Bytes de texto limpio recibidos desde la conexión (posición absoluta en la salida).
+    written: u64,
+    /// Inicio de la línea del último pedido respondido con la contraseña guardada (por el
+    /// autocompletado o por un script): cada pedido se responde una sola vez.
+    answered: Option<u64>,
 }
 
 /// Cuántos bytes finales son el comienzo de un carácter UTF-8 todavía incompleto.
@@ -80,6 +85,7 @@ impl Mirror {
                     .retain(|t| !matches!(t.try_send(owned.clone()), Err(std::sync::mpsc::TrySendError::Disconnected(_))));
             }
             self.history.push_str(&text);
+            self.written += text.len() as u64;
             // Se recorta al doble del tope: mover 256 KB en cada fragmento costaba más que
             // todo lo demás. `history()` nunca entrega más de HISTORY_MAX.
             if self.history.len() > 2 * HISTORY_MAX {
@@ -106,12 +112,39 @@ impl Mirror {
         };
         // Va por el hilo de escritura: mismo orden que lo tecleado y nunca pasa por el
         // log, el historial ni los suscriptores (solo ven lo que devuelve el equipo).
-        if let Some(bytes) = af.feed(text, Instant::now()) {
-            let _ = tx.send(Outgoing::Secret(bytes));
-        }
+        let sent = af.feed(text, Instant::now()).map(|bytes| tx.send(Outgoing::Secret(bytes))).is_some();
         if af.done() {
             self.autofill = None;
         }
+        // Ese pedido ya tuvo respuesta: un script no la vuelve a escribir encima.
+        if sent {
+            self.answered = Some(self.line_start());
+        }
+    }
+
+    /// Posición absoluta donde empieza la línea actual (la última del historial).
+    fn line_start(&self) -> u64 {
+        let h = &self.history;
+        let last = h.rfind('\n').map_or(0, |i| i + 1);
+        self.written - (h.len() - last) as u64
+    }
+
+    /// Escribe la contraseña guardada si la pantalla muestra ahora un pedido de login que no se
+    /// respondió (ver `autofill::screen_prompt`). Como el autocompletado, va por el hilo de
+    /// escritura y nunca pasa por el log, el historial ni los suscriptores.
+    fn type_secret(&mut self, tx: &Sender<Outgoing>, secret: &str, newline: &str, host: Option<&str>, strict: bool) -> Result<(), String> {
+        let tail = self.tail(2048);
+        let start = crate::autofill::screen_prompt(tail, host, strict)?;
+        let at = self.written - (tail.len() - start) as u64;
+        if self.answered == Some(at) {
+            return Err("Ese pedido de contraseña ya se respondió: se escribe una vez por pedido".into());
+        }
+        let mut out = Zeroizing::new(Vec::with_capacity(secret.len() + newline.len()));
+        out.extend_from_slice(secret.as_bytes());
+        out.extend_from_slice(newline.as_bytes());
+        tx.send(Outgoing::Secret(out)).map_err(|_| "La conexión se cerró".to_string())?;
+        self.answered = Some(at);
+        Ok(())
     }
 
     /// Últimos `max` bytes (como máximo HISTORY_MAX), cortados en un límite de carácter.
@@ -448,11 +481,7 @@ impl ConnectionManager {
         };
 
         if let Some(f) = fill {
-            let newline = match session.newline.as_deref() {
-                Some("lf") => "\n",
-                Some("crlf") => "\r\n",
-                _ => "\r",
-            };
+            let newline = newline_of(session);
             let mut m = lock(&sink.mirror);
             // Lo que ya llegó antes de instalarlo (Telnet rápido) también cuenta.
             let seen = m.tail(1024).to_string();
@@ -471,6 +500,19 @@ impl ConnectionManager {
             },
         );
         Ok(())
+    }
+
+    /// Escribe la contraseña guardada de la sesión en un pedido de login que la pantalla muestra
+    /// ahora (pedido por un script con la aprobación del usuario). El valor nunca vuelve a quien
+    /// lo pidió ni pasa por el log, el historial o los suscriptores.
+    pub fn type_saved(&self, id: &str, fill: FillSpec, host: Option<&str>, strict: bool) -> Result<(), String> {
+        let (mirror, input, newline) = {
+            let map = lock(&self.conns);
+            let conn = map.get(id).filter(|c| !c.sink.exited.load(Ordering::SeqCst)).ok_or("Sesión no conectada")?;
+            (conn.sink.mirror.clone(), conn.input.clone(), newline_of(&conn.session))
+        };
+        let mut m = lock(&mirror);
+        m.type_secret(&input, &fill.secret, newline, host, strict)
     }
 
     pub fn write(&self, id: &str, data: &[u8]) -> Result<(), String> {
@@ -623,6 +665,15 @@ impl ConnectionManager {
             }
             Transport::Serial { stop, .. } => stop.store(true, Ordering::SeqCst),
         }
+    }
+}
+
+/// Fin de línea configurado en la sesión (Enter del login).
+fn newline_of(session: &Session) -> &'static str {
+    match session.newline.as_deref() {
+        Some("lf") => "\n",
+        Some("crlf") => "\r\n",
+        _ => "\r",
     }
 }
 
@@ -1737,6 +1788,100 @@ mod tests {
             assert!(lines[1].ends_with("] Cisco IOS"));
             let _ = std::fs::remove_dir_all(dir);
         }
+    }
+
+    /// Contraseña guardada escrita a pedido de un script: solo con un pedido de login en
+    /// pantalla, una vez por pedido, nunca tras un rechazo, y sin pasar por el historial, los
+    /// suscriptores ni el log.
+    #[test]
+    fn typed_saved_password_once_per_prompt_and_never_logged() {
+        use std::io::{BufRead, BufReader, Write};
+        use std::time::Duration;
+        let listener = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
+        let port = listener.local_addr().unwrap().port();
+        let (step_tx, step_rx) = std::sync::mpsc::channel::<&'static [u8]>();
+        let (got_tx, got_rx) = std::sync::mpsc::channel::<String>();
+        let server = std::thread::spawn(move || {
+            let (s, _) = listener.accept().unwrap();
+            let mut w = s.try_clone().unwrap();
+            let mut r = BufReader::new(s);
+            std::thread::spawn(move || {
+                let mut line = Vec::new();
+                while r.read_until(b'\r', &mut line).unwrap_or(0) > 0 {
+                    let _ = got_tx.send(String::from_utf8_lossy(&line).into_owned());
+                    line.clear();
+                }
+            });
+            for step in step_rx {
+                w.write_all(step).unwrap();
+            }
+        });
+        let session: crate::models::Session = serde_json::from_value(serde_json::json!({
+            "name": "t", "type": "raw", "host": "127.0.0.1", "port": port
+        }))
+        .unwrap();
+        let mgr = super::ConnectionManager::default();
+        mgr.connect("c1".into(), &session, 80, 24, tauri::ipc::Channel::new(|_| Ok(())), None).unwrap();
+        let dir = std::env::temp_dir().join(format!("nt-ts-{}", uuid::Uuid::new_v4()));
+        let opts = crate::logfile::LogOptions { mask: false, ..Default::default() };
+        let path = mgr.set_logging("c1", true, opts, &dir, None).unwrap().unwrap();
+        let tap = mgr.tap("c1").unwrap();
+        let fill = || super::FillSpec { secret: zeroize::Zeroizing::new("Sup3r-S3cret".into()), user: None, only_host: None };
+        let show = |b: &'static [u8]| {
+            step_tx.send(b).unwrap();
+            let t = std::time::Instant::now();
+            let want = String::from_utf8_lossy(b).replace('\r', "");
+            while !mgr.history("c1", 10_000).unwrap().ends_with(&want) {
+                assert!(t.elapsed() < Duration::from_secs(3), "no llegó {want:?}");
+                std::thread::sleep(Duration::from_millis(5));
+            }
+        };
+
+        // Prompt de comandos: no hay pedido, nada se escribe.
+        show(b"router>");
+        assert_eq!(mgr.type_saved("c1", fill(), None, false), Err(crate::autofill::NO_PROMPT.into()));
+        // Pedido de login: se escribe una vez; el mismo pedido no se responde dos veces.
+        show(b"\r\nUser Access Verification\r\n\r\nPassword: ");
+        assert_eq!(mgr.type_saved("c1", fill(), None, false), Ok(()));
+        assert_eq!(got_rx.recv_timeout(Duration::from_secs(3)).unwrap(), "Sup3r-S3cret\r");
+        assert!(mgr.type_saved("c1", fill(), None, false).unwrap_err().contains("ya se respondió"));
+        // Rechazo y nuevo pedido: no se reintenta.
+        show(b"\r\n% Login invalid\r\n\r\nPassword: ");
+        assert_eq!(mgr.type_saved("c1", fill(), None, false), Err(crate::autofill::AFTER_DENIED.into()));
+        // Pedido de otro equipo (un ssh lanzado dentro de la sesión): no.
+        show(b"\r\nUser Access Verification\r\nUsername: noc\r\nrouter>show clock\r\n10:00:00 UTC\r\nrouter>ssh -l noc 198.51.100.9\r\nnoc@198.51.100.9's password: ");
+        assert_eq!(mgr.type_saved("c1", fill(), None, false), Err(crate::autofill::OTHER_HOST.into()));
+        // Pedido nuevo y válido más adelante: sí, otra vez una sola.
+        show(b"\r\nConnection closed\r\nrouter>login\r\n\r\nPassword: ");
+        assert_eq!(mgr.type_saved("c1", fill(), None, false), Ok(()));
+        assert_eq!(got_rx.recv_timeout(Duration::from_secs(3)).unwrap(), "Sup3r-S3cret\r");
+        show(b"\r\nrouter>");
+        assert!(got_rx.recv_timeout(Duration::from_millis(200)).is_err(), "nada más llegó al equipo");
+
+        let history = mgr.history("c1", 100_000).unwrap();
+        let tapped: String = tap.try_iter().collect();
+        mgr.set_logging("c1", false, Default::default(), &dir, None).unwrap();
+        mgr.disconnect("c1");
+        let log = std::fs::read_to_string(&path).unwrap();
+        for (what, text) in [("historial", &history), ("suscriptores", &tapped), ("log", &log)] {
+            assert!(text.contains("Password:") && !text.contains("Sup3r"), "{what}: {text}");
+        }
+        drop(step_tx);
+        server.join().unwrap();
+        let _ = std::fs::remove_dir_all(dir);
+    }
+
+    /// El autocompletado ya respondió el pedido: un script no vuelve a escribir encima.
+    #[test]
+    fn autofilled_prompt_is_not_typed_again() {
+        let (tx, rx) = std::sync::mpsc::channel();
+        let mut m = super::Mirror::default();
+        let af = crate::autofill::AutoFill::new(zeroize::Zeroizing::new("S3cret".into()), None, "\r", std::time::Instant::now());
+        m.autofill = Some((af, tx.clone()));
+        m.push(b"banner\r\nPassword: ");
+        assert!(matches!(rx.try_recv(), Ok(super::Outgoing::Secret(_))));
+        assert!(m.type_secret(&tx, "S3cret", "\r", None, false).unwrap_err().contains("ya se respondió"));
+        assert!(rx.try_recv().is_err());
     }
 
     /// Login por TCP con contraseña guardada: se envían usuario y contraseña una sola vez,

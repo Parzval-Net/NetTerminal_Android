@@ -131,6 +131,25 @@ const correr = (fx, extra = {}) => ejecutar(`${FX}${fx}`, { sesiones: TRES, resp
   console.log("ask_secret: ok (enmascarado en mensajes, confirmaciones y errores; cancelar no detiene)");
 }
 
+// 3b. type_saved_password: solo con la casilla del lanzamiento y un pedido de contraseña en pantalla.
+{
+  const conLogin = (cmd, nombre) => (cmd === "login" ? { pide: "Password: " } : equipos(cmd, nombre));
+  const r = await correr("boveda.py", { responder: conLogin, boveda: true, confirmar: () => true });
+  assert.equal(r.estado, "ok");
+  assert.deepEqual(r.escritas, ["dist-b"]);
+  assert.deepEqual(r.logs, [
+    "Contraseña guardada escrita en dist-b (el script no la ve)",
+    "dist-b: escrita",
+    "dist-a: La pantalla no muestra un pedido de contraseña",
+    "dist-b: show clock",
+  ]);
+  assert.deepEqual(r.confirmaciones.map((c) => c.line), ["login"], "la contraseña no pasa por el control de líneas");
+  const sin = await correr("boveda.py", { responder: conLogin, confirmar: () => true });
+  assert.deepEqual(sin.escritas, []);
+  assert.match(sin.logs[0], /^dist-b: No se permitió escribir contraseñas guardadas/);
+  console.log("type_saved_password: ok (aprobación por ejecución, sin pedido no escribe)");
+}
+
 // 4. Cancelación y tiempos.
 {
   const t0 = Date.now();

@@ -578,10 +578,11 @@ function Workspace({
       const run = await invoke<string>("run_script", {
         script,
         targets,
-        options: { allowChanges: l.allowChanges, parallel: l.parallel, maxMinutes: l.maxMinutes },
+        options: { allowChanges: l.allowChanges, parallel: l.parallel, maxMinutes: l.maxMinutes, vaultType: l.vaultType },
       });
       setScriptRun({ run, script, targets: targets.length });
-      toast(`Ejecutando ${script}${targets.length > 1 ? ` en ${targets.length} sesiones` : ""}${l.allowChanges ? " (permite cambios)" : ""}`);
+      const modes = [l.allowChanges ? "permite cambios" : "", l.vaultType ? "puede escribir contraseñas guardadas" : ""].filter(Boolean);
+      toast(`Ejecutando ${script}${targets.length > 1 ? ` en ${targets.length} sesiones` : ""}${modes.length ? ` (${modes.join(", ")})` : ""}`);
     } catch (e) {
       toast(String(e), "error");
     }

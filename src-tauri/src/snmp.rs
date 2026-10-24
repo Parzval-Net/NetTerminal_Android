@@ -1988,6 +1988,19 @@ pub const TOPO_WALK_ROOTS: &[(&str, &str)] = &[
     ("1.0.8802.1.1.2.1.4.1.1.9", "lldpRemSysName"),
     ("1.0.8802.1.1.2.1.4.1.1.10", "lldpRemSysDesc"),
     ("1.0.8802.1.1.2.1.4.2.1.3", "lldpRemManAddrIfSubtype"),
+    // LLDP-V2-MIB, IEEE Std 802.1AB-2009 (alternativa si LLDP-MIB no responde): lldpV2MIB =
+    // { ieee802dot1mibs 13 } con ieee802dot1mibs = 1.3.111.2.802.1.1 (LLDP-V2-TC-MIB);
+    // lldpV2RemEntry { lldpV2RemTable 1 } = 1.3.111.2.802.1.1.13.1.4.1.1 (ChassisIdSubtype 5 a
+    // SysDesc 11) y lldpV2RemManAddrEntry { lldpV2RemManAddrTable 1 } = 1.3.111.2.802.1.1.13.1.4.2.1
+    // (IfSubtype, columna 3). https://www.ieee802.org/1/files/public/MIBs/LLDP-V2-MIB-200906080000Z.txt
+    ("1.3.111.2.802.1.1.13.1.4.1.1.5", "lldpV2RemChassisIdSubtype"),
+    ("1.3.111.2.802.1.1.13.1.4.1.1.6", "lldpV2RemChassisId"),
+    ("1.3.111.2.802.1.1.13.1.4.1.1.7", "lldpV2RemPortIdSubtype"),
+    ("1.3.111.2.802.1.1.13.1.4.1.1.8", "lldpV2RemPortId"),
+    ("1.3.111.2.802.1.1.13.1.4.1.1.9", "lldpV2RemPortDesc"),
+    ("1.3.111.2.802.1.1.13.1.4.1.1.10", "lldpV2RemSysName"),
+    ("1.3.111.2.802.1.1.13.1.4.1.1.11", "lldpV2RemSysDesc"),
+    ("1.3.111.2.802.1.1.13.1.4.2.1.3", "lldpV2RemManAddrIfSubtype"),
     // CISCO-CDP-MIB (ciscoCdpMIB = { ciscoMgmt 23 } = 1.3.6.1.4.1.9.9.23), cdpCacheEntry =
     // { cdpCacheTable 1 } = 1.3.6.1.4.1.9.9.23.1.2.1.1: AddressType 3, Address 4, DeviceId 6,
     // DevicePort 7, Platform 8.
@@ -2023,7 +2036,16 @@ pub const TOPO_WALK_ROOTS: &[(&str, &str)] = &[
     // 1.3.6.1.2.1.17.7.1.2.2.1 (dot1qTpFdbPort 2, dot1qTpFdbStatus 3).
     ("1.3.6.1.2.1.17.7.1.2.2.1.2", "dot1qTpFdbPort"),
     ("1.3.6.1.2.1.17.7.1.2.2.1.3", "dot1qTpFdbStatus"),
+    // CISCO-VTP-MIB (ciscoVtpMIB = { ciscoMgmt 46 } = 1.3.6.1.4.1.9.9.46): vtpMIBObjects 1,
+    // vlanInfo 3, vtpVlanTable 1, vtpVlanEntry 1 (índice managementDomainIndex.vtpVlanIndex),
+    // vtpVlanState 2 = 1.3.6.1.4.1.9.9.46.1.3.1.1.2.
+    // https://github.com/cisco/cisco-mibs/blob/main/v2/CISCO-VTP-MIB.my
+    ("1.3.6.1.4.1.9.9.46.1.3.1.1.2", "vtpVlanState"),
 ];
+
+/// Tablas que se pueden leer en el contexto de una VLAN (`community@vlan` o contexto v3
+/// `vlan-N`): en Cisco la tabla MAC de BRIDGE-MIB es por VLAN. Subconjunto de TOPO_WALK_ROOTS.
+pub const TOPO_VLAN_WALKS: &[&str] = &["1.3.6.1.2.1.17.1.4.1.2", "1.3.6.1.2.1.17.4.3.1.2", "1.3.6.1.2.1.17.4.3.1.3"];
 
 /// Columnas cuyas instancias se pueden pedir con GET (contadores de tráfico y velocidad).
 pub const TOPO_GET_COLUMNS: &[(&str, &str)] = &[
@@ -2039,7 +2061,8 @@ pub const TOPO_GET_COLUMNS: &[(&str, &str)] = &[
 
 /// Escalares que se pueden pedir con GET (con su ".0").
 pub const TOPO_GET_SCALARS: &[(&str, &str)] = &[
-    // SNMPv2-MIB, RFC 3418: sysName { system 5 }.
+    // SNMPv2-MIB, RFC 3418: sysObjectID { system 2 } (fabricante) y sysName { system 5 }.
+    ("1.3.6.1.2.1.1.2.0", "sysObjectID"),
     ("1.3.6.1.2.1.1.5.0", "sysName"),
     // OSPF-MIB, RFC 4750: ospfRouterId { ospfGeneralGroup 1 }.
     ("1.3.6.1.2.1.14.1.1.0", "ospfRouterId"),
@@ -2205,17 +2228,50 @@ pub fn topo_check(gets: &[String], walks: &[String]) -> Result<TopoPlan, String>
     Ok((g, w))
 }
 
+/// Lectura por VLAN: solo las tablas de BRIDGE-MIB, sin GET, con una VLAN 1 a 4094.
+pub fn topo_vlan_check(gets: &[String], walks: &[String], vlan: u16) -> Result<(), String> {
+    if !(1..=4094).contains(&vlan) {
+        return Err("VLAN inválida (1 a 4094)".into());
+    }
+    let allowed: Vec<Oid> = TOPO_VLAN_WALKS.iter().filter_map(|o| parse_oid(o).ok()).collect();
+    if !gets.is_empty() || walks.iter().any(|w| parse_oid(w).map_or(true, |o| !allowed.contains(&o))) {
+        return Err("Por VLAN solo se leen las tablas MAC de BRIDGE-MIB".into());
+    }
+    Ok(())
+}
+
+/// Contexto de una VLAN en Cisco: con v1/v2c la community pasa a `community@vlan`
+/// ("community string indexing"); con v3, el contextName `vlan-N`. La community sigue atada al
+/// host y puerto del perfil: solo cambia la instancia de BRIDGE-MIB que responde el agente.
+pub fn vlan_scope(sec: &mut Security, vlan: u16) {
+    match sec {
+        Security::Community { community, .. } => {
+            let indexed = Zeroizing::new(format!("{}@{vlan}", community.as_str()));
+            *community = indexed;
+        }
+        Security::V3(c) => c.context = format!("vlan-{vlan}"),
+    }
+}
+
 /// Lectura para Topología con un perfil SNMP: GET de contadores y escalares permitidos y
-/// recorridos de las tablas permitidas, con topes de filas y tiempo. Solo lectura.
+/// recorridos de las tablas permitidas, con topes de filas y tiempo. Solo lectura. Con `vlan`,
+/// lee la tabla MAC de esa VLAN (Cisco: community@vlan o contexto vlan-N en v3).
 #[tauri::command(async)]
 pub fn snmp_topo_read(
     target: TargetParams,
     gets: Vec<String>,
     walks: Vec<String>,
+    vlan: Option<u16>,
     state: tauri::State<'_, crate::AppState>,
 ) -> Result<TopoRead, String> {
+    if let Some(v) = vlan {
+        topo_vlan_check(&gets, &walks, v)?;
+    }
     let (gets, walks) = topo_check(&gets, &walks)?;
     let mut target = target.into_target(|p| vault_secret(&state, p))?;
+    if let Some(v) = vlan {
+        vlan_scope(&mut target.sec, v);
+    }
     // Un equipo que no responde no deja la herramienta esperando minutos por tabla.
     target.timeout = target.timeout.min(Duration::from_secs(5));
     target.retries = target.retries.min(2);
@@ -2945,7 +3001,15 @@ pub(crate) mod tests {
     #[test]
     fn topo_allowlist_enforced() {
         // Raíces y columnas permitidas, también con punto inicial.
-        for ok in ["1.0.8802.1.1.2.1.4.1.1.9", ".1.3.6.1.4.1.9.9.23.1.2.1.1.6", "1.3.6.1.2.1.17.7.1.2.2.1.2", "1.3.6.1.2.1.4.35.1.4"] {
+        for ok in [
+            "1.0.8802.1.1.2.1.4.1.1.9",
+            ".1.3.6.1.4.1.9.9.23.1.2.1.1.6",
+            "1.3.6.1.2.1.17.7.1.2.2.1.2",
+            "1.3.6.1.2.1.4.35.1.4",
+            "1.3.6.1.4.1.9.9.46.1.3.1.1.2",
+            "1.3.111.2.802.1.1.13.1.4.1.1.10",
+            "1.3.111.2.802.1.1.13.1.4.2.1.3",
+        ] {
             assert!(topo_walk_oid(ok).is_ok(), "{ok}");
         }
         // Subárboles no listados: system completo, la MIB entera, CISCO-CONFIG-COPY, hijos o
@@ -2959,12 +3023,18 @@ pub(crate) mod tests {
             "1.0.8802.1.1.2.1.4.1.1.90",
             "1.3.6.1.2.1.25.4.2.1.5",
             "1.3.6.1.2.1.31.1.1.1.6",
+            // VTP: solo vtpVlanState, no la tabla entera ni otras columnas (vtpVlanName).
+            "1.3.6.1.4.1.9.9.46.1.3.1",
+            "1.3.6.1.4.1.9.9.46.1.3.1.1.4",
+            // LLDP-V2: no la MIB entera ni la tabla local.
+            "1.3.111.2.802.1.1.13",
+            "1.3.111.2.802.1.1.13.1.3.7",
             "x",
         ] {
             assert!(topo_walk_oid(bad).is_err(), "{bad}");
         }
         // GET: instancias de los contadores (un ifIndex) y escalares listados.
-        for ok in ["1.3.6.1.2.1.31.1.1.1.6.10101", "1.3.6.1.2.1.2.2.1.10.3", "1.3.6.1.2.1.1.5.0", "1.3.6.1.2.1.15.2.0"] {
+        for ok in ["1.3.6.1.2.1.31.1.1.1.6.10101", "1.3.6.1.2.1.2.2.1.10.3", "1.3.6.1.2.1.1.5.0", "1.3.6.1.2.1.1.2.0", "1.3.6.1.2.1.15.2.0"] {
             assert!(topo_get_oid(ok).is_ok(), "{ok}");
         }
         for bad in ["1.3.6.1.2.1.31.1.1.1.6", "1.3.6.1.2.1.31.1.1.1.6.1.2", "1.3.6.1.2.1.1.1.0", "1.3.6.1.2.1.1.5", "1.3.6.1.2.1.25.4.2.1.5.1", "1.3.6.1.2.1.2.2.1.100.1"] {
@@ -2984,6 +3054,38 @@ pub(crate) mod tests {
         }
         let walk: std::collections::HashSet<_> = TOPO_WALK_ROOTS.iter().map(|x| x.0).collect();
         assert_eq!(walk.len(), TOPO_WALK_ROOTS.len());
+    }
+
+    #[test]
+    fn vlan_reads_use_indexed_community_or_v3_context() {
+        // Solo BRIDGE-MIB, sin GET y con una VLAN válida.
+        let fdb: Vec<String> = TOPO_VLAN_WALKS.iter().map(|s| s.to_string()).collect();
+        assert!(topo_vlan_check(&[], &fdb, 10).is_ok());
+        for w in TOPO_VLAN_WALKS {
+            assert!(topo_walk_oid(w).is_ok(), "{w} también está en TOPO_WALK_ROOTS");
+        }
+        assert!(topo_vlan_check(&[], &fdb, 0).is_err());
+        assert!(topo_vlan_check(&[], &fdb, 4095).is_err());
+        assert!(topo_vlan_check(&["1.3.6.1.2.1.1.5.0".into()], &fdb, 10).is_err());
+        assert!(topo_vlan_check(&[], &["1.0.8802.1.1.2.1.4.1.1.9".into()], 10).is_err());
+        assert!(topo_vlan_check(&[], &["x".into()], 10).is_err());
+        // v2c: community@vlan; v3: contexto vlan-N.
+        let mut sec = Security::Community { v2: true, community: Zeroizing::new("lectura".into()) };
+        vlan_scope(&mut sec, 20);
+        assert!(matches!(&sec, Security::Community { community, .. } if community.as_str() == "lectura@20"));
+        let mut sec = Security::V3(V3Creds { user: "noc".into(), auth: None, privacy: None, context: String::new() });
+        vlan_scope(&mut sec, 300);
+        assert!(matches!(&sec, Security::V3(c) if c.context == "vlan-300"));
+        // Contra un agente que solo responde a "public@20": la tabla MAC de la VLAN 20.
+        let port = parse_oid("1.3.6.1.2.1.17.4.3.1.2").unwrap();
+        let tree = vec![([port.clone(), vec![0, 17, 34, 51, 68, 85]].concat(), Value::Int(3))];
+        let addr = fake_agent(b"public@20", tree);
+        let mut t = target(addr, "public");
+        vlan_scope(&mut t.sec, 20);
+        let mut c = Client::connect(t).unwrap();
+        let r = topo_read(&mut c, &[], &[(port, "1.3.6.1.2.1.17.4.3.1.2".into())], TOPO_LIMITS).unwrap();
+        assert_eq!(r.walks[0].rows.len(), 1);
+        assert_eq!(r.walks[0].rows[0].oid, "1.3.6.1.2.1.17.4.3.1.2.0.17.34.51.68.85");
     }
 
     #[test]

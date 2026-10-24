@@ -18,7 +18,26 @@ Validación (Node 22.6+ y Python 3; en Node anterior a 22.18 agrega `--experimen
 
 - `node scripts/video/plugins/probar-ejemplos.mjs`: `resumen_equipo.py`, `diagnostico-basico` y `consultas-campus.json`.
 - `node scripts/video/v2/v3-automatizacion/probar-ejemplos.mjs`: los scripts del video 3, cada acción de `revision-puertos`, `turno-puertos.json` y la plantilla, contra un campus simulado de cinco equipos (incluidos un router sin `show interfaces status` y un equipo que no responde). El inventario corre con los cinco equipos como destino (dos en paralelo), con uno solo y con el `netterminal.py` anterior. Revisa también el CSV que se escribe.
-- `node scripts/tests/scripts-api.test.mjs`: la API de varias sesiones, el control de riesgo (consulta, cambio, corte, rechazo), `ask_secret`, "Detener script" y los tiempos máximos.
+- `node scripts/tests/scripts-api.test.mjs`: la API de varias sesiones, el control de riesgo (consulta, cambio, corte, rechazo), `ask_secret`, `type_saved_password`, "Detener script" y los tiempos máximos.
+
+Las pruebas de Node requieren Node 22.15 o superior (`.nvmrc` fija 24); `npm test` corre todas las de `scripts/tests`.
+
+## Contraseña guardada sin exponerla
+
+Ningún ejemplo trae credenciales. Si un script tiene que volver a entrar a un equipo que pide su contraseña de login (una consola que expiró, un `login` por Telnet), no la pidas con `ask_secret` ni la escribas en el script: usa `type_saved_password()`. La app escribe la contraseña guardada de esa sesión en el pedido que muestra la pantalla y el script solo sabe si se escribió.
+
+```python
+import netterminal as nt
+
+s = nt.on("consola-core")          # una sesión con contraseña guardada
+s.sendline("login")
+s.expect(r"[Pp]assword:\s*$")      # el pedido tiene que estar en pantalla
+s.type_saved_password()            # RuntimeError con el motivo si no se puede
+s.expect(r"[>#]\s*$")
+print(s.run("show clock"))
+```
+
+Al lanzarlo marca "Permitir que el script escriba contraseñas guardadas en: …" (vale solo esa ejecución). En un plugin, declara `"permissions": ["session", "vault-type"]` y marca la casilla de su tarjeta antes de ejecutar. No se escribe tras un "Permission denied" o "% Login invalid", en una passphrase, en un cambio de clave ni en un pedido que nombra a otro equipo, y cada pedido se responde una sola vez.
 
 Ambas pruebas ejecutan los archivos reales con Python y el `netterminal.py` de la app, con el mismo protocolo que `scripts.rs`, y clasifican cada comando enviado con el motor de riesgo de la app. La revisión de instalación de los plugins la cubre el test de Rust `plugins::tests::example_plugins_pass_review`.
 

@@ -162,7 +162,7 @@ Auditoría del binario con REA (Ghidra y utilidades nativas de macOS) y revisió
 | Envío desde Notas y botones: pasa por el mismo motor de riesgo que el catálogo; lo que puede cortar servicio se confirma siempre | Código |
 | Scripts y plugins: solo alcanzan las sesiones elegidas al lanzarlos (`sessions()` sin usuarios ni contraseñas); cada línea que envían se arma como en el CLI del equipo (retroceso, Ctrl-U, Ctrl-W) y pasa por `computeRisk` antes de su Enter: las consultas pasan, un cambio se confirma salvo en modo "permitir cambios" y lo que puede cortar servicio, o una línea con Tab, `?`, Esc o Ctrl-D, se confirma siempre, una vez por comando en cada ejecución y mostrando los destinos; rechazar o no responder en 2 minutos detiene el script sin enviar la línea | Con tests (Rust y Node) |
 | Scripts: los destinos quedan tomados mientras corre (lo tecleado, la difusión, MCP y las herramientas se rechazan en esas pestañas); máximo 4 sesiones en paralelo; tiempo máximo por ejecución; "Detener script" corta también una espera en curso y cierra los diálogos pendientes | Con tests (Rust y Node) |
-| Secretos de scripts: `ask_secret` usa un campo de contraseña que no pasa por el estado de la interfaz; el valor viaja solo al stdin del script y se enmascara en sus mensajes, errores y confirmaciones; no queda en logs ni historial. Los scripts no tienen acceso a la bóveda | Con tests (Rust y Node) |
+| Secretos de scripts: `ask_secret` usa un campo de contraseña que no pasa por el estado de la interfaz; el valor viaja solo al stdin del script y se enmascara en sus mensajes, errores y confirmaciones; no queda en logs ni historial. Los scripts no tienen acceso a la bóveda: `type_saved_password` hace que la app escriba la contraseña guardada en el pedido de login del destino (aprobación por ejecución, permiso `vault-type` en plugins, una vez por pedido, mismas reglas que el autocompletado) y al script solo vuelve "escrita" o el motivo | Con tests (Rust y Node) |
 | Reconexión automática con espera creciente (5 s a 60 s) para no gatillar bloqueos de cuenta en TACACS/RADIUS; "Conectar todas" abre en tandas de 5 | Código |
 | Pegado: un bloque de varias líneas en un equipo remoto pide confirmación con vista previa (también con Cmd+V del menú nativo) | Código |
 | TFTP y FTP: la escritura del gestor de archivos se habilita en caliente solo durante una extracción y se quita al terminar (sin reiniciar el servidor); "Permitir subidas" vale solo para la sesión de la app. TFTP: máx. 16 sesiones simultáneas, retransmisiones descartadas, tope de 8 GB por archivo y temporales únicos | Con tests |
@@ -255,12 +255,12 @@ Herramientas › Topología lee los vecinos del equipo conectado y dibuja el dia
 
   | Fuente | Tablas (MIB) |
   | --- | --- |
-  | Siempre | LLDP-MIB (IEEE 802.1AB-2005): `lldpRemTable` 1.0.8802.1.1.2.1.4.1 (columnas 4 a 10), `lldpRemManAddrTable` 1.0.8802.1.1.2.1.4.2, `lldpLocPortTable` 1.0.8802.1.1.2.1.3.7. CISCO-CDP-MIB: `cdpCacheTable` 1.3.6.1.4.1.9.9.23.1.2.1 (dirección, Device ID, puerto, plataforma). IF-MIB (RFC 2863): `ifName`, `ifDescr`. BRIDGE-MIB (RFC 4188): `dot1dBasePortIfIndex`. SNMPv2-MIB: `sysName` |
+  | Siempre | LLDP-MIB (IEEE 802.1AB-2005): `lldpRemTable` 1.0.8802.1.1.2.1.4.1 (columnas 4 a 10), `lldpRemManAddrTable` 1.0.8802.1.1.2.1.4.2, `lldpLocPortTable` 1.0.8802.1.1.2.1.3.7; si vienen vacías, LLDP-V2-MIB (IEEE 802.1AB-2009): `lldpV2RemTable` 1.3.111.2.802.1.1.13.1.4.1 (columnas 5 a 11) y `lldpV2RemManAddrTable` 1.3.111.2.802.1.1.13.1.4.2. CISCO-CDP-MIB: `cdpCacheTable` 1.3.6.1.4.1.9.9.23.1.2.1 (dirección, Device ID, puerto, plataforma). IF-MIB (RFC 2863): `ifName`, `ifDescr`. BRIDGE-MIB (RFC 4188): `dot1dBasePortIfIndex`. SNMPv2-MIB: `sysName` y `sysObjectID` (fabricante) |
   | Estado de puertos | IF-MIB: `ifOperStatus`, `ifHighSpeed`, `ifAlias` |
   | Vecinos de ruteo | OSPF-MIB (RFC 4750): `ospfNbrTable` 1.3.6.1.2.1.14.10 y `ospfRouterId`. BGP4-MIB (RFC 4273): `bgpPeerTable` 1.3.6.1.2.1.15.3, `bgpLocalAs`, `bgpIdentifier`. IP-MIB (RFC 4293): `ipAddrTable` para ubicar la interfaz por subred |
-  | MAC/OUI | BRIDGE-MIB: `dot1dTpFdbTable` 1.3.6.1.2.1.17.4.3 con `dot1dBasePortTable` para pasar de puerto del bridge a ifIndex. Q-BRIDGE-MIB (RFC 4363): `dot1qTpFdbTable` 1.3.6.1.2.1.17.7.1.2.2. IP-MIB: `ipNetToPhysicalTable` 1.3.6.1.2.1.4.35 o, si no responde, `ipNetToMediaTable` 1.3.6.1.2.1.4.22 |
+  | MAC/OUI | BRIDGE-MIB: `dot1dTpFdbTable` 1.3.6.1.2.1.17.4.3 con `dot1dBasePortTable` para pasar de puerto del bridge a ifIndex. Q-BRIDGE-MIB (RFC 4363): `dot1qTpFdbTable` 1.3.6.1.2.1.17.7.1.2.2. IP-MIB: `ipNetToPhysicalTable` 1.3.6.1.2.1.4.35 o, si no responde, `ipNetToMediaTable` 1.3.6.1.2.1.4.22. En Cisco (`sysObjectID` bajo 1.3.6.1.4.1.9), si `dot1dTpFdbTable` vuelve vacía: VLAN activas de CISCO-VTP-MIB `vtpVlanState` 1.3.6.1.4.1.9.9.46.1.3.1.1.2 (sin 1002 a 1005) y la tabla MAC de cada una con `community@vlan` (v2c) o el contexto `vlan-N` (v3), máximo 64 VLAN |
 
-  Los resultados entran a las mismas estructuras que la consola: fusión, sugerencias, exportaciones y limpieza de textos. **Si LLDP y CDP vuelven vacíos por SNMP, el protocolo está apagado en el equipo** (o su agente no publica esas MIB). Tope de 10.000 filas y 20 s por tabla: una tabla cortada se avisa como resultado parcial. Límites: solo LLDP-MIB de 2005 (no LLDP-V2-MIB); en Cisco la tabla MAC del BRIDGE-MIB de cada VLAN requiere indexar la community por VLAN (`community@vlan`), que no se hace, así que puede venir vacía.
+  Los resultados entran a las mismas estructuras que la consola: fusión, sugerencias, exportaciones y limpieza de textos. **Si LLDP y CDP vuelven vacíos por SNMP, el protocolo está apagado en el equipo** (o su agente no publica esas MIB). Tope de 10.000 filas y 20 s por tabla: una tabla cortada se avisa como resultado parcial. La lectura por VLAN solo admite las tablas de BRIDGE-MIB (`dot1dBasePortIfIndex`, `dot1dTpFdbPort`, `dot1dTpFdbStatus`) y la community sigue atada al host del perfil; en v3 el usuario necesita acceso a los contextos `vlan-N` en el agente.
 - **Tráfico en enlaces** (apagado por defecto; botón "Tráfico" o la sección del panel): cada 15, 30 o 60 s (30 por defecto) lee los contadores de las interfaces con enlace de cada equipo explorado, solo mientras Topología está a la vista y la ventana no está oculta. Por SNMP, si el equipo tiene perfil (misma IP o nombre): un GET por equipo con `ifHCInOctets`, `ifHCOutOctets` e `ifHighSpeed` de todas sus interfaces (IF-MIB, 64 bits), o `ifInOctets`/`ifOutOctets`/`ifSpeed` de 32 bits con corrección de vuelta si el agente no tiene ifXTable; `ifName` se lee una vez y se reutiliza. Por consola, solo si activas "También por consola": `show interfaces` (o `show interface` en NX-OS), `display interface` o `show interfaces extensive` en la sesión conectada. Las tasas salen de la diferencia entre lecturas; un contador reiniciado (equipo reiniciado o `clear counters`) o una tasa imposible para la velocidad se descarta. Cada enlace muestra una flecha por sentido y "core-sw01 → 120 Mb/s · ← 35 Mb/s" (lo que sale y lo que llega al equipo nombrado); el color y el grosor siguen la utilización del sentido más cargado: verde, amarillo desde 70 %, rojo desde 90 %, y gris violeta si no se conoce la velocidad. Por consola manda la velocidad física ("Full-duplex, 1000Mb/s"); si solo hay `BW` (configurable con `bandwidth`), la utilización se marca aproximada (≈) y no se descartan tasas por superarlo. "Color por utilización", "Flechas de dirección" y "Velocidad de tráfico" se activan o desactivan por separado; sin color, los enlaces se ven como en el diagrama normal y el detalle sigue al pasar el mouse. "Animación" agrega un trazo en movimiento (CSS, 10 pasos por segundo) que se omite si el sistema pide reducir movimiento. SVG y CSV exportan la última tasa y la utilización; Mermaid no. Como máximo una lectura en curso por equipo.
 
 ![Tráfico en enlaces](docs/screenshots/topologia-trafico.png)
@@ -299,6 +299,7 @@ API:
 | `on(nombre)` | Objeto con `run`, `send`, `sendline`, `wait_for`, `expect`, `read` y `clear` ligados a esa sesión |
 | `for_each(fn, parallel=None)` | Llama `fn(sesion)` en cada destino, de a uno o en paralelo hasta el tope elegido al lanzar. Devuelve `{nombre: resultado}`; si `fn` falló en una sesión, el resultado es la excepción |
 | `ask_secret(etiqueta)` | Pide un secreto en un diálogo de contraseña y lo devuelve. La app lo enmascara en los mensajes del script y en las confirmaciones. Cancelar lanza `nt.ScriptDenied` |
+| `type_saved_password()` | La app escribe la contraseña guardada de la sesión principal (o `on(nombre).type_saved_password()`) en el pedido de login que su pantalla muestra en ese momento. El script nunca ve el valor. Requiere marcar "Permitir que el script escriba contraseñas guardadas en: …" al lanzarlo; si no se puede (sin pedido en pantalla, tras un rechazo, pedido de otro equipo, sin contraseña guardada), lanza `RuntimeError` con el motivo |
 | `allow_changes`, `max_parallel` | Lo que el usuario eligió al lanzar |
 
 ```python
@@ -314,7 +315,17 @@ for nombre, r in nt.for_each(version).items():
 
 Control de riesgo: cada línea que el script envía pasa por el motor de riesgo de la app antes de su Enter. Las consultas pasan sin preguntar; un cambio pide confirmación (salvo con "permitir cambios"); lo que puede cortar servicio, y las líneas con Tab, `?`, Esc o Ctrl-D (el equipo completa o recupera historial, así que no se sabe qué ejecuta), se confirman siempre. Cada línea se pregunta una vez por ejecución y el diálogo muestra todos los destinos. Rechazar, o no responder en 2 minutos, detiene el script y la línea no llega al equipo (`nt.ScriptDenied`). Mientras el script corre, lo que escribas en sus pestañas no se envía; "Detener script" en la barra de botones lo corta en cualquier momento, incluso durante una espera. Los plugins pasan por el mismo control.
 
-Contraseñas guardadas: los scripts no pueden leer la bóveda. Para un secreto que el script necesita (enable, una clave de un equipo intermedio), usa `ask_secret`. El enmascarado reemplaza el texto exacto: si el script lo transforma (codifica, invierte) o lo envía como parte de un comando que el equipo repite, el eco aparece en la terminal como si lo hubieras tecleado. Python corre con los permisos de tu usuario: el control de riesgo cubre lo que el script envía por la API, no lo que haga por su cuenta. Revisa los scripts antes de ejecutarlos.
+Contraseñas guardadas: los scripts no pueden leer la bóveda. Para volver a entrar a un equipo que pide su contraseña de login (una consola que expiró, un `login` de Telnet), usa `type_saved_password()`: la app escribe la contraseña guardada de esa sesión directo en el equipo, solo si el usuario lo permitió en el diálogo de lanzamiento (casilla por ejecución, apagada por defecto), la sesión guardada tiene contraseña y su destino coincide con la conexión, y la pantalla muestra ahora un pedido de login de ese equipo: no una passphrase ni un cambio de clave, no justo después de "Permission denied" o "% Login invalid", y si el pedido nombra un host (`u@host's password:`) debe ser el de la sesión (con bastión, tiene que nombrarlo). Se escribe una vez por pedido y como máximo 10 por ejecución; el valor no pasa por el script, sus mensajes, el log ni el historial.
+
+```python
+s = nt.on("consola-core")
+s.sendline("login")
+s.expect(r"[Pp]assword:\s*$")
+s.type_saved_password()
+s.expect(r"[>#]\s*$")
+```
+
+Para otros secretos (enable, una clave de un equipo intermedio), usa `ask_secret`. El enmascarado reemplaza el texto exacto: si el script lo transforma (codifica, invierte) o lo envía como parte de un comando que el equipo repite, el eco aparece en la terminal como si lo hubieras tecleado. Python corre con los permisos de tu usuario: el control de riesgo cubre lo que el script envía por la API, no lo que haga por su cuenta. Revisa los scripts antes de ejecutarlos.
 
 Intérprete: en Windows se usa `py -3` (luego `python` y `python3`). En macOS se prefiere el `python3` de Homebrew (`/opt/homebrew/bin`, `/usr/local/bin`) o de python.org (`Python.framework`), luego otros del PATH, y `/usr/bin/python3` queda al final y solo si `xcode-select -p` confirma las Command Line Tools: sin ellas ese archivo es un stub que abre el instalador de Apple. Cada prueba de versión tiene un plazo de 5 s. Si no hay Python, cada ejecución lo vuelve a buscar; Herramientas › Plugins muestra el intérprete en uso y tiene "Volver a detectar".
 
@@ -328,7 +339,7 @@ mi-plugin/
   main.py       import netterminal as nt; os.environ["NT_ACTION"] indica la acción
 ```
 
-Permisos: `session` (leer y enviar comandos a la sesión activa, con el mismo control de riesgo que los scripts), `network`, `files`. Son declarativos y se muestran al instalar. Ejemplo completo en [plugins/ejemplo-inventario](plugins/ejemplo-inventario). En [docs/ejemplos](docs/ejemplos) hay un script, un plugin y un pack de solo lectura, validados con `node scripts/video/plugins/probar-ejemplos.mjs`.
+Permisos: `session` (leer y enviar comandos a la sesión activa, con el mismo control de riesgo que los scripts), `network`, `files` y `vault-type` (pedir `type_saved_password()`; exige `session` y, además, marcar en la tarjeta del plugin "Permitir que el script escriba contraseñas guardadas" antes de cada ejecución). Son declarativos y se muestran al instalar. Ejemplo completo en [plugins/ejemplo-inventario](plugins/ejemplo-inventario). En [docs/ejemplos](docs/ejemplos) hay un script, un plugin y un pack de solo lectura, validados con `node scripts/video/plugins/probar-ejemplos.mjs`.
 
 ## Publicar una versión
 
@@ -349,7 +360,7 @@ Política de seguridad y reporte privado de vulnerabilidades: [SECURITY.md](SECU
 
 ## Desarrollo
 
-Requisitos: Rust estable, Node 20+ y los [prerrequisitos de Tauri](https://tauri.app/start/prerequisites/) de cada sistema operativo (en Linux además `libudev-dev` para serial y `libdbus-1-dev` para el llavero del sistema).
+Requisitos: Rust estable, Node 22.15+ (`.nvmrc` fija 24: `nvm use`) y los [prerrequisitos de Tauri](https://tauri.app/start/prerequisites/) de cada sistema operativo (en Linux además `libudev-dev` para serial y `libdbus-1-dev` para el llavero del sistema).
 
 ```bash
 npm install
@@ -363,6 +374,16 @@ npm run tauri build
 ```
 
 Para generar los binarios de los tres sistemas operativos, ejecuta el workflow `build` en GitHub Actions (manual o al crear un tag `v*`).
+
+Pruebas:
+
+```bash
+npm test                                   # todas las de scripts/tests/*.test.mjs, de a una
+node scripts/tests/run-all.mjs topology    # solo las que contienen "topology"
+cd src-tauri && cargo clippy --all-targets -- -D warnings && cargo test
+```
+
+Las pruebas de Node importan los `.ts` de `src/lib` directamente y requieren Node 22.15 o superior; antes de 22.18, `run-all.mjs` agrega `--experimental-strip-types` solo. Las mediciones de rendimiento usan `scripts/tests/timing.mjs`: si una pasa el límite, se vuelve a medir y con la máquina cargada (otro build en paralelo) el límite se duplica, para no fallar por carga ajena. El CI no corre las pruebas de Node.
 
 ### Regenerar las capturas
 

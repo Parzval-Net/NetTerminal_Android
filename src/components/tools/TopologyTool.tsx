@@ -106,7 +106,21 @@ import {
   updateManualNode,
   utilLevel,
 } from "../../lib/topology";
-import { ARP_FALLBACK, TopoRead, needsArpFallback, parseSnmpDiscovery, snmpDiscoveryPlan } from "../../lib/topoSnmp";
+import {
+  ARP_FALLBACK,
+  LLDP_V2_FALLBACK,
+  MAX_VLAN_READS,
+  TopoRead,
+  VLAN_FDB_WALKS,
+  VLAN_LIST,
+  VlanRead,
+  activeVlans,
+  needsArpFallback,
+  needsLldpV2Fallback,
+  needsVlanFdb,
+  parseSnmpDiscovery,
+  snmpDiscoveryPlan,
+} from "../../lib/topoSnmp";
 import { linkTraffic } from "../../lib/topoTraffic";
 import { SnmpProfile, targetParams } from "../../lib/snmp";
 import { TRAFFIC_INTERVALS, TrafficInterval, useTopoTraffic } from "./useTopoTraffic";
@@ -514,11 +528,33 @@ export function TopologyTool({
       const plan = snmpDiscoveryPlan(opts);
       const target = targetParams(p, { community: "", authPass: "", privPass: "" });
       let r = await invoke<TopoRead>("snmp_topo_read", { target, gets: plan.gets, walks: plan.walks });
-      if (opts.mac && needsArpFallback(r)) {
-        const r2 = await invoke<TopoRead>("snmp_topo_read", { target, gets: [], walks: ARP_FALLBACK });
+      // Alternativas en lecturas aparte: ARP antiguo y LLDP-V2-MIB (802.1AB-2009) si la de 2005 vino vacía.
+      const extra = [...(opts.mac && needsArpFallback(r) ? ARP_FALLBACK : []), ...(needsLldpV2Fallback(r) ? LLDP_V2_FALLBACK : [])];
+      if (extra.length) {
+        const r2 = await invoke<TopoRead>("snmp_topo_read", { target, gets: [], walks: extra });
         r = { ...r, walks: [...r.walks, ...r2.walks], ms: r.ms + r2.ms };
       }
-      const d = parseSnmpDiscovery(r, opts);
+      // Cisco: la tabla MAC de BRIDGE-MIB es por VLAN (community@vlan en v2c, contexto vlan-N en v3).
+      const vlanReads: VlanRead[] = [];
+      let vlanNote = "";
+      if (opts.mac && needsVlanFdb(r)) {
+        const list = await invoke<TopoRead>("snmp_topo_read", { target, gets: [], walks: VLAN_LIST });
+        r = { ...r, walks: [...r.walks, ...list.walks], ms: r.ms + list.ms };
+        const { vlans, total } = activeVlans(list);
+        for (const [i, vlan] of vlans.entries()) {
+          setMsg(`Leyendo la tabla MAC de la VLAN ${vlan} (${i + 1} de ${vlans.length})…`);
+          try {
+            const read = await invoke<TopoRead>("snmp_topo_read", { target, gets: [], walks: VLAN_FDB_WALKS, vlan });
+            vlanReads.push({ vlan, read });
+            r = { ...r, ms: r.ms + read.ms };
+          } catch (e) {
+            vlanNote = `VLAN ${vlan}: ${String(e)}`;
+          }
+        }
+        if (total > vlans.length) vlanNote = `Tabla MAC: se leyeron ${vlans.length} de ${total} VLAN (tope ${MAX_VLAN_READS}).`;
+      }
+      const d = parseSnmpDiscovery(r, opts, vlanReads);
+      if (vlanNote) d.notes.push(vlanNote);
       let macs: Record<string, MacPort> | undefined;
       if (opts.mac) {
         const { lookupOui } = await import("../../lib/oui");
@@ -535,7 +571,7 @@ export function TopologyTool({
         macs ? `${Object.keys(macs).length} puertos con MAC` : "",
       ].filter(Boolean);
       const l2 = d.l2Empty
-        ? "LLDP y CDP vacíos por SNMP: el protocolo está apagado en el equipo (o su agente no publica LLDP-MIB ni CISCO-CDP-MIB)."
+        ? "LLDP y CDP vacíos por SNMP: el protocolo está apagado en el equipo (o su agente no publica LLDP-MIB, LLDP-V2-MIB ni CISCO-CDP-MIB)."
         : "";
       const notes = d.notes.length ? `Avisos: ${d.notes.slice(0, 3).join("; ")}${d.notes.length > 3 ? ` y ${d.notes.length - 3} más` : ""}.` : "";
       setMsg([`${name}: ${parts.join(", ")} por SNMP en ${(r.ms / 1000).toFixed(1)} s.`, l2, notes].filter(Boolean).join(" "));

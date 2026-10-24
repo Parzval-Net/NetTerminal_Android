@@ -173,6 +173,20 @@ fn fill_for(session: &Session, state: &AppState) -> Option<connection::FillSpec>
     Some(connection::FillSpec { secret, user, only_host })
 }
 
+/// Contraseña guardada que un script escribe sin verla (`nt.type_saved_password()`, con la
+/// aprobación del usuario al lanzarlo). Mismas condiciones que el autocompletado: la sesión
+/// guardada tiene la contraseña activa y su destino coincide con el de la conexión, y la
+/// pantalla muestra ahora un pedido de login del equipo de destino (en SSH, si el pedido nombra
+/// un host debe ser el de la sesión; con bastión, tiene que nombrarlo). Nada vuelve al script.
+pub(crate) fn type_saved_password(state: &AppState, conn: &str) -> Result<(), String> {
+    let (_, session) = state.conns.info(conn).ok_or("Sesión no conectada")?;
+    let fill = fill_for(&session, state)
+        .ok_or("La sesión no tiene una contraseña guardada para este destino, o la bóveda está bloqueada")?;
+    let ssh = session.session_type == models::SessionType::Ssh;
+    let host = ssh.then(|| prompt_host(session.host.as_deref().unwrap_or("")));
+    state.conns.type_saved(conn, fill, host.as_deref(), ssh && uses_jump(&session))
+}
+
 /// La sesión SSH pasa por un bastión (campo jump host, -J o -o ProxyJump/ProxyCommand en
 /// los argumentos extra). Conservador: ante la duda se exige que el prompt nombre al host.
 fn uses_jump(s: &Session) -> bool {
@@ -827,10 +841,11 @@ fn plugin_run(
     id: String,
     action: String,
     conn: Option<String>,
+    vault_type: Option<bool>,
     app: tauri::AppHandle,
     state: State<'_, AppState>,
 ) -> Result<String, String> {
-    plugins::run(&state.scripts, app.clone(), &state.data_dir, &id, &action, conn)
+    plugins::run(&state.scripts, app.clone(), &state.data_dir, &id, &action, conn, vault_type.unwrap_or(false))
 }
 
 #[tauri::command]
@@ -941,6 +956,36 @@ fn merge_path(current: &std::ffi::OsStr, extra: &[std::path::PathBuf]) -> std::f
     std::env::join_paths(dirs).unwrap_or_else(|_| current.to_os_string())
 }
 
+/// Carpeta de configuración del sistema o, si no se puede obtener (HOME sin definir, perfil
+/// dañado), una alternativa con un aviso para el usuario. Antes `setup` fallaba y la app se
+/// cerraba sin decir por qué. Primero `~/.netterminal` (la carpeta de versiones anteriores),
+/// luego una carpeta temporal, que el aviso indica que puede perderse.
+fn config_dir_or_fallback(
+    dir: Result<PathBuf, String>,
+    home: Option<std::ffi::OsString>,
+    temp: PathBuf,
+) -> (PathBuf, Option<String>) {
+    let err = match dir {
+        Ok(d) => return (d, None),
+        Err(e) => e,
+    };
+    match home.filter(|h| !h.is_empty()) {
+        Some(h) => {
+            let d = PathBuf::from(h).join(".netterminal");
+            let text = format!("No se pudo obtener la carpeta de configuración del sistema ({err}). Los datos se guardan en {}.", d.display());
+            (d, Some(text))
+        }
+        None => {
+            let d = temp.join("netterminal-datos");
+            let text = format!(
+                "No se pudo obtener la carpeta de configuración del sistema ({err}) ni la carpeta personal. Los datos se guardan en {}, que el sistema puede borrar: exporta tus sesiones antes de cerrar.",
+                d.display()
+            );
+            (d, Some(text))
+        }
+    }
+}
+
 /// Abierta desde el Dock o el Finder, la app hereda el PATH mínimo de launchd
 /// (/usr/bin:/bin:/usr/sbin:/sbin) y no ve iperf3 de Homebrew ni el Python de python.org.
 /// En Linux, un lanzador de escritorio puede no incluir ~/.local/bin (pip --user, pipx).
@@ -965,7 +1010,7 @@ fn extend_path() {
 
 pub fn run() {
     extend_path();
-    tauri::Builder::default()
+    let app = tauri::Builder::default()
         .plugin(tauri_plugin_opener::init())
         .plugin(tauri_plugin_clipboard_manager::init())
         .plugin(tauri_plugin_dialog::init())
@@ -976,9 +1021,22 @@ pub fn run() {
             }
         })
         .setup(|app| {
+            // Un error de `setup` hace fallar `build` y, con panic=abort, la app se cerraba sin
+            // aviso. Sin menú la app funciona igual: el error se registra y se sigue.
             #[cfg(target_os = "macos")]
-            app.set_menu(macos_menu(app.handle())?)?;
-            let os_dir = app.path().app_config_dir()?;
+            if let Err(e) = macos_menu(app.handle()).and_then(|m| app.set_menu(m)) {
+                eprintln!("NetTerminal: no se pudo crear el menú de macOS: {e}");
+            }
+            let (os_dir, warning) = config_dir_or_fallback(
+                app.path().app_config_dir().map_err(|e| e.to_string()),
+                std::env::var_os("HOME").or_else(|| std::env::var_os("USERPROFILE")),
+                std::env::temp_dir(),
+            );
+            if let Some(text) = warning {
+                eprintln!("NetTerminal: {text}");
+                use tauri_plugin_dialog::{DialogExt, MessageDialogKind};
+                app.dialog().message(text).title("NetTerminal").kind(MessageDialogKind::Warning).show(|_| {});
+            }
             let data_dir = session_store::resolve_data_dir(os_dir);
             // Corrige permisos de archivos creados por versiones anteriores.
             for f in ["settings.json", "sessions.json"] {
@@ -1114,17 +1172,25 @@ pub fn run() {
             ftpclient::ftp_get,
             ftpclient::ftp_put
         ])
-        .build(tauri::generate_context!())
-        .expect("error al iniciar NetTerminal")
-        .run(|app, event| {
-            // La llave de la bóveda y la de la nota abierta se borran de memoria al salir.
-            if let tauri::RunEvent::Exit = event {
-                if let Some(state) = app.try_state::<AppState>() {
-                    state.creds.lock();
-                    state.secure_notes.lock();
-                }
+        .build(tauri::generate_context!());
+    // Sin `expect`: con panic=abort un fallo al iniciar (WebView, ventana) cerraba la app sin
+    // ningún mensaje. Se registra y se termina con código de error.
+    let app = match app {
+        Ok(app) => app,
+        Err(e) => {
+            eprintln!("NetTerminal: error al iniciar: {e}");
+            std::process::exit(1);
+        }
+    };
+    app.run(|app, event| {
+        // La llave de la bóveda y la de la nota abierta se borran de memoria al salir.
+        if let tauri::RunEvent::Exit = event {
+            if let Some(state) = app.try_state::<AppState>() {
+                state.creds.lock();
+                state.secure_notes.lock();
             }
-        });
+        }
+    });
 }
 
 #[cfg(test)]
@@ -1188,6 +1254,21 @@ mod tests {
             assert_eq!(std::fs::read(&p).unwrap(), bad);
         }
         std::fs::remove_dir_all(&d).unwrap();
+    }
+
+    #[test]
+    fn config_dir_falls_back_instead_of_failing() {
+        let tmp = PathBuf::from("/tmp");
+        let (d, w) = config_dir_or_fallback(Ok(PathBuf::from("/cfg/NetTerminal")), None, tmp.clone());
+        assert_eq!((d, w), (PathBuf::from("/cfg/NetTerminal"), None));
+        let (d, w) = config_dir_or_fallback(Err("sin HOME".into()), Some("/home/noc".into()), tmp.clone());
+        assert_eq!(d, PathBuf::from("/home/noc/.netterminal"));
+        assert!(w.unwrap().contains("sin HOME"));
+        for home in [None, Some(std::ffi::OsString::new())] {
+            let (d, w) = config_dir_or_fallback(Err("x".into()), home, tmp.clone());
+            assert_eq!(d, tmp.join("netterminal-datos"));
+            assert!(w.unwrap().contains("puede borrar"));
+        }
     }
 
     #[test]

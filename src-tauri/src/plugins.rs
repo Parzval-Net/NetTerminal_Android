@@ -22,7 +22,10 @@ use tauri::AppHandle;
 
 const MAX_FILES: usize = 200;
 const MAX_TOTAL: u64 = 20 * 1024 * 1024;
-const PERMISSIONS: [&str; 3] = ["session", "network", "files"];
+/// "vault-type": pedir que la app escriba la contraseña guardada en un pedido de login de la
+/// sesión (`type_saved_password`), sin que el plugin la vea. Exige "session" y además la
+/// aprobación del usuario en cada ejecución.
+const PERMISSIONS: [&str; 4] = ["session", "network", "files", "vault-type"];
 
 #[derive(Serialize, Deserialize, Clone)]
 pub struct Action {
@@ -112,6 +115,9 @@ fn read_manifest(root: &Path) -> Result<Manifest, String> {
     }
     if let Some(p) = m.permissions.iter().find(|p| !PERMISSIONS.contains(&p.as_str())) {
         return Err(format!("Permiso desconocido: {p}"));
+    }
+    if m.permissions.iter().any(|p| p == "vault-type") && !m.permissions.iter().any(|p| p == "session") {
+        return Err("El permiso 'vault-type' requiere también 'session'".into());
     }
     if m.actions.is_empty() || m.actions.iter().any(|a| !valid_id(&a.id)) {
         return Err("Se requiere al menos una acción con id válido".into());
@@ -439,6 +445,7 @@ pub fn run(
     id: &str,
     action: &str,
     conn: Option<String>,
+    vault_type: bool,
 ) -> Result<String, String> {
     if !valid_id(id) || !valid_id(action) {
         return Err("Plugin o acción inválida".into());
@@ -458,6 +465,10 @@ pub fn run(
         return Err("Acción no declarada en plugin.json".into());
     }
     let allow_session = m.permissions.iter().any(|p| p == "session");
+    // La casilla de esta ejecución solo vale si el plugin declaró (y el usuario aprobó) el permiso.
+    if vault_type && !m.permissions.iter().any(|p| p == "vault-type") {
+        return Err("El plugin no declaró el permiso 'vault-type'".into());
+    }
     runner.run_spec(
         app,
         RunSpec {
@@ -471,7 +482,7 @@ pub fn run(
                 vec![]
             },
             allow_session,
-            options: crate::scripts::RunOptions::default(),
+            options: crate::scripts::RunOptions { vault_type, ..Default::default() },
             env: vec![("NT_ACTION".into(), action.into()), ("NT_PLUGIN_DIR".into(), root.to_string_lossy().into())],
         },
         data,
@@ -636,6 +647,14 @@ mod tests {
         sample(&src);
         fs::write(src.join("plugin.json"), r#"{"id":"../x","name":"x","version":"1","actions":[{"id":"a","label":"a"}]}"#).unwrap();
         assert!(stage(&base.join("data"), &src).is_err());
+        // "vault-type" es un permiso conocido, pero exige "session"; se muestra en la revisión.
+        let manifest = |perms: &str| format!(r#"{{"id":"demo","name":"Demo","version":"1","permissions":[{perms}],"actions":[{{"id":"a","label":"a"}}]}}"#);
+        fs::write(src.join("plugin.json"), manifest(r#""vault-type""#)).unwrap();
+        assert!(stage(&base.join("data"), &src).err().unwrap().contains("requiere también 'session'"));
+        fs::write(src.join("plugin.json"), manifest(r#""session","vault-type""#)).unwrap();
+        let preview = stage(&base.join("data"), &src).unwrap();
+        assert_eq!(preview.manifest.permissions, ["session", "vault-type"]);
+        cancel(&base.join("data"), &preview.staging);
 
         // zip con ruta "../evil.py"
         let zpath = base.join("evil.zip");

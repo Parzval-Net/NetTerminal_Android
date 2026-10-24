@@ -76,6 +76,8 @@ function teclear(st, data) {
  *   - `confirmar(p)`: respuesta del usuario a una línea que pide confirmación
  *     ({ line, risk, session, targets, opaque }); por defecto rechaza.
  *   - `secreto`: lo que el usuario ingresa en ask_secret (null o ausente: cancela).
+ *   - `boveda`: el usuario marcó "Permitir que el script escriba contraseñas guardadas". El
+ *     equipo ficticio pide contraseña si `responder` devuelve `{ pide: "Password: " }`.
  *   - `detenerTras` (ms): el usuario pulsa "Detener script". `tiempoMax` (ms): tiempo máximo.
  *   - `latencia` (ms): demora de cada operación de sesión (mide cuántas corren a la vez).
  *   - `helperDir`: carpeta del netterminal.py (por defecto el de la app).
@@ -97,6 +99,7 @@ export function ejecutar(
     paralelo = 1,
     confirmar = () => false,
     secreto = null,
+    boveda = false,
     detenerTras,
     tiempoMax,
     latencia = 0,
@@ -131,6 +134,8 @@ export function ejecutar(
     const logs = [];
     const confirmaciones = [];
     const secretos = [];
+    /** Sesiones donde la app escribió la contraseña guardada (type_saved_password). */
+    const escritas = [];
     const aprobadas = new Set();
     /** Estado del equipo ficticio de cada sesión. */
     const eq = Object.fromEntries(destinos.map((d) => [d.name, { pending: "", resto: null, colgado: false, linea: { buf: "", opaque: false } }]));
@@ -162,6 +167,21 @@ export function ejecutar(
         if (typeof secreto !== "string") return { ok: false, code: "cancelled", error: "El usuario canceló el ingreso del secreto" };
         secretos.push(secreto);
         return { ok: true, value: secreto };
+      }
+      // Contraseña guardada: la escribe la app (aquí no hay valor) y el script solo recibe ok.
+      if (op === "type_saved_password") {
+        if (!session) return { ok: false, code: "permission", error: "Este plugin no declaró el permiso 'session'" };
+        if (!boveda) return { ok: false, code: "permission", error: "No se permitió escribir contraseñas guardadas en esta ejecución (casilla al lanzar el script)" };
+        const nombre = req.session ?? destinos[0].name;
+        const s = eq[nombre];
+        if (!s) return { ok: false, code: "session", error: `La sesión "${nombre}" no está entre los destinos elegidos al lanzar el script` };
+        // Como la app, mira la pantalla (no lo que el script ya leyó) y responde una vez por pedido.
+        if (!s.pidiendo) return { ok: false, code: "vault", error: "La pantalla no muestra un pedido de contraseña" };
+        s.pidiendo = false;
+        escritas.push(nombre);
+        logs.push(`Contraseña guardada escrita en ${nombre} (el script no la ve)`);
+        s.pending = `\r\n${nombre}#`;
+        return { ok: true };
       }
       if (!["send", "wait", "read", "clear"].includes(op)) return { ok: false, code: "unknown", error: `operación desconocida: ${op}` };
       if (!session) return { ok: false, code: "permission", error: "Este plugin no declaró el permiso 'session'" };
@@ -202,6 +222,7 @@ export function ejecutar(
             const out = responder(cmd, nombre);
             s.resto = null;
             s.colgado = false;
+            s.pidiendo = false;
             if (!out) {
               fail = `El equipo ficticio no conoce: ${cmd}`;
               s.pending = `${cmd}\r\n${nombre}#`;
@@ -211,6 +232,9 @@ export function ejecutar(
             } else if (out.mudo) {
               s.pending = `${cmd}\r\n`;
               s.resto = "";
+            } else if (out.pide) {
+              s.pending = `${cmd}\r\n${out.pide}`;
+              s.pidiendo = true;
             } else if (out.lento) {
               s.pending = `${cmd}\r\n${out.parcial.join("\r\n")}`;
               s.resto = `\r\n${out.resto.join("\r\n")}\r\n${nombre}#`;
@@ -272,7 +296,7 @@ export function ejecutar(
     });
     py.on("close", (code) => {
       timers.forEach(clearTimeout);
-      const r = { commands, porSesion, logs, confirmaciones, estado, motivo, enVueloMax, stderr: enmascarar(err) };
+      const r = { commands, porSesion, logs, confirmaciones, estado, motivo, enVueloMax, escritas, stderr: enmascarar(err) };
       if (estado !== "ok") resolve(r);
       else if (fail) reject(new Error(fail));
       else if (code === 0) resolve(r);

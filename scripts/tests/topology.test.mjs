@@ -1,6 +1,7 @@
 // Pruebas de topología: `node scripts/tests/topology.test.mjs` (Node 22.15+ con tipos TS).
 // Salidas de ejemplo con direcciones de documentación (RFC 5737) y nombres ficticios.
 import assert from "node:assert/strict";
+import { fastEnough } from "./timing.mjs";
 import { registerHooks } from "node:module";
 
 // packs.ts importa "./highlight" sin extensión (como lo resuelve Vite): se completa con .ts.
@@ -407,14 +408,11 @@ for (const cmd of ["show ip ospf neighbor", "show ip eigrp neighbors", "show ip 
 
 // ---------- Fuzz: salidas maliciosas o aleatorias de un equipo (no confiable) ----------
 
-/** Falla si fn tarda más de `ms` (backtracking catastrófico o crecimiento cuadrático). */
-const fast = (label, ms, fn) => {
-  const t0 = performance.now();
-  const r = fn();
-  const dt = performance.now() - t0;
-  assert.ok(dt < ms, `${label}: ${dt.toFixed(0)} ms (máximo ${ms} ms)`);
-  return r;
-};
+/**
+ * Falla si fn tarda más de `ms` (backtracking catastrófico o crecimiento cuadrático). Sobre el
+ * límite se vuelve a medir y, con la máquina cargada, el límite se duplica (timing.mjs).
+ */
+const fast = (label, ms, fn) => fastEnough(label, ms, fn);
 const BIG = 100_000;
 fast("promptName con '[' sin cierre", 300, () => T.promptName("[" + "a".repeat(BIG)));
 fast("BGP con muchos espacios", 300, () => T.parseBgpSummary(`192.0.2.1 4 65000 1 1 1 0 0 00:01 a${" ".repeat(BIG)}x`));
@@ -851,6 +849,10 @@ const rustList = (name) => {
 assert.deepEqual(rustList("TOPO_WALK_ROOTS"), [...S.WALK_ALLOWED].sort(), "WALK: snmp.rs = topoSnmp.ts");
 assert.deepEqual(rustList("TOPO_GET_COLUMNS"), [...S.GET_COLUMNS].sort(), "GET columnas: snmp.rs = topoSnmp.ts");
 assert.deepEqual(rustList("TOPO_GET_SCALARS"), [...S.GET_SCALARS].sort(), "GET escalares: snmp.rs = topoSnmp.ts");
+const rustVlan = () => {
+  const at = rust.indexOf("pub const TOPO_VLAN_WALKS:");
+  return [...rust.slice(at, rust.indexOf("];", at)).matchAll(/"([\d.]+)"/g)].map((m) => m[1]).sort();
+};
 for (const routing of [false, true])
   for (const mac of [false, true])
     for (const ports of [false, true]) {
@@ -1083,6 +1085,82 @@ assert.equal(Object.getPrototypeOf(hd.ports), Object.prototype);
 assert.equal({}.status, undefined, "Object.prototype intacto");
 assert.equal(T.macPortsFromRows(hd.macRows, [], lookupOui).__proto__, Object.prototype);
 assert.ok(!hd.neighbors.length, "índice LLDP malformado descartado");
+// LLDP-V2-MIB (802.1AB-2009): OIDs del MIB oficial y alternativa solo si LLDP-MIB vino vacía.
+assert.equal(O_.lldpV2RemSysName, "1.3.111.2.802.1.1.13.1.4.1.1.10");
+assert.equal(O_.lldpV2RemChassisIdSubtype, "1.3.111.2.802.1.1.13.1.4.1.1.5");
+assert.equal(O_.lldpV2RemManAddrIfSubtype, "1.3.111.2.802.1.1.13.1.4.2.1.3");
+for (const w of S.LLDP_V2_FALLBACK) assert.ok(S.WALK_ALLOWED.includes(w) && w.startsWith("1.3.111.2.802.1.1.13.1.4."), w);
+assert.ok(!S.needsLldpV2Fallback(read(rows, gets)), "con LLDP-MIB no se pide la V2");
+const L2 = "1.3.111.2.802.1.1.13.1.4";
+const v2rows = [
+  str(`${O_.ifName}.10105`, "Gi1/0/5"),
+  // Índice TimeMark.ifIndex.destino.remIndex; dos TimeMark del mismo vecino.
+  str(`${L2}.1.1.10.0.10105.1.4`, "viejo"),
+  str(`${L2}.1.1.10.900.10105.1.4`, "acc-sw07"),
+  int(`${L2}.1.1.7.900.10105.1.4`, 5),
+  str(`${L2}.1.1.8.900.10105.1.4`, "ge-0/0/3"),
+  str(`${L2}.1.1.11.900.10105.1.4`, "Juniper EX2300\nJUNOS"),
+  // Sin nombre: chassis MAC; puerto local sin ifName conocido.
+  int(`${L2}.1.1.5.950.77.1.2`, 4),
+  hex(`${L2}.1.1.6.950.77.1.2`, "3c61040a0b0c"),
+  int(`${L2}.1.1.7.950.77.1.2`, 3),
+  hex(`${L2}.1.1.8.950.77.1.2`, "3c61040a0b0d"),
+  // Dirección de gestión IPv4 (familia 1, largo 4) e índice corto (descartado).
+  int(`${L2}.2.1.3.900.10105.1.4.1.4.192.0.2.70`, 2),
+  str(`${L2}.1.1.10.5.6.7`, "corto"),
+];
+const v1empty = read([str(`${O_.ifName}.1`, "Gi0/1")]);
+assert.ok(S.needsLldpV2Fallback(v1empty), "LLDP-MIB vacía: se pide la V2");
+const dv2 = S.parseSnmpDiscovery(read(v2rows), all);
+assert.deepEqual(
+  dv2.neighbors.map((n) => [n.name, n.localPort, n.remotePort, n.ip, n.platform, n.proto]).sort((a, b) => b[0].localeCompare(a[0])),
+  [
+    ["acc-sw07", "Gi1/0/5", "ge-0/0/3", "192.0.2.70", "Juniper EX2300", "LLDP"],
+    ["3c61.040a.0b0c", "puerto 77", "3c61.040a.0b0d", undefined, undefined, "LLDP"],
+  ],
+);
+assert.ok(!dv2.l2Empty);
+// Con LLDP-MIB y V2 a la vez manda la de 2005 (sin duplicar vecinos).
+assert.equal(S.parseSnmpDiscovery(read([...rows, ...v2rows], gets), all).neighbors.filter((n) => n.name === "acc-sw07").length, 0);
+
+// Cisco: tabla MAC por VLAN. vtpVlanState (CISCO-VTP-MIB) y lectura por VLAN de BRIDGE-MIB.
+assert.equal(O_.vtpVlanState, "1.3.6.1.4.1.9.9.46.1.3.1.1.2");
+assert.equal(O_.sysObjectID, "1.3.6.1.2.1.1.2.0");
+assert.ok(S.WALK_ALLOWED.includes(O_.vtpVlanState) && S.VLAN_LIST.every((w) => S.WALK_ALLOWED.includes(w)));
+assert.deepEqual(S.VLAN_FDB_WALKS, [O_.dot1dBasePortIfIndex, O_.dot1dTpFdbPort, O_.dot1dTpFdbStatus]);
+assert.deepEqual([...S.VLAN_FDB_WALKS].sort(), rustVlan(), "VLAN: snmp.rs = topoSnmp.ts");
+const oidVal = (oid, v) => ({ oid, type: "OID", value: v });
+const cisco = [oidVal(O_.sysObjectID, "1.3.6.1.4.1.9.1.2494"), str(O_.sysName, "acc-sw01")];
+const ciscoNoFdb = read([str(`${O_.ifName}.10102`, "Gi1/0/2")], cisco);
+assert.ok(S.isCiscoAgent(ciscoNoFdb) && S.needsVlanFdb(ciscoNoFdb));
+assert.ok(!S.needsVlanFdb(read(rows, cisco)), "con FDB general no se lee por VLAN");
+assert.ok(!S.isCiscoAgent(read([], [oidVal(O_.sysObjectID, "1.3.6.1.4.1.2011.2.23.1")])), "Huawei no es Cisco");
+assert.ok(!S.isCiscoAgent(read([], [oidVal(O_.sysObjectID, "1.3.6.1.4.1.99.1")])), "enterprises.99 no es Cisco");
+assert.ok(!S.needsVlanFdb(read([], [str(O_.sysName, "x")])), "sin sysObjectID no se asume Cisco");
+// Índice managementDomainIndex.vtpVlanIndex; solo operational(1), sin 1002 a 1005 ni repetidos.
+const vtp = read([
+  int(`${O_.vtpVlanState}.1.1`, 1),
+  int(`${O_.vtpVlanState}.1.20`, 1),
+  int(`${O_.vtpVlanState}.1.30`, 2),
+  int(`${O_.vtpVlanState}.2.20`, 1),
+  int(`${O_.vtpVlanState}.1.1002`, 1),
+  int(`${O_.vtpVlanState}.1.4095`, 1),
+  int(`${O_.vtpVlanState}.1`, 1),
+]);
+assert.deepEqual(S.activeVlans(vtp), { vlans: [1, 20], total: 2 });
+const manyVlans = read(Array.from({ length: 100 }, (_, i) => int(`${O_.vtpVlanState}.1.${i + 2}`, 1)));
+assert.deepEqual([S.activeVlans(manyVlans).vlans.length, S.activeVlans(manyVlans).total, S.activeVlans(manyVlans).vlans[0]], [S.MAX_VLAN_READS, 100, 2], "tope de 64 VLAN");
+assert.equal(S.MAX_VLAN_READS, 64);
+// Cada VLAN trae su dot1dBasePortTable; una MAC vista en dos VLAN por el mismo puerto va una vez.
+const vlan20 = read([int(`${O_.dot1dBasePortIfIndex}.2`, 10102), int(`${O_.dot1dTpFdbPort}.0.224.252.18.52.86`, 2), int(`${O_.dot1dTpFdbStatus}.0.224.252.18.52.86`, 3)]);
+const vlan30 = read([int(`${O_.dot1dBasePortIfIndex}.7`, 10146), int(`${O_.dot1dTpFdbPort}.0.0.12.7.172.30`, 7), int(`${O_.dot1dTpFdbPort}.0.224.252.18.52.86`, 9)]);
+const ciscoRead = read([str(`${O_.ifName}.10102`, "Gi1/0/2"), str(`${O_.ifName}.10146`, "Gi1/0/46")], cisco);
+const dv = S.parseSnmpDiscovery(ciscoRead, all, [{ vlan: 20, read: vlan20 }, { vlan: 30, read: vlan30 }, { vlan: 40, read: vlan20 }]);
+assert.deepEqual(dv.macRows.map((r) => [r.mac, r.port]).sort(), [["0000.0c07.ac1e", "Gi1/0/46"], ["00e0.fc12.3456", "Gi1/0/2"]], "puerto 9 sin mapeo fuera");
+const vlanNotes = S.parseSnmpDiscovery(ciscoRead, all, [{ vlan: 50, read: { ...vlan20, walks: [{ oid: O_.dot1dTpFdbPort, rows: [], truncated: false, timedOut: true, error: null }] } }]).notes;
+assert.match(vlanNotes[0], /^VLAN 50: dot1dTpFdbPort: tiempo agotado/);
+assert.ok(S.snmpDiscoveryPlan(all).gets.includes(O_.sysObjectID));
+
 const bigRead = read(Array.from({ length: 10000 }, (_, i) => str(`${L}.4.1.1.9.${i}.${i % 50}.${i}`, `sw${i}`)).concat(Array.from({ length: 10000 }, (_, i) => int(`${O_.dot1dTpFdbPort}.0.17.${(i >> 16) & 255}.${(i >> 8) & 255}.${i & 255}.1`, 1))));
 fast("SNMP con 20.000 filas", 1500, () => S.parseSnmpDiscovery(bigRead, all));
 

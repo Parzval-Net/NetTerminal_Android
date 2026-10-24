@@ -1,5 +1,6 @@
 // Pruebas del diff de configuraciones: `node scripts/tests/diff.test.mjs` (Node 22.6+ con tipos TS).
 import assert from "node:assert/strict";
+import { fastEnough } from "./timing.mjs";
 import { diffLines, diffStats, foldBlocks, markSecretChanges, splitLines, unifiedDiff } from "../../src/lib/diff.ts";
 
 /** Reconstruye A y B desde las filas: valida que el diff sea consistente. */
@@ -48,25 +49,20 @@ const changed = cfg.slice();
 changed[501] = " description CAMBIADO";
 changed.splice(4000, 0, " spanning-tree portfast");
 changed.splice(9000, 5);
-let t0 = performance.now();
-const rows = check(cfg, changed);
-const ms = performance.now() - t0;
+// Tiempos con fastEnough: sobre el límite se vuelve a medir y con carga el límite se duplica.
+const rows = fastEnough("diff de 10.000 líneas", 500, () => check(cfg, changed));
+const ms = fastEnough.lastMs;
 assert.deepEqual(diffStats(rows), { added: 2, removed: 6, same: cfg.length - 6 });
-assert.ok(ms < 500, `lento: ${ms} ms`);
 
 // Dos equipos distintos (mucho cambio): debe terminar acotado.
 const other = cfg.map((l, i) => (i % 3 === 0 ? l + " x" : l));
-t0 = performance.now();
-check(cfg, other);
-const ms2 = performance.now() - t0;
-assert.ok(ms2 < 3000, `lento: ${ms2} ms`);
+fastEnough("diff con mucho cambio", 3000, () => check(cfg, other));
+const ms2 = fastEnough.lastMs;
 
 // Peor caso: sin líneas únicas y muy distinto (activa el tope de Myers).
 const noisyA = Array.from({ length: 6000 }, () => (rnd(2) ? "!" : " exit"));
 const noisyB = Array.from({ length: 6000 }, () => (rnd(2) ? "!" : " exit"));
-t0 = performance.now();
-check(noisyA, noisyB);
-assert.ok(performance.now() - t0 < 3000, "peor caso lento");
+fastEnough("diff peor caso", 3000, () => check(noisyA, noisyB));
 
 // Plegado y diff unificado.
 assert.ok(foldBlocks(rows, 3).some((b) => b.type === "fold"));

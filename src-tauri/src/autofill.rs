@@ -132,6 +132,51 @@ impl AutoFill {
     }
 }
 
+/// Por qué no se escribe la contraseña guardada que pide un script.
+pub const NO_PROMPT: &str = "La pantalla no muestra un pedido de contraseña";
+pub const NOT_LOGIN_PROMPT: &str = "El pedido no es el de inicio de sesión (passphrase, cambio de clave o confirmación)";
+pub const AFTER_DENIED: &str = "El equipo acaba de rechazar una contraseña: no se reintenta";
+pub const OTHER_HOST: &str = "El pedido de contraseña es de otro equipo, no del destino de la sesión";
+/// Líneas anteriores al pedido que se revisan en busca de un rechazo.
+const RECENT_LINES: usize = 4;
+
+/// Pedido de contraseña que la pantalla muestra ahora (última línea del texto limpio), para que
+/// un script escriba la contraseña guardada sin verla (`type_saved_password`). Mismas reglas que
+/// el autocompletado: termina en "password:" o "contraseña:", no es una passphrase de llave ni
+/// un cambio de clave, ninguna de las líneas recién anteriores es un rechazo ("Permission
+/// denied", "% Login invalid") o una advertencia de llave de host, y si nombra un host al estilo
+/// OpenSSH ("u@host's password:", "(u@host) Password:") debe ser `host`. Con `strict` (sesión
+/// con bastión) el pedido tiene que nombrar al host. Devuelve el byte de `tail` donde empieza
+/// la línea del pedido, que identifica ese pedido (se responde una sola vez).
+pub fn screen_prompt(tail: &str, host: Option<&str>, strict: bool) -> Result<usize, &'static str> {
+    let start = tail.rfind('\n').map_or(0, |i| i + 1);
+    let line = tail[start..].trim().to_lowercase();
+    if !(line.ends_with("password:") || line.ends_with("contraseña:")) {
+        return Err(NO_PROMPT);
+    }
+    if line.contains("passphrase") || line.contains(HOSTKEY) || NOT_LOGIN.iter().any(|w| line.contains(w)) {
+        return Err(NOT_LOGIN_PROMPT);
+    }
+    let recent = tail[..start].lines().rev().filter(|l| !l.trim().is_empty()).take(RECENT_LINES);
+    if recent.map(str::to_lowercase).any(|l| aborts(&l)) {
+        return Err(AFTER_DENIED);
+    }
+    let host = host.map(|h| h.trim().to_lowercase()).filter(|h| !h.is_empty());
+    match host.as_deref() {
+        Some(h) if names_host(&line, h) => {}
+        Some(_) if strict || names_some_host(&line) => return Err(OTHER_HOST),
+        None if names_some_host(&line) => return Err(OTHER_HOST),
+        _ => {}
+    }
+    Ok(start)
+}
+
+/// El pedido nombra un host al estilo OpenSSH (de cualquier equipo).
+fn names_some_host(line: &str) -> bool {
+    let line = line.trim_start();
+    (line.ends_with("'s password:") && line.contains('@')) || (line.starts_with('(') && line.contains('@') && line.contains(") "))
+}
+
 /// El prompt de contraseña es de OpenSSH para `host` (ya en minúsculas).
 fn names_host(line: &str, host: &str) -> bool {
     let line = line.trim_start();
@@ -226,6 +271,41 @@ mod tests {
         let (mut a, t) = af(None);
         assert_eq!(sent(a.feed("Password: ", t + WINDOW + Duration::from_secs(1))), None);
         assert!(a.done());
+    }
+
+    #[test]
+    fn screen_prompt_for_scripts() {
+        // Pedidos de login: el que no nombra host y el de OpenSSH del destino.
+        assert_eq!(screen_prompt("router con\nPassword: ", None, false), Ok(11));
+        assert!(screen_prompt("Contraseña:", None, false).is_ok());
+        assert!(screen_prompt("banner\nnoc@10.0.0.1's password: ", Some("10.0.0.1"), false).is_ok());
+        assert!(screen_prompt("(noc@Router1) Password: ", Some("router1"), true).is_ok());
+        // Sin pedido en la última línea: un prompt de comandos o un pedido ya respondido.
+        for tail in ["router#", "Password: \nrouter>", "", "show run | i password:\nrouter#"] {
+            assert_eq!(screen_prompt(tail, None, false), Err(NO_PROMPT), "{tail:?}");
+        }
+        // Passphrase de llave, cambio de clave, confirmación de llave de host.
+        for tail in ["Enter passphrase for key '/home/u/.ssh/id_ed25519': password:", "(current) UNIX password:", "Retype new password:"] {
+            assert_eq!(screen_prompt(tail, None, false), Err(NOT_LOGIN_PROMPT), "{tail:?}");
+        }
+        // Justo después de un rechazo (también con líneas vacías de por medio): nunca.
+        for tail in [
+            "Permission denied, please try again.\nnoc@10.0.0.1's password: ",
+            "% Login invalid\n\nUsername: noc\nPassword: ",
+            "Password: \n% Bad passwords\n\nPassword: ",
+            "Access denied\nPassword:",
+        ] {
+            assert_eq!(screen_prompt(tail, Some("10.0.0.1"), false), Err(AFTER_DENIED), "{tail:?}");
+        }
+        // Un rechazo antiguo (varias líneas atrás) no impide un login nuevo.
+        assert!(screen_prompt("% Login invalid\na\nb\nc\nd\ne\nPassword: ", None, false).is_ok());
+        // Pedido de otro equipo: un ssh lanzado dentro de la sesión, o el bastión.
+        assert_eq!(screen_prompt("noc@evil.example's password: ", Some("10.0.0.1"), false), Err(OTHER_HOST));
+        assert_eq!(screen_prompt("(noc@evil.example) Password: ", None, false), Err(OTHER_HOST));
+        assert_eq!(screen_prompt("noc@bastion's password: ", Some("10.0.0.1"), true), Err(OTHER_HOST));
+        // Con bastión, un "Password:" que no nombra al destino tampoco.
+        assert_eq!(screen_prompt("Password: ", Some("10.0.0.1"), true), Err(OTHER_HOST));
+        assert!(screen_prompt("Password: ", Some("10.0.0.1"), false).is_ok());
     }
 
     #[test]

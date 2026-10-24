@@ -17,6 +17,10 @@
 //! - `ask_secret`: el valor viaja solo por el stdin del script. Se enmascara en todo lo
 //!   que el script muestra en la app (mensajes, errores, diálogos de confirmación).
 //! - No hay acceso a la bóveda: ninguna operación devuelve una contraseña guardada.
+//!   `type_saved_password` hace que la app escriba la contraseña guardada de un destino en el
+//!   pedido de login que su pantalla muestra en ese momento, sin que el script la vea. Requiere
+//!   que el usuario lo permita al lanzar (casilla por ejecución; en plugins, además el permiso
+//!   "vault-type") y se responde una vez por pedido.
 
 use crate::expect::{self, WaitEnd};
 use regex::Regex;
@@ -64,6 +68,8 @@ const SLICE: Duration = Duration::from_millis(200);
 const GATE_TIMEOUT: Duration = Duration::from_secs(120);
 const SECRET_TIMEOUT: Duration = Duration::from_secs(300);
 const MAX_SECRET_PROMPTS: usize = 10;
+/// Contraseñas guardadas que un script puede escribir por ejecución (además, una por pedido).
+const MAX_VAULT_TYPES: usize = 10;
 const MAX_LABEL: usize = 120;
 const MASK: &str = "••••••";
 pub const BUSY: &str = "Un script está usando esta sesión. Espera a que termine o usa Detener script.";
@@ -211,6 +217,9 @@ pub trait Bridge: Send + Sync + 'static {
     fn prompt(&self, p: Prompt) -> Option<Answer>;
     /// Detiene la ejecución (rechazo del usuario).
     fn abort(&self, reason: String);
+    /// Escribe la contraseña guardada de la sesión en el pedido de login que muestra su
+    /// pantalla. Nunca devuelve el valor; el error explica por qué no se escribió.
+    fn type_saved_password(&self, conn: &str) -> Result<(), String>;
 }
 
 /// Semáforo simple: tope de sesiones con una operación en curso.
@@ -273,6 +282,9 @@ pub struct Broker<B: Bridge> {
     secrets: Mutex<Vec<Zeroizing<String>>>,
     secret_prompts: Mutex<usize>,
     stop: Arc<AtomicBool>,
+    /// El usuario permitió, para esta ejecución, escribir contraseñas guardadas en los destinos.
+    allow_vault: bool,
+    vault_typed: Mutex<usize>,
 }
 
 fn ok() -> Value {
@@ -295,7 +307,15 @@ impl<B: Bridge> Broker<B> {
             secrets: Mutex::new(Vec::new()),
             secret_prompts: Mutex::new(0),
             stop,
+            allow_vault: false,
+            vault_typed: Mutex::new(0),
         }
+    }
+
+    /// Permiso de la ejecución para `type_saved_password` (casilla del diálogo de lanzamiento).
+    pub fn with_vault(mut self, allow: bool) -> Self {
+        self.allow_vault = allow;
+        self
     }
 
     fn stopped(&self) -> bool {
@@ -339,6 +359,7 @@ impl<B: Bridge> Broker<B> {
             "sessions" if !self.allow_session => fail("permission", "Este plugin no declaró el permiso 'session'"),
             "sessions" => json!({"ok": true, "sessions": self.targets.iter().map(|t| t.info.clone()).collect::<Vec<_>>()}),
             "ask_secret" => self.ask_secret(req["label"].as_str().unwrap_or("")),
+            "type_saved_password" => self.type_saved(req),
             op @ ("send" | "wait" | "read" | "clear") => self.session_op(op, req),
             other => fail("unknown", format!("operación desconocida: {other}")),
         }
@@ -373,6 +394,41 @@ impl<B: Bridge> Broker<B> {
                 while io.rx.try_recv().is_ok() {}
                 ok()
             }
+        }
+    }
+
+    /// Contraseña guardada escrita por la app en el pedido de login del destino. El script solo
+    /// recibe si se escribió o por qué no; el valor no pasa por él ni por sus mensajes.
+    fn type_saved(&self, req: &Value) -> Value {
+        if !self.allow_session {
+            return fail("permission", "Este plugin no declaró el permiso 'session'");
+        }
+        if !self.allow_vault {
+            return fail("permission", "No se permitió escribir contraseñas guardadas en esta ejecución (casilla al lanzar el script)");
+        }
+        if self.stopped() {
+            return fail("cancelled", "El script se detuvo");
+        }
+        let t = match self.target(req["session"].as_str()) {
+            Ok(t) => t,
+            Err(e) => return e,
+        };
+        let io = lock(&t.io);
+        let _permit = self.parallel.acquire();
+        // Con texto a medio escribir la contraseña quedaría pegada a él.
+        if !io.line.buf.is_empty() || io.line.opaque {
+            return fail("pending", "Hay texto sin Enter en la línea: envía Enter o Ctrl-U antes de escribir la contraseña");
+        }
+        if *lock(&self.vault_typed) >= MAX_VAULT_TYPES {
+            return fail("limit", format!("Máximo {MAX_VAULT_TYPES} contraseñas guardadas por ejecución"));
+        }
+        match self.bridge.type_saved_password(&t.conn) {
+            Ok(()) => {
+                *lock(&self.vault_typed) += 1;
+                self.bridge.log(format!("Contraseña guardada escrita en {} (el script no la ve)", t.name));
+                ok()
+            }
+            Err(e) => fail("vault", e),
         }
     }
 
@@ -536,7 +592,7 @@ pub fn serve<B: Bridge>(broker: Arc<Broker<B>>, input: impl BufRead, out: Arc<Mu
                 continue;
             }
         };
-        let concurrent = matches!(req["op"].as_str(), Some("send" | "wait" | "read" | "clear" | "ask_secret"));
+        let concurrent = matches!(req["op"].as_str(), Some("send" | "wait" | "read" | "clear" | "ask_secret" | "type_saved_password"));
         if !concurrent {
             send(&out, reply_line(&req, broker.handle(&req)));
             continue;
@@ -583,6 +639,9 @@ pub struct RunOptions {
     pub parallel: usize,
     #[serde(default = "thirty")]
     pub max_minutes: u64,
+    /// Casilla "Permitir que el script escriba contraseñas guardadas": vale solo esta ejecución.
+    #[serde(default)]
+    pub vault_type: bool,
 }
 
 fn one() -> usize {
@@ -594,7 +653,7 @@ fn thirty() -> u64 {
 
 impl Default for RunOptions {
     fn default() -> Self {
-        RunOptions { allow_changes: false, parallel: 1, max_minutes: 30 }
+        RunOptions { allow_changes: false, parallel: 1, max_minutes: 30, vault_type: false }
     }
 }
 
@@ -682,6 +741,10 @@ impl Bridge for TauriBridge {
 
     fn abort(&self, reason: String) {
         self.ctl.halt(reason);
+    }
+
+    fn type_saved_password(&self, conn: &str) -> Result<(), String> {
+        crate::type_saved_password(&self.app.state::<crate::AppState>(), conn)
     }
 }
 
@@ -1029,7 +1092,8 @@ impl ScriptRunner {
         });
 
         let bridge = TauriBridge { app: app.clone(), run: run_id.clone(), script: script.clone(), ctl: ctl.clone() };
-        let broker = Arc::new(Broker::new(bridge, targets, allow_session, options.allow_changes, parallel, stop));
+        let vault = allow_session && options.vault_type;
+        let broker = Arc::new(Broker::new(bridge, targets, allow_session, options.allow_changes, parallel, stop).with_vault(vault));
         let id = run_id.clone();
         std::thread::spawn(move || {
             let out: Arc<Mutex<dyn Write + Send>> = Arc::new(Mutex::new(stdin));
@@ -1157,7 +1221,17 @@ mod tests {
         fn abort(&self, reason: String) {
             *lock(&self.aborted) = Some(reason);
         }
+        /// Como la app: el valor va directo al equipo (aquí, a `written`) y nunca vuelve.
+        fn type_saved_password(&self, conn: &str) -> Result<(), String> {
+            if conn == "sin-pedido" {
+                return Err(crate::autofill::NO_PROMPT.into());
+            }
+            lock(&self.written).push((conn.to_string(), format!("{VAULT_SECRET}\r")));
+            Ok(())
+        }
     }
+
+    const VAULT_SECRET: &str = "B0veda-S3creta";
 
     fn broker(fake: Fake, names: &[&str], allow_changes: bool) -> Arc<Broker<Fake>> {
         let mut targets = Vec::new();
@@ -1271,6 +1345,52 @@ mod tests {
         let b = broker(Fake::new(true, None), &["core"], false);
         assert_eq!(b.handle(&(json!({"op": "ask_secret", "label": "x"})))["code"], "cancelled");
         assert!(b.bridge.aborted.lock().unwrap().is_none());
+    }
+
+    #[test]
+    fn saved_password_needs_approval_a_target_and_never_returns_the_value() {
+        let req = |s: &str| json!({"op": "type_saved_password", "session": s});
+        // Sin la casilla del diálogo de lanzamiento: rechazado y nada llega al equipo.
+        let b = broker(Fake::new(true, None), &["core", "sin-pedido"], false);
+        let r = b.handle(&req("core"));
+        assert_eq!((r["ok"].as_bool(), r["code"].as_str()), (Some(false), Some("permission")));
+        assert_eq!(b.bridge.sent("core"), "");
+        // Plugin sin "session": tampoco (la casilla no basta).
+        let p = Broker::new(Fake::new(true, None), vec![], false, false, 1, Arc::default()).with_vault(true);
+        assert_eq!(p.handle(&json!({"op": "type_saved_password"}))["code"], "permission");
+
+        let b = Arc::try_unwrap(b).ok().unwrap().with_vault(true);
+        // Sesión que no está entre los destinos: rechazada.
+        assert_eq!(b.handle(&req("otra"))["code"], "session");
+        // Sin pedido de contraseña en pantalla: el motivo vuelve al script, sin escribir nada.
+        let r = b.handle(&req("sin-pedido"));
+        assert_eq!((r["code"].as_str(), r["error"].as_str()), (Some("vault"), Some(crate::autofill::NO_PROMPT)));
+        assert_eq!(b.bridge.sent("sin-pedido"), "");
+        // Texto a medio escribir en la línea: no se pega la contraseña detrás.
+        b.handle(&json!({"op": "send", "session": "core", "data": "sh"}));
+        assert_eq!(b.handle(&req("core"))["code"], "pending");
+        b.handle(&json!({"op": "send", "session": "core", "data": "\x15"}));
+        // Aprobado, destino válido y con pedido: la app la escribe; el script solo recibe ok.
+        let r = b.handle(&req("core"));
+        assert_eq!(r, json!({"ok": true}));
+        assert!(b.bridge.sent("core").ends_with(&format!("{VAULT_SECRET}\r")));
+        let logs = lock(&b.bridge.logs).clone();
+        assert_eq!(logs, ["Contraseña guardada escrita en core (el script no la ve)"]);
+        // El valor no aparece en respuestas, mensajes, diálogos ni errores.
+        let shown = format!("{r}{logs:?}{:?}{:?}", lock(&b.bridge.prompts), lock(&b.bridge.aborted));
+        assert!(!shown.contains(VAULT_SECRET));
+        // Tope por ejecución.
+        for _ in 1..MAX_VAULT_TYPES {
+            assert_eq!(b.handle(&req("core"))["ok"], true);
+        }
+        assert_eq!(b.handle(&req("core"))["code"], "limit");
+        // Por serve también se responde por id y en paralelo con el resto.
+        let out: Arc<Mutex<Vec<u8>>> = Arc::default();
+        let w: Arc<Mutex<dyn Write + Send>> = out.clone();
+        let b2 = broker(Fake::new(true, None), &["core"], false);
+        serve(b2, Cursor::new(format!("{}\n", json!({"id": 7, "op": "type_saved_password"}))), w);
+        let reply: Value = serde_json::from_slice(lock(&out).as_slice()).unwrap();
+        assert_eq!((reply["id"].as_i64(), reply["code"].as_str()), (Some(7), Some("permission")));
     }
 
     #[test]

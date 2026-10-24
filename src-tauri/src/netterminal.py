@@ -45,6 +45,14 @@ Secretos:
                                 devuelve. La app lo enmascara en los mensajes del script y en
                                 los diálogos de confirmación; no queda en logs ni historial.
                                 Si el usuario cancela, lanza ScriptDenied.
+    type_saved_password()       La app escribe la contraseña guardada de la sesión principal
+                                (o de on(nombre).type_saved_password()) en el pedido de login
+                                que su pantalla muestra ahora. El script nunca ve el valor.
+                                Requiere que el usuario lo permita al lanzar el script (en
+                                plugins, además el permiso "vault-type"), una sesión con
+                                contraseña guardada y un pedido de login del equipo de destino
+                                (no tras un rechazo ni en una passphrase). Una vez por pedido.
+                                Si no se puede, lanza RuntimeError con el motivo.
 
 Seguridad: cada línea que el script envía pasa por el motor de riesgo de la app. Las
 consultas pasan; un cambio pide confirmación (salvo en modo "permitir cambios") y lo que
@@ -62,7 +70,7 @@ import threading
 
 __all__ = [
     "send", "sendline", "wait_for", "expect", "read", "run", "clear", "log", "session", "data_dir",
-    "sessions", "on", "for_each", "ask_secret", "allow_changes", "max_parallel",
+    "sessions", "on", "for_each", "ask_secret", "type_saved_password", "allow_changes", "max_parallel",
     "ScriptTimeout", "ScriptDenied", "Session",
 ]
 
@@ -222,6 +230,10 @@ class Session:
     def clear(self):
         self._op("clear")
 
+    def type_saved_password(self):
+        """La app escribe la contraseña guardada en el pedido de login actual; no la devuelve."""
+        self._op("type_saved_password")
+
     def run(self, command, prompt=DEFAULT_PROMPT, timeout=30):
         """Ejecuta un comando y devuelve su salida, sin el eco del comando ni el prompt final."""
         self.clear()
@@ -313,6 +325,11 @@ def for_each(fn, parallel=None, targets=None):
         for name, fut in futures:
             results[name] = fut.result()
     return results
+
+
+def type_saved_password():
+    """Contraseña guardada de la sesión principal escrita por la app (el script no la ve)."""
+    _main.type_saved_password()
 
 
 def ask_secret(label="Secreto"):

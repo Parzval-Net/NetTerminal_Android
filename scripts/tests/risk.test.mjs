@@ -2,6 +2,7 @@
 // computeRisk protege lo pegado, la difusión, los comandos al conectar, las macros y la
 // sugerencia en gris: cada caso de abajo fue reportado por las auditorías por fabricante.
 import assert from "node:assert/strict";
+import { fastEnough } from "./timing.mjs";
 import { registerHooks } from "node:module";
 import { readFileSync, readdirSync } from "node:fs";
 import { dirname, join } from "node:path";
@@ -196,9 +197,7 @@ is("iptables -F", "change");
 
 // ---------- Rendimiento: patrones lineales (sin retroceso catastrófico) ----------
 for (const cmd of ["fw ctl conntab " + "-sip=192.0.2.1 ".repeat(800), "show " + "a ".repeat(4000), "tcpdump " + "-n ".repeat(3000), "monitor traffic " + "interface ge-0/0/0 ".repeat(500)]) {
-  const t0 = performance.now();
-  computeRisk(cmd);
-  assert.ok(performance.now() - t0 < 50, `computeRisk lento con entrada larga (${cmd.slice(0, 20)}…)`);
+  fastEnough(`computeRisk con entrada larga (${cmd.slice(0, 20)}…)`, 50, () => computeRisk(cmd));
 }
 
 // ---------- Catálogo: ninguna consulta declarada se vuelve cambio (rompería la sugerencia en gris) ----------
