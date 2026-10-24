@@ -1,5 +1,6 @@
-// Genera la narración con la voz del sistema de macOS (Paulina, es_MX), una pista por línea de guion.
-// Uso: node scripts/video/tts.mjs   (variables: VOICE, RATE, WORK)
+// Genera la narración, una pista por línea de guion. Motor por defecto: Kokoro local (voz ef_dora,
+// léxico pronunciacion.json); `say -v Paulina` (es_MX) queda como respaldo.
+// Uso: node scripts/video/tts.mjs   (variables: NT_TTS=kokoro|say, NT_VOICE, NT_SPEED, VOICE y RATE para say, WORK)
 // Lee scripts/video/guion/*.txt (primera línea "# Título", luego una frase por línea) y deja en
 // WORK/tts/<capítulo>-<n>.wav (48 kHz, mono) junto a WORK/tts/manifest.json con textos y duraciones.
 import { execFileSync } from "node:child_process";
@@ -7,6 +8,7 @@ import { mkdirSync, readFileSync, readdirSync, writeFileSync, existsSync } from 
 import { join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { FFPROBE, WORK } from "./cdp.mjs";
+import { generarKokoro, huellaKokoro, usarKokoro } from "./kokoro.mjs";
 
 const VOICE = process.env.VOICE ?? "Paulina";
 const RATE = process.env.RATE ?? "185";
@@ -66,16 +68,31 @@ if (process.argv[1] === fileURLToPath(import.meta.url)) {
   const dir = join(WORK, "tts");
   mkdirSync(dir, { recursive: true });
   const manifest = [];
+  let kokoro = usarKokoro();
+  const huella = kokoro ? huellaKokoro() : "";
+  // Solo se regenera un clip si cambió el texto, el motor, la voz o el léxico.
+  const firma = (c, k = kokoro) => (k ? `${huella}|${c.text}` : `${VOICE}|${RATE}|${spoken(c.text)}`);
+  const vigente = (c) => existsSync(c.file) && existsSync(`${c.file}.txt`) && readFileSync(`${c.file}.txt`, "utf8") === firma(c);
+  const pendientes = [];
+  const capitulos = [];
   for (const ch of readScripts()) {
     for (const t of ch.lines) if (/\u2014/.test(t)) throw new Error(`Guion ${ch.id}: no usar raya larga`);
-    const cues = ch.lines.map((text, i) => {
-      const file = join(dir, `${ch.id}-${String(i + 1).padStart(2, "0")}.wav`);
-      const say = spoken(text);
-      const stamp = `${file}.txt`;
-      // Solo se regenera si cambió el texto.
-      if (!existsSync(file) || !existsSync(stamp) || readFileSync(stamp, "utf8") !== `${VOICE}|${RATE}|${say}`) {
-        execFileSync("say", ["-v", VOICE, "-r", RATE, "--file-format=WAVE", "--data-format=LEI16@48000", "-o", file, say]);
-        writeFileSync(stamp, `${VOICE}|${RATE}|${say}`);
+    const cues = ch.lines.map((text, i) => ({ text, file: join(dir, `${ch.id}-${String(i + 1).padStart(2, "0")}.wav`) }));
+    pendientes.push(...cues.filter((c) => !vigente(c)));
+    capitulos.push({ ch, cues });
+  }
+  // Kokoro: todos los clips pendientes en un solo lote (el modelo se carga una vez).
+  if (kokoro && pendientes.length) {
+    const ok = generarKokoro(pendientes.map((c) => ({ texto: c.text, salida: c.file, tiempos: `${c.file}.json` })), { lote: join(dir, "lote-kokoro.json") });
+    if (ok) for (const c of pendientes) writeFileSync(`${c.file}.txt`, firma(c));
+    else kokoro = false;
+  }
+  for (const { ch, cues: base } of capitulos) {
+    const cues = base.map(({ text, file }) => {
+      if (!vigente({ text, file })) {
+        // Respaldo: voz del sistema de macOS.
+        execFileSync("say", ["-v", VOICE, "-r", RATE, "--file-format=WAVE", "--data-format=LEI16@48000", "-o", file, spoken(text)]);
+        writeFileSync(`${file}.txt`, firma({ text }, false));
       }
       const dur = Number(execFileSync(FFPROBE, ["-v", "error", "-show_entries", "format=duration", "-of", "csv=p=0", file]).toString().trim());
       return { text, file, dur };
