@@ -45,6 +45,8 @@ import {
   ROUTING_COMMANDS,
   SUGGESTERS,
   TOPO_SOURCES,
+  DismissedMap,
+  PendingFollow,
   TopoLink,
   TopoNode,
   TopoResult,
@@ -55,6 +57,7 @@ import {
   UTIL_LEGEND,
   UtilLevel,
   acceptSuggestion,
+  addDismissed,
   addManualLink,
   addManualNode,
   buildMacPorts,
@@ -62,7 +65,9 @@ import {
   deleteManualLink,
   deleteManualNode,
   diffTopology,
+  dismissedSet,
   fmtBps,
+  followedTerminal,
   isCliError,
   isIpv4,
   isIpv6,
@@ -82,6 +87,7 @@ import {
   mergeNeighbors,
   nodeId,
   parseNeighbors,
+  parseDismissed,
   parseOwnAddresses,
   parsePortInfo,
   parseRoutingNeighbors,
@@ -111,6 +117,7 @@ import { Btn, Collapsible, CountBadge, Label, Toggle } from "./ui";
 import { ContextMenu } from "../Sidebar";
 import type { MenuItem } from "../tabMenu";
 
+import { plural } from "../../lib/plural";
 type Menu = { x: number; y: number; items: MenuItem[] };
 
 const W = 170;
@@ -188,8 +195,20 @@ function loadUi(): TopoUi {
   }
 }
 
-/** Color del tema por nivel de utilización (sin velocidad conocida: acento). */
-const UTIL_VAR: Record<UtilLevel, string> = { ok: "var(--ok)", warn: "var(--warn)", crit: "var(--danger)", none: "var(--accent)" };
+/** Color del tema por nivel de utilización (sin velocidad conocida: gris violeta, distinto del azul de selección y ruta). */
+const UTIL_VAR: Record<UtilLevel, string> = { ok: "var(--ok)", warn: "var(--warn)", crit: "var(--danger)", none: "var(--util-unknown)" };
+
+/** Sugerencias descartadas por equipo: comodidad de este navegador, con tope. */
+const DISMISSED_KEY = "topoDismissed";
+function loadDismissed(): DismissedMap {
+  try {
+    return parseDismissed(JSON.parse(localStorage.getItem(DISMISSED_KEY) ?? "null"));
+  } catch {
+    return {};
+  }
+}
+
+type ConfirmReq = { title: string; message: string; label: string; danger?: boolean; defaultCancel?: boolean; action: () => void };
 
 /** El sistema pide reducir movimiento (se respeta aunque "Animación" esté activa). */
 function useReducedMotion(): boolean {
@@ -278,6 +297,7 @@ export function TopologyTool({
   onSnapshots,
   onSources,
   onOpenSession,
+  onConfirm,
 }: {
   terminals: TerminalRef[];
   sessions: Session[];
@@ -292,6 +312,8 @@ export function TopologyTool({
   onSnapshots: (s: TopoSnapshot[]) => void;
   onSources: (s: TopoSources) => void;
   onOpenSession: (s: Session) => void;
+  /** Confirmación de la app (ConfirmDialog) para borrar o reemplazar el diagrama y los snapshots. */
+  onConfirm: (req: ConfirmReq) => void;
 }) {
   const [connId, setConnId] = useState("");
   const term = terminals.find((t) => t.connId === connId);
@@ -308,7 +330,19 @@ export function TopologyTool({
   const [snapName, setSnapName] = useState<string | null>(null);
   const [form, setForm] = useState<ManualForm | null>(null);
   const [formErr, setFormErr] = useState("");
-  const [dismissed, setDismissed] = useState<Set<string>>(() => new Set());
+  const [dismissedMap, setDismissedMap] = useState<DismissedMap>(loadDismissed);
+  const dismissed = useMemo(() => dismissedSet(dismissedMap), [dismissedMap]);
+  const dismiss = (id: string) =>
+    setDismissedMap((m) => {
+      const next = addDismissed(m, id);
+      try {
+        localStorage.setItem(DISMISSED_KEY, JSON.stringify(next));
+      } catch {
+        /* solo comodidad */
+      }
+      return next;
+    });
+  const [pendingFollow, setPendingFollow] = useState<PendingFollow | null>(null);
   const drag = useRef<{ id: string; sx: number; sy: number; x: number; y: number } | null>(null);
   const [ui, setUi] = useState<TopoUi>(loadUi);
   const scroller = useRef<HTMLDivElement>(null);
@@ -347,10 +381,19 @@ export function TopologyTool({
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
-  // Por defecto la sesión más reciente (la que se acaba de abrir al seguir la ruta).
+  // Por defecto la sesión más reciente.
   useEffect(() => {
     if (!term && terminals.length) setConnId(terminals[terminals.length - 1].connId);
   }, [terminals, term]);
+  // "Conectar y seguir la ruta": en cuanto la sesión abierta queda conectada, se elige sola en "Equipo".
+  useEffect(() => {
+    if (!pendingFollow) return;
+    const t = followedTerminal(terminals, pendingFollow);
+    if (!t) return;
+    setConnId(t.connId);
+    setPendingFollow(null);
+    setMsg(`${t.name} conectado y elegido en "Equipo": pulsa "Descubrir vecinos" para seguir la ruta.`);
+  }, [terminals, pendingFollow]);
   useEffect(() => {
     if (!term) return;
     const v = vendorFor(term.highlight);
@@ -432,7 +475,7 @@ export function TopologyTool({
       onTopo((t) => mergeNeighbors(t, { name, ip: term.host, ports, addrs, macs }, [...neighbors, ...routing]));
       setSelected(nodeId(name));
       const parts = [
-        `${neighbors.length} vecinos CDP/LLDP`,
+        `${plural(neighbors.length, "vecino", "vecinos")} CDP/LLDP`,
         routingOn && ROUTING_COMMANDS[vendor].length ? `${routing.length} de ruteo` : "",
         macs ? `${Object.keys(macs).length} puertos con MAC` : "",
       ].filter(Boolean);
@@ -487,7 +530,7 @@ export function TopologyTool({
       setSelected(nodeId(name));
       traffic.prime(nodeId(name), p.id, d.ifIndex);
       const parts = [
-        `${d.neighbors.length} vecinos CDP/LLDP`,
+        `${plural(d.neighbors.length, "vecino", "vecinos")} CDP/LLDP`,
         routingOn ? `${d.routing.length} de ruteo` : "",
         macs ? `${Object.keys(macs).length} puertos con MAC` : "",
       ].filter(Boolean);
@@ -507,6 +550,8 @@ export function TopologyTool({
 
   // Comparación con un snapshot: los enlaces y equipos que ya no están se dibujan fantasma.
   const snapshot = snapshots.find((s) => s.id === compareId);
+  /** Nombre del equipo en el diagrama o en el snapshot (los ids son nombres normalizados en minúscula). */
+  const anyName = (id: string) => node(id)?.name ?? snapshot?.topo.nodes.find((n) => n.id === id)?.name ?? id;
   const diff = useMemo(() => (snapshot ? diffTopology(snapshot.topo, topo) : null), [snapshot, topo]);
   const view: Topology = useMemo(() => {
     if (!diff || !snapshot) return topo;
@@ -572,7 +617,7 @@ export function TopologyTool({
         x,
         y,
         anchor: multi ? "end" : "middle",
-        text: `${multi ? `${g.l.aPort || "?"}: ` : ""}${trafficLabel(lt)}`,
+        text: multi ? `${g.l.aPort || "?"}: ${trafficLabel(lt)}` : trafficLabel(lt, node(g.l.a)?.name ?? g.l.a),
         color: ui.color ? UTIL_VAR[utilLevel(lt.util)] : "var(--text)",
         dim: !!route && !routeKeys.has(k),
       });
@@ -628,9 +673,11 @@ export function TopologyTool({
 
   const follow = (n: TopoNode) => {
     const saved = savedFor(n);
+    const known = terminals.map((t) => t.connId);
     if (saved) {
+      setPendingFollow({ sessionId: saved.id, host: saved.host, known });
       onOpenSession(saved);
-      setMsg(`Abriendo la sesión guardada "${saved.name}": autentícate, vuelve aquí y pulsa "Descubrir vecinos".`);
+      setMsg(`Abriendo la sesión guardada "${saved.name}": autentícate en su pestaña. Al conectar queda elegida aquí; vuelve y pulsa "Descubrir vecinos".`);
       return;
     }
     if (!term || !n.ip) return;
@@ -643,6 +690,7 @@ export function TopologyTool({
     // Solo lo necesario para llegar al vecino: usuario, llave, jump host y compatibilidad. No se copian
     // comandos al conectar, túneles ni argumentos extra hacia una IP que informó otro equipo.
     const ssh = proto === "ssh";
+    setPendingFollow({ host: n.ip, known });
     onOpenSession({
       id: "",
       name: n.name,
@@ -656,15 +704,29 @@ export function TopologyTool({
       highlight: base.highlight,
       created_at: new Date().toISOString(),
     });
-    setMsg(`Abriendo ${proto.toUpperCase()} a ${n.name}: autentícate en su pestaña, vuelve aquí y pulsa "Descubrir vecinos".`);
+    setMsg(`Abriendo ${proto.toUpperCase()} a ${n.name}: autentícate en su pestaña. Al conectar queda elegida aquí; vuelve y pulsa "Descubrir vecinos".`);
   };
 
   const saveSnapshot = () => {
     const name = snapName?.trim() || `Topología ${new Date().toLocaleString()}`;
     const snap: TopoSnapshot = { id: `s${Date.now()}`, name, ts: Date.now(), topo };
-    onSnapshots([snap, ...snapshots].slice(0, MAX_SNAPSHOTS));
-    setSnapName(null);
-    setMsg(`Snapshot guardado: ${name}`);
+    const save = () => {
+      onSnapshots([snap, ...snapshots].slice(0, MAX_SNAPSHOTS));
+      setSnapName(null);
+      setMsg(`Snapshot guardado: ${name}`);
+    };
+    // Sobre el tope se descarta el más antiguo: se avisa cuál antes de guardar.
+    const dropped = snapshots.slice(MAX_SNAPSHOTS - 1);
+    if (dropped.length)
+      onConfirm({
+        title: "¿Guardar y eliminar el snapshot más antiguo?",
+        message: `Se guardan hasta ${MAX_SNAPSHOTS} snapshots. Al guardar "${name}" se elimina ${dropped.length === 1 ? "el más antiguo" : `los ${dropped.length} más antiguos`}: ${dropped.map((d) => `"${d.name}"`).join(", ")}.`,
+        label: "Guardar",
+        danger: true,
+        defaultCancel: true,
+        action: save,
+      });
+    else save();
   };
 
   const portLine = (n: TopoNode | undefined, port: string) => {
@@ -769,7 +831,7 @@ export function TopologyTool({
     ? "Apagado"
     : !visible
       ? "En pausa (herramienta oculta)"
-      : `Cada ${ui.interval} s · ${linkRates.size} enlaces con datos${trafficCli ? " · también por consola" : ""}`;
+      : `Cada ${ui.interval} s · ${plural(linkRates.size, "enlace", "enlaces")} con datos${trafficCli ? " · también por consola" : ""}`;
   const diffCount = diff ? diff.addedLinks.length + diff.removedLinks.length + diff.addedNodes.length + diff.removedNodes.length : 0;
   const hint = "Descubre los vecinos del equipo conectado y sigue la ruta salto a salto: clic en un vecino y 'Conectar'. Solo usa comandos de consulta.";
 
@@ -914,9 +976,19 @@ export function TopologyTool({
         title="Borrar diagrama"
         disabled={!topo.nodes.length}
         onClick={() => {
-          onTopo({ nodes: [], links: [] });
-          setSelected(null);
-          setPath({});
+          const manual = topo.nodes.filter((n) => n.manual).length + topo.links.filter((l) => isUserProto(l.proto)).length;
+          onConfirm({
+            title: "¿Borrar el diagrama?",
+            message: `Se borran ${topo.nodes.length} ${topo.nodes.length === 1 ? "equipo" : "equipos"} y ${topo.links.length} ${topo.links.length === 1 ? "enlace" : "enlaces"}${manual ? `, incluidos ${manual} ${manual === 1 ? "elemento agregado" : "elementos agregados"} a mano o desde sugerencias` : ""}. Los snapshots no se tocan: guarda uno antes si quieres recuperarlo.`,
+            label: "Borrar diagrama",
+            danger: true,
+            defaultCancel: true,
+            action: () => {
+              onTopo({ nodes: [], links: [] });
+              setSelected(null);
+              setPath({});
+            },
+          });
         }}
       >
         <Trash2 size={14} />
@@ -966,7 +1038,7 @@ export function TopologyTool({
             const tip = [
               `${aName} ${g.l.aPort || "?"} ↔ ${g.l.bPort || "?"} ${bName} (${protoLabel(g.l)})`,
               lt &&
-                `Tráfico: ↑ ${aName} → ${bName} ${fmtBps(lt.ab)} · ↓ ${bName} → ${aName} ${fmtBps(lt.ba)}${lt.speed ? ` · enlace de ${fmtBps(lt.speed)}, ${Math.round((lt.util ?? 0) * 100)} %` : " · velocidad desconocida"}`,
+                `Tráfico: ${aName} → ${bName} ${fmtBps(lt.ab)} · ${bName} → ${aName} ${fmtBps(lt.ba)}${lt.speed ? ` · enlace de ${fmtBps(lt.speed)}, ${lt.approx ? "≈" : ""}${Math.round((lt.util ?? 0) * 100)} %${lt.approx ? " (aproximada: velocidad desde el BW configurado)" : ""}` : " · velocidad desconocida"}`,
               portLine(node(g.l.a), g.l.aPort) && `${g.l.aPort}: ${portLine(node(g.l.a), g.l.aPort)}`,
               portLine(node(g.l.b), g.l.bPort) && `${g.l.bPort}: ${portLine(node(g.l.b), g.l.bPort)}`,
               g.l.logical ? "Sesión lógica: no es un enlace físico" : "",
@@ -1160,7 +1232,7 @@ export function TopologyTool({
                           <polygon points="13,1.5 19,4.5 13,7.5" fill="var(--ok)" />
                           <polygon points="21,4.5 15,7.5 21,10.5" fill="var(--warn)" />
                         </svg>
-                        Una flecha por sentido · ↑ de A hacia B, ↓ de B hacia A (detalle al pasar el mouse)
+                        Una flecha por sentido · rótulo "equipo A → sale de A · ← llega a A" (≈: aproximada; detalle al pasar el mouse)
                       </span>}
                     </>
                   )}
@@ -1318,7 +1390,7 @@ export function TopologyTool({
                         <Btn kind="primary" className="!h-6 !px-2 !text-[11px]" onClick={() => accept(s)}>
                           <Check size={12} /> Confirmar
                         </Btn>
-                        <Btn kind="ghost" className="!h-6 !px-2 !text-[11px]" onClick={() => setDismissed((d) => new Set([...d, s.id]))}>
+                        <Btn kind="ghost" className="!h-6 !px-2 !text-[11px]" onClick={() => dismiss(s.id)}>
                           Descartar
                         </Btn>
                       </div>
@@ -1676,9 +1748,20 @@ export function TopologyTool({
                 kind="ghost"
                 title="Reemplazar el diagrama actual por este snapshot"
                 onClick={() => {
-                  onTopo(snapshot.topo);
-                  setCompareId("");
-                  setMsg(`Snapshot "${snapshot.name}" abierto`);
+                  const open = () => {
+                    onTopo(snapshot.topo);
+                    setCompareId("");
+                    setMsg(`Snapshot "${snapshot.name}" abierto`);
+                  };
+                  if (!topo.nodes.length) return open();
+                  onConfirm({
+                    title: `¿Reemplazar el diagrama por "${snapshot.name}"?`,
+                    message: "El diagrama actual (equipos, enlaces manuales y posiciones) se pierde. Guarda un snapshot antes si lo necesitas.",
+                    label: "Reemplazar",
+                    danger: true,
+                    defaultCancel: true,
+                    action: open,
+                  });
                 }}
               >
                 Abrir
@@ -1687,10 +1770,19 @@ export function TopologyTool({
                 kind="ghost"
                 className="hover:!text-danger"
                 title="Eliminar snapshot"
-                onClick={() => {
-                  onSnapshots(snapshots.filter((s) => s.id !== snapshot.id));
-                  setCompareId("");
-                }}
+                onClick={() =>
+                  onConfirm({
+                    title: `¿Eliminar el snapshot "${snapshot.name}"?`,
+                    message: "No se puede deshacer. El diagrama actual no cambia.",
+                    label: "Eliminar",
+                    danger: true,
+                    defaultCancel: true,
+                    action: () => {
+                      onSnapshots(snapshots.filter((s) => s.id !== snapshot.id));
+                      setCompareId("");
+                    },
+                  })
+                }
               >
                 <X size={14} />
               </Btn>
@@ -1716,12 +1808,12 @@ export function TopologyTool({
                   ))}
                   {diff.removedLinks.map((l, i) => (
                     <li key={`rl${i}`} className="text-danger">
-                      − {l.a} {l.aPort} ↔ {l.bPort} {l.b}
+                      − {anyName(l.a)} {l.aPort} ↔ {l.bPort} {anyName(l.b)}
                     </li>
                   ))}
                   {diff.addedLinks.map((l, i) => (
                     <li key={`al${i}`} className="text-ok">
-                      + {l.a} {l.aPort} ↔ {l.bPort} {l.b}
+                      + {anyName(l.a)} {l.aPort} ↔ {l.bPort} {anyName(l.b)}
                     </li>
                   ))}
                 </ul>

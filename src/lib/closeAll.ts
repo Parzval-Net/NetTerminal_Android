@@ -55,4 +55,4 @@ export function namesPreview(tabs: Tab[], max = 5): string {
   return `${names.slice(0, -1).join(", ")} y ${names[names.length - 1]}`;
 }
 
-export const plural = (n: number, one: string, many: string) => `${n} ${n === 1 ? one : many}`;
+export { plural } from "./plural";

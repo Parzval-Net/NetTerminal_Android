@@ -1118,8 +1118,23 @@ assert.equal(R.linkTraffic(lk, new Map([["core", new Map([["gi1/0/1", { inBps: 5
 // Umbrales: verde, amarillo desde 70 %, rojo desde 90 %.
 assert.deepEqual([0, 0.69, 0.7, 0.899, 0.9, 1.2, undefined, NaN].map(T.utilLevel), ["ok", "ok", "warn", "warn", "crit", "crit", "none", "none"]);
 assert.deepEqual([0, 950, 999_499, 35e6, 120e6, 1.2e9, null, -1].map(T.fmtBps), ["0 b/s", "950 b/s", "999 kb/s", "35 Mb/s", "120 Mb/s", "1.2 Gb/s", "?", "?"]);
-assert.equal(T.trafficLabel({ ab: 120e6, ba: 35e6, speed: 1e9, util: 0.12, ts: 0 }), "↑ 120 Mb/s ↓ 35 Mb/s · 12 %");
-assert.equal(T.trafficLabel({ ab: 120e6, ba: null, ts: 0 }), "↑ 120 Mb/s ↓ ?");
+assert.equal(T.trafficLabel({ ab: 120e6, ba: 35e6, speed: 1e9, util: 0.12, ts: 0 }), "→ 120 Mb/s · ← 35 Mb/s · 12 %");
+assert.equal(T.trafficLabel({ ab: 120e6, ba: null, ts: 0 }), "→ 120 Mb/s · ← ?");
+// Con el equipo A explícito (nombre largo recortado) y utilización aproximada.
+assert.equal(T.trafficLabel({ ab: 120e6, ba: 35e6, speed: 1e9, util: 0.12, ts: 0 }, "core-sw01"), "core-sw01 → 120 Mb/s · ← 35 Mb/s · 12 %");
+assert.equal(T.trafficLabel({ ab: 1e6, ba: 2e6, speed: 1e6, util: 2, approx: true, ts: 0 }, "nucleo-campus-edificio-a"), "nucleo-campus-e… → 1.0 Mb/s · ← 2.0 Mb/s · ≈200 %");
+assert.notEqual(T.UTIL_COLORS.none, "#2563eb", "velocidad desconocida no usa el azul de selección");
+
+// BW configurado menor que la velocidad real: la tasa no se descarta y la utilización queda aproximada.
+const bw0 = { inOctets: 0n, outOctets: 0n, bits: 64, speed: 10e6, approx: true, ts: 0 };
+const bw1 = { ...bw0, inOctets: 375_000_000n, outOctets: 0n, ts: 30_000 };
+assert.deepEqual(R.portRate(bw0, bw1), { inBps: 100e6, outBps: 0, speed: 10e6, approx: true, ts: 30_000 }, "100 Mb/s con BW 10 Mbit");
+assert.equal(R.portRate({ ...bw0, approx: undefined }, { ...bw1, approx: undefined }).inBps, null, "con velocidad física sí se descarta");
+const approxRates = new Map([["core", new Map([["gi1/0/1", R.portRate(bw0, bw1)]])]]);
+assert.deepEqual(R.linkTraffic(lk, approxRates), { ab: 0, ba: 100e6, speed: 10e6, util: 10, approx: true, ts: 30_000 });
+// Una velocidad física en el otro extremo gana sobre el BW.
+approxRates.set("dist", new Map([["gi1/0/48", { inBps: null, outBps: null, speed: 1e9, ts: 30_000 }]]));
+assert.deepEqual(R.linkTraffic(lk, approxRates), { ab: 0, ba: 100e6, speed: 1e9, util: 0.1, ts: 30_000 });
 // GET de contadores: 64 bits, 32 bits y agente sin ifXTable.
 const hcRows = [
   { oid: `${O_.ifHCInOctets}.10101`, type: "Counter64", value: "18446744073709551000" },
@@ -1141,7 +1156,8 @@ const iosIf = `core-sw01#show interfaces
 GigabitEthernet1/0/1 is up, line protocol is up (connected)
   Hardware is Gigabit Ethernet, address is 0011.2233.4401 (bia 0011.2233.4401)
   Description: UPLINK dist-sw01
-  MTU 1500 bytes, BW 1000000 Kbit/sec, DLY 10 usec,
+  MTU 1500 bytes, BW 100000 Kbit/sec, DLY 10 usec,
+  Full-duplex, 1000Mb/s, media type is 10/100/1000BaseTX
   5 minute input rate 35000000 bits/sec, 2900 packets/sec
      123456 packets input, 987654321 bytes, 0 no buffer
      654321 packets output, 1234567890123 bytes, 0 underruns
@@ -1151,8 +1167,11 @@ TenGigabitEthernet1/1/1 is administratively down, line protocol is down (disable
      0 packets output, 0 bytes, 0 underruns
 core-sw01#`;
 const ios = R.parseCliCounters(iosIf);
-assert.deepEqual(ios.get("gi1/0/1"), { name: "GigabitEthernet1/0/1", inOctets: 987654321n, outOctets: 1234567890123n, speed: 1e9 });
+assert.deepEqual(ios.get("gi1/0/1"), { name: "GigabitEthernet1/0/1", inOctets: 987654321n, outOctets: 1234567890123n, speed: 1e9 }, "la velocidad física gana sobre un bandwidth configurado");
 assert.equal(ios.get("te1/1/1").speed, 1e10);
+assert.equal(ios.get("te1/1/1").speedApprox, true, "solo BW: aproximada");
+assert.equal(R.parseCliCounters("Gi0/1 is up\n  full-duplex, 10 Gb/s, media type is 10G\n 1 packets input, 2 bytes\n 3 packets output, 4 bytes").get("gi0/1").speed, 1e10, "NX-OS");
+assert.equal(R.parseCliCounters("Gi0/1 is up\n  Full Duplex, 100Mbps, link type is auto\n 1 packets input, 2 bytes\n 3 packets output, 4 bytes").get("gi0/1").speed, 1e8, "IOS-XE");
 const nxIf = `Ethernet1/49 is up
 admin state is up, Dedicated Interface
   MTU 9216 bytes, BW 100000000 Kbit , DLY 10 usec
@@ -1163,7 +1182,7 @@ admin state is up, Dedicated Interface
     2000 unicast packets  0 multicast packets  0 broadcast packets
     2000 output packets  128000 bytes
 `;
-assert.deepEqual(R.parseCliCounters(nxIf).get("eth1/49"), { name: "Ethernet1/49", inOctets: 64000n, outOctets: 128000n, speed: 1e11 });
+assert.deepEqual(R.parseCliCounters(nxIf).get("eth1/49"), { name: "Ethernet1/49", inOctets: 64000n, outOctets: 128000n, speed: 1e11, speedApprox: true });
 const hwIf = `<ar-wan01>display interface
 GigabitEthernet0/0/1 current state : UP
 Line protocol current state : UP
@@ -1219,20 +1238,56 @@ const tt = {
 const tmap = new Map([[T.linkKey(tt.links[0]), { ab: 950e6, ba: 35e6, speed: 1e9, util: 0.95, ts: Date.UTC(2026, 9, 23, 12) }]]);
 const tsvg = T.toSvg(tt, 170, 54, tmap);
 assert.ok(!/<b>|<x>/.test(tsvg), "SVG escapado");
-assert.match(tsvg, />↑ 950 Mb\/s ↓ 35 Mb\/s · 95 %<\/text>/);
+assert.match(tsvg, />=cmd\|&quot;&lt;b&gt;&amp; → 950 Mb\/s · ← 35 Mb\/s · 95 %<\/text>/, "rótulo con el nombre del equipo A, escapado");
 assert.match(tsvg, /stroke="#cf222e" stroke-width="4\.8"/, "rojo desde 90 %");
 assert.match(tsvg, /Utilización de 90 % o más/);
-assert.match(tsvg, /↑ de A hacia B, ↓ de B hacia A/);
-assert.equal((tsvg.match(/↑ /g) ?? []).length, 2, "solo el enlace con datos lleva etiqueta (más la leyenda)");
+assert.match(tsvg, /Rótulo: equipo A → lo que sale de A · ← lo que llega a A/);
+assert.match(tsvg, /Velocidad desconocida/);
+assert.match(tsvg, new RegExp(`stroke="${T.UTIL_COLORS.none}"`), "leyenda con el color de velocidad desconocida");
+assert.equal((tsvg.match(/· ← /g) ?? []).length, 2, "solo el enlace con datos lleva etiqueta (más la leyenda)");
 assert.ok(!/Utilización/.test(T.toSvg(tt, 170, 54)), "sin tráfico, sin leyenda de tráfico");
 const tcsv = T.toCsv(tt, tmap).split("\n");
-assert.match(tcsv[0], /,protocolo,trafico_a_b_bps,trafico_b_a_bps,velocidad_enlace_bps,utilizacion_pct,lectura$/);
+assert.match(tcsv[0], /,protocolo,trafico_a_b_bps,trafico_b_a_bps,velocidad_enlace_bps,utilizacion_pct,lectura,utilizacion_aproximada$/);
 assert.match(tcsv[1], /^"'=cmd\|""<b>&",/, "fórmula neutralizada");
-assert.match(tcsv[1], /,"CDP","950000000","35000000","1000000000","95\.0","2026-10-23T12:00:00\.000Z"$/);
-assert.match(tcsv[2], /,"LLDP","","","","",""$/, "enlace sin datos: celdas vacías");
+assert.match(tcsv[1], /,"CDP","950000000","35000000","1000000000","95\.0","2026-10-23T12:00:00\.000Z",""$/);
+assert.match(tcsv[2], /,"LLDP","","","","","",""$/, "enlace sin datos: celdas vacías");
+assert.match(T.toCsv(tt, new Map([[T.linkKey(tt.links[0]), { ab: 1, ba: 1, speed: 1e6, util: 0, approx: true, ts: 0 }]])).split("\n")[1], /,"si"$/);
 assert.equal(T.toCsv(tt).split("\n")[0].split(",").length, 14, "sin tráfico, columnas de siempre");
 assert.equal(T.toMermaid(tt), T.toMermaid(tt), "Mermaid no cambia");
-assert.ok(!/↑/.test(T.toMermaid(tt)));
+assert.ok(!/→ |↑/.test(T.toMermaid(tt)));
+
+// ---------- Seguir la ruta: la sesión nueva se elige sola ----------
+
+const terms = [
+  { connId: "c1", host: "192.0.2.1", session: { id: "s1" } },
+  { connId: "c2", host: "192.0.2.9", session: { id: "" } },
+  { connId: "c3", host: "192.0.2.7", session: { id: "s7" } },
+];
+assert.equal(T.followedTerminal(terms, { host: "192.0.2.9", known: ["c1"] })?.connId, "c2", "sesión nueva por IP");
+assert.equal(T.followedTerminal(terms, { sessionId: "s7", known: ["c1", "c2"] })?.connId, "c3", "sesión guardada");
+assert.equal(T.followedTerminal(terms, { host: "192.0.2.1", known: ["c1"] }), undefined, "una conexión que ya existía no cuenta");
+assert.equal(T.followedTerminal(terms, { known: [] }), undefined);
+
+// ---------- Sugerencias descartadas: por equipo, con tope y sin confiar en lo guardado ----------
+
+let dm = {};
+dm = T.addDismissed(dm, "mac|core|gi1/0/5");
+dm = T.addDismissed(dm, "descriptions|core|gi1/0/6");
+dm = T.addDismissed(dm, "mac|core|gi1/0/5");
+assert.deepEqual(dm, { core: ["descriptions|core|gi1/0/6", "mac|core|gi1/0/5"] }, "sin duplicados, el más reciente al final");
+assert.ok(T.dismissedSet(dm).has("mac|core|gi1/0/5"));
+for (let i = 0; i < T.MAX_DISMISSED_PER_DEVICE + 5; i++) dm = T.addDismissed(dm, `mac|dist|p${i}`);
+assert.equal(dm.dist.length, T.MAX_DISMISSED_PER_DEVICE, "tope por equipo");
+assert.equal(dm.dist[0], "mac|dist|p5", "se olvidan los más antiguos");
+let many = {};
+for (let i = 0; i < T.MAX_DISMISSED_DEVICES + 3; i++) many = T.addDismissed(many, `mac|sw${i}|x`);
+assert.equal(Object.keys(many).length, T.MAX_DISMISSED_DEVICES, "tope de equipos");
+assert.ok(!("sw0" in many) && "sw202" in many);
+const hostileDm = T.parseDismissed(JSON.parse('{"__proto__":["mac|__proto__|x"],"core":["mac|core|a",5,"mac|otro|b"],"x":"no"}'));
+assert.deepEqual(hostileDm, { core: ["mac|core|a"] }, "forma validada, sin __proto__ ni ids de otro equipo");
+assert.equal({}.polluted, undefined);
+assert.deepEqual(T.parseDismissed(null), {});
+assert.deepEqual(T.parseDismissed([1, 2]), {});
 }
 
 console.log("topology: ok");

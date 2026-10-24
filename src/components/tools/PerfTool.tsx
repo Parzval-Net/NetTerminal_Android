@@ -197,9 +197,9 @@ function Iperf() {
             macOS: <CopyText text="brew install iperf3" />
           </li>
           <li>
-            Linux: <CopyText text="sudo apt install iperf3" />
+            Linux: <CopyText text="sudo apt install iperf3" /> o <CopyText text="sudo dnf install iperf3" />
           </li>
-          <li>Windows: binario oficial en iperf.fr; deja iperf3.exe en el PATH o junto a NetTerminal.exe</li>
+          <li>Windows: búscalo con <CopyText text="winget search iperf3" /> o usa una compilación de terceros enlazada desde iperf.fr (ESnet no publica binarios); deja iperf3.exe en el PATH o junto a NetTerminal.exe</li>
         </ul>
       </Section>
     );

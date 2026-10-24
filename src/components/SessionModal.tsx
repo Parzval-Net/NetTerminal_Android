@@ -14,6 +14,8 @@ export type CredChange = { action: "keep" } | { action: "set"; password: string 
 
 interface Props {
   initial?: Session;
+  /** Título del diálogo (por defecto "Editar sesión" o "Nueva sesión"). */
+  title?: string;
   defaultFolder?: string;
   folders: string[];
   onClose: () => void;
@@ -28,7 +30,7 @@ const ENCODINGS: [string, string][] = [
   ["windows-1252", "Windows-1252"],
 ];
 
-export function SessionModal({ initial, defaultFolder, folders, onClose, onSave }: Props) {
+export function SessionModal({ initial, title, defaultFolder, folders, onClose, onSave }: Props) {
   const [s, setS] = useState<Session>(
     initial ?? {
       id: "",
@@ -124,7 +126,7 @@ export function SessionModal({ initial, defaultFolder, folders, onClose, onSave 
         }}
       >
         <header {...win.handle} className="shrink-0 flex items-center justify-between px-5 h-12 border-b border-line select-none">
-          <h2 className="text-[14px] font-semibold">{initial ? "Editar sesión" : "Nueva sesión"}</h2>
+          <h2 className="text-[14px] font-semibold">{title ?? (initial ? "Editar sesión" : "Nueva sesión")}</h2>
           <button
             type="button"
             onClick={onClose}
@@ -185,7 +187,7 @@ export function SessionModal({ initial, defaultFolder, folders, onClose, onSave 
                   required
                   autoFocus
                   value={s.host ?? ""}
-                  placeholder="10.0.0.1 o hostname"
+                  placeholder="192.0.2.10 o hostname"
                   onChange={(e) => set("host", e.target.value)}
                 />
               </Field>
@@ -234,7 +236,7 @@ export function SessionModal({ initial, defaultFolder, folders, onClose, onSave 
                 <input
                   className="field font-mono !text-[12px]"
                   value={s.ssh_args ?? ""}
-                  placeholder="-L 8443:10.0.0.1:443 -A -o StrictHostKeyChecking=accept-new"
+                  placeholder="-L 8443:192.0.2.10:443 -A -o StrictHostKeyChecking=accept-new"
                   onChange={(e) => set("ssh_args", e.target.value)}
                 />
               </Field>

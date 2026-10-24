@@ -16,9 +16,12 @@ import { readText, writeText } from "@tauri-apps/plugin-clipboard-manager";
 import { Settings, UpdateInfo, defaultSettings } from "../lib/settings";
 import { Session } from "../types";
 import { TermPreset, fontStack, presets } from "../lib/theme";
-import { isMac } from "../lib/platform";
+import { zoomLabel } from "../lib/platform";
 import { LIST_KEYS, type ListKey, clearUsage } from "../lib/suggest";
 
+import { plural } from "../lib/plural";
+import { ConfirmDialog } from "./ConfirmDialog";
+import { createPortal } from "react-dom";
 interface Props {
   settings: Settings;
   appDark: boolean;
@@ -99,6 +102,21 @@ export function SettingsModal({
   const win = useDragResize("settingsWindow");
   const [dataDir, setDataDir] = useState("");
   const [notice, setNotice] = useState("");
+  const [confirmReset, setConfirmReset] = useState(false);
+  // Lo que "Restablecer valores" borra además de las preferencias (las reglas de resaltado propias se conservan).
+  const resetLoses = [
+    s.macros.length && plural(s.macros.length, "botón de comandos", "botones de comandos"),
+    s.monitors.length && plural(s.monitors.length, "monitor", "monitores"),
+    s.alertRules.length && plural(s.alertRules.length, "regla de alerta", "reglas de alerta"),
+    s.topology.nodes.length && `la topología (${plural(s.topology.nodes.length, "equipo", "equipos")})`,
+    s.topoSnapshots.length && plural(s.topoSnapshots.length, "snapshot de topología", "snapshots de topología"),
+    s.snmpProfiles.length && plural(s.snmpProfiles.length, "perfil SNMP", "perfiles SNMP"),
+    s.favCommands.length && plural(s.favCommands.length, "comando favorito", "comandos favoritos"),
+    s.extraFolders.length && plural(s.extraFolders.length, "carpeta vacía", "carpetas vacías"),
+    s.speedHistory.length && "el historial de velocidad",
+    s.disabledPacks.length && plural(s.disabledPacks.length, "pack desactivado (vuelve a activarse)", "packs desactivados (vuelven a activarse)"),
+    s.mcpEnabled && "la configuración del servidor MCP (se apaga y su token se borra)",
+  ].filter((x): x is string => !!x);
   const [query, setQuery] = useState("");
   const q = query.trim().toLowerCase();
   const visible = useMemo(
@@ -129,7 +147,7 @@ export function SettingsModal({
       .filter((x) => x.type !== "local")
       .map(({ id: _id, created_at: _c, save_password: _pw, ...rest }) => rest);
     await writeText(JSON.stringify(list, null, 2));
-    flash(`${list.length} sesiones copiadas al portapapeles (nunca incluye contraseñas)`);
+    flash(`${plural(list.length, "sesión copiada", "sesiones copiadas")} al portapapeles (nunca incluye contraseñas)`);
   };
 
   const importSessions = async () => {
@@ -145,7 +163,7 @@ export function SettingsModal({
     if (!list.length) return flash("El portapapeles no contiene sesiones válidas (JSON)");
     try {
       const added = await onImportSessions(list);
-      flash(`${added} sesiones importadas${added < list.length ? `, ${list.length - added} ya existían` : ""}`);
+      flash(`${plural(added, "sesión importada", "sesiones importadas")}${added < list.length ? `, ${plural(list.length - added, "ya existía", "ya existían")}` : ""}`);
     } catch (e) {
       flash(`Importación incompleta: ${e}`);
     }
@@ -279,7 +297,7 @@ export function SettingsModal({
                   </datalist>
                 </Item>
 
-                <Item label="Tamaño" hint={`${isMac ? "⌘" : "Ctrl"} + / − también lo ajusta`}>
+                <Item label="Tamaño" hint={`${zoomLabel}+ / ${zoomLabel}- también lo ajusta`}>
                   <div className="flex items-center gap-2">
                     <input
                       type="range"
@@ -502,7 +520,7 @@ export function SettingsModal({
 
           <footer className="flex justify-between items-center px-5 h-12 border-t border-line">
             <button
-              onClick={() => onChange({ ...defaultSettings, customRules: s.customRules })}
+              onClick={() => setConfirmReset(true)}
               title="Las reglas de resaltado personalizadas se conservan"
               className="text-[12px] text-muted hover:text-danger"
             >
@@ -510,6 +528,37 @@ export function SettingsModal({
             </button>
             <span className="text-[11.5px] text-muted">Los cambios se aplican al instante</span>
           </footer>
+          {confirmReset &&
+            createPortal(
+            <ConfirmDialog
+              title="¿Restablecer todos los ajustes?"
+              message={
+                <>
+                  Vuelven a sus valores por defecto la apariencia, la terminal, los módulos, los logs y los puertos.
+                  {resetLoses.length > 0 && (
+                    <>
+                      {" "}También se borra:
+                      <ul className="mt-1.5 list-disc pl-5">
+                        {resetLoses.map((x) => (
+                          <li key={x}>{x}</li>
+                        ))}
+                      </ul>
+                    </>
+                  )}
+                  <p className="mt-1.5">Se conservan las sesiones, las notas, los respaldos, las contraseñas guardadas y tus reglas de resaltado. No se puede deshacer.</p>
+                </>
+              }
+              confirmLabel="Restablecer"
+              danger
+              defaultCancel
+              onCancel={() => setConfirmReset(false)}
+              onConfirm={() => {
+                setConfirmReset(false);
+                onChange({ ...defaultSettings, customRules: s.customRules });
+              }}
+            />,
+            document.body,
+          )}
         </div>
       </div>
     </div>

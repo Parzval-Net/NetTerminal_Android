@@ -595,6 +595,18 @@ fn server_stop(kind: String, state: State<'_, AppState>) {
     state.servers.stop(&kind)
 }
 
+/// Habilita o quita las subidas de TFTP o FTP en caliente; devuelve el valor anterior.
+#[tauri::command]
+fn server_set_write(kind: String, allow: bool, state: State<'_, AppState>) -> Result<bool, String> {
+    state.servers.set_write(&kind, allow)
+}
+
+/// Escritura del servidor en marcha (null si está detenido).
+#[tauri::command]
+fn server_write(kind: String, state: State<'_, AppState>) -> Option<bool> {
+    state.servers.write_allowed(&kind)
+}
+
 #[tauri::command]
 fn server_running(state: State<'_, AppState>) -> Vec<String> {
     state.servers.running()
@@ -721,6 +733,12 @@ fn backup_save(device: String, content: String, mask: bool, state: State<'_, App
 #[tauri::command(async)]
 fn backup_list(state: State<'_, AppState>) -> serde_json::Value {
     serde_json::to_value(backups::list(&state.data_dir)).unwrap_or_default()
+}
+
+/// Huellas de los secretos enmascarados de un respaldo (para avisar "secreto cambiado").
+#[tauri::command(async)]
+fn backup_secrets(device: String, file: String, state: State<'_, AppState>) -> Result<std::collections::BTreeMap<usize, Vec<String>>, String> {
+    backups::read_secrets(&state.data_dir, &device, &file)
 }
 
 #[tauri::command(async)]
@@ -899,7 +917,42 @@ fn macos_menu(app: &tauri::AppHandle) -> tauri::Result<tauri::menu::Menu<tauri::
 }
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
+/// Agrega `extra` al final de `current` sin duplicar carpetas: lo que ya había mantiene su
+/// orden y prioridad.
+fn merge_path(current: &std::ffi::OsStr, extra: &[std::path::PathBuf]) -> std::ffi::OsString {
+    let mut dirs: Vec<std::path::PathBuf> = std::env::split_paths(current).filter(|d| !d.as_os_str().is_empty()).collect();
+    for d in extra {
+        if !dirs.iter().any(|x| x == d) {
+            dirs.push(d.clone());
+        }
+    }
+    std::env::join_paths(dirs).unwrap_or_else(|_| current.to_os_string())
+}
+
+/// Abierta desde el Dock o el Finder, la app hereda el PATH mínimo de launchd
+/// (/usr/bin:/bin:/usr/sbin:/sbin) y no ve iperf3 de Homebrew ni el Python de python.org.
+/// En Linux, un lanzador de escritorio puede no incluir ~/.local/bin (pip --user, pipx).
+fn extend_path() {
+    let mut extra: Vec<std::path::PathBuf> = Vec::new();
+    if cfg!(target_os = "macos") {
+        extra.extend(["/opt/homebrew/bin", "/usr/local/bin", "/Library/Frameworks/Python.framework/Versions/Current/bin"].map(Into::into));
+    }
+    if cfg!(target_os = "linux") {
+        if let Some(home) = std::env::var_os("HOME") {
+            extra.push(std::path::Path::new(&home).join(".local/bin"));
+        }
+    }
+    let extra: Vec<_> = extra.into_iter().filter(|d| d.is_dir()).collect();
+    if extra.is_empty() {
+        return;
+    }
+    let current = std::env::var_os("PATH").unwrap_or_default();
+    // Al arrancar, antes de crear hilos: set_var es seguro en ese momento.
+    std::env::set_var("PATH", merge_path(&current, &extra));
+}
+
 pub fn run() {
+    extend_path();
     tauri::Builder::default()
         .plugin(tauri_plugin_opener::init())
         .plugin(tauri_plugin_clipboard_manager::init())
@@ -993,6 +1046,8 @@ pub fn run() {
             local_ips,
             server_start,
             server_stop,
+            server_set_write,
+            server_write,
             server_running,
             tftp_files,
             tftp_add,
@@ -1021,6 +1076,7 @@ pub fn run() {
             backup_save,
             backup_list,
             backup_read,
+            backup_secrets,
             cred_status,
             cred_set,
             cred_has,
@@ -1060,6 +1116,17 @@ pub fn run() {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn merge_path_appends_without_duplicates_and_keeps_order() {
+        use std::path::PathBuf;
+        let cur = std::env::join_paths(["/usr/bin", "/bin", "/usr/local/bin"]).unwrap();
+        let extra: Vec<PathBuf> = ["/opt/homebrew/bin", "/usr/local/bin", "/opt/homebrew/bin"].map(PathBuf::from).to_vec();
+        let got: Vec<PathBuf> = std::env::split_paths(&merge_path(&cur, &extra)).collect();
+        assert_eq!(got, ["/usr/bin", "/bin", "/usr/local/bin", "/opt/homebrew/bin"].map(PathBuf::from));
+        let empty: Vec<PathBuf> = std::env::split_paths(&merge_path(std::ffi::OsStr::new(""), &extra[..1])).collect();
+        assert_eq!(empty, [PathBuf::from("/opt/homebrew/bin")]);
+    }
 
     fn ssh(jump: Option<&str>, args: Option<&str>) -> Session {
         serde_json::from_value(serde_json::json!({

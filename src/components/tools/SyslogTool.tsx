@@ -3,7 +3,9 @@ import { invoke } from "@tauri-apps/api/core";
 import { listen } from "@tauri-apps/api/event";
 import { FolderOpen, Pause, Play } from "lucide-react";
 import { Settings } from "../../lib/settings";
-import { Btn, CopyText, Label, Section, StatusPill, Toggle } from "./ui";
+import { Btn, CopyText, IpSelect, Label, Section, StatusPill, Toggle } from "./ui";
+import { useLocalIp } from "./useLocalIp";
+import { loghostCommands } from "../../lib/devicefs";
 
 interface Msg {
   ts: number;
@@ -33,13 +35,12 @@ export function SyslogTool({
   const [minSev, setMinSev] = useState(7);
   const [paused, setPaused] = useState(false);
   const [error, setError] = useState("");
-  const [ips, setIps] = useState<{ ip: string }[]>([]);
+  const { ips, ip: localIp, setIp } = useLocalIp();
   const pausedRef = useRef(paused);
   pausedRef.current = paused;
   const on = running.includes("syslog");
 
   useEffect(() => {
-    invoke<{ ip: string }[]>("local_ips").then(setIps).catch(() => {});
     const un = listen<Msg[]>("syslog", ({ payload }) => {
       if (pausedRef.current) return;
       setMsgs((m) => [...payload.reverse(), ...m].slice(0, MAX));
@@ -65,7 +66,8 @@ export function SyslogTool({
     return msgs.filter((m) => m.severity <= minSev && (!q || m.msg.toLowerCase().includes(q) || m.src.includes(q)));
   }, [msgs, filter, minSev]);
 
-  const ip = ips[0]?.ip ?? "IP_DE_ESTE_PC";
+  const ip = localIp || "IP_DE_ESTE_PC";
+  const cmds = loghostCommands(ip, s.syslogPort);
 
   return (
     <div className="space-y-4">
@@ -89,11 +91,20 @@ export function SyslogTool({
           </Btn>
         </div>
         {error && <p className="mt-2 text-[12px] text-danger">{error}</p>}
-        <div className="mt-3 flex flex-wrap items-center gap-1.5 text-[11.5px] text-muted">
-          Configura el equipo:
-          <CopyText text={`logging host ${ip}${s.syslogPort !== 514 ? ` transport udp port ${s.syslogPort}` : ""}`} />
-          <CopyText text={`info-center loghost ${ip}`} />
+        <div className="mt-3 flex flex-wrap items-end gap-3">
+          <IpSelect ips={ips} ip={localIp} onChange={setIp} className="w-72" />
+          <div className="flex flex-wrap items-center gap-1.5 pb-1 text-[11.5px] text-muted">
+            Configura el equipo: Cisco <CopyText text={cmds.cisco} /> Huawei <CopyText text={cmds.huawei} />
+          </div>
         </div>
+        {cmds.huaweiPortNote && (
+          <p className="mt-1.5 text-[11.5px] text-muted">
+            Huawei: "port" existe en CloudEngine, NE y VRP8; en AR y switches S con VRP5 antiguos no está y solo sirve el 514.
+          </p>
+        )}
+        {s.syslogPort < 1024 && (
+          <p className="mt-1.5 text-[11.5px] text-muted">En Linux y macOS el puerto 514 puede requerir privilegios; si no inicia, usa 1514.</p>
+        )}
       </Section>
 
       <Section

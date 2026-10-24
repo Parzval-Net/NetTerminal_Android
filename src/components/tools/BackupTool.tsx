@@ -8,9 +8,10 @@ import { Btn, Section, StatusPill, Toggle, fmtBytes } from "./ui";
 import { DiffView } from "./DiffView";
 import { runOnDevice } from "../../lib/deviceRun";
 import { BACKUP_PROFILES, backupLabel, cleanConfig, configProblem, guessBackupProfile, pool, profileById } from "../../lib/backup";
-import { diffLines, diffStats, splitLines, unifiedDiff, DiffRow } from "../../lib/diff";
+import { diffLines, diffStats, markSecretChanges, splitLines, unifiedDiff, DiffRow, SecretMarks } from "../../lib/diff";
 import { isWithin, normPath } from "../../lib/folders";
 
+import { plural } from "../../lib/plural";
 interface BackupFile {
   name: string;
   size: number;
@@ -82,7 +83,7 @@ export default function BackupTool({ terminals }: { terminals: TerminalRef[] }) 
           const problem = configProblem(clean);
           if (problem) return set(t.connId, { state: "error", text: problem });
           const file = await invoke<string>("backup_save", { device: t.session.name, content: clean, mask });
-          set(t.connId, { state: "ok", text: `${splitLines(clean).length} líneas · ${file}` });
+          set(t.connId, { state: "ok", text: `${plural(splitLines(clean).length, "línea", "líneas")} · ${file}` });
         } catch (e) {
           set(t.connId, { state: "error", text: String(e instanceof Error ? e.message : e) });
         }
@@ -114,10 +115,8 @@ export default function BackupTool({ terminals }: { terminals: TerminalRef[] }) 
     if (!selA || !selB) return;
     setBusy(true);
     try {
-      const [ta, tb] = await Promise.all([
-        invoke<string>("backup_read", selA),
-        invoke<string>("backup_read", selB),
-      ]);
+      const marks = (sel: { device: string; file: string }) => invoke<SecretMarks>("backup_secrets", sel).catch(() => null);
+      const [ta, tb, ha, hb] = await Promise.all([invoke<string>("backup_read", selA), invoke<string>("backup_read", selB), marks(selA), marks(selB)]);
       const a = splitLines(ta);
       const b = splitLines(tb);
       // Se cede el hilo antes de calcular para que se vea el estado "Comparando".
@@ -125,7 +124,8 @@ export default function BackupTool({ terminals }: { terminals: TerminalRef[] }) 
       setDiff({
         a,
         b,
-        rows: diffLines(a, b),
+        // Las huellas usan una llave por equipo: solo se comparan entre respaldos del mismo equipo.
+        rows: selA.device === selB.device ? markSecretChanges(diffLines(a, b), ha, hb) : diffLines(a, b),
         nameA: `${selA.device}/${selA.file}`,
         nameB: `${selB.device}/${selB.file}`,
       });
@@ -262,7 +262,7 @@ export default function BackupTool({ terminals }: { terminals: TerminalRef[] }) 
               <span className="text-[12px] text-muted">
                 {msg ||
                   (doneCount && !running ? `${okCount} de ${Object.keys(jobs).length} guardados.` : "") ||
-                  (mask ? "Contraseñas, llaves y comunidades SNMP se guardan como ****. Revisa antes de compartir." : "Se guardará la configuración con sus secretos.")}
+                  (mask ? "Contraseñas, llaves y comunidades SNMP se guardan como ****; la comparación entre fechas del mismo equipo marca \"secreto cambiado\" por una huella, sin guardar el secreto. Revisa antes de compartir." : "Se guardará la configuración con sus secretos.")}
               </span>
             </div>
           </>

@@ -26,8 +26,8 @@ export interface Profile {
   download: ((v: Vars) => string) | null;
   backup: ((v: Vars) => string) | null;
   /**
-   * FTP con el servidor de la app. `cred` es "usuario:contraseña" (temporales, cambian en
-   * cada inicio del servidor). Solo fabricantes que aceptan la contraseña en la URL: los
+   * FTP con el servidor de la app. `cred` es "nt:contraseña" (la contraseña cambia en cada
+   * inicio del servidor; el usuario es siempre nt). Solo fabricantes que aceptan la contraseña en la URL: los
    * que la piden por teclado (NX-OS, VRP) no se automatizan.
    */
   ftp?: {
@@ -137,9 +137,35 @@ export function parseListing(output: string): { files: RemoteFile[]; free: numbe
   return { files, free, total };
 }
 
-/** Sugiere el perfil según el resaltado configurado en la sesión. */
-export function guessProfile(highlight?: string): string {
-  if (highlight === "huawei") return "huawei";
-  if (highlight === "juniper") return "juniper";
+/**
+ * Sugiere el perfil de la sesión: primero la plataforma detectada o fijada en el catálogo
+ * (NX-OS usa bootflash: y "vrf management"), luego el resaltado configurado.
+ */
+export function guessProfile(session?: { platform?: string; highlight?: string }): string {
+  const p = session?.platform ?? "";
+  if (p === "nxos") return "nxos";
+  if (/^(junos|ex-legacy)/.test(p)) return "juniper";
+  if (/^(vrp|yunshan)/.test(p)) return "huawei";
+  if (/^(ios|iosxe|iosxr)$/.test(p)) return "cisco";
+  if (session?.highlight === "huawei") return "huawei";
+  if (session?.highlight === "juniper") return "juniper";
   return "cisco";
+}
+
+/**
+ * Comandos para que el equipo envíe syslog a este PC.
+ * - Cisco IOS/IOS-XE: "logging host IP transport udp port N" (Cisco IOS Configuration
+ *   Fundamentals, "logging host").
+ * - Huawei: "info-center loghost IP port N" (parámetro opcional, 514 por defecto en UDP), según
+ *   las referencias de comandos de CloudEngine 16800 V300R025C00 y NE08E/NE05E V800R022C00
+ *   (support.huawei.com, "info-center loghost"). La referencia de AR500 V200R007 no lo trae: en
+ *   esos equipos solo sirve el 514.
+ */
+export function loghostCommands(ip: string, port: number): { cisco: string; huawei: string; huaweiPortNote: boolean } {
+  const custom = port !== 514;
+  return {
+    cisco: `logging host ${ip}${custom ? ` transport udp port ${port}` : ""}`,
+    huawei: `info-center loghost ${ip}${custom ? ` port ${port}` : ""}`,
+    huaweiPortNote: custom,
+  };
 }

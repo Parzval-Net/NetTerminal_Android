@@ -236,15 +236,37 @@ assert.ok(ios.entries.every((e) => !/[\r\n]/.test(e.cmd)), "sin comandos de vari
   assert.ok(S.ghostFor(ios, "SHOW VER"), "sin distinguir mayúsculas");
   assert.equal(S.ghostFor(ios, "zzzz"), null);
 }
-// Lista: máximo 8, todas empiezan con lo tecleado, en el orden del catálogo.
+// Lista: máximo 8, todas empiezan con lo tecleado. Sin uso: menos palabras, menos texto
+// agregado, sin filtro "|" y luego el orden del catálogo.
 {
   const list = S.lookup(ios, "show ", 8);
   assert.equal(list.length, 8);
   for (const e of list) assert.ok(e.key.startsWith("show "));
-  for (let i = 1; i < list.length; i++) assert.ok(list[i - 1].order <= list[i].order);
-  const all = ios.entries.filter((e) => e.key.startsWith("show ")).sort((a, b) => a.order - b.order);
-  assert.deepEqual(list, all.slice(0, 8), "son las 8 primeras del catálogo");
+  const len = (e) => (e.placeholder ? e.insert.length : e.cmd.length);
+  const rank = (a, b) => a.toks.length - b.toks.length || len(a) - len(b) || Number(a.pipe) - Number(b.pipe) || a.order - b.order;
+  const all = ios.entries.filter((e) => e.key.startsWith("show ") && e.toks.length > 1 && (!e.placeholder || e.insert.length >= 5)).sort(rank);
+  assert.deepEqual(list.map((e) => e.cmd), all.slice(0, 8).map((e) => e.cmd), "las 8 mejores según el desempate");
   assert.equal(S.lookup(ios, "", 8).length, 8, "con la línea vacía también lista");
+}
+// Desempate del texto gris con igual uso: el comando más corto que completa lo tecleado.
+{
+  const has = (cmd) => ios.entries.some((e) => e.key === cmd);
+  const ghost = (q) => {
+    const g = S.ghostFor(ios, q);
+    return g && (q + g.rest).replace(/^\S+/, "");
+  };
+  const full = (q) => S.ghostFor(ios, q)?.entry.cmd;
+  assert.ok(has("show running-config") && has("show interfaces {{interfaz}}") && has("show logging"), "el catálogo IOS-XE trae los comandos base");
+  assert.equal(full("sh run"), "show running-config", "sh run: sin | include");
+  assert.equal(full("sh int"), "show interfaces {{interfaz}}", "sh int: inserta show interfaces, no transceiver detail");
+  assert.equal(full("sh log"), "show logging", "sh log: no login failures");
+  assert.equal(full("show running"), "show running-config");
+  assert.ok(ghost("sh run") !== null);
+  // El uso sigue mandando: un comando usado gana aunque sea más largo.
+  const target = ios.entries.find((e) => e.key.startsWith("show interfaces ") && e.risk === "read" && !e.placeholder);
+  const w = new Int32Array(ios.entries.length);
+  w[target.pos] = 5;
+  assert.equal(S.ghostFor(ios, "sh int", w).entry.cmd, target.cmd, "con historial gana el usado");
 }
 
 // ---------- Marcadores: se inserta hasta el marcador ----------
@@ -449,24 +471,24 @@ const mkIndex = (vendor, cmds, platform = "testos") => {
   const u = new S.SuggestUsage();
   const none = new Set();
   const first = (w) => S.lookup(idx, "show v", 3, { weights: w }).map((e) => e.key);
-  assert.deepEqual(first(u.weights(idx, none)), ["show version", "show vlan brief", "show vrf"], "sin historial, orden del catálogo");
-  const vrf = idx.entries.find((e) => e.key === "show vrf");
-  u.record("testos", vrf);
-  u.record("testos", vrf);
-  assert.equal(u.count("testos", "show vrf"), 2);
-  assert.equal(first(u.weights(idx, none))[0], "show vrf", "lo usado sube");
-  assert.equal(S.ghostFor(idx, "show v", u.weights(idx, none)).entry.key, "show vrf", "también en el texto gris");
+  assert.deepEqual(first(u.weights(idx, none)), ["show vrf", "show version", "show vlan brief"], "sin historial: menos palabras y menos texto primero");
+  const vlan = idx.entries.find((e) => e.key === "show vlan brief");
+  u.record("testos", vlan);
+  u.record("testos", vlan);
+  assert.equal(u.count("testos", "show vlan brief"), 2);
+  assert.equal(first(u.weights(idx, none))[0], "show vlan brief", "lo usado sube");
+  assert.equal(S.ghostFor(idx, "show v", u.weights(idx, none)).entry.key, "show vlan brief", "también en el texto gris");
   assert.equal(u.weights(idx, none), u.weights(idx, none), "pesos en caché mientras no cambie nada");
   // Favoritos: "fabricante:comando", igual que el panel de comandos.
-  const favs = new Set(["cisco:show vlan brief"]);
+  const favs = new Set(["cisco:show version"]);
   const fresh = new S.SuggestUsage();
-  assert.equal(first(fresh.weights(idx, favs))[0], "show vlan brief", "el favorito sube");
+  assert.equal(first(fresh.weights(idx, favs))[0], "show version", "el favorito sube");
   // Otra plataforma no se ve afectada.
   const other = mkIndex("cisco", ["show version", "show vrf"], "otheros");
-  assert.equal(S.lookup(other, "show v", 2, { weights: u.weights(other, none) })[0].key, "show version");
+  assert.equal(S.lookup(other, "show v", 2, { weights: u.weights(other, none) })[0].key, "show vrf");
   // Borrar.
   u.clear();
-  assert.deepEqual(first(u.weights(idx, none)), ["show version", "show vlan brief", "show vrf"]);
+  assert.deepEqual(first(u.weights(idx, none)), ["show vrf", "show version", "show vlan brief"]);
   assert.equal(u.serialize(), JSON.stringify({ v: 1, p: {} }));
 }
 {

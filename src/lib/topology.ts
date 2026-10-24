@@ -1050,7 +1050,7 @@ export function toCsv(t: Topology, traffic?: Map<string, LinkTraffic>): string {
   const num = (n: number | null | undefined) => (n == null || !Number.isFinite(n) ? "" : String(Math.round(n)));
   return [
     "equipo_a,ip_a,puerto_a,estado_a,velocidad_a,descripcion_a,equipo_b,ip_b,puerto_b,estado_b,velocidad_b,descripcion_b,agregado,protocolo" +
-      (withTraffic ? ",trafico_a_b_bps,trafico_b_a_bps,velocidad_enlace_bps,utilizacion_pct,lectura" : ""),
+      (withTraffic ? ",trafico_a_b_bps,trafico_b_a_bps,velocidad_enlace_bps,utilizacion_pct,lectura,utilizacion_aproximada" : ""),
     ...t.links.map((l) => {
       const a = node(l.a);
       const b = node(l.b);
@@ -1062,7 +1062,7 @@ export function toCsv(t: Topology, traffic?: Map<string, LinkTraffic>): string {
         b?.name ?? l.b, b?.ip, l.bPort, pb?.status, pb?.speed, pb?.desc,
         linkGroup(t, l), protoLabel(l),
         ...(withTraffic
-          ? [num(lt?.ab), num(lt?.ba), num(lt?.speed), lt?.util == null ? "" : (lt.util * 100).toFixed(1), lt ? new Date(lt.ts).toISOString() : ""]
+          ? [num(lt?.ab), num(lt?.ba), num(lt?.speed), lt?.util == null ? "" : (lt.util * 100).toFixed(1), lt ? new Date(lt.ts).toISOString() : "", lt?.approx ? "si" : ""]
           : []),
       ]
         .map(q)
@@ -1119,6 +1119,8 @@ export interface LinkTraffic {
   speed?: number;
   /** Utilización (0 a 1) del sentido más cargado; sin velocidad conocida queda indefinida. */
   util?: number;
+  /** La velocidad salió del "BW" configurado (consola), no de la velocidad física: utilización aproximada. */
+  approx?: boolean;
   /** Momento de la lectura (ms). */
   ts: number;
 }
@@ -1129,8 +1131,12 @@ export const UTIL_WARN = 0.7;
 export const UTIL_CRIT = 0.9;
 export const utilLevel = (u: number | undefined): UtilLevel =>
   u === undefined || !Number.isFinite(u) ? "none" : u >= UTIL_CRIT ? "crit" : u >= UTIL_WARN ? "warn" : "ok";
-/** Colores fijos para el SVG exportado (en pantalla se usan los del tema). */
-export const UTIL_COLORS: Record<UtilLevel, string> = { ok: "#1a7f37", warn: "#bf8700", crit: "#cf222e", none: "#57606a" };
+/**
+ * Colores fijos para el SVG exportado (en pantalla se usan los del tema). "none" (velocidad
+ * desconocida) es gris violeta: distinto del azul de selección y ruta, con contraste 5,6:1
+ * sobre blanco.
+ */
+export const UTIL_COLORS: Record<UtilLevel, string> = { ok: "#1a7f37", warn: "#bf8700", crit: "#cf222e", none: "#6e5f99" };
 export const UTIL_LEGEND: [string, UtilLevel][] = [
   ["Utilización bajo 70 %", "ok"],
   ["Utilización de 70 % a 89 %", "warn"],
@@ -1150,10 +1156,17 @@ export function fmtBps(bps: number | null | undefined): string {
   return `${v >= 10 || i === 0 ? Math.round(v) : v.toFixed(1)} ${u[i]}`;
 }
 
-/** Etiqueta de un enlace: "↑ 120 Mb/s ↓ 35 Mb/s" (↑ de A hacia B) y el porcentaje si se conoce. */
-export function trafficLabel(lt: LinkTraffic): string {
-  const pct = lt.util === undefined ? "" : ` · ${Math.round(lt.util * 100)} %`;
-  return `↑ ${fmtBps(lt.ab)} ↓ ${fmtBps(lt.ba)}${pct}`;
+/** Nombre corto para rótulos: hasta `max` caracteres con "…". */
+export const shortName = (name: string, max = 16) => (name.length > max ? `${name.slice(0, max - 1)}…` : name);
+
+/**
+ * Etiqueta de un enlace con el equipo A explícito: "core-sw01 → 120 Mb/s · ← 35 Mb/s · 12 %".
+ * "→" es lo que sale de A hacia el otro extremo y "←" lo que llega a A. Con la utilización
+ * aproximada (velocidad desde el BW configurado) el porcentaje lleva "≈".
+ */
+export function trafficLabel(lt: LinkTraffic, aName?: string): string {
+  const pct = lt.util === undefined ? "" : ` · ${lt.approx ? "≈" : ""}${Math.round(lt.util * 100)} %`;
+  return `${aName ? `${shortName(aName)} ` : ""}→ ${fmtBps(lt.ab)} · ← ${fmtBps(lt.ba)}${pct}`;
 }
 
 // ---------- Geometría y SVG ----------
@@ -1211,7 +1224,8 @@ export function toSvg(t: Topology, W = 170, H = 54, traffic?: Map<string, LinkTr
   const trafficRows: [string, string][] = withTraffic
     ? [
         ...UTIL_LEGEND.map(([text, lv]): [string, string] => [text, UTIL_COLORS[lv]]),
-        ["↑ de A hacia B, ↓ de B hacia A (A: primer equipo del enlace en el CSV)", UTIL_COLORS.none],
+        ["Velocidad desconocida", UTIL_COLORS.none],
+        ["Rótulo: equipo A → lo que sale de A · ← lo que llega a A (≈: utilización aproximada)", "#8a919c"],
       ]
     : [];
   const legendRows = kinds.length + trafficRows.length;
@@ -1233,7 +1247,7 @@ export function toSvg(t: Topology, W = 170, H = 54, traffic?: Map<string, LinkTr
     const stroke = lt ? UTIL_COLORS[utilLevel(lt.util)] : "#8a919c";
     const width = lt ? (2 + 3 * Math.min(1, lt.util ?? 0)).toFixed(1) : "2";
     parts.push(`<path d="${g.d}" fill="none" stroke="${stroke}" stroke-width="${width}"${dash ? ` stroke-dasharray="${dash}" stroke-linecap="round"` : ""}/>`);
-    if (lt) parts.push(label({ x: g.mid.x, y: g.mid.y + 16 }, trafficLabel(lt), 600, stroke));
+    if (lt) parts.push(label({ x: g.mid.x, y: g.mid.y + 16 }, trafficLabel(lt, t.nodes.find((n) => n.id === g.l.a)?.name ?? g.l.a), 600, stroke));
     if (g.l.aPort) parts.push(label(g.pa, g.l.aPort));
     if (g.l.bPort) parts.push(label(g.pb, g.l.bPort));
     const grp = linkGroup(t, g.l);
@@ -1885,3 +1899,51 @@ function acceptNodeSuggestion(t: Topology, s: LinkSuggestion, spec: NonNullable<
   }
   return addManualLink(topo, { a: s.a, aPort: s.aPort, b: target.id, bPort: s.bPort }, s.proto);
 }
+
+// ---------- Seguir la ruta y sugerencias descartadas ----------
+
+/** Sesión que se abrió con "Conectar y seguir la ruta" y aún no aparece conectada. */
+export interface PendingFollow {
+  host?: string;
+  sessionId?: string;
+  /** Conexiones que ya existían al pulsar "Conectar": no cuentan como la nueva. */
+  known: string[];
+}
+
+/** La conexión nueva que corresponde al equipo que se siguió (por sesión guardada o por host). */
+export function followedTerminal<T extends { connId: string; host?: string; session: { id: string } }>(terms: T[], p: PendingFollow): T | undefined {
+  return terms.find((t) => !p.known.includes(t.connId) && ((!!p.sessionId && t.session.id === p.sessionId) || (!!p.host && t.host === p.host)));
+}
+
+/** Sugerencias descartadas por equipo (el id lleva "fuente|equipo|clave"). */
+export type DismissedMap = Record<string, string[]>;
+export const MAX_DISMISSED_PER_DEVICE = 200;
+export const MAX_DISMISSED_DEVICES = 200;
+
+const deviceOfSuggestion = (id: string) => id.split("|")[1] ?? "";
+
+/** Agrega un descarte con topes: por equipo se olvidan los más antiguos y, por cantidad de equipos, los menos recientes. */
+export function addDismissed(map: DismissedMap, id: string): DismissedMap {
+  const dev = deviceOfSuggestion(id);
+  if (!dev || dev === "__proto__" || dev === "constructor" || dev === "prototype") return map;
+  const list = [...(map[dev] ?? []).filter((x) => x !== id), id].slice(-MAX_DISMISSED_PER_DEVICE);
+  const next: DismissedMap = { ...map };
+  delete next[dev];
+  next[dev] = list;
+  const devs = Object.keys(next);
+  for (const d of devs.slice(0, Math.max(0, devs.length - MAX_DISMISSED_DEVICES))) delete next[d];
+  return next;
+}
+
+/** Lee lo guardado sin confiar en su forma (localStorage editable). */
+export function parseDismissed(raw: unknown): DismissedMap {
+  if (!raw || typeof raw !== "object" || Array.isArray(raw)) return {};
+  let out: DismissedMap = {};
+  for (const [dev, ids] of Object.entries(raw as Record<string, unknown>)) {
+    if (!Array.isArray(ids) || dev === "__proto__") continue;
+    for (const id of ids) if (typeof id === "string" && id.length <= 512 && deviceOfSuggestion(id) === dev) out = addDismissed(out, id);
+  }
+  return out;
+}
+
+export const dismissedSet = (map: DismissedMap) => new Set(Object.values(map).flat());

@@ -104,6 +104,7 @@ export const ToolsView = memo(function ToolsView({ active, settings, update, mon
             snmpProfiles={settings.snmpProfiles ?? []}
             visible={active && current === "topology"}
             onOpenSession={onOpenSession}
+            onConfirm={onConfirm}
           />
         );
       case "subnet":

@@ -214,7 +214,7 @@ function MonitorForm({ initial, onSave, onCancel }: { initial: MonitorTarget; on
             <input className="field" value={t.name} placeholder="Core SCL" onChange={(e) => set("name", e.target.value)} />
           </Label>
           <Label text="Host o IP">
-            <input autoFocus className="field" value={t.host} placeholder="10.0.0.1" onChange={(e) => set("host", e.target.value.trim())} />
+            <input autoFocus className="field" value={t.host} placeholder="192.0.2.10" onChange={(e) => set("host", e.target.value.trim())} />
           </Label>
           <Label text="Tipo">
             <select className="field" value={t.kind} onChange={(e) => set("kind", e.target.value as MonitorTarget["kind"])}>

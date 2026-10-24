@@ -1,7 +1,7 @@
 //! Servidor FTP mínimo para que los equipos descarguen o suban archivos de la carpeta
 //! compartida con `copy ftp:` (RFC 959, EPSV/EPRT de RFC 2428 y SIZE/MDTM de RFC 3659).
 //!
-//! Apagado por defecto. Usuario y contraseña aleatorios en cada inicio, solo lectura salvo
+//! Apagado por defecto. Usuario fijo `nt` y contraseña aleatoria en cada inicio, solo lectura salvo
 //! que se habilite la subida, rutas confinadas a la carpeta compartida, conexiones de datos
 //! solo con la IP que inició sesión (sin "FTP bounce", RFC 2577) y límites de clientes,
 //! intentos y tamaño. FTP no cifra: usuario, contraseña y archivos viajan en claro.
@@ -48,7 +48,8 @@ struct Config {
     root: PathBuf,
     user: String,
     pass: String,
-    write: bool,
+    /// Subidas habilitadas: se cambia en caliente con `server_set_write`.
+    write: Arc<AtomicBool>,
     flag: Arc<AtomicBool>,
     events: Events,
 }
@@ -74,6 +75,7 @@ impl Servers {
         listener.set_nonblocking(true).map_err(|e| e.to_string())?;
         let info = FtpInfo { user: "nt".into(), pass: random_text(10), port, write };
         let flag = self.flag("ftp");
+        let write = self.write_flag("ftp", write);
         let cfg = Arc::new(Config {
             root,
             user: info.user.clone(),
@@ -296,7 +298,7 @@ impl Session {
     }
 
     fn stor(&mut self, arg: &str) -> std::io::Result<()> {
-        if !self.cfg.write {
+        if !self.cfg.write.load(Ordering::SeqCst) {
             return self.reply(550, "Servidor de solo lectura: habilita las subidas en NetTerminal");
         }
         let Some((path, parts)) = self.resolve(arg) else { return self.reply(553, "Nombre no permitido") };
@@ -544,11 +546,11 @@ pub fn ftp_server_start(port: u16, allow_write: bool, app: tauri::AppHandle) -> 
 /// Credenciales del servidor en marcha (para armar los comandos copy ftp:).
 #[tauri::command]
 pub fn ftp_server_info(state: tauri::State<'_, crate::AppState>) -> Option<FtpInfo> {
-    if !state.servers.running().iter().any(|k| k == "ftp") {
+    let Some(write) = state.servers.write_allowed("ftp") else {
         *INFO.lock().unwrap() = None;
         return None;
-    }
-    INFO.lock().unwrap().clone()
+    };
+    INFO.lock().unwrap().clone().map(|i| FtpInfo { write, ..i })
 }
 
 #[cfg(test)]
@@ -600,7 +602,7 @@ mod tests {
             root: root.clone(),
             user: "nt".into(),
             pass: "clave".into(),
-            write,
+            write: Arc::new(AtomicBool::new(write)),
             flag: flag.clone(),
             events: Arc::new(move |v| ev.lock().unwrap().push(v)),
         });
@@ -674,6 +676,35 @@ mod tests {
     }
 
     #[test]
+    fn ftp_write_toggles_live_without_restart() {
+        // Mismo esquema que `server`, pero con acceso a la bandera de escritura.
+        let root = std::env::temp_dir().join(format!("nt-ftp-{}", uuid::Uuid::new_v4()));
+        fs::create_dir_all(&root).unwrap();
+        let listener = TcpListener::bind("127.0.0.1:0").unwrap();
+        listener.set_nonblocking(true).unwrap();
+        let addr = listener.local_addr().unwrap();
+        let flag = Arc::new(AtomicBool::new(true));
+        let write = Arc::new(AtomicBool::new(false));
+        let cfg = Arc::new(Config { root: root.clone(), user: "nt".into(), pass: "clave".into(), write: write.clone(), flag: flag.clone(), events: Arc::new(|_| {}) });
+        std::thread::spawn(move || serve(listener, cfg));
+        let mut f = Ftp::connect(addr);
+        f.cmd("USER nt");
+        assert!(f.cmd("PASS clave").starts_with("230"));
+        assert!(f.cmd("STOR a.cfg").starts_with("550"), "solo lectura");
+        // La misma sesión (mismas credenciales) acepta la subida en cuanto se habilita.
+        write.store(true, Ordering::SeqCst);
+        let mut d = f.pasv();
+        assert!(f.cmd("STOR a.cfg").starts_with("150"));
+        d.write_all(b"x").unwrap();
+        drop(d);
+        assert!(f.line().starts_with("226"));
+        write.store(false, Ordering::SeqCst);
+        assert!(f.cmd("STOR b.cfg").starts_with("550"));
+        flag.store(false, Ordering::SeqCst);
+        fs::remove_dir_all(root).unwrap();
+    }
+
+    #[test]
     fn interop_with_ftp_client() {
         use crate::ftpclient::{open, parse_entries, FtpParams};
         let (addr, root, flag, _) = server(true);
@@ -716,7 +747,7 @@ mod tests {
         let listener = TcpListener::bind(("127.0.0.1", port)).unwrap();
         listener.set_nonblocking(true).unwrap();
         let flag = Arc::new(AtomicBool::new(true));
-        let cfg = Arc::new(Config { root, user: "nt".into(), pass: "clave".into(), write: true, flag: flag.clone(), events: Arc::new(|_| {}) });
+        let cfg = Arc::new(Config { root, user: "nt".into(), pass: "clave".into(), write: Arc::new(AtomicBool::new(true)), flag: flag.clone(), events: Arc::new(|_| {}) });
         std::thread::spawn(move || serve(listener, cfg));
         std::thread::sleep(Duration::from_secs(30));
         flag.store(false, Ordering::SeqCst);

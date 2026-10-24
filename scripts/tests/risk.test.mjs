@@ -21,7 +21,7 @@ registerHooks({
 });
 
 const root = join(dirname(fileURLToPath(import.meta.url)), "..", "..");
-const { computeRisk } = await import("../../src/lib/packs.ts");
+const { computeRisk, textRisk } = await import("../../src/lib/packs.ts");
 const { vendors } = await import("../../src/lib/commands.ts");
 
 const RANK = { read: 0, change: 1, disruptive: 2 };
@@ -224,5 +224,11 @@ for (const v of vendors) for (const c of v.commands) {
 }
 assert.deepEqual(escalated, [], "comandos del catálogo cuyo riesgo calculado supera al declarado");
 assert.ok(total > 1700 && reads > 1000, `catálogo con ${total} comandos (${reads} consultas)`);
+
+// Aprobación MCP: el riesgo de un bloque es el de su línea más riesgosa.
+assert.equal(textRisk("show version\nshow clock"), "read");
+assert.equal(textRisk("show version\nreload"), "disruptive");
+assert.equal(textRisk("show run\r\ninterface Gi0/1"), "change");
+assert.equal(textRisk(""), "read");
 
 console.log(`risk: ok (${total} comandos del catálogo revisados, ${reads} consultas intactas)`);

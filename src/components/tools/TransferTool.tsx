@@ -4,7 +4,8 @@ import { listen } from "@tauri-apps/api/event";
 import { open } from "@tauri-apps/plugin-dialog";
 import { FilePlus, FolderOpen, RefreshCw } from "lucide-react";
 import { Settings } from "../../lib/settings";
-import { Btn, CopyText, Label, Section, StatusPill, Toggle, fmtBytes } from "./ui";
+import { Btn, CopyText, IpSelect, Label, Section, StatusPill, Toggle, fmtBytes } from "./ui";
+import { useLocalIp } from "./useLocalIp";
 import { FileManager, ScpRequest, TerminalRef } from "./FileManager";
 import { FtpClientSection, FtpServerSection, SftpSection } from "./FtpPanels";
 
@@ -38,15 +39,42 @@ export function TransferTool({
   onConfirm: (req: { title: string; message: string; label: string; danger?: boolean; action: () => void }) => void;
   onScp: (req: ScpRequest) => void;
 }) {
-  const [ips, setIps] = useState<{ name: string; ip: string }[]>([]);
+  const { ips, ip: localIp, setIp } = useLocalIp();
   const [files, setFiles] = useState<[string, number][]>([]);
+  const [selFile, setSelFile] = useState("");
+  // Subidas TFTP: solo por esta sesión de la app, igual que en FTP (nunca quedan habilitadas
+  // al reiniciar). Con el servidor activo se aplican en caliente, sin reiniciarlo.
+  const [tftpWrite, setTftpWrite] = useState(false);
   const [transfers, setTransfers] = useState<Transfer[]>([]);
   const [error, setError] = useState("");
 
   const loadFiles = useCallback(() => invoke<[string, number][]>("tftp_files").then(setFiles), []);
 
+  // Estado real del servidor (el gestor de archivos puede habilitar subidas durante una extracción).
+  const syncWrite = useCallback(() => {
+    invoke<boolean | null>("server_write", { kind: "tftp" })
+      .then((w) => w != null && setTftpWrite(w))
+      .catch(() => {});
+  }, []);
   useEffect(() => {
-    invoke<{ name: string; ip: string }[]>("local_ips").then(setIps);
+    syncWrite();
+    window.addEventListener("nt-server-write", syncWrite);
+    return () => window.removeEventListener("nt-server-write", syncWrite);
+  }, [syncWrite, running]);
+
+  const setWrite = async (v: boolean) => {
+    setError("");
+    setTftpWrite(v);
+    if (!running.includes("tftp")) return;
+    try {
+      await invoke("server_set_write", { kind: "tftp", allow: v });
+    } catch (e) {
+      setError(String(e));
+      syncWrite();
+    }
+  };
+
+  useEffect(() => {
     loadFiles();
     const un = listen<Omit<Transfer, "ts">>("transfer", ({ payload }) => {
       setTransfers((list) => {
@@ -70,7 +98,7 @@ export function TransferTool({
         await invoke("server_start", {
           kind,
           port: kind === "tftp" ? s.tftpPort : s.httpPort,
-          allowWrite: s.tftpAllowWrite,
+          allowWrite: tftpWrite,
         });
     } catch (e) {
       setError(String(e));
@@ -89,8 +117,9 @@ export function TransferTool({
     }
   };
 
-  const ip = ips[0]?.ip ?? "IP_DE_ESTE_PC";
-  const file = files[0]?.[0] ?? "firmware.bin";
+  const ip = localIp || "IP_DE_ESTE_PC";
+  // Los comandos usan el archivo elegido en "Archivos compartidos" (o el primero).
+  const file = files.some(([n]) => n === selFile) ? selFile : (files[0]?.[0] ?? "firmware.bin");
   const tftpOn = running.includes("tftp");
   const httpOn = running.includes("http");
 
@@ -103,17 +132,21 @@ export function TransferTool({
         <FileManager
           terminals={terminals}
           settings={s}
-          running={running}
           refreshRunning={refreshRunning}
           onConfirm={onConfirm}
           onScp={onScp}
         />
       </Section>
 
-      <p className="text-[12px] text-muted">
-        Servidores: el gestor los inicia solo cuando hace falta. Escuchan en la red únicamente mientras están activos; si el
-        firewall del sistema pregunta, permite el acceso solo en redes privadas.
-      </p>
+      <div className="flex flex-wrap items-end gap-4">
+        <IpSelect ips={ips} ip={localIp} onChange={setIp} className="w-72" />
+        <p className="flex-1 min-w-[260px] text-[12px] text-muted">
+          Servidores: el gestor de archivos usa el que ya esté activo; si no hay uno, lo inicia para la operación y lo detiene al
+          terminar. Las subidas que necesita una extracción se habilitan en caliente, sin reiniciar ni cambiar la contraseña FTP,
+          y se vuelven a quitar al final. Escuchan en la red solo mientras están activos; si el firewall del sistema pregunta,
+          permite el acceso solo en redes privadas.
+        </p>
+      </div>
       {error && <p className="text-[12px] text-danger">{error}</p>}
 
       <div className="grid gap-4 [grid-template-columns:repeat(auto-fit,minmax(340px,1fr))]">
@@ -123,7 +156,7 @@ export function TransferTool({
               <input className="field" type="number" disabled={tftpOn} value={s.tftpPort} onChange={(e) => onChange({ tftpPort: Number(e.target.value) || 69 })} />
             </Label>
             <div className="pb-1.5">
-              <Toggle checked={s.tftpAllowWrite} onChange={(v) => onChange({ tftpAllowWrite: v })} label="Permitir subidas" />
+              <Toggle checked={tftpWrite} onChange={setWrite} label="Permitir subidas" />
             </div>
             <Btn kind={tftpOn ? "default" : "primary"} className="ml-auto" onClick={() => toggle("tftp")}>
               {tftpOn ? "Detener" : "Iniciar"}
@@ -133,11 +166,11 @@ export function TransferTool({
           <div className="flex flex-col items-start gap-1">
             <CopyText text={`copy tftp://${ip}/${file} flash:`} />
             <CopyText text={`tftp ${ip} get ${file}`} />
-            {s.tftpAllowWrite && <CopyText text={`copy running-config tftp://${ip}/respaldo.cfg`} />}
+            {tftpWrite && <CopyText text={`copy running-config tftp://${ip}/respaldo.cfg`} />}
           </div>
           {s.tftpPort < 1024 && (
             <p className="mt-2 text-[11.5px] text-muted">
-              En Linux el puerto 69 requiere privilegios; si no inicia, usa 1069 y configura ese puerto en el equipo si lo soporta.
+              En Linux y macOS el puerto 69 puede requerir privilegios; si no inicia, usa 1069 y configura ese puerto en el equipo si lo soporta.
             </p>
           )}
         </Section>
@@ -168,7 +201,7 @@ export function TransferTool({
 
       <Section
         title="Archivos compartidos"
-        hint={`IPs de este PC: ${ips.map((i) => `${i.ip} (${i.name})`).join(" · ") || "sin interfaces activas"}`}
+        hint="Clic en un archivo para usarlo en los comandos de arriba."
         right={
           <div className="flex gap-1">
             <Btn onClick={addFile}>
@@ -189,9 +222,14 @@ export function TransferTool({
           <table className="w-full text-[12px]">
             <tbody>
               {files.map(([name, size]) => (
-                <tr key={name} className="border-t border-line first:border-0">
-                  <td className="py-1.5 font-mono">{name}</td>
-                  <td className="text-right text-muted tabular-nums">{fmtBytes(size)}</td>
+                <tr
+                  key={name}
+                  aria-selected={name === file}
+                  onClick={() => setSelFile(name)}
+                  className={`border-t border-line first:border-0 cursor-default ${name === file ? "bg-selected" : "hover:bg-hover"}`}
+                >
+                  <td className="py-1.5 px-1 font-mono">{name}</td>
+                  <td className="px-1 text-right text-muted tabular-nums">{fmtBytes(size)}</td>
                 </tr>
               ))}
             </tbody>

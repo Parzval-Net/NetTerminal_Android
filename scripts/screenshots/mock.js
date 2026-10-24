@@ -393,6 +393,7 @@ settings.snmpProfiles = [
   { id: "pcore", name: "core-sw01", host: "192.0.2.1", port: 161, version: "3", user: "monitoreo", level: "authPriv", authProto: "sha256", privProto: "aes", context: "", timeoutMs: 2000, retries: 1, saved: true },
 ];
 const running = new Set();
+const writes = new Map();
 const IFNAMES = ["Gi1/0/1", "Gi1/0/2", "Gi1/0/3", "Gi1/0/4", "Te1/1/1", "Te1/1/2", "Vlan10", "Vlan20"];
 const IFDESC = ["UPLINK dist-sw01", "UPLINK dist-sw01", "Camara piso 2", "", "ISL core-sw02", "ISL core-sw02", "USUARIOS", "VOZ"];
 const counterBase = IFNAMES.map((_, i) => 9_000_000_000 + i * 1_234_567_890);
@@ -530,9 +531,23 @@ const handlers = {
   cmd_history_clear: ({ key }) => (key ? delete cmdHistory[key] : Object.keys(cmdHistory).forEach((k) => delete cmdHistory[k]), null),
   plugins_list: () => [],
   tftp_files: () => [["c9300-universalk9.17.12.04.SPA.bin", 1_163_845_632], ["AR6100-V300R022C10SPC100.cc", 168_820_736], ["FGT_200F-v7.4.5.out", 92_340_224]],
-  local_ips: () => [{ name: "en0", ip: "192.0.2.250" }],
+  // Como el backend: primero la de la ruta por defecto, luego físicas y al final virtuales.
+  local_ips: () => [
+    { name: "en0", ip: "192.0.2.250", default: true },
+    { name: "en7", ip: "198.51.100.20", default: false },
+    { name: "bridge100", ip: "192.168.64.1", default: false },
+    { name: "utun4", ip: "203.0.113.9", default: false },
+  ],
   server_running: () => [...running],
-  server_stop: ({ kind }) => (running.delete(kind), null),
+  server_start: ({ kind, allowWrite }) => (running.add(kind), writes.set(kind, !!allowWrite), `${kind} activo`),
+  server_write: ({ kind }) => (running.has(kind) ? (writes.get(kind) ?? false) : null),
+  server_set_write: ({ kind, allow }) => {
+    if (!running.has(kind)) throw "El servidor no está activo";
+    const before = writes.get(kind) ?? false;
+    writes.set(kind, allow);
+    return before;
+  },
+  server_stop: ({ kind }) => (running.delete(kind), writes.delete(kind), null),
   snmp_request: ({ oids }) => oids.map((oid) => (SYS[oid] ? { oid, type: oid.endsWith(".2.0") ? "OID" : oid.endsWith(".3.0") ? "Timeticks" : "OCTET STRING", value: SYS[oid] } : { oid, type: "noSuchObject", value: "No existe el objeto en este agente" })),
   snmp_walk_many: ({ oids }) => oids.map((oid) => ({ oid, rows: snmpColumn(oid), truncated: false, error: null })),
   snmp_walk: ({ oid }) => {
@@ -553,8 +568,8 @@ const handlers = {
     setTimeout(emitTraps, 400);
     return `Receptor de traps escuchando en ${bind}:${port} (UDP)`;
   },
-  ftp_server_info: () => (running.has("ftp") ? { user: "nt", pass: "k7m2q9xh4p", port: 21, write: false } : null),
-  ftp_server_start: ({ port, allowWrite }) => (running.add("ftp"), { user: "nt", pass: "k7m2q9xh4p", port, write: allowWrite }),
+  ftp_server_info: () => (running.has("ftp") ? { user: "nt", pass: "k7m2q9xh4p", port: 21, write: writes.get("ftp") ?? false } : null),
+  ftp_server_start: ({ port, allowWrite }) => (running.add("ftp"), writes.set("ftp", !!allowWrite), { user: "nt", pass: "k7m2q9xh4p", port, write: allowWrite }),
   ftp_list: () => ({ cwd: "/firmware", tls: true, entries: [{ name: "cisco", size: 0, dir: true, date: "2026-10-01 09:00" }, { name: "c9300-universalk9.17.12.04.SPA.bin", size: 1_163_845_632, dir: false, date: "2026-09-12 18:20" }, { name: "AR6100-V300R022C10SPC100.cc", size: 168_820_736, dir: false, date: "2026-08-30 11:02" }] }),
   monitor_start: ({ cfg }) => startMonitor(cfg),
   monitor_stop: ({ id }) => (clearInterval(monitorTimers.get(id)), monitorTimers.delete(id), null),
@@ -593,6 +608,15 @@ const handlers = {
       files: Object.keys(files).sort().reverse().map((name) => ({ name, size: files[name].length, modified: now / 1000 })),
     })),
   backup_read: ({ device, file }) => backups[device]?.[file] ?? "",
+  // Huellas de secretos: entre las dos fechas de core-sw01 cambió la community SNMP (línea con "community").
+  backup_secrets: ({ device, file }) => {
+    const text = backups[device]?.[file] ?? "";
+    const out = {};
+    text.split("\n").forEach((l, i) => {
+      if (/\*\*\*\*/.test(l)) out[i] = [/community/.test(l) && file.startsWith("2026-10-20") ? "b2" : "a1"];
+    });
+    return out;
+  },
   save_note: ({ name, content }) => {
     if (secureNotes[name]) throw "La nota está protegida con contraseña";
     notes[name] = content;
@@ -1240,6 +1264,14 @@ Object.assign(scenes, {
   "t-plugins": tool("Plugins"),
   suggest: async () => { await open("core-sw01"); },
   "suggest-config": async () => { await open("core-sw01"); },
+  // Revisión de la interfaz: confirmaciones y textos de las herramientas de red.
+  "q-syslog": tool("Syslog"),
+  "q-traps": async () => { await tool("SNMP")(); await wait(400); [...document.querySelectorAll("h3")].find((h) => h.textContent === "Receptor de traps")?.scrollIntoView(); },
+  "q-transfer-files": async () => { await open("core-sw01"); await tool("Transferencias")(); await wait(400); [...document.querySelectorAll("h3")].find((h) => h.textContent === "Archivos compartidos")?.scrollIntoView(); },
+  "q-backup-secret": async () => { await scenes.backup(); await wait(900); [...document.querySelectorAll("span")].find((x) => x.textContent === "secreto cambiado")?.scrollIntoView({ block: "center" }); },
+  "q-transfer-top": async () => { await open("core-sw01"); await tool("Transferencias")(); },
+  "q-reset": async () => { await click("Ajustes"); await wait(300); await click("Restablecer valores"); },
+  "q-topo-clear": async () => { await tool("Topología")(); await wait(300); await click("Borrar diagrama"); },
 });
 // Acceso para el script de QA (CDP): pasos adicionales sobre una escena.
 window.__demo = { click, open, wait, svgNode, emit, find, setVal };

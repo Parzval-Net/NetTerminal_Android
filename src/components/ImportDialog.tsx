@@ -7,6 +7,7 @@ import { Session, sessionTarget } from "../types";
 import { SessionIcon, typeLabel } from "./SessionIcon";
 import { joinPath, normPath } from "../lib/folders";
 
+import { plural } from "../lib/plural";
 interface Preview {
   format: string;
   sessions: Session[];
@@ -92,7 +93,7 @@ export function ImportDialog({ folders, onImport, onClose }: Props) {
     setBusy(true);
     try {
       const added = await onImport(list);
-      setMsg(`${added} sesiones importadas${added < list.length ? `, ${list.length - added} ya existían` : ""}.`);
+      setMsg(`${plural(added, "sesión importada", "sesiones importadas")}${added < list.length ? `, ${plural(list.length - added, "ya existía", "ya existían")}` : ""}.`);
       setPreview(null);
     } catch (e) {
       setMsg(`Importación incompleta: ${e}`);
@@ -192,7 +193,7 @@ export function ImportDialog({ folders, onImport, onClose }: Props) {
                     onChange={() => setSelected(all ? new Set() : new Set(preview.sessions.map((_, i) => i)))}
                   />
                   <span className="flex-1 truncate">
-                    {NAMES[preview.format] ?? preview.format} · {preview.sessions.length} sesiones · {file}
+                    {NAMES[preview.format] ?? preview.format} · {plural(preview.sessions.length, "sesión", "sesiones")} · {file}
                   </span>
                 </div>
                 <ul className="max-h-[300px] overflow-y-auto">

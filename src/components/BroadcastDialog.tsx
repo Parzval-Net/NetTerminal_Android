@@ -173,7 +173,7 @@ export function BroadcastBar() {
         <Radio size={14} className={run.running ? "text-warn animate-pulse" : "text-accent"} />
         <span className="font-medium">{run.running ? "Difusión en curso" : "Difusión terminada"}</span>
         <span className="tabular-nums text-muted">
-          {done}/{sendable.length} equipos · {ok} enviados
+          {done}/{sendable.length} {sendable.length === 1 ? "equipo" : "equipos"} · {ok} {ok === 1 ? "enviado" : "enviados"}
           {current ? ` · ${current.name}` : ""}
         </span>
         <div className="w-32 h-1.5 rounded-full bg-hover overflow-hidden">

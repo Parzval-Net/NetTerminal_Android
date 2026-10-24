@@ -14,8 +14,10 @@ export interface CounterSample {
   outOctets: bigint;
   /** 64: ifHCInOctets/ifHCOutOctets o consola; 32: ifInOctets/ifOutOctets (dan la vuelta). */
   bits: 32 | 64;
-  /** Velocidad en bits/s (ifHighSpeed x 10^6, ifSpeed o BW de la consola). */
+  /** Velocidad en bits/s (ifHighSpeed x 10^6, ifSpeed, velocidad física o BW de la consola). */
   speed?: number;
+  /** La velocidad es el "BW" configurado (puede ser menor que la real): no sirve para descartar tasas. */
+  approx?: boolean;
   /** Momento de la lectura (ms). */
   ts: number;
 }
@@ -25,6 +27,7 @@ export interface PortRate {
   inBps: number | null;
   outBps: number | null;
   speed?: number;
+  approx?: boolean;
   ts: number;
 }
 
@@ -60,12 +63,16 @@ export function rateBps(prev: bigint, cur: bigint, bits: 32 | 64, seconds: numbe
 /** Tasas de una interfaz entre dos lecturas (de la misma fuente). */
 export function portRate(prev: CounterSample | undefined, cur: CounterSample): PortRate {
   const speed = cur.speed && cur.speed > 0 ? cur.speed : undefined;
-  if (!prev || prev.bits !== cur.bits) return { inBps: null, outBps: null, speed, ts: cur.ts };
+  const approx = speed && cur.approx ? { approx: true as const } : {};
+  if (!prev || prev.bits !== cur.bits) return { inBps: null, outBps: null, speed, ...approx, ts: cur.ts };
   const secs = (cur.ts - prev.ts) / 1000;
+  // Con el BW configurado la velocidad puede ser menor que la real: no se descarta por 1,5x.
+  const limit = cur.approx ? undefined : speed;
   return {
-    inBps: rateBps(prev.inOctets, cur.inOctets, cur.bits, secs, speed),
-    outBps: rateBps(prev.outOctets, cur.outOctets, cur.bits, secs, speed),
+    inBps: rateBps(prev.inOctets, cur.inOctets, cur.bits, secs, limit),
+    outBps: rateBps(prev.outOctets, cur.outOctets, cur.bits, secs, limit),
     speed,
+    ...approx,
     ts: cur.ts,
   };
 }
@@ -81,10 +88,21 @@ export function linkTraffic(l: TopoLink, rates: Map<string, Map<string, PortRate
   const ab = ra?.outBps ?? rb?.inBps ?? null;
   const ba = ra?.inBps ?? rb?.outBps ?? null;
   if (ab === null && ba === null) return null;
-  const speeds = [ra?.speed, rb?.speed].filter((x): x is number => !!x && x > 0);
-  const speed = speeds.length ? Math.min(...speeds) : undefined;
+  // La menor velocidad informada; una física (exacta) gana sobre un BW configurado.
+  const known = [ra, rb].filter((r): r is PortRate => !!r?.speed && r.speed > 0);
+  const exact = known.filter((r) => !r.approx);
+  const pool = exact.length ? exact : known;
+  const speed = pool.length ? Math.min(...pool.map((r) => r.speed!)) : undefined;
+  const approx = !exact.length && known.length > 0;
   const util = speed ? Math.max(ab ?? 0, ba ?? 0) / speed : undefined;
-  return { ab, ba, ...(speed ? { speed } : {}), ...(util !== undefined ? { util } : {}), ts: Math.max(ra?.ts ?? 0, rb?.ts ?? 0) };
+  return {
+    ab,
+    ba,
+    ...(speed ? { speed } : {}),
+    ...(util !== undefined ? { util } : {}),
+    ...(approx ? { approx: true } : {}),
+    ts: Math.max(ra?.ts ?? 0, rb?.ts ?? 0),
+  };
 }
 
 // ---------- SNMP ----------
@@ -156,6 +174,8 @@ export interface CliCounters {
   inOctets: bigint;
   outOctets: bigint;
   speed?: number;
+  /** La velocidad salió de "BW N Kbit" (configurable con "bandwidth"), no de la física. */
+  speedApprox?: true;
 }
 
 const HEADER = /^(?:(\S+) is (?:administratively )?(?:up|down|deleted)\b|(\S+) current state\s*:|Physical interface:\s*([^,\s]+),)/;
@@ -163,13 +183,23 @@ const HEADER = /^(?:(\S+) is (?:administratively )?(?:up|down|deleted)\b|(\S+) c
 const MAX_CLI_IFACES = 4096;
 const MAX_CLI_LEN = 4_000_000;
 
-function speedOf(block: string): number | undefined {
+const UNIT = { k: 1e3, m: 1e6, g: 1e9, t: 1e12 } as const;
+
+/**
+ * Velocidad de la interfaz. Cisco informa la física junto al dúplex ("Full-duplex, 1000Mb/s",
+ * "full-duplex, 10 Gb/s" en NX-OS, "Full Duplex, 1000Mbps") y además "BW N Kbit", que es
+ * configurable con "bandwidth" y puede ser menor que la real: la física gana y, si solo hay BW,
+ * la velocidad queda marcada como aproximada.
+ */
+function speedOf(block: string): { speed: number; approx?: true } | undefined {
+  const phys = block.match(/\b(?:full|half)[- ]duplex,\s*(\d{1,6}(?:\.\d{1,3})?)\s*([kmgt])(?:b\/s|bps)/i);
+  if (phys) return { speed: Number(phys[1]) * UNIT[phys[2].toLowerCase() as keyof typeof UNIT] };
   const bw = block.match(/\bBW (\d{1,12}) Kbit/);
-  if (bw) return Number(bw[1]) * 1e3;
+  if (bw) return { speed: Number(bw[1]) * 1e3, approx: true };
   const hw = block.match(/^\s*Speed\s*:\s*(\d{1,7}),/m);
-  if (hw) return Number(hw[1]) * 1e6;
+  if (hw) return { speed: Number(hw[1]) * 1e6 };
   const jn = block.match(/\bSpeed\s*:\s*(\d{1,6}(?:\.\d{1,3})?)\s*([kmgt])bps/i);
-  if (jn) return Number(jn[1]) * { k: 1e3, m: 1e6, g: 1e9, t: 1e12 }[jn[2].toLowerCase() as "k" | "m" | "g" | "t"];
+  if (jn) return { speed: Number(jn[1]) * UNIT[jn[2].toLowerCase() as keyof typeof UNIT] };
   return undefined;
 }
 
@@ -201,7 +231,8 @@ export function parseCliCounters(out: string): Map<string, CliCounters> {
     if (name && res.size < MAX_CLI_IFACES) {
       const block = buf.join("\n");
       const c = countersOf(block);
-      if (c) res.set(canonPort(name), { name, inOctets: c[0], outOctets: c[1], speed: speedOf(block) });
+      const sp = speedOf(block);
+      if (c) res.set(canonPort(name), { name, inOctets: c[0], outOctets: c[1], speed: sp?.speed, ...(sp?.approx ? { speedApprox: true as const } : {}) });
     }
     buf = [];
   };

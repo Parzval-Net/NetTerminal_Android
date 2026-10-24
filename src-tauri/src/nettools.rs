@@ -275,16 +275,55 @@ pub fn check_ports(host: &str, ports: Vec<u16>, timeout_ms: u64) -> Result<Vec<P
 pub struct LocalIf {
     name: String,
     ip: String,
+    /// Interfaz que el sistema usa para la ruta por defecto.
+    default: bool,
+}
+
+/// Orden de preferencia por nombre: físicas primero (en*, eth*, Ethernet, Wi-Fi, wlan) y
+/// virtuales al final (bridges, utun, vEthernet, docker, VPN), para que la primera IP sea
+/// la que un equipo de la red puede alcanzar.
+pub fn if_rank(name: &str) -> u8 {
+    let n = name.to_ascii_lowercase();
+    const VIRTUAL: &[&str] = &[
+        "bridge", "utun", "vethernet", "docker", "br-", "virbr", "vmnet", "vboxnet", "veth", "tun", "tap", "awdl", "llw", "anpi", "zt",
+        "tailscale", "wg", "ppp", "ipsec", "gif", "stf", "vmware", "virtualbox", "hyper-v", "loopback",
+    ];
+    if VIRTUAL.iter().any(|v| n.starts_with(v)) || n.contains("virtual") || n.contains("vpn") {
+        return 2;
+    }
+    const PHYSICAL: &[&str] = &["en", "eth", "wl", "wi-fi", "wifi", "wireless", "local area connection", "conexión de área local"];
+    if PHYSICAL.iter().any(|p| n.starts_with(p)) {
+        return 0;
+    }
+    1
+}
+
+/// IP de origen hacia `addr` según la tabla de rutas (no envía paquetes: UDP connect).
+pub fn route_source(addr: std::net::SocketAddr) -> Option<String> {
+    let sock = std::net::UdpSocket::bind("0.0.0.0:0").ok()?;
+    sock.connect(addr).ok()?;
+    Some(sock.local_addr().ok()?.ip().to_string())
+}
+
+/// Ordena: la de la ruta por defecto primero, luego físicas, otras y virtuales; por nombre.
+pub fn sort_ifs(list: &mut [LocalIf]) {
+    list.sort_by(|a, b| (!a.default, if_rank(&a.name), &a.name).cmp(&(!b.default, if_rank(&b.name), &b.name)));
 }
 
 pub fn local_ips() -> Vec<LocalIf> {
+    // Ruta por defecto: una dirección de documentación (RFC 5737) cae en la ruta por
+    // defecto del sistema; no se envía nada.
+    let default = route_source(([192, 0, 2, 1], 9).into());
     let mut list: Vec<_> = if_addrs::get_if_addrs()
         .unwrap_or_default()
         .into_iter()
         .filter(|i| !i.is_loopback() && i.ip().is_ipv4())
-        .map(|i| LocalIf { name: i.name.clone(), ip: i.ip().to_string() })
+        .map(|i| {
+            let ip = i.ip().to_string();
+            LocalIf { default: default.as_deref() == Some(ip.as_str()), name: i.name.clone(), ip }
+        })
         .collect();
-    list.sort_by(|a, b| a.name.cmp(&b.name));
+    sort_ifs(&mut list);
     list
 }
 
@@ -440,6 +479,20 @@ async fn run_speedtest(app: &AppHandle, job: &str, cancel: &AtomicBool) -> Resul
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn ranks_physical_interfaces_before_virtual_ones() {
+        let mk = |name: &str, default: bool| LocalIf { name: name.into(), ip: String::new(), default };
+        let mut l = vec![mk("bridge100", false), mk("utun3", false), mk("en0", false), mk("vEthernet (WSL)", false), mk("Wi-Fi", false), mk("Ethernet 2", false)];
+        sort_ifs(&mut l);
+        let names: Vec<_> = l.iter().map(|i| i.name.as_str()).collect();
+        assert_eq!(names, ["Ethernet 2", "Wi-Fi", "en0", "bridge100", "utun3", "vEthernet (WSL)"]);
+        // La interfaz de la ruta por defecto va primero aunque sea virtual (VPN de túnel completo).
+        let mut l = vec![mk("en0", false), mk("utun4", true)];
+        sort_ifs(&mut l);
+        assert_eq!(l[0].name, "utun4");
+        assert_eq!([if_rank("eth0"), if_rank("enp3s0"), if_rank("wlan0"), if_rank("docker0"), if_rank("ham0")], [0, 0, 0, 2, 1]);
+    }
 
     #[test]
     fn summarizes_iperf_tcp_json() {
