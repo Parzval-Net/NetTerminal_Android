@@ -479,6 +479,18 @@ fn run_script(
     state.scripts.run(app.clone(), script, targets, options.unwrap_or_default(), &state.data_dir)
 }
 
+/// Intérprete de Python que usan scripts y plugins (versión y ruta).
+#[tauri::command(async)]
+fn python_status() -> Result<String, String> {
+    scripts::python_status()
+}
+
+/// Vuelve a buscar Python sin reiniciar la app (por ejemplo, tras instalarlo).
+#[tauri::command(async)]
+fn python_redetect() -> Result<String, String> {
+    scripts::redetect_python()
+}
+
 /// Respuesta del usuario a un diálogo de un script: confirmación de un comando o secreto.
 /// El secreto no se registra en ningún lado: viaja solo al stdin del script.
 #[tauri::command]
@@ -1032,6 +1044,8 @@ pub fn run() {
             run_script,
             stop_script,
             script_prompt_reply,
+            python_status,
+            python_redetect,
             mcp_configure,
             mcp_decide,
             monitor_start,

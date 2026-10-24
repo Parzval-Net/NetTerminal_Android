@@ -15,8 +15,9 @@ Sesión principal (la pestaña activa, o la primera de los destinos elegidos):
     sendline(texto="")          Envía texto + Enter.
     wait_for(regex, timeout, return_match_only=False)
                                 Espera hasta que la salida coincida. Devuelve TODO lo
-                                acumulado hasta ese momento, incluido lo que llegó después
-                                de la coincidencia en el mismo fragmento. Con
+                                acumulado desde la última lectura (eco del comando
+                                incluido), no solo la coincidencia, y también lo que llegó
+                                después de ella en el mismo fragmento. Con
                                 return_match_only=True devuelve solo hasta el final de la
                                 coincidencia y deja el resto para la próxima lectura.
     expect(regex, timeout)      Igual a wait_for(..., return_match_only=True).

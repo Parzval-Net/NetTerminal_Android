@@ -2,7 +2,7 @@ import { useCallback, useEffect, useRef, useState } from "react";
 import { invoke } from "@tauri-apps/api/core";
 import { listen } from "@tauri-apps/api/event";
 import { open } from "@tauri-apps/plugin-dialog";
-import { AlertTriangle, Code2, FolderOpen, FolderInput, Package, Play, Trash2 } from "lucide-react";
+import { AlertTriangle, Code2, FolderOpen, FolderInput, Package, Play, RefreshCw, Trash2 } from "lucide-react";
 import { Btn, Console, Section, Toggle } from "./ui";
 
 interface Action {
@@ -51,6 +51,15 @@ export function PluginsTool({
   const [error, setError] = useState("");
   const [output, setOutput] = useState<string[]>([]);
   const runs = useRef(new Set<string>());
+  // Intérprete que usan scripts y plugins; "Volver a detectar" evita reiniciar tras instalarlo.
+  const [py, setPy] = useState<{ ok: boolean; text: string } | null>(null);
+  const checkPython = useCallback((again: boolean) => {
+    setPy(null);
+    invoke<string>(again ? "python_redetect" : "python_status")
+      .then((text) => setPy({ ok: true, text }))
+      .catch((e) => setPy({ ok: false, text: String(e) }));
+  }, []);
+  useEffect(() => checkPython(false), [checkPython]);
 
   const load = useCallback(() => invoke<Plugin[]>("plugins_list").then(setPlugins), []);
 
@@ -125,6 +134,14 @@ export function PluginsTool({
             <FolderOpen size={14} />
           </Btn>
         </div>
+      </div>
+      <div className="flex items-center gap-2 text-[12px]">
+        <span className={py && !py.ok ? "text-danger" : "text-muted"}>
+          Python: {py ? py.text : "buscando…"}
+        </span>
+        <Btn kind="ghost" title="Volver a detectar Python" disabled={!py} onClick={() => checkPython(true)}>
+          <RefreshCw size={13} /> Volver a detectar
+        </Btn>
       </div>
       {error && <p className="text-[12px] text-danger">{error}</p>}
 

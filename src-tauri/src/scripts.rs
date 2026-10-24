@@ -29,7 +29,7 @@ use std::path::{Path, PathBuf};
 use std::process::{Child, Command, Stdio};
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::mpsc::{channel, Receiver, RecvTimeoutError, Sender};
-use std::sync::{Arc, Condvar, Mutex, MutexGuard, OnceLock};
+use std::sync::{Arc, Condvar, Mutex, MutexGuard};
 use std::time::{Duration, Instant};
 use tauri::{AppHandle, Emitter, Manager};
 use zeroize::Zeroizing;
@@ -718,27 +718,154 @@ pub fn list(data_dir: &Path) -> Vec<String> {
     names
 }
 
-/// Intérprete disponible: `py -3` en Windows, luego python3 y python.
-fn python() -> Option<&'static (String, Vec<String>)> {
-    static PY: OnceLock<Option<(String, Vec<String>)>> = OnceLock::new();
-    PY.get_or_init(|| {
-        let candidates: &[(&str, &[&str])] = if cfg!(windows) {
-            &[("py", &["-3"]), ("python", &[]), ("python3", &[])]
-        } else {
-            &[("python3", &[]), ("python", &[])]
-        };
-        candidates.iter().find_map(|(bin, args)| {
-            let mut c = Command::new(bin);
-            c.args(*args).arg("--version");
-            hide_console(&mut c);
-            let out = c.output().ok()?;
-            let v = String::from_utf8_lossy(&out.stdout).to_string() + &String::from_utf8_lossy(&out.stderr);
-            v.contains("Python 3")
-                .then(|| (bin.to_string(), args.iter().map(|a| a.to_string()).collect()))
-        })
-    })
-    .as_ref()
+/// Un intérprete a probar: ejecutable y argumentos previos (`py -3`).
+#[derive(Clone, Debug, PartialEq)]
+pub struct Interpreter {
+    pub bin: String,
+    pub args: Vec<String>,
 }
+
+impl Interpreter {
+    fn new(bin: impl Into<String>, args: &[&str]) -> Self {
+        Interpreter { bin: bin.into(), args: args.iter().map(|a| a.to_string()).collect() }
+    }
+}
+
+#[derive(Clone, Copy, PartialEq, Debug)]
+enum Os {
+    Windows,
+    Mac,
+    Other,
+}
+
+const MAC_PREFERRED: [&str; 3] = [
+    "/opt/homebrew/bin/python3",
+    "/usr/local/bin/python3",
+    "/Library/Frameworks/Python.framework/Versions/Current/bin/python3",
+];
+/// En macOS puede ser el stub de las Command Line Tools: ejecutarlo sin ellas abre el
+/// instalador de Apple.
+const MAC_STUB: &str = "/usr/bin/python3";
+
+/// Candidatos en orden de preferencia. `exists` y `clt` se inyectan para probar el orden.
+/// - Windows: `py -3` (el lanzador elige el Python 3 instalado), luego python y python3.
+/// - macOS: Homebrew (Apple Silicon e Intel), python.org, otros python3 del PATH (pyenv,
+///   conda) y al final /usr/bin/python3, solo si `xcode-select -p` confirma que las
+///   Command Line Tools están instaladas.
+/// - Linux y otros: python3 y python del PATH.
+fn candidates(os: Os, path_dirs: &[PathBuf], exists: &dyn Fn(&Path) -> bool, clt: &dyn Fn() -> bool) -> Vec<Interpreter> {
+    match os {
+        Os::Windows => vec![Interpreter::new("py", &["-3"]), Interpreter::new("python", &[]), Interpreter::new("python3", &[])],
+        Os::Other => vec![Interpreter::new("python3", &[]), Interpreter::new("python", &[])],
+        Os::Mac => {
+            let mut out: Vec<Interpreter> = Vec::new();
+            let mut push = |p: PathBuf| {
+                let s = p.to_string_lossy().into_owned();
+                if s != MAC_STUB && exists(&p) && !out.iter().any(|c| c.bin == s) {
+                    out.push(Interpreter::new(s, &[]));
+                }
+            };
+            for p in MAC_PREFERRED {
+                push(PathBuf::from(p));
+            }
+            for d in path_dirs {
+                push(d.join("python3"));
+            }
+            if exists(Path::new(MAC_STUB)) && clt() {
+                out.push(Interpreter::new(MAC_STUB, &[]));
+            }
+            out
+        }
+    }
+}
+
+fn current_os() -> Os {
+    if cfg!(windows) {
+        Os::Windows
+    } else if cfg!(target_os = "macos") {
+        Os::Mac
+    } else {
+        Os::Other
+    }
+}
+
+/// Salida de un comando con plazo: lo que no responde a tiempo se mata.
+fn output_within(mut cmd: Command, timeout: Duration) -> Option<String> {
+    cmd.stdin(Stdio::null()).stdout(Stdio::piped()).stderr(Stdio::piped());
+    hide_console(&mut cmd);
+    let mut child = cmd.spawn().ok()?;
+    let deadline = Instant::now() + timeout;
+    loop {
+        match child.try_wait() {
+            Ok(Some(st)) => {
+                let mut text = String::new();
+                if let Some(mut o) = child.stdout.take() {
+                    let _ = std::io::Read::read_to_string(&mut o, &mut text);
+                }
+                if let Some(mut e) = child.stderr.take() {
+                    let _ = std::io::Read::read_to_string(&mut e, &mut text);
+                }
+                return st.success().then_some(text);
+            }
+            Ok(None) if Instant::now() < deadline => std::thread::sleep(Duration::from_millis(25)),
+            _ => {
+                let _ = child.kill();
+                let _ = child.wait();
+                return None;
+            }
+        }
+    }
+}
+
+/// Versión de Python 3 que informa el intérprete, si responde a tiempo.
+fn python_version(i: &Interpreter) -> Option<String> {
+    let mut c = Command::new(&i.bin);
+    c.args(&i.args).arg("--version");
+    let v = output_within(c, Duration::from_secs(5))?;
+    let v = v.trim();
+    v.starts_with("Python 3").then(|| v.to_string())
+}
+
+fn detect() -> Option<(Interpreter, String)> {
+    let dirs: Vec<PathBuf> = std::env::var_os("PATH").map(|p| std::env::split_paths(&p).collect()).unwrap_or_default();
+    let clt = || {
+        let mut c = Command::new("xcode-select");
+        c.arg("-p");
+        output_within(c, Duration::from_secs(3)).is_some()
+    };
+    candidates(current_os(), &dirs, &|p| p.is_file(), &clt)
+        .into_iter()
+        .find_map(|i| python_version(&i).map(|v| (i, v)))
+}
+
+static PYTHON: Mutex<Option<(Interpreter, String)>> = Mutex::new(None);
+
+/// Intérprete detectado. Solo se recuerda un resultado positivo: si falta Python, cada
+/// ejecución vuelve a buscar, así instalarlo no exige reiniciar la app.
+fn python() -> Option<Interpreter> {
+    let mut cached = lock(&PYTHON);
+    if cached.is_none() {
+        *cached = detect();
+    }
+    cached.as_ref().map(|(i, _)| i.clone())
+}
+
+/// Olvida el intérprete y lo vuelve a buscar ("Volver a detectar Python").
+pub fn redetect_python() -> Result<String, String> {
+    let found = detect();
+    let mut cached = lock(&PYTHON);
+    *cached = found;
+    cached.as_ref().map(|(i, v)| format!("{v} ({})", i.bin)).ok_or_else(|| NO_PYTHON.into())
+}
+
+/// Intérprete en uso, sin forzar una búsqueda nueva si ya hay uno.
+pub fn python_status() -> Result<String, String> {
+    python().ok_or(NO_PYTHON)?;
+    let cached = lock(&PYTHON);
+    cached.as_ref().map(|(i, v)| format!("{v} ({})", i.bin)).ok_or_else(|| NO_PYTHON.into())
+}
+
+const NO_PYTHON: &str = "No se encontró Python 3. Instálalo (python.org o Homebrew en macOS) y usa Volver a detectar.";
 
 fn hide_console(_c: &mut Command) {
     #[cfg(windows)]
@@ -796,7 +923,7 @@ impl ScriptRunner {
 
     pub fn run_spec(&self, app: AppHandle, spec: RunSpec, data_dir: &Path) -> Result<String, String> {
         let RunSpec { label: script, path, cwd, targets: wanted, allow_session, options, env } = spec;
-        let (bin, pre) = python().ok_or("No se encontró Python 3. Instálalo para usar scripts y plugins.")?;
+        let Interpreter { bin, args: pre } = python().ok_or(NO_PYTHON)?;
         let helper_dir = scripts_dir(data_dir);
         let conns = &app.state::<crate::AppState>().conns;
 
@@ -1208,10 +1335,60 @@ mod tests {
         assert_eq!(Broker::new(Fake::new(true, None), vec![], true, false, 99, Arc::default()).parallel.free.lock().map(|f| *f).unwrap(), MAX_PARALLEL);
     }
 
+    fn bins(c: Vec<Interpreter>) -> Vec<String> {
+        c.into_iter().map(|i| [vec![i.bin], i.args].concat().join(" ")).collect()
+    }
+
+    #[test]
+    fn python_candidates_prefer_real_installs_on_macos() {
+        let all = |_: &Path| true;
+        let path = [PathBuf::from("/Users/u/.pyenv/shims"), PathBuf::from("/usr/bin"), PathBuf::from("/opt/homebrew/bin")];
+        // Con las Command Line Tools: Homebrew, /usr/local, python.org, el PATH y el stub al final.
+        assert_eq!(
+            bins(candidates(Os::Mac, &path, &all, &|| true)),
+            [
+                "/opt/homebrew/bin/python3",
+                "/usr/local/bin/python3",
+                "/Library/Frameworks/Python.framework/Versions/Current/bin/python3",
+                "/Users/u/.pyenv/shims/python3",
+                "/usr/bin/python3",
+            ]
+        );
+        // Sin ellas, /usr/bin/python3 no se ejecuta: abriría el instalador de Apple.
+        let only_stub = |p: &Path| p == Path::new("/usr/bin/python3");
+        assert!(candidates(Os::Mac, &path, &only_stub, &|| false).is_empty());
+        assert_eq!(bins(candidates(Os::Mac, &path, &only_stub, &|| true)), ["/usr/bin/python3"]);
+        // Solo los que existen, sin repetir.
+        let brew = |p: &Path| p.starts_with("/usr/local");
+        assert_eq!(bins(candidates(Os::Mac, &[PathBuf::from("/usr/local/bin")], &brew, &|| true)), ["/usr/local/bin/python3"]);
+    }
+
+    #[test]
+    fn python_candidates_on_windows_and_linux() {
+        let none = |_: &Path| false;
+        assert_eq!(bins(candidates(Os::Windows, &[], &none, &|| false)), ["py -3", "python", "python3"]);
+        assert_eq!(bins(candidates(Os::Other, &[], &none, &|| false)), ["python3", "python"]);
+    }
+
+    #[test]
+    fn slow_commands_are_cut_by_the_timeout() {
+        if cfg!(windows) {
+            return;
+        }
+        let start = Instant::now();
+        let mut c = Command::new("sleep");
+        c.arg("5");
+        assert_eq!(output_within(c, Duration::from_millis(200)), None);
+        assert!(start.elapsed() < Duration::from_secs(2));
+        let mut c = Command::new("echo");
+        c.arg("Python 3.12.1");
+        assert_eq!(output_within(c, Duration::from_secs(2)).as_deref().map(str::trim), Some("Python 3.12.1"));
+    }
+
     /// El netterminal.py real contra el Broker: varias sesiones, hilos y respuestas por id.
     #[test]
     fn python_helper_runs_multi_session_scripts() {
-        let Some((bin, pre)) = python() else {
+        let Some(Interpreter { bin, args: pre }) = python() else {
             eprintln!("sin Python 3: se omite");
             return;
         };

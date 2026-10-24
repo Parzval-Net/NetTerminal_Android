@@ -316,6 +316,8 @@ Control de riesgo: cada línea que el script envía pasa por el motor de riesgo 
 
 Contraseñas guardadas: los scripts no pueden leer la bóveda. Para un secreto que el script necesita (enable, una clave de un equipo intermedio), usa `ask_secret`. El enmascarado reemplaza el texto exacto: si el script lo transforma (codifica, invierte) o lo envía como parte de un comando que el equipo repite, el eco aparece en la terminal como si lo hubieras tecleado. Python corre con los permisos de tu usuario: el control de riesgo cubre lo que el script envía por la API, no lo que haga por su cuenta. Revisa los scripts antes de ejecutarlos.
 
+Intérprete: en Windows se usa `py -3` (luego `python` y `python3`). En macOS se prefiere el `python3` de Homebrew (`/opt/homebrew/bin`, `/usr/local/bin`) o de python.org (`Python.framework`), luego otros del PATH, y `/usr/bin/python3` queda al final y solo si `xcode-select -p` confirma las Command Line Tools: sin ellas ese archivo es un stub que abre el instalador de Apple. Cada prueba de versión tiene un plazo de 5 s. Si no hay Python, cada ejecución lo vuelve a buscar; Herramientas › Plugins muestra el intérprete en uso y tiene "Volver a detectar".
+
 Pruebas: `node scripts/tests/scripts-api.test.mjs` (varias sesiones, riesgo, secretos, cancelación y tiempos con el `netterminal.py` real) y `cargo test scripts::` (protocolo, armado de líneas y control de riesgo en Rust).
 
 ## Crear un plugin
