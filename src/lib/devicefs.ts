@@ -156,10 +156,12 @@ export function guessProfile(session?: { platform?: string; highlight?: string }
  * Comandos para que el equipo envíe syslog a este PC.
  * - Cisco IOS/IOS-XE: "logging host IP transport udp port N" (Cisco IOS Configuration
  *   Fundamentals, "logging host").
- * - Huawei: "info-center loghost IP port N" (parámetro opcional, 514 por defecto en UDP), según
- *   las referencias de comandos de CloudEngine 16800 V300R025C00 y NE08E/NE05E V800R022C00
- *   (support.huawei.com, "info-center loghost"). La referencia de AR500 V200R007 no lo trae: en
- *   esos equipos solo sirve el 514.
+ * - Huawei: "info-center loghost IP port N" (parámetro opcional, 1 a 65535, 514 por defecto en
+ *   UDP). Revisado en support.huawei.com (octubre 2026): referencia de comandos de CloudEngine
+ *   16800 V300R026C00 ("info-center loghost (System view)", EDOC1100611763) y guía de
+ *   configuración de S5700/S6700 V200R024C10 (EDOC1100456148, "port port"); antes, CE16800
+ *   V300R025C00 y NE08E/NE05E V800R022C00. La referencia de AR500 V200R007 no lo trae y no se
+ *   pudo confirmar en otros AR: la interfaz pide verificarlo en la versión del equipo.
  */
 export function loghostCommands(ip: string, port: number): { cisco: string; huawei: string; huaweiPortNote: boolean } {
   const custom = port !== 514;

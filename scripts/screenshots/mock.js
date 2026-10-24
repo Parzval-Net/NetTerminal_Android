@@ -4,6 +4,7 @@
  */
 const cbs = new Map();
 let nextId = 1;
+let busyVerifies = 0;
 const listeners = new Map(); // evento -> [callbackId]
 const channels = new Map(); // conexión -> canales de datos
 const enc = new TextEncoder();
@@ -496,7 +497,8 @@ const handlers = {
     secureNotes[name].password = next;
     return null;
   },
-  list_scripts: () => [],
+  // ?scripts: un script para probar el diálogo de lanzamiento.
+  list_scripts: () => (location.search.includes("scripts") ? ["ejemplo_respaldo.py"] : []),
   // Búsqueda en notas: texto plano sin distinguir mayúsculas, como el backend.
   search_notes: ({ query }) => {
     const q = (query ?? "").trim().toLowerCase();
@@ -578,7 +580,21 @@ const handlers = {
   data_dir: () => "~/NetTerminal/data",
   logs_dir_get: () => logsDirInfo(),
   logs_dir_set: ({ path }) => ((logsDir = path ?? ""), logsDirInfo()),
+  // MD5 de la copia del PC; el equipo devuelve el mismo en "verify /md5" (o ?md5bad, otro).
+  tftp_md5: () => "3f2a9c1e5b7d4a6f8e0c2b4d6f8a1c3e",
   device_run: ({ conn, command }) => {
+    // ?scpbusy: la sesión está tomada por un script en las dos primeras verificaciones.
+    if (/^verify \/md5/.test(command) && location.search.includes("scpbusy") && busyVerifies++ < 2)
+      throw "Un script está usando esta sesión. Espera a que termine o usa Detener script.";
+    if (/^verify \/md5/.test(command)) {
+      const job = `job-${nextId++}`;
+      const md5 = location.search.includes("md5bad") ? "00000000000000000000000000000000" : "3f2a9c1e5b7d4a6f8e0c2b4d6f8a1c3e";
+      setTimeout(() => {
+        emit("tool-job", { job, kind: "result", text: "", data: { ok: true, output: `${command}\r\n.......Done!\r\n${command.slice(7)} = ${md5}\r\ncore-sw01#` } });
+        emit("tool-job", { job, kind: "done", text: "" });
+      }, 400);
+      return job;
+    }
     const s = connSessions.get(conn);
     const job = `job-${nextId++}`;
     const name = s?.name ?? "equipo";
@@ -660,6 +676,15 @@ const handlers = {
         send("Unable to negotiate with 192.0.2.99 port 22: no matching host key type found. Their offer: ssh-rsa\r\n");
         cbs.get(ch.data)?.({ index: ch.index++, message: "El proceso terminó (código 255)" });
       }, 300);
+      return null;
+    }
+    // Pestaña SCP/SFTP del gestor de archivos: copia simulada y fin del proceso como el backend
+    // (spawn_pty). ?scpfail: termina con código 1. SFTP interactivo (shell) no termina solo.
+    if (session.scp && session.scp.mode !== "shell") {
+      const files = session.scp.files.join(" ");
+      setTimeout(() => send(`noc@${session.host}'s password: \r\n${files}    100%  160MB  11.2MB/s   00:14\r\n`), 300);
+      const fail = location.search.includes("scpfail");
+      setTimeout(() => cbs.get(ch.data)?.({ index: ch.index++, message: fail ? "Proceso terminado (código 1)" : "Sesión finalizada" }), 1500);
       return null;
     }
     setTimeout(() => send(text), 150);

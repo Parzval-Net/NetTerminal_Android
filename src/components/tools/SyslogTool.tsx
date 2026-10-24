@@ -99,7 +99,8 @@ export function SyslogTool({
         </div>
         {cmds.huaweiPortNote && (
           <p className="mt-1.5 text-[11.5px] text-muted">
-            Huawei: "port" existe en CloudEngine, NE y VRP8; en AR y switches S con VRP5 antiguos no está y solo sirve el 514.
+            Huawei: "port" está documentado en CloudEngine V300, NE y S5700/S6700 V200R024; en AR y versiones antiguas, verificar en tu
+            versión (sin "port" solo sirve el 514).
           </p>
         )}
         {s.syslogPort < 1024 && (

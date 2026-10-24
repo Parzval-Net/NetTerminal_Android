@@ -18,6 +18,11 @@ import { isMac, modLabel, shortcutFor } from "../lib/platform";
 import { paneBodyStyle } from "../lib/split";
 import { credStatus, needsUnlock } from "../lib/credentials";
 import { VaultUnlock } from "./VaultUnlock";
+import { SCP_EXIT_EVENT, type ScpExit } from "../lib/scpVerify";
+
+/** Avisa al gestor de archivos que terminó (o se cerró) una pestaña de transferencia. */
+const notifyScpExit = (transfer: string, reason: string | null, closed = false) =>
+  window.dispatchEvent(new CustomEvent<ScpExit>(SCP_EXIT_EVENT, { detail: { transfer, reason, closed } }));
 import { ConfirmDialog } from "./ConfirmDialog";
 import { type CatalogVendor, riskLabel } from "../lib/packs";
 import {
@@ -356,6 +361,8 @@ export const TerminalView = memo(function TerminalView({ id, session, active, vi
           return;
         }
         if (sessionRef.current.scp) {
+          // El gestor de archivos verifica el MD5 si fue una subida terminada con código 0.
+          notifyScpExit(sessionRef.current.id, reason);
           // Transferencia SCP: no se repite con Enter para no sobrescribir por accidente.
           term.write(`\r\n${dim(`── ${reason}. Transferencia terminada: puedes cerrar esta pestaña ──`)}\r\n`);
         } else if (!manualClose && sessionRef.current.auto_reconnect && retries < MAX_RECONNECTS) {
@@ -873,6 +880,8 @@ export const TerminalView = memo(function TerminalView({ id, session, active, vi
     const host = hostRef.current!;
 
     return () => {
+      // Pestaña de transferencia cerrada antes de que el proceso terminara: el gestor no verifica.
+      if (sessionRef.current.scp && statusRef.current !== "closed") notifyScpExit(sessionRef.current.id, null, true);
       disposed = true;
       unlockResolve.current?.(false);
       releaseChannels();

@@ -5,6 +5,7 @@ import { AlertTriangle, ArrowDownToLine, ArrowUpFromLine, Folder, FileText, Lock
 import type { Settings } from "../../lib/settings";
 import { Btn, CopyText, Label, Section, StatusPill, Toggle, fmtBytes } from "./ui";
 import type { ScpRequest, TerminalRef } from "./FileManager";
+import { SCP_EXIT_EVENT, type ScpExit, scpOutcome } from "../../lib/scpVerify";
 
 interface FtpInfo {
   user: string;
@@ -282,6 +283,26 @@ export function SftpSection({ terminals, onScp }: { terminals: TerminalRef[]; on
   const ssh = terminals.filter((t) => t.host);
   const [conn, setConn] = useState("");
   const term = ssh.find((t) => t.connId === conn) ?? ssh[0];
+  // SFTP interactivo: no hay un fin de transferencia claro (el usuario escribe put/get). Al
+  // cerrarse la pestaña se recuerda cómo verificar el MD5 en el gestor de archivos.
+  const open = useRef(new Set<string>());
+  const [notice, setNotice] = useState("");
+  useEffect(() => {
+    const on = (ev: Event) => {
+      const e = (ev as CustomEvent<ScpExit>).detail;
+      if (!open.current.delete(e.transfer)) return;
+      setNotice(scpOutcome({ upload: true, mode: "shell", files: [], verify: true, canVerify: true }, e).text);
+    };
+    window.addEventListener(SCP_EXIT_EVENT, on);
+    return () => window.removeEventListener(SCP_EXIT_EVENT, on);
+  }, []);
+  const openSftp = () => {
+    if (!term) return;
+    const transferId = `sftp-${Date.now()}`;
+    open.current.add(transferId);
+    setNotice("");
+    onScp({ upload: false, files: [], remoteDir: "", session: term.session, mode: "shell", transferId });
+  };
   return (
     <Section
       title="SFTP interactivo"
@@ -298,14 +319,19 @@ export function SftpSection({ terminals, onScp }: { terminals: TerminalRef[]; on
             ))}
           </select>
         </Label>
-        <Btn kind="primary" disabled={!term} onClick={() => term && onScp({ upload: false, files: [], remoteDir: "", session: term.session, mode: "shell" })}>
+        <Btn kind="primary" disabled={!term} onClick={openSftp}>
           <TerminalSquare size={14} /> Abrir SFTP
         </Btn>
       </div>
       <p className="mt-2 text-[11.5px] text-muted">
         La llave del equipo se verifica contra known_hosts como en SSH y la contraseña se escribe en la pestaña. Comandos: <code>ls</code>, <code>cd</code>, <code>get archivo</code>,{" "}
-        <code>put archivo</code>, <code>bye</code>.
+        <code>put archivo</code>, <code>bye</code>. Lo que subas aquí no se verifica solo: selecciónalo en el gestor de archivos y pulsa MD5.
       </p>
+      {notice && (
+        <p className="mt-1.5 text-[11.5px] text-warn" role="status">
+          {notice}
+        </p>
+      )}
     </Section>
   );
 }

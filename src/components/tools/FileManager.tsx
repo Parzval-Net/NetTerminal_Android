@@ -22,6 +22,7 @@ import type { Session } from "../../types";
 import { Btn, Console, Label, fmtBytes } from "./ui";
 
 import { plural } from "../../lib/plural";
+import { SCP_EXIT_EVENT, type ScpExit, type ScpJob, busyRetry, isBusyError, scpOutcome } from "../../lib/scpVerify";
 export interface TerminalRef {
   connId: string;
   name: string;
@@ -37,6 +38,8 @@ export interface ScpRequest {
   session: Session;
   /** "scp" (clásico), "sftp" (scp sobre SFTP) o "shell" (sftp interactivo). */
   mode?: "scp" | "sftp" | "shell";
+  /** Id de la transferencia: la pestaña lo usa como id de sesión y lo informa al terminar (SCP_EXIT_EVENT). */
+  transferId?: string;
 }
 
 type Proto = "tftp" | "http" | "ftp" | "scp" | "sftp";
@@ -56,6 +59,14 @@ interface Op {
   error?: string;
   bytes?: number;
   total?: number | null;
+  /** SCP/SFTP en otra pestaña: no ocupa la cola y termina con SCP_EXIT_EVENT. */
+  transfer?: string;
+  scp?: ScpJob;
+  /** Comando MD5 armado al enviar (perfil, sistema de archivos e IP de ese momento). */
+  md5For?: (file: string) => string;
+  /** Reintentos con el equipo ocupado por un script y cuándo se puede volver a intentar. */
+  retries?: number;
+  notBefore?: number;
 }
 
 interface Props {
@@ -248,12 +259,20 @@ export function FileManager({ terminals, settings: s, refreshRunning, onConfirm,
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [ops]);
 
-  // Cola: una operación a la vez sobre el equipo.
-  const runningOp = ops.find((o) => o.status === "running");
+  // Cola: una operación a la vez sobre el equipo. SCP/SFTP corre en su pestaña y no la ocupa.
+  const runningOp = ops.find((o) => o.status === "running" && !o.transfer);
+  // Reintentos diferidos (equipo ocupado por un script): un tic vuelve a revisar la cola.
+  const [tick, setTick] = useState(0);
   useEffect(() => {
     if (runningOp) return;
-    const next = ops.find((o) => o.status === "pending");
-    if (!next) return;
+    const now = Date.now();
+    const next = ops.find((o) => o.status === "pending" && !(o.notBefore && o.notBefore > now));
+    if (!next) {
+      const wait = ops.filter((o) => o.status === "pending" && o.notBefore).map((o) => o.notBefore! - now);
+      if (!wait.length) return;
+      const t = window.setTimeout(() => setTick((x) => x + 1), Math.max(50, Math.min(...wait)));
+      return () => window.clearTimeout(t);
+    }
     setOps((l) => l.map((o) => (o.id === next.id ? { ...o, status: "running" } : o)));
     (async () => {
       try {
@@ -266,11 +285,21 @@ export function FileManager({ terminals, settings: s, refreshRunning, onConfirm,
         const job = await invoke<string>("device_run", { conn: next.conn, command, timeoutSecs: TIMEOUT });
         jobToOp.current.set(job, next.id);
       } catch (e) {
-        setOps((l) => l.map((o) => (o.id === next.id ? { ...o, status: "error", error: String(e) } : o)));
+        // Verificación con la sesión tomada por un script: se espera sin interferir y se reintenta.
+        const wait = next.kind === "verify" && isBusyError(e) ? busyRetry(next.retries ?? 0) : null;
+        setOps((l) =>
+          l.map((o) =>
+            o.id !== next.id
+              ? o
+              : wait !== null
+                ? { ...o, status: "pending", retries: (o.retries ?? 0) + 1, notBefore: Date.now() + wait, error: "Equipo ocupado por un script: se reintenta en 5 s" }
+                : { ...o, status: "error", error: isBusyError(e) && next.kind === "verify" ? "El equipo siguió ocupado por un script: pulsa MD5 cuando termine" : String(e) },
+          ),
+        );
       }
     })();
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [ops, runningOp]);
+  }, [ops, runningOp, tick]);
 
   // Al terminar todas las operaciones, refresca ambos paneles.
   const pending = ops.some((o) => o.status === "pending" || o.status === "running");
@@ -284,8 +313,10 @@ export function FileManager({ terminals, settings: s, refreshRunning, onConfirm,
   }, [pending, loadLocal, refreshRemote]);
 
   /** Encola verificaciones MD5: calcula el hash local y compara con el del equipo. */
-  const queueVerify = async (files: string[], conn: string) => {
-    if (!profile.md5) return;
+  const queueVerify = async (files: string[], conn: string, md5For?: (file: string) => string) => {
+    const md5 = profile.md5;
+    const build = md5For ?? (md5 ? (file: string) => md5({ ip, port: s.httpPort, file, fs, extra }) : null);
+    if (!build) return;
     for (const file of files) {
       const expect = await invoke<string>("tftp_md5", { name: file }).catch(() => null);
       if (!expect) continue;
@@ -297,7 +328,7 @@ export function FileManager({ terminals, settings: s, refreshRunning, onConfirm,
           file,
           conn,
           expect,
-          command: profile.md5!({ ip, port: s.httpPort, file, fs, extra }),
+          command: build(file),
           status: "pending",
           lines: [],
         },
@@ -312,11 +343,55 @@ export function FileManager({ terminals, settings: s, refreshRunning, onConfirm,
     if (verify && profile.md5) queueVerify([op.file], op.conn);
   };
 
+  // Fin de una pestaña SCP/SFTP abierta por el gestor: con código 0 en una subida se verifica
+  // el MD5 en la sesión del equipo (la misma cola que TFTP/HTTP/FTP); si falló, se avisa.
+  const onScpExitRef = useRef((_e: ScpExit) => {});
+  onScpExitRef.current = (e: ScpExit) => {
+    const op = opsRef.current.find((o) => o.transfer === e.transfer && o.status === "running");
+    if (!op?.scp) return;
+    const next = scpOutcome(op.scp, e);
+    setOps((l) =>
+      l.map((o) =>
+        o.id !== op.id ? o : { ...o, status: next.action === "failed" ? "error" : "ok", error: next.action === "failed" ? next.text : undefined, lines: [...o.lines, next.text] },
+      ),
+    );
+    if (next.action === "verify") queueVerify(next.files, op.conn, op.md5For);
+  };
+  useEffect(() => {
+    const on = (ev: Event) => onScpExitRef.current((ev as CustomEvent<ScpExit>).detail);
+    window.addEventListener(SCP_EXIT_EVENT, on);
+    return () => window.removeEventListener(SCP_EXIT_EVENT, on);
+  }, []);
+
   const enqueue = (kind: Op["kind"], files: string[]) => {
     if (!term) return setError("Conecta una sesión con el equipo primero");
     if (ssh && (kind === "send" || kind === "pull")) {
       if (!term.host) return setError(`${proto.toUpperCase()} requiere una sesión de red con host (no serial)`);
-      const go = () => onScp({ upload: kind === "send", files, remoteDir: fs, session: term.session, mode: proto === "sftp" ? "sftp" : "scp" });
+      const mode: "scp" | "sftp" = proto === "sftp" ? "sftp" : "scp";
+      const md5 = profile.md5;
+      const md5Vars = { ip, port: s.httpPort, fs, extra };
+      const go = () => {
+        const transfer = `scp-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
+        onScp({ upload: kind === "send", files, remoteDir: fs, session: term.session, mode, transferId: transfer });
+        // Seguimiento en la lista: termina cuando la pestaña avisa el fin del proceso.
+        setOps((o) =>
+          [
+            {
+              id: transfer,
+              kind: kind === "send" ? ("send" as const) : ("pull" as const),
+              file: files.join(", "),
+              conn: term.connId,
+              command: `${mode.toUpperCase()} en otra pestaña`,
+              status: "running" as const,
+              lines: [],
+              transfer,
+              scp: { upload: kind === "send", mode, files, verify, canVerify: !!md5 },
+              md5For: md5 ? (file: string) => md5({ ...md5Vars, file }) : undefined,
+            },
+            ...o.filter((x) => x.status !== "ok"),
+          ].slice(0, 30),
+        );
+      };
       const overwrite = kind === "send" ? files.filter((f) => remote?.files.some((r) => r.name === f)) : [];
       if (overwrite.length)
         onConfirm({ title: "¿Sobrescribir en el equipo?", message: overwrite.join(", "), label: "Sobrescribir", danger: true, action: go });
@@ -445,16 +520,16 @@ export function FileManager({ terminals, settings: s, refreshRunning, onConfirm,
         </Label>
       </div>
       <div className="flex flex-wrap items-center gap-4 text-[11.5px] text-muted">
-        {profile.md5 && !ssh && (
+        {profile.md5 && (
           <label className="flex items-center gap-1.5">
             <input type="checkbox" className="accent-[var(--accent)]" checked={verify} onChange={(e) => setVerify(e.target.checked)} />
             Verificar MD5 después de enviar
           </label>
         )}
-        {profile.md5 && ssh && (
+        {profile.md5 && ssh && verify && (
           <span>
-            Con {proto.toUpperCase()} el MD5 no se verifica solo (la copia corre en otra pestaña): al terminar, selecciona el archivo en el
-            equipo y pulsa "MD5".
+            Con {proto.toUpperCase()} se verifica cuando la pestaña de la copia termina sin error (código 0); si falla o la cierras antes, no
+            se verifica.
           </span>
         )}
         {proto === "sftp" && (
@@ -649,7 +724,15 @@ export function FileManager({ terminals, settings: s, refreshRunning, onConfirm,
                         o.status === "ok" ? "text-ok" : o.status === "error" ? "text-danger" : o.status === "running" ? "text-accent" : "text-muted"
                       }
                     >
-                      {o.status === "ok" ? "● Completado" : o.status === "error" ? `✕ ${o.error ?? "Error"}` : o.status === "running" ? `En curso${o.bytes ? ` · ${fmtBytes(o.bytes)}` : ""}` : "En cola"}
+                      {o.status === "ok"
+                        ? "● Completado"
+                        : o.status === "error"
+                          ? `✕ ${o.error ?? "Error"}`
+                          : o.status === "running"
+                            ? o.transfer
+                              ? "En curso en su pestaña"
+                              : `En curso${o.bytes ? ` · ${fmtBytes(o.bytes)}` : ""}`
+                            : (o.error ?? "En cola")}
                     </span>
                     <button className="text-muted hover:text-fg" title="Ver salida del equipo" onClick={() => setShowLog(showLog === o.id ? null : o.id)}>
                       <ChevronDown size={14} className={showLog === o.id ? "rotate-180" : ""} />

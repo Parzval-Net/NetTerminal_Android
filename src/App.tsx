@@ -971,7 +971,8 @@ function Workspace({
       const s = req.session;
       openTab({
         ...s,
-        id: `scp-${Date.now()}`,
+        // El gestor de archivos reconoce el fin de su transferencia por este id.
+        id: req.transferId ?? `scp-${Date.now()}`,
         type: "local",
         name: req.mode === "shell" ? `SFTP ${s.name}` : `${req.mode === "sftp" ? "SFTP" : "SCP"} ${req.upload ? "→" : "←"} ${s.name}`,
         // Telnet/TCP usan su propio puerto: SCP siempre va por SSH.
