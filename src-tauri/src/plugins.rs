@@ -597,13 +597,29 @@ mod tests {
     fn example_plugins_pass_review() {
         let repo = Path::new(env!("CARGO_MANIFEST_DIR")).parent().unwrap();
         let data = std::env::temp_dir().join(format!("nt-plug-ej-{}", std::process::id()));
-        for (rel, id) in [("plugins/ejemplo-inventario", "ejemplo-inventario"), ("docs/ejemplos/plugins/diagnostico-basico", "diagnostico-basico")] {
+        for (rel, id) in [
+            ("plugins/ejemplo-inventario", "ejemplo-inventario"),
+            ("docs/ejemplos/plugins/diagnostico-basico", "diagnostico-basico"),
+            ("docs/ejemplos/plugins/revision-puertos", "revision-puertos"),
+        ] {
             let preview = stage(&data, &repo.join(rel)).unwrap_or_else(|e| panic!("{rel}: {e}"));
             assert_eq!(preview.manifest.id, id);
             assert!(preview.code.starts_with("# ===== main.py ====="), "{rel}");
             assert!(preview.replaces.is_none());
+            // Todo .py del plugin aparece en la revisión, no solo el archivo de entrada.
+            for (file, _) in preview.files.iter().filter(|f| f.0.ends_with(".py")) {
+                assert!(preview.code.contains(&format!("# ===== {file} =====")), "{rel}: falta {file} en la revisión");
+            }
             cancel(&data, &preview.staging);
         }
+        // El de varios archivos: entrada primero, luego el módulo que importa, y los permisos tal cual.
+        let preview = stage(&data, &repo.join("docs/ejemplos/plugins/revision-puertos")).unwrap();
+        let files: Vec<&str> = preview.files.iter().map(|f| f.0.as_str()).collect();
+        assert_eq!(files, ["analisis.py", "main.py", "plugin.json"]);
+        assert!(preview.code.find("# ===== main.py").unwrap() < preview.code.find("# ===== analisis.py").unwrap());
+        assert_eq!(preview.manifest.permissions, ["session", "files"]);
+        assert_eq!(preview.manifest.actions.iter().map(|a| a.id.as_str()).collect::<Vec<_>>(), ["resumen", "errores", "exportar"]);
+        cancel(&data, &preview.staging);
         let _ = fs::remove_dir_all(data);
     }
 

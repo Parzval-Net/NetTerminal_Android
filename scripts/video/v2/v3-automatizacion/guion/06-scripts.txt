@@ -1,0 +1,15 @@
+# Scripts de Python
+
+Un script es un archivo .py en la carpeta de scripts: en la barra de botones, Scripts, Abrir carpeta de scripts. Ahí la app deja el módulo netterminal, que no hay que instalar. Lo escribes con tu editor y corre sobre la pestaña activa conectada.
+
+El primero lee el nombre y el host de la sesión, y con run envía show version: run escribe el comando, espera el prompt y devuelve solo la salida. Lo que imprimes con print aparece como aviso. Lo ejecutas desde el menú Scripts, y mientras corre, ese botón sirve para detenerlo.
+
+Para más control, run se arma con cuatro piezas: clear descarta la salida anterior, sendline envía una línea, wait_for espera el prompt con un tiempo máximo, y read lee hasta que el equipo deja de enviar.
+
+Este segundo script hace ping a tres destinos. Si el prompt no vuelve en ocho segundos, wait_for avisa con un error de tiempo agotado. El script lo atrapa, termina de leer con read y pasa al siguiente destino.
+
+Ahora uno avanzado: un inventario en CSV. La API trabaja con una sesión a la vez: lo ejecutas en cada pestaña y cada ejecución actualiza la fila de ese equipo en el mismo archivo. Lee show version y show interfaces status, y anota modelo, serie, versión y puertos por estado.
+
+Si el equipo no tiene el comando, como este router, lo anota en vez de fallar. Si no responde a tiempo o la sesión se corta, la fila queda marcada con el motivo.
+
+¿Por qué solo consultas? Porque lo que envía un script no pasa por el motor de riesgo. Un error en un script de consulta deja un CSV incompleto; en uno de cambios, puede dejar un equipo sin servicio.
