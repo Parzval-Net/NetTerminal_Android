@@ -537,7 +537,7 @@ const handlers = {
   local_ips: () => [
     { name: "en0", ip: "192.0.2.250", default: true },
     { name: "en7", ip: "198.51.100.20", default: false },
-    { name: "bridge100", ip: "192.168.64.1", default: false },
+    { name: "bridge100", ip: "198.51.100.200", default: false },
     { name: "utun4", ip: "203.0.113.9", default: false },
   ],
   server_running: () => [...running],
@@ -1040,7 +1040,7 @@ const open = (l) => act("dblclick", l);
 const key = (k) => window.dispatchEvent(new KeyboardEvent("keydown", { key: k, code: `Key${k.toUpperCase()}`, metaKey: true, bubbles: true, cancelable: true }));
 async function quickTo(host) {
   await click("Conexión rápida sin guardar");
-  typeInto(document.querySelector('input[placeholder="10.0.0.1 o hostname"]'), host);
+  typeInto(document.querySelector('input[placeholder="192.0.2.10 o hostname"]'), host);
   await click("Conectar");
 }
 function typeInto(el, value) {
@@ -1061,10 +1061,10 @@ const scenes = {
   about: async () => { await click("Ajustes"); await click("Acerca de"); },
   settings: async () => { await open("core-sw01"); await click("Ajustes"); },
   logs: async () => { await open("core-sw01"); await click("Ajustes"); await click("Logs"); },
-  quick: async () => { await click("Conexión rápida sin guardar"); const h = document.querySelector('input[placeholder="10.0.0.1 o hostname"]'); if (h) { Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, "value").set.call(h, "192.0.2.77"); h.dispatchEvent(new Event("input", { bubbles: true })); } },
+  quick: async () => { await click("Conexión rápida sin guardar"); const h = document.querySelector('input[placeholder="192.0.2.10 o hostname"]'); if (h) { Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, "value").set.call(h, "192.0.2.77"); h.dispatchEvent(new Event("input", { bubbles: true })); } },
   quickserial: async () => { await click("Conexión rápida sin guardar"); await click("Serial"); },
   // Pestaña abierta por conexión rápida: "Guardar como sesión…" en la barra de estado.
-  quicktab: async () => { await click("Conexión rápida sin guardar"); const h = document.querySelector('input[placeholder="10.0.0.1 o hostname"]'); Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, "value").set.call(h, "192.0.2.77"); h.dispatchEvent(new Event("input", { bubbles: true })); await click("Conectar"); },
+  quicktab: async () => { await click("Conexión rápida sin guardar"); const h = document.querySelector('input[placeholder="192.0.2.10 o hostname"]'); Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, "value").set.call(h, "192.0.2.77"); h.dispatchEvent(new Event("input", { bubbles: true })); await click("Conectar"); },
   packs: async () => { await open("core-sw01"); await click("Catálogo de comandos"); await click("Packs de comandos"); },
   split: async () => { await open("core-sw01"); await open("ar-wan01"); await open("dist-sw01"); await open("sw-acceso-sur"); await click("Vista dividida: ver 2 o 4 pestañas a la vez"); await click("4 en cuadrícula (2x2)"); },
   backup: async () => { await open("core-sw01"); await open("ar-wan01"); await click("Herramientas: monitoreo, diagnóstico, TFTP, syslog, plugins"); await click("Respaldos"); await click("Comparar A y B"); },
@@ -1188,7 +1188,7 @@ Object.assign(scenes, {
   "session-edit": async () => { await wait(300); const row = [...document.querySelectorAll("[title]")].find((e) => e.title.startsWith("192.0.2.1")); row?.dispatchEvent(new MouseEvent("mouseover", { bubbles: true })); const ed = row?.querySelector('[title="Editar"]') ?? find("Editar"); ed?.dispatchEvent(new MouseEvent("click", { bubbles: true })); },
   "quick-telnet": async () => { await click("Conexión rápida sin guardar"); await click("Telnet"); },
   confirm: async () => { await open("core-sw01"); await open("ar-wan01"); await wait(300); window.dispatchEvent(new KeyboardEvent("keydown", { key: "w", metaKey: true, ctrlKey: true, bubbles: true })); },
-  approval: async () => { await wait(800); emit("mcp-approval", { id: "a1", tool: "run_command", target: "core-sw01 (192.0.2.1)", detail: "configure terminal\ninterface GigabitEthernet1/0/4\n no shutdown\nend" }); },
+  approval: async () => { await wait(800); emit("mcp-approval", { id: "a1", tool: "send_command", target: "core-sw01 (192.0.2.1)", detail: "configure terminal\ninterface GigabitEthernet1/0/4\n no shutdown\nend" }); },
   macro: async () => { await open("core-sw01"); await click("Nuevo botón"); },
   "cmd-editor": async () => { await open("core-sw01"); await click("Catálogo de comandos"); await click("Agregar un comando propio"); },
   // Nueva sesión con túneles, contraseña guardada y un error de validación visibles.
@@ -1283,7 +1283,7 @@ Object.assign(scenes, {
   },
   "t-subnet": tool("Subredes"),
   "t-perf": tool("Velocidad"),
-  "t-transfer": tool("TFTP / HTTP"),
+  "t-transfer": tool("Transferencias"),
   "t-syslog": tool("Syslog"),
   "t-backup": scenes.backup,
   "t-plugins": tool("Plugins"),
