@@ -16,6 +16,9 @@ use tauri::{AppHandle, Emitter};
 #[derive(Default)]
 pub struct Servers {
     flags: Mutex<HashMap<&'static str, Arc<AtomicBool>>>,
+    /// Escritura habilitada (TFTP y FTP): se cambia en caliente, sin reiniciar el servidor,
+    /// así no se cortan transferencias en curso ni cambian las credenciales FTP.
+    writes: Mutex<HashMap<&'static str, Arc<AtomicBool>>>,
     http: Mutex<Option<Arc<tiny_http::Server>>>,
 }
 
@@ -74,10 +77,36 @@ impl Servers {
         f
     }
 
+    /// Bandera de escritura de un servidor que se inicia (reemplaza la anterior).
+    pub(crate) fn write_flag(&self, name: &'static str, allow: bool) -> Arc<AtomicBool> {
+        let f = Arc::new(AtomicBool::new(allow));
+        self.writes.lock().unwrap().insert(name, f.clone());
+        f
+    }
+
+    /// Escritura del servidor en marcha (None si no está activo).
+    pub fn write_allowed(&self, name: &str) -> Option<bool> {
+        if !self.flags.lock().unwrap().contains_key(name) {
+            return None;
+        }
+        self.writes.lock().unwrap().get(name).map(|f| f.load(Ordering::SeqCst))
+    }
+
+    /// Habilita o quita la escritura sin reiniciar. Devuelve el valor anterior.
+    pub fn set_write(&self, name: &str, allow: bool) -> Result<bool, String> {
+        if !self.flags.lock().unwrap().contains_key(name) {
+            return Err("El servidor no está activo".into());
+        }
+        let writes = self.writes.lock().unwrap();
+        let f = writes.get(name).ok_or("Este servidor no admite subidas")?;
+        Ok(f.swap(allow, Ordering::SeqCst))
+    }
+
     pub fn stop(&self, name: &str) {
         if let Some(f) = self.flags.lock().unwrap().remove(name) {
             f.store(false, Ordering::SeqCst);
         }
+        self.writes.lock().unwrap().remove(name);
         if name == "http" {
             if let Some(s) = self.http.lock().unwrap().take() {
                 s.unblock();
@@ -101,6 +130,7 @@ impl Servers {
         let sock = bind_udp(port).map_err(|e| bind_error("TFTP", port, e))?;
         sock.set_read_timeout(Some(Duration::from_millis(400))).ok();
         let flag = self.flag("tftp");
+        let allow_write = self.write_flag("tftp", allow_write);
         std::thread::spawn(move || {
             let mut buf = [0u8; 2048];
             // Sesiones activas por equipo: descarta pedidos retransmitidos (el mismo RRQ dos
@@ -116,9 +146,9 @@ impl Servers {
                     set.insert(peer);
                 }
                 let req = buf[..n].to_vec();
-                let (app, root, flag, active) = (app.clone(), root.clone(), flag.clone(), active.clone());
+                let (app, root, flag, active, write) = (app.clone(), root.clone(), flag.clone(), active.clone(), allow_write.clone());
                 std::thread::spawn(move || {
-                    tftp_session(app, root, allow_write, peer, req, flag);
+                    tftp_session(app, root, write.load(Ordering::SeqCst), peer, req, flag);
                     active.lock().unwrap().remove(&peer);
                 });
             }
@@ -284,9 +314,21 @@ fn bind_udp(port: u16) -> std::io::Result<UdpSocket> {
     Err(last.unwrap())
 }
 
+/// Puerto sin privilegios sugerido para cada servicio (el mismo que indica la interfaz).
+pub(crate) fn unprivileged_port(port: u16) -> u16 {
+    match port {
+        69 => 1069,
+        80 => 8080,
+        21 => 2121,
+        514 => 1514,
+        162 => 1162,
+        p => p.saturating_add(1000).max(1025),
+    }
+}
+
 pub(crate) fn bind_error(what: &str, port: u16, e: std::io::Error) -> String {
     if e.kind() == std::io::ErrorKind::PermissionDenied && port < 1024 {
-        format!("{what}: el puerto {port} requiere privilegios en este sistema. Usa un puerto mayor a 1024 (ej. {}).", port as u32 + 1000)
+        format!("{what}: el puerto {port} requiere privilegios en este sistema. Usa un puerto mayor a 1024 (ej. {}).", unprivileged_port(port))
     } else if e.kind() == std::io::ErrorKind::AddrInUse {
         format!("{what}: el puerto {port} ya está en uso por otra aplicación")
     } else {
@@ -691,6 +733,28 @@ fn percent_encode(s: &str) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn write_flag_changes_without_restart() {
+        let s = Servers::default();
+        assert!(s.set_write("tftp", true).is_err(), "sin servidor activo");
+        assert_eq!(s.write_allowed("tftp"), None);
+        let run = s.flag("tftp");
+        let w = s.write_flag("tftp", false);
+        assert_eq!(s.write_allowed("tftp"), Some(false));
+        assert_eq!(s.set_write("tftp", true), Ok(false), "devuelve el valor anterior");
+        assert!(w.load(Ordering::SeqCst), "la sesión en marcha ve el cambio");
+        assert!(run.load(Ordering::SeqCst), "sin reiniciar: el servidor sigue activo");
+        s.stop("tftp");
+        assert_eq!(s.write_allowed("tftp"), None);
+        assert!(s.set_write("syslog", true).is_err());
+    }
+
+    #[test]
+    fn suggests_the_same_unprivileged_ports_as_the_ui() {
+        assert_eq!([69, 80, 21, 514, 162].map(unprivileged_port), [1069, 8080, 2121, 1514, 1162]);
+        assert!(bind_error("FTP", 21, std::io::ErrorKind::PermissionDenied.into()).contains("2121"));
+    }
 
     #[test]
     fn safe_path_blocks_traversal() {

@@ -23,6 +23,9 @@
   --danger-fg: #ffffff;
   --ok: #1a7f37;
   --warn: #8a5a00;
+  /* Tráfico sin velocidad conocida en Topología: gris violeta, distinto del azul de
+     selección y ruta (5,6:1 sobre panel claro, 6,6:1 sobre panel oscuro). */
+  --util-unknown: #6e5f99;
   /* Rayo de conexión rápida: relleno amarillo con borde oscuro, legible sobre cualquier
      fondo de pestaña (interfaz o tema de terminal, claro u oscuro). Igual en ambos modos. */
   --bolt: #f5b83d;
@@ -50,6 +53,7 @@
   --danger-fg: #0e1116;
   --ok: #4cc472;
   --warn: #e0aa45;
+  --util-unknown: #a99bd6;
   --shadow: 0 16px 48px rgba(0, 0, 0, 0.55);
   color-scheme: dark;
 }

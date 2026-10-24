@@ -6,7 +6,7 @@ use crate::expect;
 use regex::Regex;
 use serde::Serialize;
 use serde_json::json;
-use std::net::{ToSocketAddrs, UdpSocket};
+use std::net::ToSocketAddrs;
 use std::sync::OnceLock;
 use std::time::{Duration, Instant};
 use tauri::{AppHandle, Emitter, Manager};
@@ -200,9 +200,7 @@ pub fn source_ip_for(host: &str) -> Result<String, String> {
         .map_err(|e| e.to_string())?
         .find(|a| a.is_ipv4())
         .ok_or("El host no tiene dirección IPv4")?;
-    let sock = UdpSocket::bind("0.0.0.0:0").map_err(|e| e.to_string())?;
-    sock.connect(addr).map_err(|e| e.to_string())?;
-    Ok(sock.local_addr().map_err(|e| e.to_string())?.ip().to_string())
+    crate::nettools::route_source(addr).ok_or_else(|| "Sin ruta hacia el equipo".to_string())
 }
 
 #[cfg(test)]

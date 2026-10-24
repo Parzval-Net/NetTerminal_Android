@@ -289,6 +289,15 @@ const riskCache = new Map<string, Risk>();
  * Riesgo según el contenido. Analiza cada línea (sin lo que va tras "|"). Un comando que
  * no se reconoce como consulta se trata como cambio: ante la duda, se pide confirmación.
  */
+/** Riesgo mayor entre las líneas de un texto de varios comandos (aprobaciones MCP). */
+export function textRisk(text: string): Risk {
+  return text
+    .split(/\r?\n|\r/)
+    .filter((l) => l.trim())
+    .map((l) => computeRisk(l))
+    .reduce<Risk>((a, b) => maxRisk(a, b), "read");
+}
+
 export function computeRisk(cmd: string): Risk {
   let risk = riskCache.get(cmd);
   if (risk === undefined) {

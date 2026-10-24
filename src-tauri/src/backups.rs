@@ -97,6 +97,11 @@ fn forti_set_secret(tok: &str) -> bool {
 /// Reemplaza por `****` los valores secretos de una línea, conservando la estructura
 /// (palabra clave, tipo y lo que sigue al valor) para que las comparaciones sigan sirviendo.
 pub fn mask_line(line: &str) -> String {
+    mask_line_secrets(line, &mut Vec::new())
+}
+
+/// Como `mask_line`, y deja en `found` los valores que reemplazó (para su huella, nunca para guardarlos).
+pub fn mask_line_secrets(line: &str, found: &mut Vec<String>) -> String {
     // Fragmentos alternados de espacio y texto, para reconstruir la línea tal cual.
     let mut parts: Vec<(bool, String)> = Vec::new();
     for c in line.chars() {
@@ -167,6 +172,8 @@ pub fn mask_line(line: &str) -> String {
             j = m;
         }
         let tail = if parts[end].1.ends_with(';') { ";" } else { "" };
+        let value: String = parts[start..=end].iter().map(|p| p.1.as_str()).collect();
+        found.push(value.strip_suffix(tail).unwrap_or(&value).to_string());
         parts[start].1 = format!("****{tail}");
         for p in parts.iter_mut().take(end + 1).skip(start + 1) {
             p.1.clear();
@@ -214,7 +221,76 @@ pub fn save(data_dir: &Path, device: &str, content: &str, masked: bool) -> Resul
     fs::write(&tmp, body).map_err(|e| e.to_string())?;
     crate::session_store::restrict(&tmp);
     fs::rename(&tmp, &path).map_err(|e| e.to_string())?;
+    // Huellas de los secretos enmascarados: la comparación avisa "secreto cambiado" sin
+    // guardar ni mostrar el secreto. Si falla, el respaldo igual queda guardado.
+    if masked {
+        if let Ok(key) = device_key(&dir) {
+            let marks = secret_marks(&key, content);
+            if !marks.is_empty() {
+                let sidecar = dir.join(secrets_name(&name));
+                if fs::write(&sidecar, serde_json::to_vec(&marks).unwrap_or_default()).is_ok() {
+                    crate::session_store::restrict(&sidecar);
+                }
+            }
+        }
+    }
     Ok(name)
+}
+
+/// Archivo oculto con las huellas de un respaldo (no aparece en el listado).
+fn secrets_name(file: &str) -> String {
+    format!(".{file}.secrets.json")
+}
+
+/// Llave aleatoria por equipo (32 bytes, archivo 600): las huellas de dos respaldos del mismo
+/// equipo se pueden comparar, pero no sirven fuera de esta carpeta ni entre equipos.
+fn device_key(dir: &Path) -> Result<Vec<u8>, String> {
+    let path = dir.join(".secret-key");
+    if let Ok(k) = fs::read(&path) {
+        if k.len() == 32 {
+            return Ok(k);
+        }
+    }
+    use chacha20poly1305::aead::rand_core::RngCore;
+    let mut k = vec![0u8; 32];
+    chacha20poly1305::aead::OsRng.fill_bytes(&mut k);
+    fs::write(&path, &k).map_err(|e| e.to_string())?;
+    crate::session_store::restrict(&path);
+    Ok(k)
+}
+
+/// Huella de cada secreto por número de línea (base 0): HMAC-SHA256 con la llave del equipo
+/// sobre la línea enmascarada y el valor, recortada a 64 bits. Incluir la línea evita que dos
+/// líneas distintas con la misma contraseña muestren la misma huella.
+pub fn secret_marks(key: &[u8], content: &str) -> std::collections::BTreeMap<usize, Vec<String>> {
+    use hmac::{Hmac, Mac};
+    let mut out = std::collections::BTreeMap::new();
+    for (i, line) in content.split('\n').enumerate() {
+        let mut found = Vec::new();
+        let masked = mask_line_secrets(line, &mut found);
+        if found.is_empty() {
+            continue;
+        }
+        let marks = found
+            .iter()
+            .map(|v| {
+                let mut m = <Hmac<sha2::Sha256> as Mac>::new_from_slice(key).expect("HMAC acepta cualquier largo");
+                m.update(masked.as_bytes());
+                m.update(b"\0");
+                m.update(v.as_bytes());
+                m.finalize().into_bytes()[..8].iter().map(|b| format!("{b:02x}")).collect::<String>()
+            })
+            .collect();
+        out.insert(i, marks);
+    }
+    out
+}
+
+/// Huellas guardadas de un respaldo (vacío si no tiene secretos o es anterior a esta función).
+pub fn read_secrets(data_dir: &Path, device: &str, file: &str) -> Result<std::collections::BTreeMap<usize, Vec<String>>, String> {
+    let path = file_path(data_dir, device, file)?;
+    let side = path.with_file_name(secrets_name(file));
+    Ok(fs::read(side).ok().and_then(|b| serde_json::from_slice(&b).ok()).unwrap_or_default())
 }
 
 pub fn list(data_dir: &Path) -> Vec<DeviceBackups> {
@@ -264,6 +340,40 @@ pub fn read(data_dir: &Path, device: &str, file: &str) -> Result<String, String>
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn secret_marks_detect_changes_without_storing_secrets() {
+        let key = [7u8; 32];
+        let a = "hostname sw1\nenable secret 5 $1$abc$xyz\nusername admin privilege 15 secret 9 $9$uno\nsnmp-server community publica RO";
+        let b = "hostname sw1\nenable secret 5 $1$abc$xyz\nusername admin privilege 15 secret 9 $9$dos\nsnmp-server community publica RO";
+        let (ma, mb) = (secret_marks(&key, a), secret_marks(&key, b));
+        assert_eq!(ma.keys().copied().collect::<Vec<_>>(), [1, 2, 3]);
+        assert_eq!(ma[&1], mb[&1], "mismo secreto, misma huella");
+        assert_ne!(ma[&2], mb[&2], "contraseña cambiada");
+        assert_eq!(ma[&3], mb[&3]);
+        // La huella no contiene el secreto y depende de la llave del equipo.
+        let json = serde_json::to_string(&ma).unwrap();
+        assert!(!json.contains("abc") && !json.contains("uno") && !json.contains("publica"));
+        assert_ne!(secret_marks(&[8u8; 32], a)[&1], ma[&1]);
+        // Mismo valor en dos líneas distintas: huellas distintas.
+        let same = secret_marks(&key, "username a secret 0 igual\nusername b secret 0 igual");
+        assert_ne!(same[&0], same[&1]);
+    }
+
+    #[test]
+    fn saves_secret_marks_next_to_masked_backups_only() {
+        let d = std::env::temp_dir().join(format!("nt-bk-{}", uuid::Uuid::new_v4()));
+        let n1 = save(&d, "core", "enable secret 0 uno\n", true).unwrap();
+        let n2 = save(&d, "core", "enable secret 0 dos\n", true).unwrap();
+        let n3 = save(&d, "core", "enable secret 0 dos\n", false).unwrap();
+        let (s1, s2) = (read_secrets(&d, "core", &n1).unwrap(), read_secrets(&d, "core", &n2).unwrap());
+        assert_ne!(s1[&0], s2[&0]);
+        assert!(read_secrets(&d, "core", &n3).unwrap().is_empty(), "sin enmascarar no hay huellas");
+        assert_eq!(read(&d, "core", &n1).unwrap(), "enable secret 0 ****\n");
+        assert_eq!(list(&d)[0].files.len(), 3, "las huellas y la llave no aparecen como respaldos");
+        assert!(read_secrets(&d, "core", "../x").is_err());
+        fs::remove_dir_all(d).unwrap();
+    }
 
     #[test]
     fn sanitizes_device_names() {

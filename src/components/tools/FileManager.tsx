@@ -60,7 +60,6 @@ interface Op {
 interface Props {
   terminals: TerminalRef[];
   settings: Settings;
-  running: string[];
   refreshRunning: () => void;
   onConfirm: (req: { title: string; message: string; label: string; danger?: boolean; action: () => void }) => void;
   /** Abre una pestaña con scp (la contraseña se escribe ahí). */
@@ -71,7 +70,7 @@ const DND_LOCAL = "application/x-nt-local";
 const DND_REMOTE = "application/x-nt-remote";
 const TIMEOUT = 3600; // firmware grandes por TFTP pueden tardar decenas de minutos
 
-export function FileManager({ terminals, settings: s, running, refreshRunning, onConfirm, onScp }: Props) {
+export function FileManager({ terminals, settings: s, refreshRunning, onConfirm, onScp }: Props) {
   const [connId, setConnId] = useState<string>("");
   const term = terminals.find((t) => t.connId === connId);
   const [profileId, setProfileId] = useState("cisco");
@@ -106,7 +105,7 @@ export function FileManager({ terminals, settings: s, running, refreshRunning, o
   }, [terminals, term]);
   useEffect(() => {
     if (!term) return;
-    const p = guessProfile(term.highlight);
+    const p = guessProfile(term.session);
     setProfileId(p);
     setFs(profiles.find((x) => x.id === p)!.fs);
     setRemote(null);
@@ -115,7 +114,7 @@ export function FileManager({ terminals, settings: s, running, refreshRunning, o
         .then(setIp)
         .catch(() => {});
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [connId]);
+  }, [connId, term?.session.platform]);
 
   const loadLocal = useCallback(() => invoke<[string, number][]>("tftp_files").then(setLocal), []);
   useEffect(() => {
@@ -187,47 +186,64 @@ export function FileManager({ terminals, settings: s, running, refreshRunning, o
     }
   }, [connId, profile, fs]);
 
-  // Asegura el servidor necesario. "write" habilita subidas TFTP (el equipo envía al PC).
+  // Servidores: se reutiliza el que ya esté activo. Si falta, se inicia; si hace falta escribir
+  // (el equipo envía al PC), las subidas se habilitan en caliente, sin reiniciar: no cambia la
+  // contraseña FTP que el usuario ya copió ni se cortan otras transferencias. Al terminar la
+  // tanda se deja cada servidor como estaba (detenido o sin subidas). La escritura no queda
+  // abierta: el servidor escucha en toda la red y TFTP no tiene autenticación.
+  type Prev = { ran: boolean; write?: boolean };
+  const restore = useRef<Partial<Record<"tftp" | "http" | "ftp", Prev>>>({});
+  const remember = (k: "tftp" | "http" | "ftp", prev: Prev) => {
+    if (!(k in restore.current)) restore.current[k] = prev;
+  };
+  const notifyWrite = () => window.dispatchEvent(new Event("nt-server-write"));
+
   const ensureServer = async (kind: "tftp" | "http", write: boolean) => {
+    const on = (await invoke<string[]>("server_running")).includes(kind);
     if (kind === "http") {
-      if (!running.includes("http")) await invoke("server_start", { kind: "http", port: s.httpPort });
-    } else if (!running.includes("tftp") || (write && !s.tftpAllowWrite && !tempWrite.current)) {
-      // La escritura se habilita solo mientras dura la extracción: el servidor escucha en
-      // toda la red y sin autenticación, así que no queda abierto a subidas de terceros.
-      if (write && !s.tftpAllowWrite) tempWrite.current = true;
-      await invoke("server_start", { kind: "tftp", port: s.tftpPort, allowWrite: write || s.tftpAllowWrite });
+      if (!on) {
+        remember("http", { ran: false });
+        await invoke("server_start", { kind: "http", port: s.httpPort });
+      }
+    } else if (!on) {
+      remember("tftp", { ran: false });
+      await invoke("server_start", { kind: "tftp", port: s.tftpPort, allowWrite: write });
+    } else if (write) {
+      const before = await invoke<boolean>("server_set_write", { kind: "tftp", allow: true });
+      remember("tftp", { ran: true, write: before });
     }
     refreshRunning();
+    notifyWrite();
   };
-  const tempWrite = useRef(false);
 
-  // FTP: credenciales temporales del servidor de la app. La subida (equipo -> PC) se
-  // habilita solo mientras dura la operación, igual que en TFTP.
-  const tempFtpWrite = useRef(false);
+  // FTP: credenciales del servidor de la app (usuario nt y contraseña de este inicio).
   const ensureFtp = async (write: boolean) => {
     let info = await invoke<{ user: string; pass: string; write: boolean } | null>("ftp_server_info");
-    if (!info || (write && !info.write)) {
-      if (write) tempFtpWrite.current = true;
+    if (!info) {
+      remember("ftp", { ran: false });
       info = await invoke<{ user: string; pass: string; write: boolean }>("ftp_server_start", { port: s.ftpPort, allowWrite: write });
       refreshRunning();
+    } else if (write && !info.write) {
+      const before = await invoke<boolean>("server_set_write", { kind: "ftp", allow: true });
+      remember("ftp", { ran: true, write: before });
+      info = { ...info, write: true };
     }
+    notifyWrite();
     return info;
   };
-  useEffect(() => {
-    if (!tempFtpWrite.current || ops.some((o) => o.status === "running" || o.status === "pending")) return;
-    tempFtpWrite.current = false;
-    invoke("ftp_server_start", { port: s.ftpPort, allowWrite: false })
-      .then(refreshRunning)
-      .catch(() => {});
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [ops]);
 
   useEffect(() => {
-    if (!tempWrite.current || ops.some((o) => o.status === "running" || o.status === "pending")) return;
-    tempWrite.current = false;
-    invoke("server_start", { kind: "tftp", port: s.tftpPort, allowWrite: s.tftpAllowWrite })
-      .then(refreshRunning)
-      .catch(() => {});
+    const prev = restore.current;
+    if (!Object.keys(prev).length || ops.some((o) => o.status === "running" || o.status === "pending")) return;
+    restore.current = {};
+    (async () => {
+      for (const [kind, p] of Object.entries(prev) as [string, Prev][]) {
+        if (!p.ran) await invoke("server_stop", { kind }).catch(() => {});
+        else if (p.write === false) await invoke("server_set_write", { kind, allow: false }).catch(() => {});
+      }
+      refreshRunning();
+      notifyWrite();
+    })();
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [ops]);
 
@@ -428,11 +444,17 @@ export function FileManager({ terminals, settings: s, running, refreshRunning, o
         </Label>
       </div>
       <div className="flex flex-wrap items-center gap-4 text-[11.5px] text-muted">
-        {profile.md5 && (
+        {profile.md5 && !ssh && (
           <label className="flex items-center gap-1.5">
             <input type="checkbox" className="accent-[var(--accent)]" checked={verify} onChange={(e) => setVerify(e.target.checked)} />
             Verificar MD5 después de enviar
           </label>
+        )}
+        {profile.md5 && ssh && (
+          <span>
+            Con {proto.toUpperCase()} el MD5 no se verifica solo (la copia corre en otra pestaña): al terminar, selecciona el archivo en el
+            equipo y pulsa "MD5".
+          </span>
         )}
         {proto === "sftp" && (
           <span>
@@ -441,7 +463,7 @@ export function FileManager({ terminals, settings: s, running, refreshRunning, o
         )}
         {proto === "ftp" && (
           <span className="text-warn">
-            FTP no cifra: el usuario y la contraseña temporales del servidor de la app viajan en claro y quedan en el historial del equipo. Úsalo solo en redes de gestión.
+            FTP no cifra: el usuario nt y la contraseña de este inicio del servidor de la app viajan en claro y quedan en el historial del equipo. Úsalo solo en redes de gestión.
           </span>
         )}
         {proto === "scp" && (
@@ -543,7 +565,7 @@ export function FileManager({ terminals, settings: s, running, refreshRunning, o
             kind="ghost"
             disabled={!term || !canBackup}
             onClick={() => enqueue("backup", [backupName])}
-            title="copy running-config a este PC"
+            title="copy running-config a la carpeta compartida de este PC, sin enmascarar secretos. Para un historial con secretos enmascarados y comparación entre fechas usa Herramientas › Respaldos."
           >
             <Save size={14} /> Respaldar config
           </Btn>
@@ -639,6 +661,12 @@ export function FileManager({ terminals, settings: s, running, refreshRunning, o
                     style={pct != null ? { width: `${pct}%` } : undefined}
                   />
                 </div>
+                {o.kind === "backup" && o.status === "ok" && (
+                  <p className="mt-1 text-[11.5px] text-warn">
+                    Guardado en la carpeta compartida (panel izquierdo) tal como lo envió el equipo, con contraseñas y communities sin
+                    enmascarar. No aparece en Respaldos: para historial enmascarado y comparable usa Herramientas › Respaldos.
+                  </p>
+                )}
                 {showLog === o.id && (
                   <div className="mt-2">
                     <p className="text-[11px] text-muted mb-1 font-mono">{o.command}</p>

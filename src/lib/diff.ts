@@ -14,6 +14,8 @@ export interface DiffRow {
   a: number;
   /** Índice de línea en B (0-based) o -1. */
   b: number;
+  /** Línea igual en el texto enmascarado cuyo secreto cambió (según las huellas del respaldo). */
+  secret?: boolean;
 }
 
 export interface DiffStats {
@@ -215,9 +217,33 @@ export function unifiedDiff(a: string[], b: string[], rows: DiffRow[], nameA: st
     if (bStart < 0) bStart = nearest(rows, blk.from, "b");
     const range = (start: number, n: number) => (n === 1 ? `${start + 1}` : `${n ? start + 1 : start},${n}`);
     out.push(`@@ -${range(aStart, aCount)} +${range(bStart, bCount)} @@`);
-    for (const r of slice) out.push(r.kind === 0 ? ` ${a[r.a]}` : r.kind === 1 ? `-${a[r.a]}` : `+${b[r.b]}`);
+    for (const r of slice) out.push(r.kind === 0 ? ` ${a[r.a]}` : r.kind === 1 ? `-${a[r.a]}` : `+${b[r.b]}${r.secret ? SECRET_NOTE : ""}`);
   }
   return out.join("\n") + "\n";
+}
+
+const SECRET_NOTE = "    [secreto cambiado]";
+
+/** Huellas de secretos por línea (base 0), como las guarda el respaldo enmascarado. */
+export type SecretMarks = Record<string, string[]>;
+
+/**
+ * Con secretos enmascarados, "password ****" queda igual aunque la contraseña cambie. Si las
+ * huellas de una línea igual difieren entre A y B, esa línea pasa a quitada + agregada con la
+ * marca `secret`: cuenta como cambio, no se pliega y se muestra "secreto cambiado" sin revelar
+ * el valor. Sin huellas en uno de los lados (respaldo antiguo) no se marca nada.
+ */
+export function markSecretChanges(rows: DiffRow[], ha: SecretMarks | null, hb: SecretMarks | null): DiffRow[] {
+  if (!ha || !hb || !Object.keys(ha).length || !Object.keys(hb).length) return rows;
+  const out: DiffRow[] = [];
+  for (const r of rows) {
+    const x = r.kind === 0 ? ha[String(r.a)] : undefined;
+    const y = r.kind === 0 ? hb[String(r.b)] : undefined;
+    if (r.kind === 0 && (x || y) && (x ?? []).join() !== (y ?? []).join()) {
+      out.push({ kind: 1, a: r.a, b: -1, secret: true }, { kind: 2, a: -1, b: r.b, secret: true });
+    } else out.push(r);
+  }
+  return out;
 }
 
 /** Para un tramo sin líneas de un lado: la posición (0-based) tras la última línea previa de ese lado. */

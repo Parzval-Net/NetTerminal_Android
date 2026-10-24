@@ -67,7 +67,14 @@ function Row({ r, a, b }: { r: DiffRow; a: string[]; b: string[] }) {
       <td className="w-12 pr-2 text-right text-muted select-none align-top">{r.a >= 0 ? r.a + 1 : ""}</td>
       <td className="w-12 pr-2 text-right text-muted select-none align-top">{r.b >= 0 ? r.b + 1 : ""}</td>
       <td className={`w-4 select-none align-top ${r.kind === 1 ? "text-danger" : r.kind === 2 ? "text-ok" : "text-muted"}`}>{sign[r.kind]}</td>
-      <td className="whitespace-pre-wrap break-all pr-3">{r.kind === 2 ? b[r.b] : a[r.a]}</td>
+      <td className="whitespace-pre-wrap break-all pr-3">
+        {r.kind === 2 ? b[r.b] : a[r.a]}
+        {r.secret && r.kind === 2 && (
+          <span className="ml-3 rounded border border-[var(--warn)] px-1 font-sans text-[10.5px] text-warn" title="El valor enmascarado cambió entre los dos respaldos (se compara su huella, nunca el secreto)">
+            secreto cambiado
+          </span>
+        )}
+      </td>
     </tr>
   );
 }

@@ -74,7 +74,6 @@ export interface Settings {
   tftpPort: number;
   httpPort: number;
   syslogPort: number;
-  tftpAllowWrite: boolean;
   syslogSave: boolean;
   speedHistory: SpeedResult[];
   updateDismissed: string;
@@ -158,7 +157,6 @@ export const defaultSettings: Settings = {
   tftpPort: 69,
   httpPort: 8080,
   syslogPort: 514,
-  tftpAllowWrite: false,
   syslogSave: false,
   speedHistory: [],
   updateDismissed: "",

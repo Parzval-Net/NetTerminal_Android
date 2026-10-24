@@ -164,7 +164,7 @@ export function useTopoTraffic({
       const res = new Map<string, CounterSample>();
       for (const k of ports) {
         const c = counters.get(k);
-        if (c) res.set(k, { inOctets: c.inOctets, outOctets: c.outOctets, bits: 64, speed: c.speed, ts });
+        if (c) res.set(k, { inOctets: c.inOctets, outOctets: c.outOctets, bits: 64, speed: c.speed, ...(c.speedApprox ? { approx: true } : {}), ts });
       }
       return res;
     };

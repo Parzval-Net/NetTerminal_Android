@@ -33,6 +33,7 @@ import {
   trapSummary,
 } from "../../lib/snmp";
 import { Btn, Label, Section, StatusPill, Toggle } from "./ui";
+import { useLocalIp } from "./useLocalIp";
 import SnmpConfigGen from "./SnmpConfigGen";
 
 type Op = "get" | "getnext" | "walk" | "getbulk";
@@ -704,7 +705,7 @@ function TrapSection({
   profile: SnmpProfile;
 }) {
   const [traps, setTraps] = useState<Trap[]>([]);
-  const [ips, setIps] = useState<{ name: string; ip: string }[]>([]);
+  const { ips, ip: mgmtIp } = useLocalIp();
   const [useV3, setUseV3] = useState(false);
   const [error, setError] = useState("");
   const [open, setOpen] = useState<number | null>(null);
@@ -712,7 +713,6 @@ function TrapSection({
   const bind = s.snmpTrapBind || "127.0.0.1";
 
   useEffect(() => {
-    invoke<{ name: string; ip: string }[]>("local_ips").then(setIps).catch(() => {});
     const un = listen<Trap[]>("snmp-trap", ({ payload }) => setTraps((t) => [...payload.reverse(), ...t].slice(0, MAX_TRAPS)));
     return () => {
       un.then((f) => f());
@@ -760,13 +760,23 @@ function TrapSection({
           {on ? "Detener" : "Iniciar"}
         </Btn>
       </div>
+      {bind === "127.0.0.1" && !on && (
+        <div className="mt-2 flex flex-wrap items-center gap-2 text-[12px] text-muted">
+          <span>Con 127.0.0.1 solo llegan traps de este PC: los equipos de la red no pueden alcanzarlo.</span>
+          {mgmtIp && (
+            <Btn kind="ghost" className="!h-6 !px-2 !text-[11.5px] !text-accent" onClick={() => onChange({ snmpTrapBind: mgmtIp })}>
+              Escuchar en {mgmtIp}
+            </Btn>
+          )}
+        </div>
+      )}
       {bind === "0.0.0.0" && !on && (
         <p className="mt-2 flex items-center gap-1.5 text-[12px] text-warn">
           <AlertTriangle size={13} /> Escuchará en todas las interfaces, incluidas Wi-Fi o VPN. Prefiere la IP de la red de gestión.
         </p>
       )}
       {s.snmpTrapPort < 1024 && (
-        <p className="mt-2 text-[11.5px] text-muted">En Linux el puerto 162 requiere privilegios; si no inicia, usa 1162 y configúralo en el equipo.</p>
+        <p className="mt-2 text-[11.5px] text-muted">En Linux y macOS el puerto 162 puede requerir privilegios; si no inicia, usa 1162 y configúralo en el equipo.</p>
       )}
       {error && <p className="mt-2 text-[12px] text-danger">{error}</p>}
       <div className="mt-3 flex items-center justify-between">

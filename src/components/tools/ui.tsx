@@ -114,6 +114,23 @@ export function Label({ text, children, className = "" }: { text: string; childr
   );
 }
 
+/** Selector de la IP de este PC que va en los comandos para el equipo. */
+export function IpSelect({ ips, ip, onChange, className = "" }: { ips: { name: string; ip: string; default?: boolean }[]; ip: string; onChange: (ip: string) => void; className?: string }) {
+  return (
+    <Label text="IP de este PC (para los comandos)" className={className}>
+      <select className="field" value={ip} disabled={!ips.length} onChange={(e) => onChange(e.target.value)}>
+        {!ips.length && <option value="">Sin interfaces activas</option>}
+        {ips.map((i) => (
+          <option key={`${i.name}-${i.ip}`} value={i.ip}>
+            {i.ip} · {i.name}
+            {i.default ? " (ruta por defecto)" : ""}
+          </option>
+        ))}
+      </select>
+    </Label>
+  );
+}
+
 export function Toggle({ checked, onChange, label }: { checked: boolean; onChange: (v: boolean) => void; label: string }) {
   return (
     <label className="inline-flex items-center gap-2 text-[12.5px] cursor-default select-none">

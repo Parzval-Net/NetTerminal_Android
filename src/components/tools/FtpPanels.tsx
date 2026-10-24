@@ -35,9 +35,33 @@ export function FtpServerSection({
   const [write, setWrite] = useState(false);
   const [error, setError] = useState("");
 
+  const syncInfo = () => {
+    invoke<FtpInfo | null>("ftp_server_info")
+      .then((i) => {
+        setInfo(i);
+        if (i) setWrite(i.write);
+      })
+      .catch(() => {});
+  };
   useEffect(() => {
-    invoke<FtpInfo | null>("ftp_server_info").then(setInfo).catch(() => {});
+    syncInfo();
+    // El gestor de archivos puede habilitar subidas durante una extracción.
+    window.addEventListener("nt-server-write", syncInfo);
+    return () => window.removeEventListener("nt-server-write", syncInfo);
   }, [on]);
+
+  // Con el servidor activo, el cambio se aplica en caliente: mismas credenciales, sin cortar transferencias.
+  const changeWrite = async (v: boolean) => {
+    setError("");
+    setWrite(v);
+    if (!on) return;
+    try {
+      await invoke("server_set_write", { kind: "ftp", allow: v });
+    } catch (e) {
+      setError(String(e));
+    }
+    syncInfo();
+  };
 
   const toggle = async () => {
     setError("");
@@ -56,7 +80,7 @@ export function FtpServerSection({
   return (
     <Section
       title="Servidor FTP"
-      hint="Usuario y contraseña nuevos en cada inicio. Solo lectura salvo que habilites subidas."
+      hint="Usuario nt y contraseña nueva en cada inicio. Solo lectura salvo que habilites subidas (se pueden activar o quitar con el servidor en marcha)."
       right={<StatusPill state={on ? "running" : "stopped"} label={on ? `Activo · TCP ${s.ftpPort}${info?.write ? " · con subidas" : ""}` : "Detenido"} />}
     >
       <div className="flex items-end gap-3 mb-3">
@@ -64,7 +88,7 @@ export function FtpServerSection({
           <input className="field" type="number" disabled={on} value={s.ftpPort} onChange={(e) => onChange({ ftpPort: Number(e.target.value) || 21 })} />
         </Label>
         <div className="pb-1.5">
-          <Toggle checked={write} onChange={setWrite} label="Permitir subidas" />
+          <Toggle checked={write} onChange={changeWrite} label="Permitir subidas" />
         </div>
         <Btn kind={on ? "default" : "primary"} className="ml-auto" onClick={toggle}>
           {on ? "Detener" : "Iniciar"}
@@ -86,7 +110,7 @@ export function FtpServerSection({
         <CopyText text={`file copy ftp://${cred}@${ip}/${file} /var/tmp/`} />
         {info?.write && <CopyText text={`copy running-config ftp://${cred}@${ip}/respaldo.cfg`} />}
       </div>
-      {s.ftpPort < 1024 && <p className="mt-2 text-[11.5px] text-muted">En Linux el puerto 21 requiere privilegios; si no inicia, usa 2121 (los equipos que no permiten indicar puerto necesitan el 21).</p>}
+      {s.ftpPort < 1024 && <p className="mt-2 text-[11.5px] text-muted">En Linux y macOS el puerto 21 puede requerir privilegios; si no inicia, usa 2121 (los equipos que no permiten indicar puerto necesitan el 21).</p>}
     </Section>
   );
 }
@@ -176,7 +200,7 @@ export function FtpClientSection({ files, onLocalChange }: { files: [string, num
         </Label>
       </div>
       <div className="mt-3 flex flex-wrap items-center gap-3">
-        <Toggle checked={tls} onChange={setTls} label="FTPS explícito (TLS, certificado verificado)" />
+        <Toggle checked={tls} onChange={setTls} label="FTPS explícito (AUTH TLS, certificado verificado)" />
         {!tls && (
           <span className="inline-flex items-center gap-1.5 text-[12px] text-warn">
             <AlertTriangle size={13} /> Sin TLS la contraseña y los archivos viajan en claro
@@ -184,7 +208,7 @@ export function FtpClientSection({ files, onLocalChange }: { files: [string, num
         )}
         {tls && (
           <span className="inline-flex items-center gap-1 text-[12px] text-muted">
-            <Lock size={12} /> Certificados del sistema, sin excepciones
+            <Lock size={12} /> Certificados del sistema, sin excepciones. Solo modo explícito (puerto 21 o el que indiques); FTPS implícito en el 990 no está soportado
           </span>
         )}
         {jobs.length > 0 && (
