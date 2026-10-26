@@ -55,11 +55,10 @@ struct Config {
 }
 
 fn random_text(n: usize) -> String {
-    use chacha20poly1305::aead::rand_core::RngCore;
     // Sin caracteres ambiguos ni los que rompen una URL (@ : /), para dictarla o escribirla.
     const ALPHA: &[u8] = b"abcdefghjkmnpqrstuvwxyz23456789";
     let mut b = vec![0u8; n];
-    chacha20poly1305::aead::OsRng.fill_bytes(&mut b);
+    crate::seal::fill_random(&mut b);
     b.iter().map(|x| ALPHA[*x as usize % ALPHA.len()] as char).collect()
 }
 

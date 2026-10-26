@@ -38,9 +38,12 @@ md-5 = "0.11"
 tauri-plugin-updater = "2"
 # Contraseñas guardadas: bóveda cifrada (XChaCha20-Poly1305 + Argon2id) y llave en el
 # llavero del sistema cuando está disponible.
-chacha20poly1305 = { version = "0.10", default-features = false, features = ["alloc", "getrandom"] }
-argon2 = { version = "0.5", default-features = false, features = ["alloc", "zeroize"] }
+# "zeroize" borra la llave interna del cifrador y la de Poly1305 al soltarse (en 0.10 era fijo).
+chacha20poly1305 = { version = "0.11", default-features = false, features = ["alloc", "zeroize"] }
+argon2 = { version = "0.6", default-features = false, features = ["alloc", "zeroize"] }
 zeroize = { version = "1", features = ["derive"] }
+# RNG del sistema (sal, nonce, llaves y credenciales temporales): el mismo getrandom 0.4 de RustCrypto.
+getrandom = "0.4"
 # SNMPv3 (USM): HMAC-MD5/SHA-1/SHA-2 y AES-128-CFB, de RustCrypto como el resto del cifrado.
 hmac = "0.13"
 sha1 = "0.11"
