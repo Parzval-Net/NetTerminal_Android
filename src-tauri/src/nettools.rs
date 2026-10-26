@@ -495,6 +495,24 @@ mod tests {
     }
 
     #[test]
+    fn local_ips_are_ipv4_without_loopback_and_mark_the_default_route() {
+        let list = local_ips();
+        eprintln!("local_ips: {}", serde_json::to_string(&list).unwrap());
+        for i in &list {
+            let ip: std::net::IpAddr = i.ip.parse().unwrap();
+            assert!(ip.is_ipv4() && !ip.is_loopback() && !i.name.is_empty(), "{}", i.ip);
+        }
+        // "default" marca solo la IP de origen de la ruta por defecto, y esa va primero.
+        let route = route_source(([192, 0, 2, 1], 9).into());
+        for i in &list {
+            assert_eq!(i.default, route.as_deref() == Some(i.ip.as_str()), "{}", i.name);
+        }
+        if list.iter().any(|i| i.default) {
+            assert!(list[0].default, "la interfaz por defecto va primero");
+        }
+    }
+
+    #[test]
     fn summarizes_iperf_tcp_json() {
         let v = json!({
             "start": {"connected": [{"remote_host": "10.0.0.2"}]},
