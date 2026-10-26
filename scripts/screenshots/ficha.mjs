@@ -42,8 +42,12 @@ try {
   await sleep(2500);
   await send("Runtime.evaluate", { expression: "window.scrollTo(0,0)" });
   const { result: m } = await send("Page.getLayoutMetrics");
-  const h = Math.ceil(m.cssContentSize.height);
-  await send("Emulation.setDeviceMetricsOverride", { width: 1440, height: h, deviceScaleFactor: 2, mobile: false });
+  // Alto real del documento (el carrusel en modo ficha cambia el layout; cssContentSize puede quedar desfasado).
+  const { result: dh } = await send("Runtime.evaluate", { expression: "Math.ceil(document.documentElement.getBoundingClientRect().height)", returnByValue: true });
+  const h = Math.min(Math.ceil(m.cssContentSize.height), dh.result.value || Infinity);
+  // Chrome no captura más de ~16.000 px de alto real: con páginas largas baja la escala.
+  const dpr = Math.min(2, Math.floor((16000 / h) * 100) / 100);
+  await send("Emulation.setDeviceMetricsOverride", { width: 1440, height: h, deviceScaleFactor: dpr, mobile: false });
   await sleep(1000);
   const { result } = await send("Page.captureScreenshot", { format: "png", captureBeyondViewport: true, clip: { x: 0, y: 0, width: 1440, height: h, scale: 1 } });
   writeFileSync(out, Buffer.from(result.data, "base64"));
