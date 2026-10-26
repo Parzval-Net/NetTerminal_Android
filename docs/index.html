@@ -111,6 +111,29 @@
   .steps .feat { counter-increment: paso; }
   .steps .feat h3::before { content: counter(paso) ". "; color: var(--accent); }
   @media (max-width: 860px) { .videos, .steps, .chapters { grid-template-columns: 1fr; } }
+  /* Carrusel de capturas: una a la vez, rota sola y se detiene al interactuar. */
+  .carousel { position: relative; }
+  .car-view { overflow: hidden; border-radius: 14px; outline: none; }
+  .car-view:focus-visible { box-shadow: 0 0 0 3px var(--accent); }
+  .car-track { display: flex; transition: transform .5s ease; }
+  .car-track .slide { flex: 0 0 100%; min-width: 0; }
+  .car-track .slide img { width: 100%; aspect-ratio: 16 / 9.8; object-fit: cover; object-position: top center; background: var(--panel); }
+  .car-btn { position: absolute; top: 40%; width: 44px; height: 44px; border-radius: 50%; border: 1px solid var(--line); background: var(--panel); color: var(--text); font-size: 28px; line-height: 1; cursor: pointer; box-shadow: var(--shadow); display: grid; place-items: center; }
+  .car-btn:hover { border-color: var(--accent); color: var(--accent); }
+  .car-btn:focus-visible, .car-play:focus-visible, .car-dots button:focus-visible { outline: 3px solid var(--accent); outline-offset: 2px; }
+  .car-btn.prev { left: -18px; } .car-btn.next { right: -18px; }
+  .car-foot { display: flex; align-items: center; justify-content: center; gap: 12px; margin-top: 14px; flex-wrap: wrap; }
+  .car-dots { display: flex; gap: 6px; flex-wrap: wrap; justify-content: center; }
+  .car-dots button { width: 10px; height: 10px; border-radius: 50%; border: 0; padding: 0; background: var(--line); cursor: pointer; }
+  .car-dots button[aria-current="true"] { background: var(--accent); width: 24px; border-radius: 6px; }
+  .car-play { border: 1px solid var(--line); background: var(--panel); color: var(--muted); border-radius: 8px; height: 28px; min-width: 34px; cursor: pointer; font-size: 11px; }
+  .car-count { font-size: 13px; color: var(--muted); min-width: 52px; }
+  @media (max-width: 860px) { .car-btn.prev { left: 6px; } .car-btn.next { right: 6px; } .car-btn { top: 32%; } }
+  @media (prefers-reduced-motion: reduce) { .car-track { transition: none; } }
+  /* Para la ficha en PDF (y al imprimir) se muestran todas las capturas en grilla. */
+  .ficha .car-track, html.ficha .car-track { display: grid; grid-template-columns: repeat(2, 1fr); gap: 22px; transform: none !important; }
+  .ficha .car-btn, .ficha .car-foot { display: none; }
+  @media print { .car-track { display: grid; grid-template-columns: repeat(2, 1fr); gap: 22px; transform: none !important; } .car-btn, .car-foot { display: none; } }
 </style>
 </head>
 <body>
@@ -235,26 +258,37 @@
     <div class="kicker">Capturas</div>
     <h2>Así se ve</h2>
     <p class="sub">Capturas en modo claro con datos ficticios: direcciones de documentación (RFC 5737) y nombres genéricos.</p>
-    <div class="gallery">
-      <figure><img src="screenshots/vista-dividida.png" alt="Vista dividida 2x2" loading="lazy"><figcaption><b>Vista dividida.</b> Cuatro equipos a la vez durante una ventana de cambio.</figcaption></figure>
-      <figure><img src="screenshots/topologia.png" alt="Topología CDP/LLDP" loading="lazy"><figcaption><b>Topología.</b> Ruta resaltada entre dos equipos con los puertos de cada salto.</figcaption></figure>
-      <figure><img src="screenshots/topologia-fuentes.png" alt="Fuentes de descubrimiento de topología" loading="lazy"><figcaption><b>Fuentes de descubrimiento.</b> Ruteo, descripciones y MAC/fabricante, apagadas por defecto y con sugerencias para confirmar.</figcaption></figure>
-      <figure><img src="screenshots/topologia-trafico.png" alt="Tráfico en enlaces de la topología" loading="lazy"><figcaption><b>Tráfico en enlaces.</b> Flechas por sentido, Mb/s y color por utilización, cada elemento activable.</figcaption></figure>
-      <figure><img src="screenshots/sugerencias-comandos.png" alt="Sugerencias de comandos en la terminal" loading="lazy"><figcaption><b>Sugerencias de comandos.</b> Completa abreviaturas como sh ip int br; nunca envía Enter y se apaga en modo configuración.</figcaption></figure>
-      <figure><img src="screenshots/respaldos.png" alt="Respaldos y comparación" loading="lazy"><figcaption><b>Respaldos.</b> Comparación entre versiones con las líneas agregadas y quitadas.</figcaption></figure>
-      <figure><img src="screenshots/monitoreo.png" alt="Monitoreo" loading="lazy"><figcaption><b>Monitoreo.</b> Latencia, pérdida y caídas con alarma sonora.</figcaption></figure>
-      <figure><img src="screenshots/notas.png" alt="Notas y plantillas" loading="lazy"><figcaption><b>Notas y plantillas.</b> Variables que se piden al enviar a la sesión.</figcaption></figure>
-      <figure><img src="screenshots/comandos-so.png" alt="Comandos de sistema operativo" loading="lazy"><figcaption><b>Comandos de sistema.</b> Consultas de red para Windows, macOS y Linux.</figcaption></figure>
-      <figure><img src="screenshots/alertas.png" alt="Alertas" loading="lazy"><figcaption><b>Alertas.</b> Reglas por texto o expresión, globales o por carpeta.</figcaption></figure>
-      <figure><img src="screenshots/importar.png" alt="Importar sesiones" loading="lazy"><figcaption><b>Importar sesiones.</b> Desde otros clientes, con vista previa y sin contraseñas.</figcaption></figure>
-      <figure><img src="screenshots/pestanas-verticales.png" alt="Pestañas verticales" loading="lazy"><figcaption><b>Pestañas verticales.</b> Opcionales, con ancho ajustable o solo íconos.</figcaption></figure>
-      <figure><img src="screenshots/credenciales.png" alt="Contraseñas guardadas" loading="lazy"><figcaption><b>Contraseñas guardadas.</b> Cifradas, nunca visibles y escritas solo al conectar.</figcaption></figure>
-      <figure><img src="screenshots/snmp.png" alt="Cliente SNMP" loading="lazy"><figcaption><b>Cliente SNMP.</b> Tabla de interfaces con contadores de 64 bits y receptor de traps.</figcaption></figure>
-      <figure><img src="screenshots/snmp-generador.png" alt="Generador de configuración SNMP" loading="lazy"><figcaption><b>Generador SNMP.</b> SNMPv3 authPriv de solo lectura, con ACL y vista restringida.</figcaption></figure>
-      <figure><img src="screenshots/transferencias.png" alt="Transferencias TFTP, HTTP, FTP y SFTP" loading="lazy"><figcaption><b>Transferencias.</b> TFTP, HTTP, FTP y SFTP con la carpeta compartida.</figcaption></figure>
-      <figure><img src="screenshots/conexion-rapida.png" alt="Conexión rápida" loading="lazy"><figcaption><b>Conexión rápida.</b> SSH, Telnet, TCP o Serial sin guardar la sesión.</figcaption></figure>
-      <figure><img src="screenshots/notas-protegidas.png" alt="Notas protegidas con contraseña" loading="lazy"><figcaption><b>Notas protegidas.</b> Cifradas en disco y bloqueadas por inactividad.</figcaption></figure>
-      <figure><img src="screenshots/acerca.png" alt="Acerca de" loading="lazy"><figcaption><b>Acerca de.</b> Versión, créditos y actualizaciones verificadas.</figcaption></figure>
+    <div class="carousel" id="carrusel" role="region" aria-roledescription="carrusel" aria-label="Capturas de NetTerminal">
+      <div class="car-view" tabindex="0">
+        <div class="car-track">
+      <figure class="slide" role="group" aria-roledescription="diapositiva"><img src="screenshots/vista-dividida.png" alt="Vista dividida 2x2" loading="lazy"><figcaption><b>Vista dividida.</b> Cuatro equipos a la vez durante una ventana de cambio.</figcaption></figure>
+      <figure class="slide" role="group" aria-roledescription="diapositiva"><img src="screenshots/topologia.png" alt="Topología CDP/LLDP" loading="lazy"><figcaption><b>Topología.</b> Ruta resaltada entre dos equipos con los puertos de cada salto.</figcaption></figure>
+      <figure class="slide" role="group" aria-roledescription="diapositiva"><img src="screenshots/topologia-fuentes.png" alt="Fuentes de descubrimiento de topología" loading="lazy"><figcaption><b>Fuentes de descubrimiento.</b> Ruteo, descripciones y MAC/fabricante, apagadas por defecto y con sugerencias para confirmar.</figcaption></figure>
+      <figure class="slide" role="group" aria-roledescription="diapositiva"><img src="screenshots/topologia-trafico.png" alt="Tráfico en enlaces de la topología" loading="lazy"><figcaption><b>Tráfico en enlaces.</b> Flechas por sentido, Mb/s y color por utilización, cada elemento activable.</figcaption></figure>
+      <figure class="slide" role="group" aria-roledescription="diapositiva"><img src="screenshots/sugerencias-comandos.png" alt="Sugerencias de comandos en la terminal" loading="lazy"><figcaption><b>Sugerencias de comandos.</b> Completa abreviaturas como sh ip int br; nunca envía Enter y se apaga en modo configuración.</figcaption></figure>
+      <figure class="slide" role="group" aria-roledescription="diapositiva"><img src="screenshots/respaldos.png" alt="Respaldos y comparación" loading="lazy"><figcaption><b>Respaldos.</b> Comparación entre versiones con las líneas agregadas y quitadas.</figcaption></figure>
+      <figure class="slide" role="group" aria-roledescription="diapositiva"><img src="screenshots/monitoreo.png" alt="Monitoreo" loading="lazy"><figcaption><b>Monitoreo.</b> Latencia, pérdida y caídas con alarma sonora.</figcaption></figure>
+      <figure class="slide" role="group" aria-roledescription="diapositiva"><img src="screenshots/notas.png" alt="Notas y plantillas" loading="lazy"><figcaption><b>Notas y plantillas.</b> Variables que se piden al enviar a la sesión.</figcaption></figure>
+      <figure class="slide" role="group" aria-roledescription="diapositiva"><img src="screenshots/comandos-so.png" alt="Comandos de sistema operativo" loading="lazy"><figcaption><b>Comandos de sistema.</b> Consultas de red para Windows, macOS y Linux.</figcaption></figure>
+      <figure class="slide" role="group" aria-roledescription="diapositiva"><img src="screenshots/alertas.png" alt="Alertas" loading="lazy"><figcaption><b>Alertas.</b> Reglas por texto o expresión, globales o por carpeta.</figcaption></figure>
+      <figure class="slide" role="group" aria-roledescription="diapositiva"><img src="screenshots/importar.png" alt="Importar sesiones" loading="lazy"><figcaption><b>Importar sesiones.</b> Desde otros clientes, con vista previa y sin contraseñas.</figcaption></figure>
+      <figure class="slide" role="group" aria-roledescription="diapositiva"><img src="screenshots/pestanas-verticales.png" alt="Pestañas verticales" loading="lazy"><figcaption><b>Pestañas verticales.</b> Opcionales, con ancho ajustable o solo íconos.</figcaption></figure>
+      <figure class="slide" role="group" aria-roledescription="diapositiva"><img src="screenshots/credenciales.png" alt="Contraseñas guardadas" loading="lazy"><figcaption><b>Contraseñas guardadas.</b> Cifradas, nunca visibles y escritas solo al conectar.</figcaption></figure>
+      <figure class="slide" role="group" aria-roledescription="diapositiva"><img src="screenshots/snmp.png" alt="Cliente SNMP" loading="lazy"><figcaption><b>Cliente SNMP.</b> Tabla de interfaces con contadores de 64 bits y receptor de traps.</figcaption></figure>
+      <figure class="slide" role="group" aria-roledescription="diapositiva"><img src="screenshots/snmp-generador.png" alt="Generador de configuración SNMP" loading="lazy"><figcaption><b>Generador SNMP.</b> SNMPv3 authPriv de solo lectura, con ACL y vista restringida.</figcaption></figure>
+      <figure class="slide" role="group" aria-roledescription="diapositiva"><img src="screenshots/transferencias.png" alt="Transferencias TFTP, HTTP, FTP y SFTP" loading="lazy"><figcaption><b>Transferencias.</b> TFTP, HTTP, FTP y SFTP con la carpeta compartida.</figcaption></figure>
+      <figure class="slide" role="group" aria-roledescription="diapositiva"><img src="screenshots/conexion-rapida.png" alt="Conexión rápida" loading="lazy"><figcaption><b>Conexión rápida.</b> SSH, Telnet, TCP o Serial sin guardar la sesión.</figcaption></figure>
+      <figure class="slide" role="group" aria-roledescription="diapositiva"><img src="screenshots/notas-protegidas.png" alt="Notas protegidas con contraseña" loading="lazy"><figcaption><b>Notas protegidas.</b> Cifradas en disco y bloqueadas por inactividad.</figcaption></figure>
+      <figure class="slide" role="group" aria-roledescription="diapositiva"><img src="screenshots/acerca.png" alt="Acerca de" loading="lazy"><figcaption><b>Acerca de.</b> Versión, créditos y actualizaciones verificadas.</figcaption></figure>
+        </div>
+      </div>
+      <button class="car-btn prev" type="button" aria-label="Captura anterior">&#8249;</button>
+      <button class="car-btn next" type="button" aria-label="Captura siguiente">&#8250;</button>
+      <div class="car-foot">
+        <button class="car-play" type="button" aria-label="Pausar rotación">&#10074;&#10074;</button>
+        <div class="car-dots" role="group" aria-label="Elegir captura"></div>
+        <span class="car-count" aria-live="polite"></span>
+      </div>
     </div>
   </section>
 
@@ -343,6 +377,72 @@
   </div>
 </footer>
 
+<script>
+  // Carrusel de capturas: botones, puntos, teclado, deslizar en pantallas táctiles y rotación
+  // automática cada 6 s que se pausa al pasar el mouse o enfocar, y no arranca si el sistema
+  // pide reducir movimiento.
+  (() => {
+    const root = document.getElementById("carrusel");
+    if (!root || document.documentElement.classList.contains("ficha")) return;
+    const track = root.querySelector(".car-track");
+    const slides = [...track.children];
+    const dots = root.querySelector(".car-dots");
+    const count = root.querySelector(".car-count");
+    const play = root.querySelector(".car-play");
+    const reduce = matchMedia("(prefers-reduced-motion: reduce)").matches;
+    let i = 0, timer = null, paused = reduce, hover = false;
+    slides.forEach((s, k) => {
+      s.setAttribute("aria-label", `${k + 1} de ${slides.length}`);
+      const b = document.createElement("button");
+      b.type = "button";
+      b.setAttribute("aria-label", `Ir a la captura ${k + 1}: ${s.querySelector("b")?.textContent ?? ""}`);
+      b.addEventListener("click", () => go(k, true));
+      dots.appendChild(b);
+    });
+    function go(k, user) {
+      i = (k + slides.length) % slides.length;
+      track.style.transform = `translateX(-${i * 100}%)`;
+      slides.forEach((s, n) => { s.setAttribute("aria-hidden", n !== i); s.querySelectorAll("a,button").forEach((e) => (e.tabIndex = n === i ? 0 : -1)); });
+      [...dots.children].forEach((d, n) => d.setAttribute("aria-current", n === i));
+      count.textContent = `${i + 1} / ${slides.length}`;
+      const img = slides[(i + 1) % slides.length].querySelector("img");
+      if (img) img.loading = "eager"; // precarga la siguiente
+      if (user) restart();
+    }
+    function restart() {
+      clearInterval(timer);
+      if (!paused && !hover && !document.hidden) timer = setInterval(() => go(i + 1), 6000);
+    }
+    function setPaused(p) {
+      paused = p;
+      play.innerHTML = p ? "&#9654;" : "&#10074;&#10074;";
+      play.setAttribute("aria-label", p ? "Reanudar rotación" : "Pausar rotación");
+      restart();
+    }
+    root.querySelector(".prev").addEventListener("click", () => go(i - 1, true));
+    root.querySelector(".next").addEventListener("click", () => go(i + 1, true));
+    play.addEventListener("click", () => setPaused(!paused));
+    root.addEventListener("mouseenter", () => { hover = true; restart(); });
+    root.addEventListener("mouseleave", () => { hover = false; restart(); });
+    root.addEventListener("focusin", () => { hover = true; restart(); });
+    root.addEventListener("focusout", () => { hover = false; restart(); });
+    root.querySelector(".car-view").addEventListener("keydown", (e) => {
+      if (e.key === "ArrowLeft") { e.preventDefault(); go(i - 1, true); }
+      if (e.key === "ArrowRight") { e.preventDefault(); go(i + 1, true); }
+    });
+    let x0 = null;
+    track.addEventListener("touchstart", (e) => (x0 = e.touches[0].clientX), { passive: true });
+    track.addEventListener("touchend", (e) => {
+      if (x0 == null) return;
+      const dx = e.changedTouches[0].clientX - x0;
+      if (Math.abs(dx) > 40) go(i + (dx < 0 ? 1 : -1), true);
+      x0 = null;
+    });
+    document.addEventListener("visibilitychange", restart);
+    go(0);
+    setPaused(paused);
+  })();
+</script>
 <script>
   // Capítulos: salta al minuto indicado en el video de la misma tarjeta.
   document.querySelectorAll(".chapters button").forEach((b) => b.addEventListener("click", () => {

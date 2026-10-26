@@ -38,7 +38,7 @@ try {
   await send("Page.navigate", { url });
   await sleep(2500);
   // Fuerza la carga de imágenes diferidas.
-  await send("Runtime.evaluate", { expression: "document.querySelectorAll('img[loading=lazy]').forEach(i=>i.loading='eager'); window.scrollTo(0, document.body.scrollHeight);" });
+  await send("Runtime.evaluate", { expression: "document.documentElement.classList.add('ficha'); document.querySelectorAll('img[loading=lazy]').forEach(i=>i.loading='eager'); window.scrollTo(0, document.body.scrollHeight);" });
   await sleep(2500);
   await send("Runtime.evaluate", { expression: "window.scrollTo(0,0)" });
   const { result: m } = await send("Page.getLayoutMetrics");
