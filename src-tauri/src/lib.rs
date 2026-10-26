@@ -248,7 +248,9 @@ async fn connect(
     .map_err(|e| e.to_string())?
 }
 
-#[tauri::command]
+// async: corre fuera del hilo principal, que entrega la salida al webview; así una
+// ráfaga de salida no deja las teclas en cola.
+#[tauri::command(async)]
 fn write(id: String, data: String, app: tauri::AppHandle, state: State<'_, AppState>) -> Result<(), String> {
     // Una sesión tomada por un script no recibe lo tecleado: se mezclaría con el script.
     if state.scripts.owner(&id).is_some() {
@@ -258,7 +260,7 @@ fn write(id: String, data: String, app: tauri::AppHandle, state: State<'_, AppSt
     state.conns.write(&id, data.as_bytes())
 }
 
-#[tauri::command]
+#[tauri::command(async)]
 fn resize(id: String, cols: u16, rows: u16, state: State<'_, AppState>) -> Result<(), String> {
     state.conns.resize(&id, cols, rows)
 }

@@ -282,7 +282,8 @@ export function compile(rules: HlRule[]): Compiled[] {
     const { on, off } = sgr(rule.style);
     if (on === "\x1b[m") continue;
     out.push({
-      re: new RegExp(rule.pattern, `gmd${rule.ignoreCase ? "i" : ""}`),
+      // El flag "d" (índices de grupos) es caro en V8: solo para reglas que pintan un grupo.
+      re: new RegExp(rule.pattern, `gm${rule.group ? "d" : ""}${rule.ignoreCase ? "i" : ""}`),
       style: rule.style,
       group: rule.group ?? 0,
       on,
@@ -308,7 +309,7 @@ export function runs(line: string, rules: Compiled[]): [number, number, number][
         rule.re.lastIndex++;
         continue;
       }
-      const span = m.indices?.[rule.group];
+      const span = rule.group ? m.indices?.[rule.group] : [m.index, m.index + m[0].length];
       if (!span) continue;
       for (let k = span[0]; k < span[1]; k++) if (owner[k] === -1) owner[k] = i;
     }
@@ -328,6 +329,8 @@ function highlightLine(line: string, rules: Compiled[]): string {
   // Líneas que ya traen secuencias de escape (prompts de shell con color, edición de
   // línea, apps de pantalla completa) se dejan intactas para no romperlas.
   if (line.includes("\x1b")) return line;
+  // Líneas enormes (configs en una línea, dumps) cuestan más de lo que aporta pintarlas.
+  if (line.length > MAX_LINE) return line;
   // El salto final queda fuera para que ^/$ funcionen igual que en el texto visible.
   const body = line.replace(/\r?\n$/, "");
   const tail = line.slice(body.length);
@@ -349,6 +352,9 @@ export function highlightText(text: string, rules: Compiled[]): string {
     .map((l) => highlightLine(l, rules))
     .join("");
 }
+
+/** Largo máximo de línea que se resalta. */
+const MAX_LINE = 1000;
 
 /** Máximo de texto sin salto de línea que se retiene esperando el resto. */
 const MAX_PENDING = 4096;
@@ -377,8 +383,10 @@ export class StreamHighlighter {
       this.write(text);
       return;
     }
-    // Eco de teclas: sin espera para que escribir se sienta inmediato.
-    if (!this.pending && text.length <= 4 && !text.includes("\n")) {
+    // Eco de teclas y redibujo de línea (\b, \x1b[K): sin espera para que escribir se sienta
+    // inmediato. Si había un prompt retenido, sale primero para conservar el orden.
+    if (!text.includes("\n") && (text.length <= 4 || text.includes("\x1b"))) {
+      this.flush();
       this.write(text);
       return;
     }
@@ -388,15 +396,19 @@ export class StreamHighlighter {
       this.write(highlightText(this.pending.slice(0, cut + 1), rules));
       this.pending = this.pending.slice(cut + 1);
     }
-    window.clearTimeout(this.timer);
     // Salida continua sin saltos de línea (barras de progreso, líneas enormes): no se
-    // retiene indefinidamente ni se acumula a costo cuadrático.
+    // retiene indefinidamente ni se acumula a costo cuadrático. El plazo es fijo desde
+    // que empezó a retenerse (no se reinicia con cada trozo).
     if (this.pending.length > MAX_PENDING) this.flush();
-    else if (this.pending) this.timer = window.setTimeout(() => this.flush(), 12);
+    else if (!this.pending) {
+      window.clearTimeout(this.timer);
+      this.timer = undefined;
+    } else if (this.timer === undefined) this.timer = window.setTimeout(() => this.flush(), 12);
   }
 
   flush() {
     window.clearTimeout(this.timer);
+    this.timer = undefined;
     if (!this.pending) return;
     const text = this.pending;
     this.pending = "";
