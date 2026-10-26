@@ -2,8 +2,9 @@
 //!
 //! Codificación BER propia y acotada (RFC 3416, 3412 y 3414), con autenticación HMAC
 //! (MD5/SHA-1 de RFC 3414 y SHA-2 de RFC 7860) y privacidad AES-128-CFB (RFC 3826) sobre
-//! las primitivas de RustCrypto. No se implementa DES (roto) ni SET: es una herramienta
-//! de consulta.
+//! las primitivas de RustCrypto, más AES-192/256 en sus variantes Blumenthal y Reeder y
+//! DES-CBC solo como legado para equipos antiguos (DES está roto). No se implementa SET:
+//! es una herramienta de consulta.
 //!
 //! Los secretos (community y contraseñas v3) nunca se registran ni se devuelven a la
 //! interfaz; viven en búferes que se borran al soltarse.
