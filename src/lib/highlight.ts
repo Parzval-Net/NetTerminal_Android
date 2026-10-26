@@ -96,7 +96,8 @@ const r = (name: string, pattern: string, style: HlStyle, opts: Partial<HlRule> 
 });
 
 const IF_STATE_BAD = String.raw`\b(?:administratively down|err-disabled|notconnect|down|disabled|failed|failure|error|denied|deny|unreachable|timed? ?out|critical|alarm|inactive|discard(?:ed)?|rejected?|invalid)\b`;
-const IF_STATE_OK = String.raw`\b(?:up|connected|established|enabled|permit|accept(?:ed)?|ok|success(?:ful)?|forwarding|full|valid|reachable)\b`;
+// "up" en prosa ("up to the cursor", "up a line") no es un estado.
+const IF_STATE_OK = String.raw`\b(?:up(?!\s+(?:to|a|an|the|one|from|by|with|for|and|of|in|on|at|until)\b)|connected|established|enabled|permit|accept(?:ed)?|ok|success(?:ful)?|forwarding|full|valid|reachable)\b`;
 const IF_STATE_WARN = String.raw`\b(?:warning|warn|blocking|learning|listening|idle|opensent|openconfirm|init|2-?way|exstart|exchange|loading|standby|pending|degraded|flapping)\b`;
 const ERR_COUNTERS = String.raw`\b[1-9]\d*\s+(?:input errors|output errors|CRC|frame|overrun|ignored|runts|giants|throttles|collisions|interface resets|late collision|output drops|input drops|drops|discards|errors)\b`;
 
@@ -345,11 +346,16 @@ function highlightLine(line: string, rules: Compiled[]): string {
   return out + body.slice(pos) + tail;
 }
 
-export function highlightText(text: string, rules: Compiled[]): string {
+/**
+ * `continued`: el texto empieza a mitad de una línea ya escrita (se escribió un trozo sin
+ * salto). Ese primer tramo se deja sin resaltar: las reglas con ^ lo tomarían por inicio de
+ * línea ("line." al final de una frase pintado como sección).
+ */
+export function highlightText(text: string, rules: Compiled[], continued = false): string {
   if (!rules.length) return text;
   return text
     .split(/(?<=\n)/)
-    .map((l) => highlightLine(l, rules))
+    .map((l, i) => (i === 0 && continued ? l : highlightLine(l, rules)))
     .join("");
 }
 
@@ -365,6 +371,8 @@ const MAX_PENDING = 4096;
  */
 export class StreamHighlighter {
   private pending = "";
+  /** Lo último escrito no terminó en salto de línea. */
+  private midLine = false;
   private timer: number | undefined;
   private write: (s: string) => void;
   private rules: () => Compiled[];
@@ -380,20 +388,20 @@ export class StreamHighlighter {
     const rules = this.rules();
     if (!rules.length || this.bypass()) {
       this.flush();
-      this.write(text);
+      this.out(text);
       return;
     }
     // Eco de teclas y redibujo de línea (\b, \x1b[K): sin espera para que escribir se sienta
     // inmediato. Si había un prompt retenido, sale primero para conservar el orden.
     if (!text.includes("\n") && (text.length <= 4 || text.includes("\x1b"))) {
       this.flush();
-      this.write(text);
+      this.out(text);
       return;
     }
     this.pending += text;
     const cut = this.pending.lastIndexOf("\n");
     if (cut >= 0) {
-      this.write(highlightText(this.pending.slice(0, cut + 1), rules));
+      this.out(highlightText(this.pending.slice(0, cut + 1), rules, this.midLine));
       this.pending = this.pending.slice(cut + 1);
     }
     // Salida continua sin saltos de línea (barras de progreso, líneas enormes): no se
@@ -412,7 +420,13 @@ export class StreamHighlighter {
     if (!this.pending) return;
     const text = this.pending;
     this.pending = "";
-    this.write(highlightText(text, this.rules()));
+    this.out(highlightText(text, this.rules(), this.midLine));
+  }
+
+  private out(text: string) {
+    if (!text) return;
+    this.midLine = !text.endsWith("\n");
+    this.write(text);
   }
 
   dispose() {
