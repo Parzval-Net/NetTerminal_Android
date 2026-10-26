@@ -1733,7 +1733,7 @@
       "desc": "Muestra los atajos Ctrl+G, Ctrl+L, Ctrl+O y Ctrl+U del equipo y el comando que ejecuta cada uno. Útil si Ctrl+L lanza un comando en vez de limpiar la pantalla.",
       "cat": "Sistema",
       "risk": "read",
-      "note": "Los valores por defecto cambian entre modelos y versiones (Ctrl+L puede ser 'undo idle-timeout' o 'display ip routing-table'): revisar en el equipo.",
+      "note": "Valores por defecto vistos en switches S: CTRL_G display current-configuration, CTRL_L display ip routing-table, CTRL_O undo debugging all, CTRL_U sin asignar. Otros modelos (por ejemplo AP) traen CTRL_L undo idle-timeout: revisar en el equipo. VRP no tiene tecla para limpiar pantalla; CTRL_R redibuja la línea actual.",
       "source": "https://support.huawei.com/enterprise/my/doc/EDOC1000184386/3a7304f2/display-hotkey"
     },
     {
