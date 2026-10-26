@@ -1670,6 +1670,89 @@
       "source": "https://support.huawei.com/enterprise/en/doc/EDOC1100513703/a0d25fee/rolling-back-configurations"
     },
     {
+      "cmd": "command alias",
+      "desc": "Entra a la vista de alias de comandos ([~HUAWEI-cmdalias]) para crear o borrar atajos propios.",
+      "cat": "Sistema",
+      "risk": "change",
+      "platforms": [
+        "vrp8",
+        "yunshan"
+      ],
+      "note": "Se ejecuta en vista de sistema. Los alias se aplican con commit.",
+      "source": "https://support.huawei.com/enterprise/mx/doc/EDOC1100137934/74f297ae/configuring-an-alias-for-a-command"
+    },
+    {
+      "cmd": "alias {{alias}} command \"{{comando}}\"",
+      "desc": "Crea un alias para un comando, por ejemplo alias shrt command \"display ip routing-table\". El comando original sigue disponible.",
+      "cat": "Sistema",
+      "risk": "change",
+      "platforms": [
+        "vrp8",
+        "yunshan"
+      ],
+      "note": "Vista command alias, y luego commit. Alias de 1 a 63 caracteres, empieza con letra. Si el comando lleva espacios va entre comillas dobles; sin comillas el equipo responde 'Too many parameters'.",
+      "source": "https://support.huawei.com/enterprise/mx/doc/EDOC1100137934/74f297ae/configuring-an-alias-for-a-command"
+    },
+    {
+      "cmd": "alias {{alias}} parameter ${{parametro}} command \"{{comando}}\"",
+      "desc": "Alias con parámetro: el comando referencia el parámetro, por ejemplo alias shrt parameter $ip command \"display ip routing-table $ip\" y luego 'shrt 10.1.1.1'.",
+      "cat": "Sistema",
+      "risk": "change",
+      "platforms": [
+        "vrp8",
+        "yunshan"
+      ],
+      "note": "Vista command alias, y luego commit. Los parámetros empiezan con $ y el comando debe usarlos todos, en orden y una sola vez.",
+      "source": "https://support.huawei.com/enterprise/mx/doc/EDOC1100137934/74f297ae/configuring-an-alias-for-a-command"
+    },
+    {
+      "cmd": "undo alias {{alias}}",
+      "desc": "Borra un alias de comando.",
+      "cat": "Sistema",
+      "risk": "change",
+      "platforms": [
+        "vrp8",
+        "yunshan"
+      ],
+      "note": "Vista command alias, y luego commit.",
+      "source": "https://support.huawei.com/enterprise/mx/doc/EDOC1100137934/74f297ae/configuring-an-alias-for-a-command"
+    },
+    {
+      "cmd": "display command alias",
+      "desc": "Lista los alias de comandos configurados.",
+      "cat": "Sistema",
+      "risk": "read",
+      "platforms": [
+        "vrp8",
+        "yunshan"
+      ],
+      "source": "https://support.huawei.com/enterprise/mx/doc/EDOC1100137934/74f297ae/configuring-an-alias-for-a-command"
+    },
+    {
+      "cmd": "display hotkey",
+      "desc": "Muestra los atajos Ctrl+G, Ctrl+L, Ctrl+O y Ctrl+U del equipo y el comando que ejecuta cada uno. Útil si Ctrl+L lanza un comando en vez de limpiar la pantalla.",
+      "cat": "Sistema",
+      "risk": "read",
+      "note": "Valores por defecto vistos en switches S: CTRL_G display current-configuration, CTRL_L display ip routing-table, CTRL_O undo debugging all, CTRL_U sin asignar. Otros modelos (por ejemplo AP) traen CTRL_L undo idle-timeout: revisar en el equipo. VRP no tiene tecla para limpiar pantalla; CTRL_R redibuja la línea actual.",
+      "source": "https://support.huawei.com/enterprise/my/doc/EDOC1000184386/3a7304f2/display-hotkey"
+    },
+    {
+      "cmd": "hotkey {{tecla}} \"{{comando}}\"",
+      "desc": "Asigna un comando a CTRL_G, CTRL_L, CTRL_O o CTRL_U, por ejemplo hotkey CTRL_L \"display interface brief\".",
+      "cat": "Sistema",
+      "risk": "change",
+      "note": "Vista de sistema y nivel de administración. Cada tecla tiene un solo comando; el último configurado reemplaza al anterior. En VRP8 se aplica con commit.",
+      "source": "https://support.huawei.com/enterprise/en/doc/EDOC1100064353/236d2db/hotkey"
+    },
+    {
+      "cmd": "undo hotkey {{tecla}}",
+      "desc": "Devuelve la tecla (CTRL_G, CTRL_L, CTRL_O o CTRL_U) a su valor por defecto.",
+      "cat": "Sistema",
+      "risk": "change",
+      "note": "Vista de sistema. En VRP8 se aplica con commit.",
+      "source": "https://support.huawei.com/enterprise/en/doc/EDOC1100064353/236d2db/hotkey"
+    },
+    {
       "cmd": "display configuration commit list verbose",
       "desc": "Lista los puntos de rollback (commit ID, usuario, fecha, etiqueta).",
       "cat": "Configuración",
