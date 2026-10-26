@@ -8,7 +8,7 @@
 //! Los secretos (community y contraseñas v3) nunca se registran ni se devuelven a la
 //! interfaz; viven en búferes que se borran al soltarse.
 
-use hmac::{Hmac, Mac};
+use hmac::{Hmac, KeyInit, Mac};
 use serde::{Deserialize, Serialize};
 use sha2::Digest;
 use std::net::{SocketAddr, ToSocketAddrs, UdpSocket};
@@ -594,7 +594,7 @@ impl AuthProto {
         macro_rules! h {
             ($d:ty) => {{
                 // HMAC acepta llaves de cualquier largo: new_from_slice no falla.
-                let mut m = <Hmac<$d> as Mac>::new_from_slice(key).expect("HMAC");
+                let mut m = <Hmac<$d> as KeyInit>::new_from_slice(key).expect("HMAC");
                 m.update(data);
                 m.finalize().into_bytes().to_vec()
             }};
@@ -704,7 +704,8 @@ impl PrivProto {
 
     /// Cifra o descifra en el lugar. Devuelve el salt (msgPrivacyParameters) usado.
     fn apply(self, key: &[u8], boots: u32, time: u32, salt: &[u8], data: &mut Vec<u8>, encrypt: bool) -> Result<(), String> {
-        use aes::cipher::{AsyncStreamCipher, BlockDecryptMut, BlockEncryptMut, KeyIvInit};
+        use aes::cipher::{Array, BlockModeDecrypt, BlockModeEncrypt, KeyIvInit};
+        const BAD_KEY: &str = "Parámetros de privacidad inválidos";
         if key.len() < self.key_len() || salt.len() != 8 {
             return Err("Parámetros de privacidad inválidos".into());
         }
@@ -717,18 +718,14 @@ impl PrivProto {
             if encrypt {
                 // Relleno a múltiplo de 8: el largo BER marca el fin real del ScopedPDU.
                 data.resize(data.len().div_ceil(8) * 8, 0);
-                let mut enc = cbc::Encryptor::<des::Des>::new(key[..8].into(), &iv.into());
-                for block in data.chunks_mut(8) {
-                    enc.encrypt_block_mut(block.into());
-                }
+                let mut enc = cbc::Encryptor::<des::Des>::new_from_slices(&key[..8], &iv).map_err(|_| BAD_KEY)?;
+                enc.encrypt_blocks(Array::slice_as_chunks_mut(data).0);
             } else {
                 if !data.len().is_multiple_of(8) {
                     return Err("Largo cifrado inválido".into());
                 }
-                let mut dec = cbc::Decryptor::<des::Des>::new(key[..8].into(), &iv.into());
-                for block in data.chunks_mut(8) {
-                    dec.decrypt_block_mut(block.into());
-                }
+                let mut dec = cbc::Decryptor::<des::Des>::new_from_slices(&key[..8], &iv).map_err(|_| BAD_KEY)?;
+                dec.decrypt_blocks(Array::slice_as_chunks_mut(data).0);
             }
             return Ok(());
         }
@@ -739,9 +736,9 @@ impl PrivProto {
         macro_rules! cfb {
             ($c:ty) => {
                 if encrypt {
-                    cfb_mode::Encryptor::<$c>::new(key[..self.key_len()].into(), &iv.into()).encrypt(data)
+                    cfb_mode::Encryptor::<$c>::new_from_slices(&key[..self.key_len()], &iv).map_err(|_| BAD_KEY)?.encrypt(data)
                 } else {
-                    cfb_mode::Decryptor::<$c>::new(key[..self.key_len()].into(), &iv.into()).decrypt(data)
+                    cfb_mode::Decryptor::<$c>::new_from_slices(&key[..self.key_len()], &iv).map_err(|_| BAD_KEY)?.decrypt(data)
                 }
             };
         }
@@ -2406,6 +2403,25 @@ pub(crate) mod tests {
             AuthProto::Sha256.localize(b"maplesyrup", &engine).to_vec(),
             hexs("8982e0e549e866db361a6b625d84cccc11162d453ee8ce3a6445c2d6776f0f8b")
         );
+        // Ku intermedio de RFC 3414 A.3.1 (MD5) y A.3.2 (SHA-1).
+        assert_eq!(AuthProto::Md5.password_key(b"maplesyrup").to_vec(), hexs("9faf3283884e92834ebc9847d8edd963"));
+        assert_eq!(AuthProto::Sha.password_key(b"maplesyrup").to_vec(), hexs("9fb5cc0381497b3793528939ff788d5d79145211"));
+        // Resto de RFC 7860 (SHA-224/384/512), contrastado con hashlib con el mismo algoritmo de A.2.
+        assert_eq!(
+            AuthProto::Sha224.localize(b"maplesyrup", &engine).to_vec(),
+            hexs("0bd8827c6e29f8065e08e09237f177e410f69b90e1782be682075674")
+        );
+        assert_eq!(
+            AuthProto::Sha384.localize(b"maplesyrup", &engine).to_vec(),
+            hexs("3b298f16164a11184279d5432bf169e2d2a48307de02b3d3f7e2b4f36eb6f0455a53689a3937eea07319a633d2ccba78")
+        );
+        assert_eq!(
+            AuthProto::Sha512.localize(b"maplesyrup", &engine).to_vec(),
+            hexs(concat!(
+                "22a5a36cedfcc085807a128d7bc6c2382167ad6c0dbc5fdff856740f3d84c099",
+                "ad1ea87a8db096714d9788bd544047c9021e4229ce27e4c0a69250adfcffbb0b"
+            ))
+        );
     }
 
     #[test]
@@ -2441,6 +2457,32 @@ pub(crate) mod tests {
         let mut data = hexs("6bc1bee22e409f96e93d7e117393172a");
         PrivProto::Aes256.apply(&key, boots, time, &iv[8..], &mut data, true).unwrap();
         assert_eq!(data, hexs("dc7e84bfda79164b7ecd8486985d3860"));
+
+        // NIST SP 800-38A F.3.15 (CFB128-AES192.Encrypt), primer bloque.
+        let key = hexs("8e73b0f7da0e6452c810f32b809079e562f8ead2522c6b7b");
+        let mut data = hexs("6bc1bee22e409f96e93d7e117393172a");
+        PrivProto::Aes192.apply(&key, boots, time, &iv[8..], &mut data, true).unwrap();
+        assert_eq!(data, hexs("cdc80d6fddf18cab34c25909c99a4174"));
+
+        // F.3.13 con 40 bytes: el ScopedPDU rara vez es múltiplo de 16 y el último bloque va parcial.
+        let key = hexs("2b7e151628aed2a6abf7158809cf4f3c");
+        let plain = hexs("6bc1bee22e409f96e93d7e117393172aae2d8a571e03ac9c9eb76fac45af8e5130c81c46a35ce411");
+        let mut data = plain.clone();
+        PrivProto::Aes.apply(&key, boots, time, &iv[8..], &mut data, true).unwrap();
+        assert_eq!(data, hexs("3b3fd92eb72dad20333449f8e83cfb4ac8a64537a0b3a93fcde3cdad9f1ce58b26751f67a3cbb140"));
+        PrivProto::Aes.apply(&key, boots, time, &iv[8..], &mut data, false).unwrap();
+        assert_eq!(data, plain);
+
+        // Cadena completa: clave AES-192 Cisco desde MD5 (extensión Reeder), IV de RFC 3826 y
+        // 37 bytes. Contrastado con `openssl enc -aes-192-cfb`.
+        let engine = hexs("000000000000000000000002");
+        let key = PrivProto::Aes192c.key(AuthProto::Md5, b"maplesyrup", &engine);
+        let plain = b"show interfaces status, 37 bytes long".to_vec();
+        let mut data = plain.clone();
+        PrivProto::Aes192c.apply(&key, 3, 1000, &hexs("0102030405060708"), &mut data, true).unwrap();
+        assert_eq!(data, hexs("f223ebaee4c983997911fb246841d6eea72354ca7e6490ebafccf9025e0648885193cc37dd"));
+        PrivProto::Aes192c.apply(&key, 3, 1000, &hexs("0102030405060708"), &mut data, false).unwrap();
+        assert_eq!(data, plain);
     }
 
     #[test]
@@ -2455,6 +2497,16 @@ pub(crate) mod tests {
         // SHA-256 da 32 bytes: no hay extensión y ambas variantes coinciden.
         assert_eq!(PrivProto::Aes256.key(AuthProto::Sha256, b"maplesyrup", &engine), PrivProto::Aes256c.key(AuthProto::Sha256, b"maplesyrup", &engine));
         assert_eq!(PrivProto::Aes.key(AuthProto::Sha, b"maplesyrup", &engine).len(), 16);
+        // MD5 da 16 bytes: AES-192 y AES-256 extienden en las dos variantes (hashlib).
+        let md5_keys = [
+            (PrivProto::Aes192, "526f5eed9fcce26f8964c2930787d82bfa24a92467426c2f"),
+            (PrivProto::Aes192c, "526f5eed9fcce26f8964c2930787d82b79eff44a90650ee0"),
+            (PrivProto::Aes256, "526f5eed9fcce26f8964c2930787d82bfa24a92467426c2f4b09192be10dfaec"),
+            (PrivProto::Aes256c, "526f5eed9fcce26f8964c2930787d82b79eff44a90650ee0a3a40abfac5acc12"),
+        ];
+        for (p, want) in md5_keys {
+            assert_eq!(p.key(AuthProto::Md5, b"maplesyrup", &engine).to_vec(), hexs(want), "{p:?}");
+        }
 
         // DES-CBC: relleno a 8 y vuelta al texto original (el largo BER marca el fin).
         let key = PrivProto::Des.key(AuthProto::Md5, b"maplesyrup", &engine);
@@ -2467,6 +2519,15 @@ pub(crate) mod tests {
         PrivProto::Des.apply(&key, 7, 0, &salt, &mut data, false).unwrap();
         assert_eq!(&data[..plain.len()], &plain[..]);
         assert!(dec_scoped(&data).is_ok());
+
+        // Vector fijo (RFC 3414 8.1.1.1): clave 526f5eed9fcce26f, IV = pre-IV 8964c2930787d82b
+        // XOR salt 0000000700000001. Contrastado con `openssl enc -des-cbc -nopad`.
+        let salt = hexs("0000000700000001");
+        let mut data = b"NetTerminal SNMP".to_vec();
+        PrivProto::Des.apply(&key, 7, 0, &salt, &mut data, true).unwrap();
+        assert_eq!(data, hexs("7d8ad50e72bc5e633337c5ea9b29e813"));
+        PrivProto::Des.apply(&key, 7, 0, &salt, &mut data, false).unwrap();
+        assert_eq!(data, b"NetTerminal SNMP");
     }
 
     /// Arma un trap v3 como lo haría un equipo (motor autoritativo).
@@ -2531,6 +2592,22 @@ pub(crate) mod tests {
         }
         // RFC 2202 caso 2 (HMAC-SHA1).
         assert_eq!(AuthProto::Sha.hmac(b"Jefe", b"what do ya want for nothing?"), hexs("effcdf6ae5eb2fa2d27416d5f184df9c259a7c79"));
+        // RFC 2202 caso 2 (HMAC-MD5) y RFC 4231 caso 2 (HMAC-SHA-224/256/384/512).
+        let jefe = |p: AuthProto| p.hmac(b"Jefe", b"what do ya want for nothing?");
+        assert_eq!(jefe(AuthProto::Md5), hexs("750c783e6ab0b503eaa86e310a5db738"));
+        assert_eq!(jefe(AuthProto::Sha224), hexs("a30e01098bc6dbbf45690f3a7e9e6d0f8bbea2a39e6148008fd05e44"));
+        assert_eq!(jefe(AuthProto::Sha256), hexs("5bdcc146bf60754e6a042426089575c75a003f089d2739839dec58b964ec3843"));
+        assert_eq!(
+            jefe(AuthProto::Sha384),
+            hexs("af45d2e376484031617f78d2b58a6b1b9c7ef464f5a01b47e42ec3736322445e8e2240ca5e69e2c78b3239ecfab21649")
+        );
+        assert_eq!(
+            jefe(AuthProto::Sha512),
+            hexs(concat!(
+                "164b7a7bfcf819e2e395fbe73b56e0a387bd64222e831fd610270cd7ea250554",
+                "9758bf75c05a994a6d034f65f8f0e6fdcaeab1a34d4a6b4b636e070a38bce737"
+            ))
+        );
         assert!(ct_eq(b"abc", b"abc") && !ct_eq(b"abc", b"abd") && !ct_eq(b"ab", b"abc"));
     }
 

@@ -670,22 +670,26 @@ async fn tftp_md5(name: String, app: tauri::AppHandle) -> Result<String, String>
     let root = app.state::<AppState>().data_dir.join("tftp");
     let path = servers::safe_path(&root, &name).ok_or("Nombre inválido")?;
     tauri::async_runtime::spawn_blocking(move || {
-        use md5::{Digest, Md5};
-        use std::io::Read;
-        let mut f = std::fs::File::open(path).map_err(|e| e.to_string())?;
-        let mut h = Md5::new();
-        let mut buf = vec![0u8; 1 << 20];
-        loop {
-            let n = f.read(&mut buf).map_err(|e| e.to_string())?;
-            if n == 0 {
-                break;
-            }
-            h.update(&buf[..n]);
-        }
-        Ok(h.finalize().iter().map(|b| format!("{b:02x}")).collect())
+        let f = std::fs::File::open(path).map_err(|e| e.to_string())?;
+        md5_hex(f).map_err(|e| e.to_string())
     })
     .await
     .map_err(|e| e.to_string())?
+}
+
+/// MD5 en hexadecimal, leyendo de a 1 MB (los firmware pesan cientos de MB).
+fn md5_hex(mut r: impl std::io::Read) -> std::io::Result<String> {
+    use md5::{Digest, Md5};
+    let mut h = Md5::new();
+    let mut buf = vec![0u8; 1 << 20];
+    loop {
+        let n = r.read(&mut buf)?;
+        if n == 0 {
+            break;
+        }
+        h.update(&buf[..n]);
+    }
+    Ok(h.finalize().iter().map(|b| format!("{b:02x}")).collect())
 }
 
 #[tauri::command]
@@ -1196,6 +1200,15 @@ pub fn run() {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn tftp_md5_known_vectors() {
+        // RFC 1321 A.5 y un archivo de 3 MB + 17 bytes (varias lecturas de 1 MB), contrastado con hashlib.
+        assert_eq!(md5_hex(&b""[..]).unwrap(), "d41d8cd98f00b204e9800998ecf8427e");
+        assert_eq!(md5_hex(&b"abc"[..]).unwrap(), "900150983cd24fb0d6963f7d28e17f72");
+        let big: Vec<u8> = (0..3 * 1_048_576 + 17).map(|i| (i % 251) as u8).collect();
+        assert_eq!(md5_hex(&big[..]).unwrap(), "7114d559ffda7029526064baa992a30d");
+    }
 
     #[test]
     fn merge_path_appends_without_duplicates_and_keeps_order() {

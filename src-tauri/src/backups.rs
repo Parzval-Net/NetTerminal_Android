@@ -263,7 +263,7 @@ fn device_key(dir: &Path) -> Result<Vec<u8>, String> {
 /// sobre la línea enmascarada y el valor, recortada a 64 bits. Incluir la línea evita que dos
 /// líneas distintas con la misma contraseña muestren la misma huella.
 pub fn secret_marks(key: &[u8], content: &str) -> std::collections::BTreeMap<usize, Vec<String>> {
-    use hmac::{Hmac, Mac};
+    use hmac::{Hmac, KeyInit, Mac};
     let mut out = std::collections::BTreeMap::new();
     for (i, line) in content.split('\n').enumerate() {
         let mut found = Vec::new();
@@ -274,7 +274,7 @@ pub fn secret_marks(key: &[u8], content: &str) -> std::collections::BTreeMap<usi
         let marks = found
             .iter()
             .map(|v| {
-                let mut m = <Hmac<sha2::Sha256> as Mac>::new_from_slice(key).expect("HMAC acepta cualquier largo");
+                let mut m = <Hmac<sha2::Sha256> as KeyInit>::new_from_slice(key).expect("HMAC acepta cualquier largo");
                 m.update(masked.as_bytes());
                 m.update(b"\0");
                 m.update(v.as_bytes());
@@ -351,6 +351,9 @@ mod tests {
         assert_eq!(ma[&1], mb[&1], "mismo secreto, misma huella");
         assert_ne!(ma[&2], mb[&2], "contraseña cambiada");
         assert_eq!(ma[&3], mb[&3]);
+        // Formato guardado: HMAC-SHA256(llave, línea enmascarada || 0 || valor), 64 bits en hex.
+        // Valor fijo contrastado con hashlib: cambiar la primitiva no puede mover las huellas guardadas.
+        assert_eq!(ma[&2], ["827f8d67ab5fa547"]);
         // La huella no contiene el secreto y depende de la llave del equipo.
         let json = serde_json::to_string(&ma).unwrap();
         assert!(!json.contains("abc") && !json.contains("uno") && !json.contains("publica"));

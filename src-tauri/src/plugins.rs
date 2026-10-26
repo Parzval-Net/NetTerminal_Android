@@ -523,6 +523,19 @@ mod tests {
     }
 
     #[test]
+    fn content_hash_is_stable() {
+        // SHA-256 de (ruta || 0 || contenido || 0) en orden de ruta; contrastado con hashlib.
+        // Es el hash aprobado que se guarda: no puede cambiar entre versiones de la app.
+        let dir = std::env::temp_dir().join(format!("nt-plug-hash-{}", std::process::id()));
+        let _ = fs::remove_dir_all(&dir);
+        fs::create_dir_all(dir.join("sub")).unwrap();
+        fs::write(dir.join("sub/b.py"), "print(2)\n").unwrap();
+        fs::write(dir.join("a.txt"), "uno").unwrap();
+        assert_eq!(hash(&dir).unwrap(), "6b26f90a31a4117c4ef27a204cb61c184173cf3ee52235d0b3c99003bb4c668c");
+        let _ = fs::remove_dir_all(&dir);
+    }
+
+    #[test]
     fn install_approve_and_detect_tampering() {
         let base = std::env::temp_dir().join(format!("nt-plug-{}", std::process::id()));
         let data = base.join("data");
