@@ -3,9 +3,8 @@
 //! atómica con permisos 600 y espera exponencial tras contraseñas incorrectas.
 
 use argon2::{Algorithm, Argon2, Params, Version};
-use chacha20poly1305::aead::rand_core::RngCore;
-use chacha20poly1305::aead::{Aead, KeyInit, OsRng, Payload};
-use chacha20poly1305::{XChaCha20Poly1305, XNonce};
+use chacha20poly1305::aead::{Aead, KeyInit, Payload};
+use chacha20poly1305::{Key, XChaCha20Poly1305, XNonce};
 use std::path::Path;
 use std::time::{Duration, Instant};
 use zeroize::Zeroizing;
@@ -39,9 +38,15 @@ impl Kdf {
     }
 }
 
+/// Llena `buf` con bytes del RNG del sistema (getrandom). Igual que el `OsRng` anterior, una
+/// falla del RNG del sistema detiene la app: no se cifra ni se crea una llave con datos predecibles.
+pub fn fill_random(buf: &mut [u8]) {
+    getrandom::fill(buf).expect("RNG del sistema no disponible");
+}
+
 pub fn random<const N: usize>() -> [u8; N] {
     let mut b = [0u8; N];
-    OsRng.fill_bytes(&mut b);
+    fill_random(&mut b);
     b
 }
 
@@ -56,15 +61,15 @@ pub fn derive(password: &str, salt: &[u8], kdf: Kdf) -> Result<Zeroizing<[u8; 32
 
 /// Cifra `plain` autenticando también `aad` (la cabecera, que incluye el nonce).
 pub fn encrypt(key: &[u8; 32], nonce: &[u8; 24], plain: &[u8], aad: &[u8]) -> Result<Vec<u8>, String> {
-    XChaCha20Poly1305::new(key.into())
-        .encrypt(XNonce::from_slice(nonce), Payload { msg: plain, aad })
+    XChaCha20Poly1305::new(Key::cast_from_core(key))
+        .encrypt(XNonce::cast_from_core(nonce), Payload { msg: plain, aad })
         .map_err(|_| "No se pudo cifrar".to_string())
 }
 
 /// Descifra; Err(()) si la llave es incorrecta o el archivo fue alterado (no se distinguen).
 pub fn decrypt(key: &[u8; 32], nonce: &[u8; 24], ct: &[u8], aad: &[u8]) -> Result<Zeroizing<Vec<u8>>, ()> {
-    XChaCha20Poly1305::new(key.into())
-        .decrypt(XNonce::from_slice(nonce), Payload { msg: ct, aad })
+    XChaCha20Poly1305::new(Key::cast_from_core(key))
+        .decrypt(XNonce::cast_from_core(nonce), Payload { msg: ct, aad })
         .map(Zeroizing::new)
         .map_err(|_| ())
 }

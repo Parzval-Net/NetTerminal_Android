@@ -251,9 +251,8 @@ fn device_key(dir: &Path) -> Result<Vec<u8>, String> {
             return Ok(k);
         }
     }
-    use chacha20poly1305::aead::rand_core::RngCore;
     let mut k = vec![0u8; 32];
-    chacha20poly1305::aead::OsRng.fill_bytes(&mut k);
+    crate::seal::fill_random(&mut k);
     fs::write(&path, &k).map_err(|e| e.to_string())?;
     crate::session_store::restrict(&path);
     Ok(k)

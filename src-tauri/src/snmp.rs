@@ -890,10 +890,7 @@ pub fn error_name(code: i64) -> String {
 }
 
 fn random_bytes<const N: usize>() -> [u8; N] {
-    use chacha20poly1305::aead::rand_core::RngCore;
-    let mut b = [0u8; N];
-    chacha20poly1305::aead::OsRng.fill_bytes(&mut b);
-    b
+    crate::seal::random()
 }
 
 /// Respuesta con error-status distinto de cero.
