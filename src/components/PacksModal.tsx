@@ -202,7 +202,7 @@ export function PacksModal({ packs, disabled, onToggle, onChanged, onClose }: Pr
         </div>
 
         <footer className="shrink-0 flex justify-between items-center px-5 py-3 border-t border-line">
-          <span className="text-[11.5px] text-muted">Formato: netterminal-commands v1 (ver README)</span>
+          <span className="text-[11.5px] text-muted">Formato: netterminal-commands v1 (ver documentación técnica, sección Packs de comandos)</span>
           <button onClick={pick} className="flex items-center gap-1.5 px-3.5 h-8 rounded-md bg-accent text-accent-fg font-medium hover:opacity-90">
             <Upload size={14} /> Importar pack
           </button>
