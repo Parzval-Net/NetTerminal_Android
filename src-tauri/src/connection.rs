@@ -1296,8 +1296,48 @@ pub fn list_serial_ports() -> Vec<crate::models::SerialPortInfo> {
             port_name: p.port_name,
         })
         .collect();
-    ports.sort_by(|a, b| a.port_name.cmp(&b.port_name));
+    // Algunos drivers de adaptadores USB (CH340, PL2303, FTDI antiguos) no publican la interfaz
+    // que lee serialport en Windows: el registro SERIALCOMM sí lista todos los COM activos.
+    #[cfg(windows)]
+    for name in windows_serialcomm() {
+        if !ports.iter().any(|p| p.port_name.eq_ignore_ascii_case(&name)) {
+            ports.push(crate::models::SerialPortInfo { port_name: name, port_type: "Serial".into() });
+        }
+    }
+    ports.sort_by(|a, b| port_order(&a.port_name, &b.port_name));
     ports
+}
+
+/// Orden natural: COM3 < COM5 < COM10 (el orden de texto pondría COM10 antes de COM3).
+fn port_order(a: &str, b: &str) -> std::cmp::Ordering {
+    let split = |s: &str| {
+        let head = s.trim_end_matches(|c: char| c.is_ascii_digit());
+        (head.to_ascii_lowercase(), s[head.len()..].parse::<u64>().ok())
+    };
+    split(a).cmp(&split(b)).then_with(|| a.cmp(b))
+}
+
+/// Puertos COM activos según HKLM\HARDWARE\DEVICEMAP\SERIALCOMM.
+#[cfg(windows)]
+fn windows_serialcomm() -> Vec<String> {
+    let Ok(out) = crate::monitor::command("reg")
+        .args(["query", r"HKLM\HARDWARE\DEVICEMAP\SERIALCOMM"])
+        .output()
+    else {
+        return Vec::new();
+    };
+    parse_serialcomm(&String::from_utf8_lossy(&out.stdout))
+}
+
+/// Cada valor de `reg query` es "    \Device\Serial0    REG_SZ    COM1": el puerto es la última columna.
+#[cfg_attr(not(windows), allow(dead_code))]
+fn parse_serialcomm(text: &str) -> Vec<String> {
+    text.lines()
+        .filter(|l| l.contains("REG_SZ"))
+        .filter_map(|l| l.split_whitespace().last())
+        .filter(|n| n.len() > 3 && n[..3].eq_ignore_ascii_case("COM"))
+        .map(str::to_string)
+        .collect()
 }
 
 #[cfg(test)]
@@ -1310,6 +1350,16 @@ mod tests {
         let opts = LogOptions { timestamps: true, mask, ..Default::default() };
         let vars = LogVars { session: "t".into(), ..Default::default() };
         (LogWriter::create(&dir, opts, vars).unwrap(), dir)
+    }
+
+    #[test]
+    fn serial_ports_natural_order_and_registry() {
+        use super::{parse_serialcomm, port_order};
+        let mut v = vec!["COM10", "COM5", "COM3", "/dev/ttyUSB1", "/dev/ttyUSB0"];
+        v.sort_by(|a, b| port_order(a, b));
+        assert_eq!(v, ["/dev/ttyUSB0", "/dev/ttyUSB1", "COM3", "COM5", "COM10"]);
+        let reg = "\r\nHKEY_LOCAL_MACHINE\\HARDWARE\\DEVICEMAP\\SERIALCOMM\r\n    \\Device\\Serial0    REG_SZ    COM3\r\n    \\Device\\Silabser0    REG_SZ    COM5\r\n\r\n";
+        assert_eq!(parse_serialcomm(reg), ["COM3", "COM5"]);
     }
 
     #[test]

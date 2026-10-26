@@ -1,7 +1,8 @@
 import { useEffect, useState } from "react";
 import { invoke } from "@tauri-apps/api/core";
-import { AlertTriangle, KeyRound, Plus, RefreshCw, Trash2, X } from "lucide-react";
+import { AlertTriangle, KeyRound, Plus, Trash2, X } from "lucide-react";
 import { SerialPortInfo, Session, SessionType, Tunnel, TunnelKind } from "../types";
+import { SerialPortField } from "./SerialPortField";
 import { SessionIcon, typeLabel } from "./SessionIcon";
 import { vendorSchemes } from "../lib/highlight";
 import { normPath } from "../lib/folders";
@@ -53,7 +54,9 @@ export function SessionModal({ initial, title, defaultFolder, folders, onClose, 
     invoke<SerialPortInfo[]>("list_serial_ports")
       .then((list) => {
         setPorts(list);
-        setS((p) => (p.serial_port || !list[0] ? p : { ...p, serial_port: list[0].port_name }));
+        // Sin puerto elegido se propone el adaptador USB (consola típica) antes que un COM de la placa.
+        const pick = list.find((x) => x.port_type.startsWith("USB")) ?? list[0];
+        setS((p) => (p.serial_port || !pick ? p : { ...p, serial_port: pick.port_name }));
       })
       .catch(() => {});
 
@@ -273,31 +276,7 @@ export function SessionModal({ initial, title, defaultFolder, folders, onClose, 
             <>
               <Row cols="3fr 2fr">
                 <Field label="Puerto">
-                  <div className="flex gap-1.5">
-                    <input
-                      className="field"
-                      list="serial-ports"
-                      required
-                      value={s.serial_port ?? ""}
-                      placeholder={navigator.userAgent.includes("Windows") ? "COM3" : "/dev/ttyUSB0"}
-                      onChange={(e) => set("serial_port", e.target.value)}
-                    />
-                    <datalist id="serial-ports">
-                      {ports.map((p) => (
-                        <option key={p.port_name} value={p.port_name}>
-                          {p.port_type}
-                        </option>
-                      ))}
-                    </datalist>
-                    <button
-                      type="button"
-                      title="Detectar puertos"
-                      onClick={loadPorts}
-                      className="w-8 shrink-0 grid place-items-center rounded-md border border-line text-muted hover:text-fg hover:bg-hover"
-                    >
-                      <RefreshCw size={14} />
-                    </button>
-                  </div>
+                  <SerialPortField value={s.serial_port ?? ""} ports={ports} onChange={(v) => set("serial_port", v)} onRefresh={loadPorts} />
                 </Field>
                 <Field label="Velocidad">
                   <select
