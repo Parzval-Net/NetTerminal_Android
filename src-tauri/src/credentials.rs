@@ -640,6 +640,147 @@ mod tests {
         std::fs::remove_dir_all(&d).unwrap();
     }
 
+    // ---------- Archivos de referencia (formato en disco) ----------
+    //
+    // `tests/fixtures/*.vault` se generaron con chacha20poly1305 0.10 y argon2 0.5. Deben
+    // abrir sin cambios con cualquier versión posterior: si una actualización rompe estas
+    // pruebas, cambió el formato y las bóvedas de los usuarios dejarían de abrir.
+
+    const GOLDEN_MASTER: &str = "maestra-de-prueba-1";
+    /// Llave fija que simula la del llavero del sistema (solo pruebas).
+    const GOLDEN_KEY: [u8; 32] = *b"llave-fija-de-prueba-32-bytes-00";
+    const GOLDEN_ENTRIES: [(&str, &str); 3] =
+        [("sess-1", "Pr0b@nd0-123"), ("snmp:core", "{\"community\":\"publica-test\"}"), ("sess-ñ", "a\"b\\c\u{1}ñ€\t")];
+
+    fn fixture(name: &str) -> PathBuf {
+        Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/fixtures").join(name)
+    }
+
+    /// Copia un archivo de referencia como `credentials.vault` de una carpeta temporal.
+    fn golden_dir(name: &str) -> (PathBuf, Vec<u8>) {
+        let d = dir();
+        let bytes = std::fs::read(fixture(name)).unwrap();
+        std::fs::write(d.join("credentials.vault"), &bytes).unwrap();
+        (d, bytes)
+    }
+
+    fn keyring_with(key: &[u8]) -> MemKeys {
+        MemKeys(std::sync::Arc::new(Mutex::new(Some(key.to_vec()))), false)
+    }
+
+    fn assert_golden_entries(c: &Credentials) {
+        for (id, pw) in GOLDEN_ENTRIES {
+            assert_eq!(c.get(id).as_deref().map(|s| s.as_str()), Some(pw), "{id}");
+        }
+        assert!(c.get("no-existe").is_none());
+    }
+
+    /// Regenera los archivos de referencia. Solo a mano y con la versión anterior:
+    /// `NT_WRITE_GOLDEN=1 cargo test --lib write_golden_vaults -- --ignored`.
+    #[test]
+    #[ignore]
+    fn write_golden_vaults() {
+        if std::env::var("NT_WRITE_GOLDEN").as_deref() != Ok("1") {
+            return;
+        }
+        let entries = || Entries(GOLDEN_ENTRIES.iter().map(|(k, v)| (k.to_string(), v.to_string())).collect());
+        std::fs::create_dir_all(fixture("")).unwrap();
+        // Contraseña maestra, parámetros por defecto.
+        let d = dir();
+        let c = Credentials::with(&d, true, Box::new(MemKeys::default()), KDF_DEFAULT);
+        let salt = random::<16>();
+        let key = derive(GOLDEN_MASTER, &salt, KDF_DEFAULT).unwrap();
+        c.encrypt_write(&key, Mode::Master, KDF_DEFAULT, salt, &entries()).unwrap();
+        std::fs::copy(d.join("credentials.vault"), fixture("credentials-master.vault")).unwrap();
+        // Llavero, con la llave fija.
+        let d = dir();
+        let c = Credentials::with(&d, false, Box::new(keyring_with(&GOLDEN_KEY)), KDF_DEFAULT);
+        c.encrypt_write(&GOLDEN_KEY, Mode::Keyring, Kdf { m: 0, t: 0, p: 0 }, random(), &entries()).unwrap();
+        std::fs::copy(d.join("credentials.vault"), fixture("credentials-keyring.vault")).unwrap();
+    }
+
+    #[test]
+    fn golden_master_vault_opens() {
+        let (d, bytes) = golden_dir("credentials-master.vault");
+        // Cabecera: NTVAULT | v1 | modo 1 | m=65536 t=3 p=1 | sal (16) | nonce (24).
+        assert_eq!(&bytes[..9], b"NTVAULT\x01\x01");
+        assert_eq!(Kdf::decode(&bytes[9..21]), KDF_DEFAULT);
+        let c = Credentials::with(&d, true, Box::new(MemKeys::default()), FAST);
+        assert_eq!(c.status().backend, "vault");
+        assert!(c.unlock("maestra-de-prueba-2").is_err());
+        lock(&c.inner).throttle.retry_at = None;
+        c.unlock(GOLDEN_MASTER).unwrap();
+        assert_golden_entries(&c);
+        // La llave derivada descifra el archivo directamente con la cabecera como AAD.
+        let h = Header::decode(&bytes).unwrap();
+        let key = derive(GOLDEN_MASTER, &h.salt, h.kdf).unwrap();
+        let plain = seal::decrypt(&key, &h.nonce, &bytes[HEADER_LEN..], &bytes[..HEADER_LEN]).unwrap();
+        let map: HashMap<String, String> = serde_json::from_slice(&plain).unwrap();
+        assert_eq!(map.len(), GOLDEN_ENTRIES.len());
+        assert_eq!(std::fs::read(d.join("credentials.vault")).unwrap(), bytes, "leer no reescribe");
+        std::fs::remove_dir_all(&d).unwrap();
+    }
+
+    #[test]
+    fn golden_keyring_vault_opens() {
+        let (d, bytes) = golden_dir("credentials-keyring.vault");
+        assert_eq!(&bytes[..9], b"NTVAULT\x01\x00");
+        assert_eq!(&bytes[9..21], &[0u8; 12]);
+        let c = Credentials::with(&d, false, Box::new(keyring_with(&GOLDEN_KEY)), FAST);
+        assert_eq!(c.status().backend, "keychain");
+        assert_golden_entries(&c);
+        // Otra llave en el llavero: no abre.
+        let other = Credentials::with(&d, false, Box::new(keyring_with(&[7u8; 32])), FAST);
+        assert!(other.get("sess-1").is_none());
+        assert!(other.has("sess-1").is_err());
+        std::fs::remove_dir_all(&d).unwrap();
+    }
+
+    /// Reescribir una bóveda de referencia con el código actual mantiene la cabecera
+    /// (magia, versión, modo, parámetros, sal) y el largo; solo cambia el nonce.
+    #[test]
+    fn golden_vaults_roundtrip_keeps_format() {
+        for (name, portable, keys, master) in [
+            ("credentials-master.vault", true, MemKeys::default(), Some(GOLDEN_MASTER)),
+            ("credentials-keyring.vault", false, keyring_with(&GOLDEN_KEY), None),
+        ] {
+            let (d, before) = golden_dir(name);
+            let c = Credentials::with(&d, portable, Box::new(keys.clone()), FAST);
+            if let Some(m) = master {
+                c.unlock(m).unwrap();
+            }
+            c.set("tmp", "x", &["sess-1".into(), "sess-ñ".into(), "tmp".into()]).unwrap();
+            c.delete("tmp").unwrap();
+            let after = std::fs::read(d.join("credentials.vault")).unwrap();
+            assert_eq!(after.len(), before.len(), "{name}");
+            assert_eq!(&after[..37], &before[..37], "{name}: cabecera sin el nonce");
+            assert_ne!(&after[37..61], &before[37..61], "{name}: nonce nuevo");
+            let c2 = Credentials::with(&d, portable, Box::new(keys), FAST);
+            if let Some(m) = master {
+                c2.unlock(m).unwrap();
+            }
+            assert_golden_entries(&c2);
+            std::fs::remove_dir_all(&d).unwrap();
+        }
+    }
+
+    /// Una bóveda nueva tiene exactamente el diseño v1: cabecera de 61 bytes + JSON + etiqueta.
+    #[test]
+    fn new_vault_layout_is_v1() {
+        let d = dir();
+        let c = Credentials::with(&d, true, Box::new(MemKeys::default()), FAST);
+        c.create("maestra-larga").unwrap();
+        let b = std::fs::read(d.join("credentials.vault")).unwrap();
+        assert_eq!(HEADER_LEN, 61);
+        assert_eq!(b.len(), HEADER_LEN + 2 + 16, "\"{{}}\" cifrado + etiqueta de 16 bytes");
+        assert_eq!(&b[..9], b"NTVAULT\x01\x01");
+        assert_eq!(Kdf::decode(&b[9..21]), FAST);
+        let h = Header::decode(&b).unwrap();
+        let key = derive("maestra-larga", &h.salt, h.kdf).unwrap();
+        assert_eq!(seal::decrypt(&key, &h.nonce, &b[HEADER_LEN..], &b[..HEADER_LEN]).unwrap().as_slice(), b"{}");
+        std::fs::remove_dir_all(&d).unwrap();
+    }
+
     #[test]
     fn rejects_bad_inputs() {
         let d = dir();

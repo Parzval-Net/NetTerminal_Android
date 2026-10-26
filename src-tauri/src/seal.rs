@@ -133,8 +133,68 @@ impl Throttle {
 }
 
 #[cfg(test)]
-mod tests {
+pub(crate) mod tests {
     use super::*;
+
+    pub(crate) fn unhex(s: &str) -> Vec<u8> {
+        let s: String = s.split_whitespace().collect();
+        (0..s.len()).step_by(2).map(|i| u8::from_str_radix(&s[i..i + 2], 16).unwrap()).collect()
+    }
+
+    // Vectores fijos para detectar cualquier cambio de salida al actualizar argon2 o
+    // chacha20poly1305. Los valores esperados se verificaron con una implementación
+    // independiente (OpenSSL vía `crypto.argon2Sync` y `chacha20-poly1305` de Node 24).
+    const PW: &str = "correct horse battery staple";
+    const SALT: [u8; 16] = [0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15];
+
+    #[test]
+    fn argon2id_output_is_pinned() {
+        let k = derive(PW, &SALT, KDF_DEFAULT).unwrap();
+        assert_eq!(k.as_ref(), unhex("0d1a3c6523c8f06e4e0af9c515aa5b5448cfebd6838f2d52c3d8b6ef8ddc3c2e").as_slice());
+        let k = derive(PW, &SALT, Kdf { m: 64, t: 1, p: 1 }).unwrap();
+        assert_eq!(k.as_ref(), unhex("92dc5d67019623868bde079275e522f4b7e8213d3414ed85cbc2ac8a41117288").as_slice());
+        assert_eq!(KDF_DEFAULT, Kdf { m: 65536, t: 3, p: 1 }, "parámetros por defecto: m=64 MiB, t=3, p=1");
+        // Parámetros inválidos: error, sin pánico.
+        assert!(derive(PW, &SALT, Kdf { m: 0, t: 0, p: 0 }).is_err());
+        assert!(derive(PW, &[0u8; 4], Kdf { m: 64, t: 1, p: 1 }).is_err(), "sal demasiado corta");
+    }
+
+    /// Vector A.3.1 de draft-irtf-cfrg-xchacha (XChaCha20-Poly1305 con AAD).
+    #[test]
+    fn xchacha20poly1305_output_is_pinned() {
+        let key: [u8; 32] = std::array::from_fn(|i| 0x80 + i as u8);
+        let nonce: [u8; 24] = std::array::from_fn(|i| 0x40 + i as u8);
+        let aad = unhex("50515253c0c1c2c3c4c5c6c7");
+        let plain = b"Ladies and Gentlemen of the class of '99: If I could offer you only one tip for the future, sunscreen would be it.";
+        let expected = unhex(
+            "bd6d179d3e83d43b9576579493c0e939572a1700252bfaccbed2902c21396cbb731c7f1b0b4aa6440bf3a82f4eda7e39ae64c6708c54c216cb96b72e1213b4522f8c9ba40db5d945b11b69b982c1bb9e3f3fac2bc369488f76b2383565d3fff921f9664c97637da9768812f615c68b13b52e
+             c0875924c1c7987947deafd8780acf49",
+        );
+        let ct = encrypt(&key, &nonce, plain, &aad).unwrap();
+        assert_eq!(ct, expected);
+        assert_eq!(decrypt(&key, &nonce, &ct, &aad).unwrap().as_slice(), plain);
+        // AAD, nonce, llave o texto cifrado alterados: Err, sin pánico.
+        assert!(decrypt(&key, &nonce, &ct, b"otra").is_err());
+        let mut n2 = nonce;
+        n2[23] ^= 1;
+        assert!(decrypt(&key, &n2, &ct, &aad).is_err());
+        let mut k2 = key;
+        k2[0] ^= 1;
+        assert!(decrypt(&k2, &nonce, &ct, &aad).is_err());
+        let mut c2 = ct.clone();
+        c2[0] ^= 1;
+        assert!(decrypt(&key, &nonce, &c2, &aad).is_err());
+        // Texto cifrado más corto que la etiqueta o vacío.
+        assert!(decrypt(&key, &nonce, &ct[..5], &aad).is_err());
+        assert!(decrypt(&key, &nonce, &[], &aad).is_err());
+    }
+
+    #[test]
+    fn random_is_not_constant() {
+        let (a, b) = (random::<24>(), random::<24>());
+        assert_ne!(a, b);
+        assert_ne!(a, [0u8; 24]);
+    }
 
     #[test]
     fn throttle_grows_exponentially() {

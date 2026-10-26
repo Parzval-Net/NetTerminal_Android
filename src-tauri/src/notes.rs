@@ -696,4 +696,72 @@ mod tests {
         assert_eq!(files(&d), vec!["otra.txt".to_string()]);
         fs::remove_dir_all(&d).unwrap();
     }
+
+    // ---------- Archivo de referencia (formato en disco) ----------
+    //
+    // `tests/fixtures/nota.ntenc` se generó con chacha20poly1305 0.10 y argon2 0.5. Debe
+    // abrir sin cambios con cualquier versión posterior: si una actualización rompe estas
+    // pruebas, cambió el formato y las notas protegidas de los usuarios dejarían de abrir.
+
+    const GOLDEN_PASSWORD: &str = "nota-de-prueba-1";
+    const GOLDEN_TEXT: &str = "hostname lab-core\nenable secret Pru3ba-Fija\nñandú € 日本\n\tfin\n";
+
+    fn golden_note() -> (PathBuf, Vec<u8>) {
+        let d = tmp();
+        let bytes = fs::read(Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/fixtures/nota.ntenc")).unwrap();
+        fs::write(d.join("nota.ntenc"), &bytes).unwrap();
+        (d, bytes)
+    }
+
+    /// Regenera el archivo de referencia. Solo a mano y con la versión anterior:
+    /// `NT_WRITE_GOLDEN=1 cargo test --lib write_golden_note -- --ignored`.
+    #[test]
+    #[ignore]
+    fn write_golden_note() {
+        if std::env::var("NT_WRITE_GOLDEN").as_deref() != Ok("1") {
+            return;
+        }
+        let dir = Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/fixtures");
+        let salt = random::<16>();
+        let key = derive(GOLDEN_PASSWORD, &salt, KDF_DEFAULT).unwrap();
+        seal_write(&dir.join("nota.ntenc"), &key, KDF_DEFAULT, salt, GOLDEN_TEXT).unwrap();
+    }
+
+    #[test]
+    fn golden_note_opens() {
+        let (d, bytes) = golden_note();
+        // Cabecera: NTNOTES | v1 | m=65536 t=3 p=1 | sal (16) | nonce (24); luego texto + etiqueta.
+        assert_eq!(&bytes[..8], b"NTNOTES\x01");
+        assert_eq!(Kdf::decode(&bytes[8..20]), KDF_DEFAULT);
+        assert_eq!(bytes.len(), HEADER_LEN + GOLDEN_TEXT.len() + 16);
+        let s = SecureNotes::with(FAST);
+        assert_eq!(s.unlock(&d, "nota", "nota-de-prueba-2", 300).unwrap_err(), BAD_PASSWORD);
+        unthrottle(&s);
+        assert_eq!(s.unlock(&d, "nota", GOLDEN_PASSWORD, 300).unwrap().as_str(), GOLDEN_TEXT);
+        assert_eq!(fs::read(d.join("nota.ntenc")).unwrap(), bytes, "abrir no reescribe");
+        fs::remove_dir_all(&d).unwrap();
+    }
+
+    /// Guardar la nota de referencia con el código actual mantiene cabecera (sin el nonce) y largo.
+    #[test]
+    fn golden_note_roundtrip_keeps_format() {
+        let (d, before) = golden_note();
+        let s = SecureNotes::with(FAST);
+        s.unlock(&d, "nota", GOLDEN_PASSWORD, 300).unwrap();
+        s.save(&d, "nota", GOLDEN_TEXT).unwrap();
+        let after = fs::read(d.join("nota.ntenc")).unwrap();
+        assert_eq!(after.len(), before.len());
+        assert_eq!(&after[..36], &before[..36], "magia, versión, parámetros y sal");
+        assert_ne!(&after[36..60], &before[36..60], "nonce nuevo");
+        assert_eq!(SecureNotes::with(FAST).unlock(&d, "nota", GOLDEN_PASSWORD, 300).unwrap().as_str(), GOLDEN_TEXT);
+        // Nota nueva: mismo diseño v1 con los parámetros del llamador.
+        save(&d, "nueva", "abc").unwrap();
+        s.protect(&d, "nueva", "contraseña-larga", 300).unwrap();
+        let b = fs::read(d.join("nueva.ntenc")).unwrap();
+        assert_eq!(HEADER_LEN, 60);
+        assert_eq!(b.len(), HEADER_LEN + 3 + 16);
+        assert_eq!(&b[..8], b"NTNOTES\x01");
+        assert_eq!(Kdf::decode(&b[8..20]), FAST);
+        fs::remove_dir_all(&d).unwrap();
+    }
 }
