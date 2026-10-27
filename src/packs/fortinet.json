@@ -2629,6 +2629,484 @@
       "cat": "Configuración",
       "risk": "read",
       "source": "https://docs.fortinet.com/document/fortigate/7.4.8/cli-reference/130421147/config-system-settings"
+    },
+    {
+      "cmd": "get extender session-info",
+      "desc": "Sesiones CAPWAP de FortiExtender y FortiGate connector gestionados: modo (lan-extension o wan-extension), estado running, uptime y echos perdidos.",
+      "cat": "Sistema",
+      "risk": "read",
+      "note": "Ejecutar en el FortiGate controlador. Primer chequeo de LAN extension tras autorizar el equipo.",
+      "source": "https://docs.fortinet.com/document/fortigate/7.4.10/administration-guide/848299/example-cli-configuration"
+    },
+    {
+      "cmd": "get extender lanextension-vdom-status",
+      "desc": "Estado LAN extension en un FortiGate que actúa como connector: canal de control (IP del controlador, echos perdidos, EXTWS_RUN) y canal de datos por uplink (túnel IPsec y VXLAN).",
+      "cat": "Sistema",
+      "risk": "read",
+      "platforms": [
+        "fos72",
+        "fos74",
+        "fos76"
+      ],
+      "note": "Ejecutar dentro del VDOM tipo lan-extension del FortiGate connector.",
+      "source": "https://docs.fortinet.com/document/fortigate/7.4.10/administration-guide/848299/example-cli-configuration"
+    },
+    {
+      "cmd": "diagnose sys vxlan fdb list",
+      "desc": "Tabla de forwarding VXLAN (MAC remotas por VTEP). Valida el plano de datos L2 de LAN extension en controlador y connector.",
+      "cat": "Capa 2",
+      "risk": "read",
+      "source": "https://docs.fortinet.com/document/fortigate/7.4.10/administration-guide/848299/example-cli-configuration"
+    },
+    {
+      "cmd": "config vdom\nedit {{vdom}}\nconfig system settings\nset vdom-type lan-extension\nset lan-extension-controller-addr {{ip}}\nend\nnext\nend",
+      "desc": "Convierte un VDOM del FortiGate en connector LAN extension (actúa como FortiExtender) apuntando a la IP del FortiGate controlador.",
+      "cat": "Configuración",
+      "risk": "change",
+      "platforms": [
+        "fos72",
+        "fos74",
+        "fos76"
+      ],
+      "note": "Requiere multi-vdom. En modelos 1000 o superiores habilitar antes set fortiextender enable en config system global.",
+      "source": "https://docs.fortinet.com/document/fortigate/7.4.10/administration-guide/848299/example-cli-configuration"
+    },
+    {
+      "cmd": "config extension-controller fortigate\nedit {{serial}}\nset authorized enable\nnext\nend",
+      "desc": "Autoriza en el controlador un FortiGate connector LAN extension descubierto.",
+      "cat": "Configuración",
+      "risk": "change",
+      "platforms": [
+        "fos72",
+        "fos74",
+        "fos76"
+      ],
+      "note": "Tras autorizar, el controlador empuja IPsec y VXLAN al connector y crea la interfaz tipo lan-extension.",
+      "source": "https://docs.fortinet.com/document/fortigate/7.6.6/cli-reference/287318706/config-extension-controller-fortigate"
+    },
+    {
+      "cmd": "show extension-controller fortigate-profile",
+      "desc": "Perfiles de FortiGate connector: túnel IPsec y backhaul-interface de LAN extension.",
+      "cat": "Configuración",
+      "risk": "read",
+      "platforms": [
+        "fos72",
+        "fos74",
+        "fos76"
+      ],
+      "source": "https://docs.fortinet.com/document/fortigate/7.6.6/cli-reference/181925749/config-extension-controller-fortigate-profile"
+    },
+    {
+      "cmd": "config extension-controller extender\nedit {{serial}}\nset extension-type lan-extension\nset authorized enable\nnext\nend",
+      "desc": "Pasa un FortiExtender gestionado a modo LAN extension (wan-extension es el otro valor) y lo autoriza.",
+      "cat": "Configuración",
+      "risk": "change",
+      "platforms": [
+        "fos70",
+        "fos72",
+        "fos74",
+        "fos76"
+      ],
+      "variants": [
+        {
+          "platforms": [
+            "fos70"
+          ],
+          "cmd": "config extender-controller extender\nedit {{serial}}\nset extension-type lan-extension\nset authorized enable\nnext\nend"
+        }
+      ],
+      "note": "LAN extension requiere FortiOS 7.0.2+ y FortiExtender OS 7.x. El FortiGate crea solo el perfil, el túnel IPsec y la interfaz lan-extension.",
+      "source": "https://docs.fortinet.com/document/fortigate/7.6.6/cli-reference/278860181/config-extension-controller-extender"
+    },
+    {
+      "cmd": "diagnose sys lte-modem modem-details",
+      "desc": "Detalle del módem LTE integrado: fabricante, modelo, IMEI, firmware y estado. Si sale en blanco, el módem no fue detectado.",
+      "cat": "Hardware",
+      "risk": "read",
+      "note": "Solo FortiGate/FortiWiFi con módem LTE integrado (ej. FG-40F-3G4G, FWF-40F-3G4G, FGR con LTE).",
+      "source": "https://docs.fortinet.com/document/fortigate/7.0.0/new-features/315830/add-monitoring-api-to-retrieve-lte-modem-statistics-from-3g-and-4g-fortigates-7-0-1"
+    },
+    {
+      "cmd": "diagnose sys lte-modem sim-info",
+      "desc": "Estado de la SIM: slot activo, SIM state (QMI_UIM_CARD_STATE_PRESENT = detectada), ICCID, IMSI y red.",
+      "cat": "Hardware",
+      "risk": "read",
+      "note": "Solo FortiGate/FortiWiFi con módem LTE integrado (ej. FG-40F-3G4G, FWF-40F-3G4G, FGR con LTE). Primer paso cuando la interfaz wwan no obtiene IP.",
+      "source": "https://docs.fortinet.com/document/fortigate/7.0.0/new-features/315830/add-monitoring-api-to-retrieve-lte-modem-statistics-from-3g-and-4g-fortigates-7-0-1"
+    },
+    {
+      "cmd": "diagnose sys lte-modem signal-info",
+      "desc": "Señal del módem LTE integrado: RSSI, RSRQ, RSRP y SNR (y RSSI/ECIO en WCDMA).",
+      "cat": "Hardware",
+      "risk": "read",
+      "note": "Solo FortiGate/FortiWiFi con módem LTE integrado (ej. FG-40F-3G4G, FWF-40F-3G4G, FGR con LTE). El SNR viene en décimas de dB (44 = 4,4 dB) según KB 97416.",
+      "source": "https://docs.fortinet.com/document/fortigate/7.0.0/new-features/315830/add-monitoring-api-to-retrieve-lte-modem-statistics-from-3g-and-4g-fortigates-7-0-1"
+    },
+    {
+      "cmd": "diagnose sys lte-modem data-session-info",
+      "desc": "Sesión de datos: estado de conexión QMI, perfil, APN, IP, gateway y DNS asignados por el carrier.",
+      "cat": "Conexiones y tráfico",
+      "risk": "read",
+      "note": "Solo FortiGate/FortiWiFi con módem LTE integrado (ej. FG-40F-3G4G, FWF-40F-3G4G, FGR con LTE).",
+      "source": "https://docs.fortinet.com/document/fortigate/7.0.0/new-features/315830/add-monitoring-api-to-retrieve-lte-modem-statistics-from-3g-and-4g-fortigates-7-0-1"
+    },
+    {
+      "cmd": "diagnose sys lte-modem data-usage",
+      "desc": "Consumo de datos del módem LTE integrado.",
+      "cat": "Conexiones y tráfico",
+      "risk": "read",
+      "note": "Solo FortiGate/FortiWiFi con módem LTE integrado (ej. FG-40F-3G4G, FWF-40F-3G4G, FGR con LTE).",
+      "source": "https://docs.fortinet.com/document/fortigate/7.0.0/new-features/315830/add-monitoring-api-to-retrieve-lte-modem-statistics-from-3g-and-4g-fortigates-7-0-1"
+    },
+    {
+      "cmd": "diagnose sys lte-modem traffic-status",
+      "desc": "Contadores TX/RX del módem LTE (paquetes, errores, overflows, bytes y descartes).",
+      "cat": "Conexiones y tráfico",
+      "risk": "read",
+      "note": "Fuente comunitaria: KB 97416. Solo FortiGate/FortiWiFi con módem LTE integrado (ej. FG-40F-3G4G, FWF-40F-3G4G, FGR con LTE).",
+      "source": "https://community.fortinet.com/fortigate-3/technical-tip-how-to-check-the-stats-for-the-lte-modem-97416"
+    },
+    {
+      "cmd": "diagnose sys lte-modem gps-info",
+      "desc": "Información GPS del módem LTE integrado.",
+      "cat": "Hardware",
+      "risk": "read",
+      "note": "Fuente comunitaria: KB 97416. Solo FortiGate/FortiWiFi con módem LTE integrado (ej. FG-40F-3G4G, FWF-40F-3G4G, FGR con LTE). Requiere antena GPS y gps-service habilitado.",
+      "source": "https://community.fortinet.com/fortigate-3/technical-tip-how-to-check-the-stats-for-the-lte-modem-97416"
+    },
+    {
+      "cmd": "diagnose debug application lted -1",
+      "desc": "Debug del daemon LTE (lted): detección USB del módem, SIM, registro en la red (QMI_NAS), sesión de datos e IP. Requiere diagnose debug enable.",
+      "cat": "Diagnóstico",
+      "risk": "change",
+      "note": "Fuente comunitaria: KB 110916 y 205438 (FG-40F-3G4G). Detener con diagnose debug disable y diagnose debug reset.",
+      "source": "https://community.fortinet.com/fortigate-3/troubleshooting-tip-wwan-3g-4g-interface-does-not-obtain-ip-address-problem-110916"
+    },
+    {
+      "cmd": "show system lte-modem",
+      "desc": "Configuración del módem LTE integrado: estado, APN, autenticación, modo (standalone o redundant) y PIN de SIM.",
+      "cat": "Configuración",
+      "risk": "read",
+      "note": "Solo FortiGate/FortiWiFi con módem LTE integrado (ej. FG-40F-3G4G, FWF-40F-3G4G, FGR con LTE). Algunos parámetros no existen en todos los modelos.",
+      "source": "https://docs.fortinet.com/document/fortigate/7.6.6/cli-reference/156534764/config-system-lte-modem"
+    },
+    {
+      "cmd": "config system lte-modem\nset status enable\nset apn {{apn}}\nend",
+      "desc": "Habilita el módem LTE integrado y fija el APN del carrier cuando la SIM no lo trae preconfigurado.",
+      "cat": "Configuración",
+      "risk": "change",
+      "note": "Solo FortiGate/FortiWiFi con módem LTE integrado (ej. FG-40F-3G4G, FWF-40F-3G4G, FGR con LTE). Si hay usuario y clave, agregar set authtype, set username y set passwd.",
+      "source": "https://docs.fortinet.com/document/fortigate/7.6.6/cli-reference/156534764/config-system-lte-modem"
+    },
+    {
+      "cmd": "execute lte-modem wireless-profile list",
+      "desc": "Lista los perfiles inalámbricos (APN, tipo PDP, autenticación) almacenados en el módem.",
+      "cat": "Hardware",
+      "risk": "read",
+      "note": "Solo FortiGate/FortiWiFi con módem LTE integrado (ej. FG-40F-3G4G, FWF-40F-3G4G, FGR con LTE).",
+      "source": "https://docs.fortinet.com/document/fortigate/7.6.6/cli-reference/111089471/execute-lte-modem"
+    },
+    {
+      "cmd": "execute lte-modem wireless-profile create {{nombre}} 0 {{tipo_pdp}} {{apn}} 0",
+      "desc": "Crea un perfil inalámbrico 3GPP con APN y sin autenticación. tipo_pdp: 0 IPv4, 1 PPP, 2 IPv6, 3 IPv4v6.",
+      "cat": "Configuración",
+      "risk": "change",
+      "note": "Solo FortiGate/FortiWiFi con módem LTE integrado (ej. FG-40F-3G4G, FWF-40F-3G4G, FGR con LTE). Con autenticación cambiar el último 0 por 1 PAP, 2 CHAP o 3 PAP y CHAP y agregar usuario y clave. Probar con execute lte-modem wireless-profile test.",
+      "source": "https://docs.fortinet.com/document/fortigate/7.6.6/cli-reference/111089471/execute-lte-modem"
+    },
+    {
+      "cmd": "execute lte-modem PLMN-profile list",
+      "desc": "Lista los perfiles PLMN (bloqueo de operador) configurados en el módem.",
+      "cat": "Hardware",
+      "risk": "read",
+      "note": "Solo FortiGate/FortiWiFi con módem LTE integrado (ej. FG-40F-3G4G, FWF-40F-3G4G, FGR con LTE).",
+      "source": "https://docs.fortinet.com/document/fortigate/7.6.6/cli-reference/111089471/execute-lte-modem"
+    },
+    {
+      "cmd": "execute lte-modem sim-switch",
+      "desc": "Cambia manualmente al otro slot de SIM. Corta la sesión de datos mientras conecta con la otra SIM.",
+      "cat": "Hardware",
+      "risk": "disruptive",
+      "note": "Solo FortiGate/FortiWiFi con módem LTE integrado (ej. FG-40F-3G4G, FWF-40F-3G4G, FGR con LTE).",
+      "source": "https://docs.fortinet.com/document/fortigate/7.6.6/cli-reference/111089471/execute-lte-modem"
+    },
+    {
+      "cmd": "execute lte-modem reboot",
+      "desc": "Reinicio en caliente del módem LTE. Corta la conexión wwan.",
+      "cat": "Hardware",
+      "risk": "disruptive",
+      "note": "Solo FortiGate/FortiWiFi con módem LTE integrado (ej. FG-40F-3G4G, FWF-40F-3G4G, FGR con LTE). cold-reboot hace reinicio en frío.",
+      "source": "https://docs.fortinet.com/document/fortigate/7.6.6/cli-reference/111089471/execute-lte-modem"
+    },
+    {
+      "cmd": "execute lte-modem power-off",
+      "desc": "Apaga el módem LTE integrado. Volver a encender con execute lte-modem power-on.",
+      "cat": "Hardware",
+      "risk": "disruptive",
+      "note": "Solo FortiGate/FortiWiFi con módem LTE integrado (ej. FG-40F-3G4G, FWF-40F-3G4G, FGR con LTE).",
+      "source": "https://docs.fortinet.com/document/fortigate/7.6.6/cli-reference/111089471/execute-lte-modem"
+    },
+    {
+      "cmd": "execute lte-modem get-modem-firmware tftp {{archivo}} {{ip_tftp}}",
+      "desc": "Carga firmware de módem LTE desde TFTP. Se aplica luego con execute lte-modem start-upgrade.",
+      "cat": "Hardware",
+      "risk": "change",
+      "note": "Solo FortiGate/FortiWiFi con módem LTE integrado (ej. FG-40F-3G4G, FWF-40F-3G4G, FGR con LTE). También admite ftp, usb o management-station.",
+      "source": "https://docs.fortinet.com/document/fortigate/7.6.6/cli-reference/111089471/execute-lte-modem"
+    },
+    {
+      "cmd": "execute lte-modem start-upgrade",
+      "desc": "Inicia la actualización de firmware del módem LTE con la imagen cargada. El enlace wwan se cae durante el proceso.",
+      "cat": "Hardware",
+      "risk": "disruptive",
+      "note": "Solo FortiGate/FortiWiFi con módem LTE integrado (ej. FG-40F-3G4G, FWF-40F-3G4G, FGR con LTE). start-upgrade-remote descarga e instala vía FortiCloud.",
+      "source": "https://docs.fortinet.com/document/fortigate/7.6.6/cli-reference/111089471/execute-lte-modem"
+    },
+    {
+      "cmd": "execute lte-modem purge-billing-data",
+      "desc": "Borra los datos de facturación (consumo) almacenados del módem LTE.",
+      "cat": "Conexiones y tráfico",
+      "risk": "change",
+      "note": "Solo FortiGate/FortiWiFi con módem LTE integrado (ej. FG-40F-3G4G, FWF-40F-3G4G, FGR con LTE).",
+      "source": "https://docs.fortinet.com/document/fortigate/7.6.6/cli-reference/111089471/execute-lte-modem"
+    },
+    {
+      "cmd": "diagnose sys 5g-modem modem-details",
+      "desc": "Detalle del módem 5G: fabricante, modelo, IMEI, firmware, carrier config, temperatura, modo de operación (debe ser ONLINE) y modo de red.",
+      "cat": "Hardware",
+      "risk": "read",
+      "platforms": [
+        "fos70",
+        "fos72",
+        "fos74",
+        "fos76"
+      ],
+      "note": "Solo modelos con módem 5G integrado (FG/FWF-50G-5G, FGR-60G-5G, FGR-70G-5G-DUAL). En FGR-70G-5G-DUAL agregar 1, 2 o all para elegir el módem.",
+      "source": "https://docs.fortinet.com/document/fortigate/7.0.15/operators-manual/121081/diagnose-sys-5g-modem-modem-details"
+    },
+    {
+      "cmd": "diagnose sys 5g-modem sim-info",
+      "desc": "SIM del módem 5G por slot: slot activo, estado (PRESENT, ABSENT, ERROR), ICCID, IMSI, red y estado del PIN.",
+      "cat": "Hardware",
+      "risk": "read",
+      "platforms": [
+        "fos70",
+        "fos72",
+        "fos74",
+        "fos76"
+      ],
+      "note": "Solo modelos con módem 5G integrado (FG/FWF-50G-5G, FGR-60G-5G, FGR-70G-5G-DUAL). En FGR-70G-5G-DUAL agregar 1, 2 o all para elegir el módem.",
+      "source": "https://docs.fortinet.com/document/fortigate/7.0.15/operators-manual/366238/diagnose-sys-5g-modem-sim-info"
+    },
+    {
+      "cmd": "diagnose sys 5g-modem signal-info",
+      "desc": "Señal del módem 5G con calificación: LTE (RSSI, RSRQ, RSRP, SNR) y NR5G (RSRP, SNR).",
+      "cat": "Hardware",
+      "risk": "read",
+      "platforms": [
+        "fos70",
+        "fos72",
+        "fos74",
+        "fos76"
+      ],
+      "note": "Solo modelos con módem 5G integrado (FG/FWF-50G-5G, FGR-60G-5G, FGR-70G-5G-DUAL). En FGR-70G-5G-DUAL agregar 1, 2 o all para elegir el módem.",
+      "source": "https://docs.fortinet.com/document/fortigate/7.0.15/operators-manual/210605/diagnose-sys-5g-modem-signal-info"
+    },
+    {
+      "cmd": "diagnose sys 5g-modem data-session-info",
+      "desc": "Sesión de datos 5G: estado de conexión IPv4/IPv6, perfil, tipo PDP, APN, IP, gateway, DNS y MTU.",
+      "cat": "Conexiones y tráfico",
+      "risk": "read",
+      "platforms": [
+        "fos70",
+        "fos72",
+        "fos74",
+        "fos76"
+      ],
+      "note": "Solo modelos con módem 5G integrado (FG/FWF-50G-5G, FGR-60G-5G, FGR-70G-5G-DUAL). En FGR-70G-5G-DUAL agregar 1, 2 o all para elegir el módem.",
+      "source": "https://docs.fortinet.com/document/fortigate/7.0.15/operators-manual/979057/diagnose-sys-5g-modem-data-session-info"
+    },
+    {
+      "cmd": "diagnose sys 5g-modem traffic-status",
+      "desc": "Contadores TX/RX IPv4 e IPv6 del módem 5G. Se reinician al cambiar entre 5G y LTE o al caer la sesión.",
+      "cat": "Conexiones y tráfico",
+      "risk": "read",
+      "platforms": [
+        "fos70",
+        "fos72",
+        "fos74",
+        "fos76"
+      ],
+      "note": "Solo modelos con módem 5G integrado (FG/FWF-50G-5G, FGR-60G-5G, FGR-70G-5G-DUAL). En FGR-70G-5G-DUAL agregar 1, 2 o all para elegir el módem.",
+      "source": "https://docs.fortinet.com/document/fortigate/7.0.15/operators-manual/928071/diagnose-sys-5g-modem-traffic-status"
+    },
+    {
+      "cmd": "diagnose sys 5g-modem gps-info",
+      "desc": "Posición GPS reportada por el módem 5G.",
+      "cat": "Hardware",
+      "risk": "read",
+      "platforms": [
+        "fos70",
+        "fos72",
+        "fos74",
+        "fos76"
+      ],
+      "note": "Solo modelos con módem 5G integrado (FG/FWF-50G-5G, FGR-60G-5G, FGR-70G-5G-DUAL). En FGR-70G-5G-DUAL agregar 1, 2 o all para elegir el módem. Requiere gps-service enable.",
+      "source": "https://docs.fortinet.com/document/fortigate/7.0.15/operators-manual/336755/diagnose-sys-5g-modem-gps-info"
+    },
+    {
+      "cmd": "diagnose test application nr5gd 15",
+      "desc": "Muestra señal y banda del módem 5G (modem1) según el daemon nr5gd.",
+      "cat": "Diagnóstico",
+      "risk": "read",
+      "platforms": [
+        "fos70",
+        "fos72",
+        "fos74",
+        "fos76"
+      ],
+      "note": "Solo modelos con módem 5G integrado (FG/FWF-50G-5G, FGR-60G-5G, FGR-70G-5G-DUAL). Otras opciones: 1 máquina de estados, 3 estado de conexión, 6 slot. En FGR-70G-5G-DUAL el módem 2 usa 75 (señal) y 61 a 74.",
+      "source": "https://docs.fortinet.com/document/fortigate/7.0.15/operators-manual/65535/diagnose-test-application-commands"
+    },
+    {
+      "cmd": "diagnose debug application nr5gd -1",
+      "desc": "Debug del daemon 5G (nr5gd) para flapping o falta de IP en wwan. Requiere diagnose debug enable.",
+      "cat": "Diagnóstico",
+      "risk": "change",
+      "platforms": [
+        "fos70",
+        "fos72",
+        "fos74",
+        "fos76"
+      ],
+      "note": "Fuente comunitaria: KB 217375 (FG-50G-5G). Detener con diagnose debug disable y diagnose debug reset.",
+      "source": "https://community.fortinet.com/fortigate-3/troubleshooting-tip-how-to-troubleshoot-fortigate-50g-5g-modem-flapping-issue-217375"
+    },
+    {
+      "cmd": "execute usb-device list",
+      "desc": "Lista los dispositivos USB del sistema. En modelos 5G valida que el módem (ej. Telit FN990) esté enumerado.",
+      "cat": "Hardware",
+      "risk": "read",
+      "platforms": [
+        "fos70",
+        "fos72",
+        "fos74",
+        "fos76"
+      ],
+      "note": "Si el módem no aparece, revisar hardware o firmware del módem.",
+      "source": "https://docs.fortinet.com/document/fortigate/7.0.15/operators-manual/441961/check-modem-driver-status"
+    },
+    {
+      "cmd": "execute 5g-modem carrier-config list",
+      "desc": "Lista las configuraciones de carrier (firmware PRI) disponibles en el módem 5G.",
+      "cat": "Hardware",
+      "risk": "read",
+      "platforms": [
+        "fos70",
+        "fos72",
+        "fos74",
+        "fos76"
+      ],
+      "note": "Solo modelos con módem 5G integrado (FG/FWF-50G-5G, FGR-60G-5G, FGR-70G-5G-DUAL).",
+      "source": "https://docs.fortinet.com/document/fortigate/7.6.6/cli-reference/738528912/execute-5g-modem"
+    },
+    {
+      "cmd": "execute 5g-modem carrier-config switch {{indice}}",
+      "desc": "Cambia la configuración de carrier del módem 5G. Reinicia la conexión del módem.",
+      "cat": "Hardware",
+      "risk": "disruptive",
+      "platforms": [
+        "fos70",
+        "fos72",
+        "fos74",
+        "fos76"
+      ],
+      "note": "Solo modelos con módem 5G integrado (FG/FWF-50G-5G, FGR-60G-5G, FGR-70G-5G-DUAL). Requiere set carrier-config manual en config system 5g-modem > config modem1.",
+      "source": "https://docs.fortinet.com/document/fortigate/7.6.6/cli-reference/738528912/execute-5g-modem"
+    },
+    {
+      "cmd": "execute 5g-modem sim-switch",
+      "desc": "Cambia manualmente de slot de SIM en el módem 5G. Corta la sesión de datos.",
+      "cat": "Hardware",
+      "risk": "disruptive",
+      "platforms": [
+        "fos70",
+        "fos72",
+        "fos74",
+        "fos76"
+      ],
+      "note": "Solo modelos con módem 5G integrado (FG/FWF-50G-5G, FGR-60G-5G, FGR-70G-5G-DUAL). No existe en FGR-70G-5G-DUAL.",
+      "source": "https://docs.fortinet.com/document/fortigate/7.6.6/cli-reference/738528912/execute-5g-modem"
+    },
+    {
+      "cmd": "execute 5g-modem reboot",
+      "desc": "Reinicio en caliente del módem 5G. Corta la conexión wwan.",
+      "cat": "Hardware",
+      "risk": "disruptive",
+      "platforms": [
+        "fos70",
+        "fos72",
+        "fos74",
+        "fos76"
+      ],
+      "note": "Solo modelos con módem 5G integrado (FG/FWF-50G-5G, FGR-60G-5G, FGR-70G-5G-DUAL). cold-reboot hace reinicio en frío.",
+      "source": "https://docs.fortinet.com/document/fortigate/7.6.6/cli-reference/738528912/execute-5g-modem"
+    },
+    {
+      "cmd": "execute 5g-modem firmware-upgrade tftp {{archivo}} {{ip_tftp}}",
+      "desc": "Actualiza el firmware del módem 5G desde TFTP. El enlace wwan se cae durante el proceso.",
+      "cat": "Hardware",
+      "risk": "disruptive",
+      "platforms": [
+        "fos70",
+        "fos72",
+        "fos74",
+        "fos76"
+      ],
+      "note": "Solo modelos con módem 5G integrado (FG/FWF-50G-5G, FGR-60G-5G, FGR-70G-5G-DUAL). También admite ftp, usb o management-station.",
+      "source": "https://docs.fortinet.com/document/fortigate/7.6.6/cli-reference/738528912/execute-5g-modem"
+    },
+    {
+      "cmd": "execute 5g-modem esim profile list",
+      "desc": "Lista los perfiles eSIM: índice, ICCID y estado.",
+      "cat": "Hardware",
+      "risk": "read",
+      "platforms": [
+        "fos70",
+        "fos72",
+        "fos74",
+        "fos76"
+      ],
+      "note": "eSIM solo en FGR-60G-5G según la matriz del Operator's Manual.",
+      "source": "https://docs.fortinet.com/document/fortigate/7.0.15/operators-manual/71728/execute-5g-modem-esim-profile-list"
+    },
+    {
+      "cmd": "config system 5g-modem\nconfig modem1\nset network-type {{tipo}}\nend\nend",
+      "desc": "Fija el tipo de red del módem 5G: auto, 5g (solo SA), 4g|5g (NSA), 4g, 3g|4g, 3g|5g o 3g.",
+      "cat": "Configuración",
+      "risk": "change",
+      "platforms": [
+        "fos70",
+        "fos72",
+        "fos74",
+        "fos76"
+      ],
+      "note": "Solo modelos con módem 5G integrado (FG/FWF-50G-5G, FGR-60G-5G, FGR-70G-5G-DUAL). Reconecta el módem. En el mismo bloque: status online o low-power, sim1-pin, sim1-data-plan y gps-service.",
+      "source": "https://docs.fortinet.com/document/fortigate/7.6.6/cli-reference/961913955/config-system-5g-modem"
+    },
+    {
+      "cmd": "show system 5g-modem",
+      "desc": "Configuración del módem 5G: data plans, modem1 (red, carrier-config, SIM) y política de sim-switch.",
+      "cat": "Configuración",
+      "risk": "read",
+      "platforms": [
+        "fos70",
+        "fos72",
+        "fos74",
+        "fos76"
+      ],
+      "note": "Solo modelos con módem 5G integrado (FG/FWF-50G-5G, FGR-60G-5G, FGR-70G-5G-DUAL).",
+      "source": "https://docs.fortinet.com/document/fortigate/7.6.6/cli-reference/961913955/config-system-5g-modem"
     }
   ]
 }

@@ -645,7 +645,9 @@ const EXEC_PROMPTS = {
       const idx = S.getIndex(catalog, pl.id);
       for (const e of idx.entries) {
         const abbr = e.toks.map((x) => x.slice(0, 2)).join(" ");
-        for (const buf of [abbr, e.cmd.slice(0, 2), e.cmd.slice(0, 4), e.cmd]) {
+        // "dot1x ..." abreviado a "do ..." es el escape `do` de Cisco: el equipo lo lee igual.
+        const bufs = [abbr, e.cmd.slice(0, 2), e.cmd.slice(0, 4), e.cmd].filter((b) => v.id !== "cisco" || !/^do(\s|$)/.test(b) || /^do\s/.test(e.cmd));
+        for (const buf of bufs) {
           for (const p of prompts) {
             const q = S.suggestQuery(buf, p, idx);
             checked++;

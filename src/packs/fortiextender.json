@@ -3,10 +3,16 @@
   "name": "FortiExtender",
   "platforms": [
     {
+      "id": "fext4",
+      "label": "FortiExtender OS 4.x",
+      "detect": "^\\s*Image version\\s*:\\s*FX\\S*-v4\\.",
+      "note": "Firmware legado (4.0 a 4.2). Sin modo LAN extension: solo WAN extension (FortiGate), FortiExtender Cloud o standalone. Resto de la sintaxis igual a 7.x según la guía 4.1.2."
+    },
+    {
       "id": "fext",
-      "label": "FortiExtender OS (4.x / 7.x)",
+      "label": "FortiExtender OS 7.x / 8.x",
       "detect": "Model\\s*:\\s*FortiExtender|Image version\\s*:\\s*FX",
-      "note": "CLI propia vía consola, SSH o Telnet. La sintaxis de estos comandos es la misma en 4.x y 7.x según las guías oficiales."
+      "note": "CLI propia vía consola, SSH o Telnet. Desde 7.0 agrega LAN extension (VXLAN sobre IPsec hacia FortiGate). Equipos 5G (FEX-511G, 311G), dual módem (modem1/modem2) y Wi-Fi (FEV-211F) usan la misma CLI con opciones adicionales."
     }
   ],
   "detectCommand": "get system version",
@@ -58,7 +64,8 @@
       "desc": "Modo de gestión (FortiGate, Cloud o local), dirección del controlador, management-state (CWWS_RUN = operativo), network-mode e intervalos de discovery y echo. Clave para validar la conexión con el FortiGate.",
       "cat": "Sistema",
       "risk": "read",
-      "source": "https://docs.fortinet.com/document/fortiextender/7.6.1/admin-guide-standalone/310622/check-current-manage-mode"
+      "source": "https://docs.fortinet.com/document/fortiextender/7.6.1/admin-guide-standalone/310622/check-current-manage-mode",
+      "note": "El campo mode indica quién gestiona el equipo (FortiGate, CLOUD o local) y management-state CWWS_RUN confirma el canal CAPWAP activo."
     },
     {
       "cmd": "get cpm status",
@@ -172,7 +179,7 @@
       "desc": "Envía un comando AT al módem 1. Ejemplos: ati (IMEI y modelo), at+cimi (IMSI), at!gstatus# (señal, banda, RSRP, SINR), at+cgdcont# (APN), at!impref# (firmware preferido vs actual).",
       "cat": "Diagnóstico",
       "risk": "change",
-      "note": "El carácter ? del AT se escribe como #. En algunas versiones requiere execute show-hidden antes. Usar solo comandos AT de consulta. Sin argumento entra al modo AT interactivo (KB 179896). Los comandos AT dependen del fabricante del módem: at!gstatus es Sierra Wireless, AT+QNWPREFCFG es Quectel.",
+      "note": "El carácter ? del AT se escribe como #. En algunas versiones requiere execute show-hidden antes. Usar solo comandos AT de consulta. Sin argumento entra al modo AT interactivo (KB 179896). Los comandos AT dependen del fabricante del módem: at!gstatus es Sierra Wireless, AT+QNWPREFCFG es Quectel. En FEX-511G y 511G-WiFi (5G, 7.6) Fortinet Community usa el modo interactivo con AT!SELRAT? para ver el modo de radio y AT!SELRAT=06 (solo LTE), 20 (solo NR 5G) o 00 (automático); el cambio aplica tras reiniciar (KB 226973).",
       "source": "https://community.fortinet.com/t5/FortiExtender/Technical-Tip-Commands-to-collect-AT-information/ta-p/192191"
     },
     {
@@ -375,7 +382,11 @@
       "desc": "Estado de las interfaces VXLAN. Útil en modo LAN extension.",
       "cat": "Interfaces",
       "risk": "read",
-      "source": "https://docs.fortinet.com/document/fortiextender/7.4.3/troubleshooting-guide/975914/fortiextender-debug-and-diagnose-commands-cheat-sheet"
+      "source": "https://docs.fortinet.com/document/fortiextender/7.4.3/troubleshooting-guide/975914/fortiextender-debug-and-diagnose-commands-cheat-sheet",
+      "platforms": [
+        "fext"
+      ],
+      "note": "Solo FortiExtender 7.x en modo LAN extension (interfaces le-vxlan sobre los túneles IPsec hacia el FortiGate)."
     },
     {
       "cmd": "get vpn ipsec negotiation error",
@@ -383,6 +394,118 @@
       "cat": "MPLS / VPN",
       "risk": "read",
       "source": "https://docs.fortinet.com/document/fortiextender/7.4.3/troubleshooting-guide/975914/fortiextender-debug-and-diagnose-commands-cheat-sheet"
+    },
+    {
+      "cmd": "get system aggregate-interface status",
+      "desc": "Estado de las interfaces agregadas. En LAN extension muestra le-agg-link y sus miembros VXLAN (uno por uplink) con su salud.",
+      "cat": "Interfaces",
+      "risk": "read",
+      "platforms": [
+        "fext"
+      ],
+      "note": "Si le-agg-link no aparece tras autorizar en el FortiGate, la configuración LAN extension no se ha empujado (guía de troubleshooting 7.4.3).",
+      "source": "https://docs.fortinet.com/document/fortiextender/7.4.3/troubleshooting-guide/975914/fortiextender-debug-and-diagnose-commands-cheat-sheet"
+    },
+    {
+      "cmd": "get system switch-interface status",
+      "desc": "Estado de los switch-interface. En LAN extension valida el softswitch le-switch que une le-agg-link con el puerto LAN.",
+      "cat": "Interfaces",
+      "risk": "read",
+      "platforms": [
+        "fext"
+      ],
+      "source": "https://docs.fortinet.com/document/fortiextender/7.4.3/troubleshooting-guide/975914/fortiextender-debug-and-diagnose-commands-cheat-sheet"
+    },
+    {
+      "cmd": "get vpn ipsec configurations",
+      "desc": "Configuración IPsec vigente. En LAN extension muestra los túneles de backhaul generados por el FortiGate (uno por uplink).",
+      "cat": "MPLS / VPN",
+      "risk": "read",
+      "source": "https://docs.fortinet.com/document/fortiextender/7.4.3/troubleshooting-guide/975914/fortiextender-debug-and-diagnose-commands-cheat-sheet"
+    },
+    {
+      "cmd": "execute debug EXTD ac_disc on",
+      "desc": "Debug del discovery CAPWAP hacia el FortiGate: muestra DISCOVERY_REQ y DISCOVERY_RESP. Usar cuando el equipo no aparece en el FortiGate o no llega a CWWS_RUN.",
+      "cat": "Diagnóstico",
+      "risk": "change",
+      "note": "Modo FortiGate-managed. Requiere execute debug log-to-console on en SSH/Telnet. Detener con execute debug clear.",
+      "source": "https://docs.fortinet.com/document/fortiextender/7.4.3/troubleshooting-guide/21290/fortigate-managed-mode-wan-extension-and-lan-extension"
+    },
+    {
+      "cmd": "execute debug EXTD fgvsp on",
+      "desc": "Debug de la configuración LAN extension empujada por el FortiGate: VXLAN, aggregate, switch-interface y políticas.",
+      "cat": "Diagnóstico",
+      "risk": "change",
+      "platforms": [
+        "fext"
+      ],
+      "note": "Usar cuando LAN extension está en CWWS_RUN pero le-switch no obtiene IP. Detener con execute debug clear.",
+      "source": "https://docs.fortinet.com/document/fortiextender/7.4.3/troubleshooting-guide/21290/fortigate-managed-mode-wan-extension-and-lan-extension"
+    },
+    {
+      "cmd": "execute debug NETD info on",
+      "desc": "Debug del daemon de red (interfaces, rutas). Fortinet lo pide junto a EXTD y CONNMGR cuando fext-wan no obtiene IP en WAN extension.",
+      "cat": "Diagnóstico",
+      "risk": "change",
+      "note": "Detener con execute debug clear.",
+      "source": "https://docs.fortinet.com/document/fortiextender/7.4.3/troubleshooting-guide/21290/fortigate-managed-mode-wan-extension-and-lan-extension"
+    },
+    {
+      "cmd": "execute debug CONNMGR connection on",
+      "desc": "Debug de eventos de conexión del connection manager (sesión de datos LTE/5G).",
+      "cat": "Diagnóstico",
+      "risk": "change",
+      "note": "Detener con execute debug clear.",
+      "source": "https://docs.fortinet.com/document/fortiextender/7.4.3/troubleshooting-guide/21290/fortigate-managed-mode-wan-extension-and-lan-extension"
+    },
+    {
+      "cmd": "config system management\nset discovery-type fortigate\nconfig fortigate\nset ac-discovery-type static\nconfig static-ac-addr\nedit 1\nset server {{ip}}\nnext\nend\nset discovery-intf {{interfaz}}\nend\nend",
+      "desc": "Fija el modo de gestión FortiGate con IP estática del controlador (AC) y la interfaz de discovery. Paso previo para WAN o LAN extension.",
+      "cat": "Configuración",
+      "risk": "change",
+      "platforms": [
+        "fext"
+      ],
+      "note": "discovery-type admite auto, fortigate, cloud o local. Cambiarlo desde cloud corta la gestión desde FortiExtender Cloud. discovery-intf acepta varias interfaces (ej. port1 port2). Validar con get extender status.",
+      "source": "https://docs.fortinet.com/document/fortigate/7.0.0/new-features/339612/introduce-lan-extension-mode-for-fortiextender-7-0-2"
+    },
+    {
+      "cmd": "config lte setting\nconfig modem1\nset default-sim {{sim}}\nend\nend",
+      "desc": "Define la SIM preferida del módem 1: sim1, sim2, by-carrier o by-cost.",
+      "cat": "Hardware",
+      "risk": "change",
+      "note": "En modelos dual módem usar config modem2 para el segundo. Ver con show dentro de config lte setting. Puede gatillar cambio de SIM y cortar la sesión de datos.",
+      "source": "https://docs.fortinet.com/document/fortiextender/7.6.1/cli-reference/474997/config-lte-setting"
+    },
+    {
+      "cmd": "config lte setting\nconfig modem1\nconfig auto-switch\nset by-disconnect enable\nset disconnect-threshold {{cantidad}}\nset disconnect-period {{segundos}}\nend\nend\nend",
+      "desc": "Activa el cambio automático de SIM del módem 1 por desconexiones (umbral 1-100 en un período de 600-18000 s).",
+      "cat": "Hardware",
+      "risk": "change",
+      "note": "auto-switch también admite by-signal, by-data-plan y by-health-monitor, y switch-back by-timer o by-time para volver a la SIM preferida. En dual módem repetir en config modem2.",
+      "source": "https://docs.fortinet.com/document/fortiextender/7.6.1/cli-reference/474997/config-lte-setting"
+    },
+    {
+      "cmd": "config wifi vap\nedit {{nombre}}\nset ssid {{ssid}}\nset broadcast-ssid enable\nconfig ap-security\nset security-mode WPA2-Personal\nset pmf optional\nset passphrase {{clave}}\nend\nnext\nend",
+      "desc": "Crea un SSID local (VAP) con WPA2-Personal en un FortiExtender con Wi-Fi.",
+      "cat": "Configuración",
+      "risk": "change",
+      "platforms": [
+        "fext"
+      ],
+      "note": "Wi-Fi solo en FEV-211F (modelo vehicular) según la CLI Reference 7.6.1. Modos: OPEN, WPA2/WPA3 Personal o Enterprise (Enterprise requiere auth-server-addr y auth-server-secret).",
+      "source": "https://docs.fortinet.com/document/fortiextender/7.6.1/cli-reference/911757/config-vap"
+    },
+    {
+      "cmd": "config wifi wifi-networks\nedit {{nombre}}\nset ssid {{ssid}}\nset security-mode WPA2-Personal\nset pmf optional\nnext\nend",
+      "desc": "Define una red Wi-Fi externa a la que el FortiExtender se conecta como cliente (station mode).",
+      "cat": "Configuración",
+      "risk": "change",
+      "platforms": [
+        "fext"
+      ],
+      "note": "Solo FEV-211F. Completar la clave según security-mode (sae-password en WPA3-SAE; identity y password en Enterprise).",
+      "source": "https://docs.fortinet.com/document/fortiextender/7.6.1/cli-reference/2963/config-wifi-networks"
     }
   ]
 }
