@@ -14,6 +14,14 @@ Antes de cambiar nada revisa que el equipo tenga un hostname propio (las llaves 
 exigen). Si las llaves ya son de 2048 bits no las regenera; si son de otro tamaño, responde
 "yes" al reemplazo. Los comandos que el equipo no soporta (por ejemplo clock calendar-valid en
 un switch sin reloj de hardware) se informan y no detienen el resto.
+
+Líneas vty (solo SSH): se aplican "transport input ssh" y el método de login únicamente si:
+  - el equipo tiene con qué autenticar: usuarios locales (se agrega "login local") o, con
+    "aaa new-model", una lista "aaa authentication login" (no se toca el login);
+  - SSH quedó habilitado (llaves RSA y versión 2) al final de la configuración;
+  - la sesión del script no es Telnet (con APLICAR_VTY_DESDE_TELNET = False): cortar Telnet
+    sin haber probado SSH desde tu red podría dejarte sin acceso remoto.
+Si falta algo, se omite el cambio de vty, se informa el motivo y el resto se aplica igual.
 """
 import re
 
@@ -22,6 +30,7 @@ import netterminal as nt
 DOMINIO = "CSA.cl"
 NTP = "192.168.60.1"
 MODULO = 2048
+APLICAR_VTY_DESDE_TELNET = False
 
 # En orden de aplicación. None marca el punto donde se generan las llaves RSA.
 COMANDOS = [
@@ -78,6 +87,36 @@ def modulo_actual(s):
     return int(m.group(1)) if m else None
 
 
+def plan_vty(s):
+    """Validación de solo lectura. Devuelve (rangos vty, usar "login local", motivo si se omite)."""
+    rangos = re.findall(r"^line vty (\d+(?: \d+)?)\s*$", s.run("show running-config | include ^line vty", PROMPT, 60), re.M)
+    if not rangos:
+        return [], False, "el equipo no muestra líneas vty"
+    if (s.session or {}).get("type") == "telnet" and not APLICAR_VTY_DESDE_TELNET:
+        return [], False, "la sesión es Telnet; prueba SSH desde tu red y vuelve a lanzarlo por SSH o consola"
+    aaa = s.run("show running-config | include ^aaa new-model|^aaa authentication login", PROMPT, 60)
+    if re.search(r"^aaa new-model", aaa, re.M):
+        if not re.search(r"^aaa authentication login", aaa, re.M):
+            return [], False, "hay aaa new-model sin 'aaa authentication login'"
+        return rangos, False, None
+    usuarios = re.findall(r"^username (\S+) .*(?:secret|password) ", s.run("show running-config | include ^username", PROMPT, 60), re.M)
+    if not usuarios:
+        return [], False, "no hay usuarios locales con clave (username ... secret)"
+    return rangos, True, None
+
+
+def aplicar_vty(s, rangos, login_local):
+    salida = s.run("do show ip ssh", PROMPT)
+    if not re.search(r"SSH Enabled - version 2", salida, re.I):
+        return "SSH no quedó habilitado en versión 2"
+    for rango in rangos:
+        for cmd in [f"line vty {rango}", "transport input ssh", *(["login local"] if login_local else []), "exit"]:
+            e = error_de(s.run(cmd, PROMPT))
+            if e:
+                return f"{cmd}: {e}"
+    return None
+
+
 def generar_llaves(s):
     s.clear()
     s.sendline(f"crypto key generate rsa general-keys modulus {MODULO}")
@@ -117,6 +156,7 @@ def aplicar(s):
 
     modulo = modulo_actual(s)
     regenerar = modulo != MODULO
+    rangos, login_local, sin_vty = plan_vty(s)
     nt.log(f"{nombre}: llaves RSA actuales {modulo or 'sin llaves'}; {'se generan' if regenerar else 'se mantienen'} {MODULO} bits")
 
     errores, omitidos = [], []
@@ -130,6 +170,13 @@ def aplicar(s):
             e = error_de(s.run(cmd, PROMPT))
             if e:
                 (omitidos if cmd in OPCIONALES else errores).append(f"{cmd}: {e}")
+        # Las vty se cierran a SSH al final y solo si todo lo anterior salió bien.
+        if not sin_vty and errores:
+            sin_vty = "hubo errores en comandos anteriores"
+        if not sin_vty:
+            sin_vty = aplicar_vty(s, rangos, login_local)
+            if sin_vty:
+                errores.append(f"vty: {sin_vty}")
     finally:
         s.run("end", PROMPT)
 
@@ -142,6 +189,10 @@ def aplicar(s):
     final = modulo_actual(s)
     ssh = s.run("show ip ssh | include version", PROMPT)
     resumen = f"OK. RSA {final or '?'} bits, {ssh.strip() or 'SSH sin datos'}"
+    if sin_vty:
+        resumen += f". vty sin cambios: {sin_vty}"
+    else:
+        resumen += f". vty {', '.join(rangos)} solo SSH{' con login local' if login_local else ' (login por AAA)'}"
     if omitidos:
         resumen += ". No soportados: " + "; ".join(c.split(":")[0] for c in omitidos)
     return resumen
