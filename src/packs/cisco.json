@@ -23,7 +23,7 @@
     {
       "id": "ios",
       "label": "IOS (12.x/15.x)",
-      "detect": "^(?![\\s\\S]*(IOS[ -]XE|IOSXE|IOS XR|NX-OS))[\\s\\S]*(Cisco IOS Software|IOS \\(tm\\))",
+      "detect": "(?<![\\s\\S])(?![\\s\\S]*(IOS[ -]XE|IOSXE|IOS XR|NX-OS))[\\s\\S]*(Cisco IOS Software|IOS \\(tm\\))",
       "note": "ISR G2, Catalyst 2960/3560/3750. Regex excluye XE/XR/NX-OS."
     },
     {

@@ -17,7 +17,7 @@
   {
    "id": "junos",
    "label": "Junos OS (MX, SRX, EX/QFX con ELS)",
-   "detect": "^(?![\\s\\S]*(Junos OS Evolved|-EVO\\b|[Mm]odel: [Ee][Xx](2200|3200|3300|4200|4500|4550|62\\d\\d|82\\d\\d)))[\\s\\S]*(JUNOS|Junos:)",
+   "detect": "(?<![\\s\\S])(?![\\s\\S]*(Junos OS Evolved|-EVO\\b|[Mm]odel: [Ee][Xx](2200|3200|3300|4200|4500|4550|62\\d\\d|82\\d\\d)))[\\s\\S]*(JUNOS|Junos:)",
    "note": "Junos clásico (FreeBSD). Incluye EX/QFX con ELS (EX2300, EX3400, EX4300, EX4600, QFX) y SRX."
   }
  ],

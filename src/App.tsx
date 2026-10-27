@@ -158,7 +158,9 @@ function Workspace({
       if (next) setNotesOpenRaw(false);
       return next;
     });
-  const [notesWidth, setNotesWidth] = useState(() => stored("notesWidth", 380));
+  const [notesWidth, setNotesWidth] = useState(() =>
+    stored("notesWidth", Math.round(Math.max(300, Math.min(380, window.innerWidth * 0.3)))),
+  );
   // Ancho del área de terminal + panel: si el panel dejaría la terminal bajo MIN_TERM px, se
   // superpone (salidas de show ... brief se parten en anchos menores).
   const MIN_TERM = 560;
@@ -682,7 +684,9 @@ function Workspace({
    * display version o get system status previo) la plataforma de algún fabricante.
    */
   const detectFromScreen = (tabId: string, preferred?: string) => {
-    const text = controllers.current.get(tabId)?.recentText(400);
+    // Las últimas 150 líneas bastan para un show version reciente y caben en los 20.000
+    // caracteres que revisa detectPlatform.
+    const text = controllers.current.get(tabId)?.recentText(150);
     if (!text) return null;
     const order = [...catalog].sort((a, b) => Number(b.id === preferred) - Number(a.id === preferred));
     for (const v of order) {
@@ -1088,6 +1092,18 @@ function Workspace({
     startBroadcast,
     openImport: () => setImportOpen(true),
     // Activa "algoritmos legacy" en la pestaña y, si es una sesión guardada, la deja guardada.
+    /** Lectura pasiva de pantalla (al conectar o tras un show version): fija plataforma y resaltado. */
+    screenHint: (tabId: string) => {
+      const tab = tabs.find((t) => t.id === tabId);
+      if (!tab || tab.session.platform || tab.session.type === "local") return;
+      const h = tab.session.highlight;
+      const preferred = h && h !== "off" ? (catalog.some((v) => v.id === h) ? h : vendorFor(h)) : settings.catalogVendor;
+      const found = detectFromScreen(tabId, preferred);
+      if (!found) return;
+      setTabPlatform(tabId, found.platform.id, found.vendor.id);
+      if (tabId === activeId) update({ catalogVendor: found.vendor.id });
+      toast(`${tab.title ?? tab.session.name}: ${found.vendor.name} ${found.platform.label}`);
+    },
     enableLegacy: (tabId: string) => {
       const tab = tabs.find((t) => t.id === tabId);
       if (!tab) return;
@@ -1223,6 +1239,7 @@ function Workspace({
               logPath={states[t.id]?.logPath ?? null}
               onActivity={markActivity}
               onEnableLegacy={h.enableLegacy}
+              onScreenHint={h.screenHint}
               register={register}
               catalog={catalog}
             />
