@@ -2775,7 +2775,7 @@ dependencies = [
 
 [[package]]
 name = "net-terminal"
-version = "0.9.9"
+version = "0.9.12"
 dependencies = [
  "aes 0.9.3",
  "argon2",
@@ -2788,6 +2788,7 @@ dependencies = [
  "hmac 0.13.0",
  "if-addrs",
  "keyring",
+ "libc",
  "md-5",
  "portable-pty",
  "regex",

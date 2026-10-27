@@ -36,7 +36,7 @@ Todos los archivos están en la [última versión publicada](https://github.com/
 
 - **Sesiones y conexión rápida:** organiza tus equipos en carpetas, impórtalos desde PuTTY, SecureCRT, MobaXterm, ssh_config o CSV, o conéctate al vuelo sin guardar nada.
 - **Catálogo de 2.776 comandos verificados** con fuente oficial para Cisco, Juniper, Fortinet (FortiGate, FortiSwitch, FortiAP y FortiExtender), Huawei, Aruba (AOS-CX, ArubaOS-Switch, ArubaOS 8, AOS 10 e Instant), Check Point, WatchGuard, Grandstream, Windows, macOS y Linux, con la sintaxis de tu plataforma y el nivel de riesgo de cada comando.
-- **Sugerencias de comandos** mientras escribes, también si abrevias (`sh ip int br`). Nunca envían Enter y se apagan en modo configuración.
+- **Sugerencias de comandos** en color mientras escribes, también si abrevias (`sh ip int br`). Tab o → acepta y Esc descarta; sin sugerencia visible, Tab sigue siendo el autocompletado del equipo. Nunca envían Enter y se apagan en modo configuración.
 - **Topología** de vecinos CDP/LLDP con estado de puertos, ruta entre dos equipos, comparación antes y después de un cambio y exportación a draw.io.
 - **Transferencias** de firmware y configuraciones por TFTP, HTTP, FTP y SFTP, con verificación MD5.
 - **SNMP** v1, v2c y v3 de solo lectura, receptor de traps y generador de configuración para seis plataformas.
@@ -99,6 +99,9 @@ Sí. Importa desde PuTTY, SecureCRT, MobaXterm, ssh_config o CSV, con vista prev
 
 **Un equipo antiguo no me deja entrar por SSH. ¿Qué hago?**
 Activa los algoritmos legacy en la sesión. Son algoritmos débiles: úsalos solo en redes de gestión confiables.
+
+**Retroceso no borra en un equipo (por ejemplo, Huawei). ¿Qué hago?**
+En la sesión, Opciones de terminal › "Retroceso envía", elige BS (^H). Con la plataforma Huawei detectada se usa BS automáticamente. Para probar sin cambiar nada, Shift+Retroceso envía el otro código. Detalle en [Tecla Retroceso](docs/TECNICO.md#tecla-retroceso).
 
 ## Seguridad
 

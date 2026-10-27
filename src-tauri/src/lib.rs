@@ -484,6 +484,36 @@ fn list_scripts(state: State<'_, AppState>) -> Vec<String> {
     scripts::list(&state.data_dir)
 }
 
+/// Trae a la carpeta de scripts un .py que el usuario elige en el diálogo del sistema. El diálogo
+/// se abre aquí: la ruta nunca viene del frontend. `None` si se canceló.
+#[tauri::command(async)]
+fn import_script(app: tauri::AppHandle, state: State<'_, AppState>) -> Result<Option<String>, String> {
+    use tauri_plugin_dialog::DialogExt;
+    let Some(file) = app.dialog().file().set_title("Script de Python").add_filter("Python", &["py"]).blocking_pick_file() else {
+        return Ok(None);
+    };
+    let path = file.into_path().map_err(|e| e.to_string())?;
+    scripts::import(&state.data_dir, &path).map(Some)
+}
+
+/// Scripts eliminados (recuperables).
+#[tauri::command(async)]
+fn list_deleted_scripts(state: State<'_, AppState>) -> Vec<String> {
+    scripts::list_deleted(&state.data_dir)
+}
+
+/// Devuelve un script eliminado a la lista.
+#[tauri::command(async)]
+fn restore_script(name: String, state: State<'_, AppState>) -> Result<String, String> {
+    scripts::restore(&state.data_dir, &name)
+}
+
+/// Quita un script de la lista (lo mueve a scripts/eliminados).
+#[tauri::command(async)]
+fn delete_script(name: String, state: State<'_, AppState>) -> Result<(), String> {
+    scripts::remove(&state.data_dir, &name)
+}
+
 #[tauri::command(async)]
 fn run_script(
     script: String,
@@ -1105,6 +1135,10 @@ pub fn run() {
             cmd_history_add,
             cmd_history_clear,
             list_scripts,
+            import_script,
+            delete_script,
+            list_deleted_scripts,
+            restore_script,
             run_script,
             stop_script,
             script_prompt_reply,

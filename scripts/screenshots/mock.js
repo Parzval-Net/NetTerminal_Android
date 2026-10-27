@@ -172,6 +172,13 @@ if (location.search.includes("scene=suggest")) {
   window.__ntSuggestPerf = [];
   window.__ntSuggestCost = [];
 }
+// ?scene=vrp (con &video=1): ar-wan01 como Huawei VRP para probar Retroceso; &vrpplatform=1 le
+// asigna la plataforma vrp8 (Retroceso en automático envía BS) y &bs=del|bs fija el modo.
+if (location.search.includes("scene=vrp")) {
+  const q = new URLSearchParams(location.search);
+  if (q.has("vrpplatform")) sessions[3].platform = "vrp8";
+  if (q.get("bs") === "del" || q.get("bs") === "bs") sessions[3].backspace = q.get("bs");
+}
 if (location.search.includes("scene=vertical") || location.search.includes("layout=vertical")) settings.tabLayout = "vertical";
 // ?toast=1: una alerta por palabra clave activa que dispara un aviso (toast) y marca la primera pestaña.
 if (location.search.includes("toast=1")) {
@@ -451,8 +458,8 @@ const handlers = {
   },
   get_settings: () => settings,
   save_settings: () => null,
-  app_version: () => "0.9.9",
-  update_check: () => ({ current: "0.9.9", latest: "0.9.9", newer: false, url: "", notes: "", published: "", supported: true, reason: null }),
+  app_version: () => "0.9.12",
+  update_check: () => ({ current: "0.9.12", latest: "0.9.12", newer: false, url: "", notes: "", published: "", supported: true, reason: null }),
   app_repo: () => "Parzval-Net/Net_Terminal",
   cmdpacks_list: () => [],
   list_notes: () => [
@@ -515,6 +522,8 @@ const handlers = {
     sessions: [
       { id: "", name: "core-sw03", type: "ssh", host: "192.0.2.3", port: 22, username: "admin", folder: "PuTTY", created_at: "" },
       { id: "", name: "consola-lab", type: "serial", serial_port: "COM3", baud_rate: 9600, folder: "PuTTY", created_at: "" },
+      // Con destino "Sucursales/Norte" coincide con una sesión existente que cambia de host.
+      { id: "", name: "sw-acceso-norte", type: "telnet", host: "203.0.113.99", created_at: "" },
     ],
     warnings: ["core-sw03: la llave .ppk de PuTTY no se importa (OpenSSH usa otro formato)"],
   }),
@@ -914,7 +923,19 @@ if (new URLSearchParams(location.search).has("video")) {
     queues.set(id, at);
     setTimeout(fn, at - Date.now());
   };
+  // Huawei VRP simulado: CTRL_H (^H) borra con eco "\b \b" (&vrpecho=k: "\b\x1b[K"); con
+  // &vrp=strict el equipo ignora DEL, como el que reportó el usuario; ^W borra la palabra.
+  // window.__ntWrites guarda lo que llega al equipo, para revisar los bytes.
+  const q = new URLSearchParams(location.search);
+  const vrpStrict = q.get("vrp") === "strict";
+  const vrpErase = q.get("vrpecho") === "k" ? "\b\x1b[K" : "\b \b";
+  window.__ntWrites = [];
+  /** Palabras que el equipo simulado completa con Tab. */
+  const MOCK_WORDS = ["show", "interface", "interfaces", "brief", "version", "running-config", "clock", "ip", "vlan"];
   handlers.write = ({ id, data }) => {
+    window.__ntWrites.push(data);
+    const vrp = connSessions.get(id)?.highlight === "huawei";
+    const erase = vrp ? vrpErase : "\b \b";
     let buf = lineBuf.get(id) ?? "";
     let echo = "";
     for (const ch of data) {
@@ -926,8 +947,23 @@ if (new URLSearchParams(location.search).has("video")) {
         later(id, () => out(id, reply(id, line) + promptOf(id)), 200);
         buf = "";
         echo = "";
-      } else if (ch === "\x7f") {
-        if (buf) (buf = buf.slice(0, -1)), (echo += "\b \b");
+      } else if (ch === "\x7f" || ch === "\b") {
+        if (ch === "\x7f" && vrp && vrpStrict) continue;
+        if (buf) (buf = buf.slice(0, -1)), (echo += erase);
+      } else if (ch === "\x17") {
+        const n = buf.length - buf.replace(/\S*\s*$/, "").length;
+        (buf = buf.slice(0, buf.length - n)), (echo += erase.repeat(n));
+      } else if (ch === "\t") {
+        // Autocompletado del equipo (como IOS): completa la última palabra si es única.
+        const last = /(\S+)$/.exec(buf)?.[1] ?? "";
+        const hits = last ? MOCK_WORDS.filter((w) => w.startsWith(last.toLowerCase())) : [];
+        if (hits.length === 1) {
+          const add = `${hits[0].slice(last.length)} `;
+          (buf += add), (echo += add);
+        }
+      } else if (ch === "?") {
+        // Ayuda del equipo: opciones y luego prompt + lo escrito (sin el "?").
+        echo += `\r\n  brief      Resumen de interfaces\r\n  interface  Estado por interfaz\r\n\r\n${promptOf(id)}${buf}`;
       } else if (ch >= " ") (buf += ch), (echo += ch);
     }
     if (echo) {
@@ -963,10 +999,10 @@ if (new URLSearchParams(location.search).has("video")) {
     return null;
   };
   if (location.search.includes("update=1")) {
-    // La revisión automática al abrir no encuentra nada; "Buscar ahora" encuentra la 0.9.9.
+    // La revisión automática al abrir no encuentra nada; "Buscar ahora" encuentra la 0.9.12.
     let checks = 0;
     handlers.update_check = () => ({
-      current: "0.9.1", latest: "0.9.9", newer: checks++ > 0, supported: true, reason: null, published: new Date(now).toISOString(),
+      current: "0.9.1", latest: "0.9.12", newer: checks++ > 0, supported: true, reason: null, published: new Date(now).toISOString(),
       url: "https://github.com/Parzval-Net/Net_Terminal/releases/latest",
       notes: "- Vista dividida: selector de pestaña más rápido\n- Cliente SNMP: exportación CSV de traps\n- Catálogo: nuevos comandos de diagnóstico",
     });
@@ -1289,6 +1325,7 @@ Object.assign(scenes, {
   "t-backup": scenes.backup,
   "t-plugins": tool("Plugins"),
   suggest: async () => { await open("core-sw01"); },
+  vrp: async () => { await open("ar-wan01"); },
   "suggest-config": async () => { await open("core-sw01"); },
   // Revisión de la interfaz: confirmaciones y textos de las herramientas de red.
   "q-syslog": tool("Syslog"),

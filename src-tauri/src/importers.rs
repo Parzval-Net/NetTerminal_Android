@@ -10,8 +10,14 @@ use serde::Serialize;
 use std::collections::HashMap;
 use std::path::Path;
 
-/// Tamaño máximo del archivo a importar.
-pub const MAX_FILE: u64 = 5 * 1024 * 1024;
+/// Tamaño máximo del archivo a importar. El XML de SecureCRT (Export Settings) incluye toda la
+/// configuración global y en instalaciones reales pesa 8 a 10 MB o más.
+pub const MAX_FILE: u64 = 64 * 1024 * 1024;
+/// Tope para los demás formatos, que solo traen sesiones.
+const MAX_OTHER: usize = 8 * 1024 * 1024;
+/// Tope de elementos del XML: acota la memoria ante un archivo armado con etiquetas mínimas
+/// (un export real de 10 MB tiene del orden de cientos de miles).
+const MAX_XML_TOKENS: usize = 3_000_000;
 /// Máximo de sesiones por importación y de avisos que se devuelven.
 const MAX_SESSIONS: usize = 5000;
 const MAX_WARNINGS: usize = 200;
@@ -55,7 +61,7 @@ pub fn parse_file(path: &Path, format: Option<&str>) -> Result<ImportPreview, St
         return Err("No es un archivo".into());
     }
     if meta.len() > MAX_FILE {
-        return Err("El archivo supera 5 MB".into());
+        return Err(format!("El archivo supera {} MB", MAX_FILE / 1024 / 1024));
     }
     let bytes = std::fs::read(path).map_err(|e| e.to_string())?;
     let text = decode(&bytes);
@@ -66,6 +72,9 @@ pub fn parse_file(path: &Path, format: Option<&str>) -> Result<ImportPreview, St
             "No se reconoce el formato. Elige OpenSSH, PuTTY (.reg), SecureCRT (.xml), MobaXterm o CSV.",
         )?,
     };
+    if fmt != "securecrt" && text.len() > MAX_OTHER {
+        return Err(format!("El archivo supera {} MB", MAX_OTHER / 1024 / 1024));
+    }
     parse_text(&fmt, &text)
 }
 
@@ -481,6 +490,10 @@ fn parse_putty(text: &str, w: &mut Warn) -> Vec<Session> {
         };
         let mut s = session(&name, kind.clone());
         s.folder = Some("PuTTY".into());
+        // "The Backspace key": 1 = Control-? (DEL, por defecto), 0 = Control-H (BS).
+        if num("BackspaceIsDelete") == Some(0) {
+            s.backspace = Some("bs".into());
+        }
         if kind == SessionType::Serial {
             s.serial_port = Some(get("SerialLine").to_string());
             s.baud_rate = num("SerialSpeed");
@@ -593,6 +606,9 @@ fn xml_tokens(text: &str) -> Result<Vec<Tok>, String> {
     let mut out = Vec::new();
     let mut rest = text;
     while let Some(i) = rest.find('<') {
+        if out.len() >= MAX_XML_TOKENS {
+            return Err("El XML tiene demasiados elementos".into());
+        }
         let before = &rest[..i];
         if !before.trim().is_empty() {
             out.push(Tok::Text(xml_unescape(before)));
@@ -1055,7 +1071,7 @@ mod tests {
 [HKEY_CURRENT_USER\\Software\\SimonTatham\\PuTTY\\Sessions\\Default%20Settings]\r\n\"HostName\"=\"\"\r\n\r\n\
 [HKEY_CURRENT_USER\\Software\\SimonTatham\\PuTTY\\Sessions\\Core%20SW%2F01]\r\n\"HostName\"=\"192.0.2.1\"\r\n\"PortNumber\"=dword:00000016\r\n\"Protocol\"=\"ssh\"\r\n\"UserName\"=\"admin\"\r\n\"PublicKeyFile\"=\"C:\\\\keys\\\\a.ppk\"\r\n\"PortForwardings\"=\"L8080=192.0.2.5:80\"\r\n\r\n\
 [HKEY_CURRENT_USER\\Software\\SimonTatham\\PuTTY\\Sessions\\consola]\r\n\"Protocol\"=\"serial\"\r\n\"SerialLine\"=\"COM3\"\r\n\"SerialSpeed\"=dword:0001c200\r\n\"SerialDataBits\"=dword:00000008\r\n\"SerialStopHalfbits\"=dword:00000002\r\n\"SerialParity\"=dword:00000000\r\n\"SerialFlowControl\"=dword:00000000\r\n\r\n\
-[HKEY_CURRENT_USER\\Software\\SimonTatham\\PuTTY\\Sessions\\tel]\r\n\"HostName\"=\"noc@192.0.2.2\"\r\n\"Protocol\"=\"telnet\"\r\n\"PortNumber\"=dword:00000017\r\n\r\n\
+[HKEY_CURRENT_USER\\Software\\SimonTatham\\PuTTY\\Sessions\\tel]\r\n\"HostName\"=\"noc@192.0.2.2\"\r\n\"Protocol\"=\"telnet\"\r\n\"PortNumber\"=dword:00000017\r\n\"BackspaceIsDelete\"=dword:00000000\r\n\r\n\
 [HKEY_CURRENT_USER\\Software\\SimonTatham\\PuTTY\\Sessions\\rl]\r\n\"HostName\"=\"192.0.2.3\"\r\n\"Protocol\"=\"rlogin\"\r\n";
         // regedit exporta en UTF-16LE con BOM.
         let mut bytes = vec![0xFF, 0xFE];
@@ -1076,6 +1092,8 @@ mod tests {
         assert_eq!(c.flow_control.as_deref(), Some("none"));
         assert_eq!(p.sessions[2].username, None, "telnet no lleva usuario");
         assert_eq!(p.sessions[2].host.as_deref(), Some("192.0.2.2"));
+        assert_eq!(p.sessions[2].backspace.as_deref(), Some("bs"), "Backspace = Control-H en PuTTY");
+        assert_eq!(s.backspace, None, "por defecto PuTTY envía DEL: queda en automático");
         let warn = p.warnings.join("\n");
         assert!(warn.contains(".ppk") && warn.contains("túneles") && warn.contains("rlogin"));
     }
@@ -1206,6 +1224,34 @@ rdp=#91#4%192.0.2.9%3389%#MobaFont#0# #-1\r\n\
         assert_eq!(url_decode("Core%20SW%2F01"), "Core SW/01");
         assert_eq!(clean_folder(["a/b", " ", "c"]).as_deref(), Some("a b/c"));
         assert_eq!(moba_baud("1115200"), Some(115200));
+    }
+
+    #[test]
+    fn securecrt_large_export() {
+        // Exportación grande: mucha configuración global de relleno y 3000 sesiones (~12 MB).
+        let mut xml = String::from("<?xml version=\"1.0\"?>\n<VanDyke version=\"3.0\">\n<key name=\"Global\">\n");
+        while xml.len() < 9 * 1024 * 1024 {
+            xml.push_str("<string name=\"Keymap\">VK_F1 \"\\033OP\" relleno de configuración global</string>\n");
+        }
+        xml.push_str("</key>\n<key name=\"Sessions\">\n");
+        for i in 0..3000 {
+            xml.push_str(&format!(
+                "<key name=\"r{i}\"><dword name=\"Is Session\">1</dword><string name=\"Protocol Name\">SSH2</string><string name=\"Hostname\">192.0.2.{}</string><dword name=\"[SSH2] Port\">22</dword></key>\n",
+                i % 250 + 1
+            ));
+        }
+        xml.push_str("</key>\n</VanDyke>\n");
+        assert!(xml.len() as u64 > 9 * 1024 * 1024 && (xml.len() as u64) < MAX_FILE);
+        let dir = std::env::temp_dir().join(format!("nt-import-{}", uuid::Uuid::new_v4()));
+        std::fs::create_dir_all(&dir).unwrap();
+        let f = dir.join("export.xml");
+        std::fs::write(&f, &xml).unwrap();
+        let p = parse_file(&f, None).unwrap();
+        std::fs::remove_dir_all(&dir).unwrap();
+        assert_eq!(p.format, "securecrt");
+        assert_eq!(p.sessions.len(), 3000);
+        // Etiquetas mínimas repetidas: se corta antes de agotar memoria.
+        assert!(xml_tokens(&"<a>".repeat(MAX_XML_TOKENS + 1)).is_err());
     }
 
     #[test]

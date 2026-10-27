@@ -6,6 +6,7 @@ import { SerialPortField } from "./SerialPortField";
 import { SessionIcon, typeLabel } from "./SessionIcon";
 import { quickTarget } from "./CommandPalette";
 import { useDragResize } from "../lib/useDragResize";
+import { backspaceOptions } from "../lib/backspace";
 
 interface Props {
   onClose: () => void;
@@ -223,6 +224,26 @@ export function QuickConnectDialog({ onClose, onOpen }: Props) {
               {ports.length === 0 && <p className="text-[11.5px] text-muted">No se detectaron adaptadores. Conecta el cable USB-serial y presiona actualizar.</p>}
             </>
           )}
+
+          <details className="rounded-lg border border-line" open={!!s.backspace}>
+            <summary className="px-3 h-8 flex items-center text-[12.5px] cursor-default">Opciones avanzadas</summary>
+            <div className="px-3 pb-3">
+              <Field label="Retroceso envía">
+                <select
+                  className="field"
+                  value={s.backspace ?? ""}
+                  onChange={(e) => set("backspace", (e.target.value || undefined) as Session["backspace"])}
+                >
+                  {backspaceOptions().map(([v, l]) => (
+                    <option key={v} value={v}>
+                      {l}
+                    </option>
+                  ))}
+                </select>
+              </Field>
+              <p className="mt-1 text-[11px] text-muted">Si Retroceso no borra (equipos Huawei VRP), usa BS (^H).</p>
+            </div>
+          </details>
 
           {error && <p className="text-[12px] text-danger">{error}</p>}
           <p className="text-[11.5px] text-muted">

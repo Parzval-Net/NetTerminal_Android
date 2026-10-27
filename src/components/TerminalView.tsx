@@ -14,6 +14,7 @@ import { fontStack } from "../lib/theme";
 import { Settings, logOptions } from "../lib/settings";
 import { alertHighlights } from "../lib/alerts";
 import { StreamHighlighter, compile, effectiveRules } from "../lib/highlight";
+import { backspaceMode, backspaceSeq, translateBackspace } from "../lib/backspace";
 import { isMac, modLabel, shortcutFor } from "../lib/platform";
 import { paneBodyStyle } from "../lib/split";
 import { credStatus, needsUnlock } from "../lib/credentials";
@@ -43,10 +44,14 @@ import {
   queryOf,
   remainderToInsert,
   safeInsert,
+  saveTipsSoon,
   saveUsageSoon,
   suggestAllowed,
   suggestKey,
   suggestQuery,
+  tabChained,
+  tipStore,
+  tipText,
   usageStore,
 } from "../lib/suggest";
 
@@ -126,7 +131,7 @@ interface SuggestList {
   bottom?: number;
 }
 
-/** Ancho real de un carácter con la fuente dada (para alinear el texto gris con las celdas). */
+/** Ancho real de un carácter con la fuente dada (para alinear la sugerencia con las celdas). */
 const charWidths = new Map<string, number>();
 function charWidth(font: string): number {
   let w = charWidths.get(font);
@@ -190,7 +195,7 @@ export const TerminalView = memo(function TerminalView({ id, session, active, vi
   /** Bóveda bloqueada al conectar una sesión con contraseña guardada: desbloquear u omitir. */
   const [unlockAsk, setUnlockAsk] = useState(false);
   const unlockResolve = useRef<((ok: boolean) => void) | null>(null);
-  // Sugerencias de comandos: el texto gris y el aviso de plataforma se dibujan directo en el
+  // Sugerencias de comandos: la sugerencia y el aviso de plataforma se dibujan directo en el
   // DOM (sin render de React por tecla); la lista y la confirmación sí usan estado.
   const focusRef = useRef(active);
   focusRef.current = active;
@@ -198,6 +203,8 @@ export const TerminalView = memo(function TerminalView({ id, session, active, vi
   catalogRef.current = catalog;
   const wrapRef = useRef<HTMLDivElement>(null);
   const ghostRef = useRef<HTMLDivElement>(null);
+  const ghostTextRef = useRef<HTMLSpanElement>(null);
+  const ghostTipRef = useRef<HTMLSpanElement>(null);
   const hintRef = useRef<HTMLDivElement>(null);
   const [suggestList, setSuggestList] = useState<SuggestList | null>(null);
   const listRef = useRef<SuggestList | null>(null);
@@ -412,7 +419,8 @@ export const TerminalView = memo(function TerminalView({ id, session, active, vi
       try {
         await invoke("connect", {
           id: connId,
-          session: s,
+          // Modo de Retroceso ya resuelto: con BS, la PTY de ssh borra con ^H y se lo informa al servidor.
+          session: { ...s, backspace: backspaceMode(s) },
           cols: term.cols,
           rows: term.rows,
           onData,
@@ -472,14 +480,17 @@ export const TerminalView = memo(function TerminalView({ id, session, active, vi
     const tracker = new InputTracker();
     const usage = usageStore();
     let swallowPress = false;
+    /** Momento del último Tab que aceptó: un segundo Tab enseguida va al equipo. */
+    let lastTabAccept = 0;
+    const tips = tipStore();
     let suggestFrame = 0;
-    /** Texto gris visible: Flecha derecha solo acepta lo que el usuario está viendo. */
+    /** Sugerencia visible: Tab y Flecha derecha solo aceptan lo que el usuario está viendo. */
     let shown: { buf: string; insert: string } | null = null;
     let ghostKey = "";
     /** Aviso "Detecta la plataforma": una vez por pestaña. */
     let hinted = false;
     let hintTimer: number | undefined;
-    /** Medición opcional (solo la demo define los arreglos): tecla → texto gris dibujado y costo de cada cuadro. */
+    /** Medición opcional (solo la demo define los arreglos): tecla → sugerencia dibujada y costo de cada cuadro. */
     const { __ntSuggestPerf: perfLog, __ntSuggestCost: perfCost } = window as unknown as { __ntSuggestPerf?: number[]; __ntSuggestCost?: number[] };
     let keyAt = 0;
     const screenEl = term.element?.querySelector<HTMLElement>(".xterm-screen") ?? null;
@@ -539,7 +550,8 @@ export const TerminalView = memo(function TerminalView({ id, session, active, vi
      */
     const queryFor = (idx: SuggestIndex, buf: string) => suggestQuery(buf, tracker.prompt, idx);
     const currentGhost = () => {
-      if (listRef.current || !usable()) return null;
+      // Esc la descartó: nada hasta el próximo Enter (y Tab vuelve a ir al equipo).
+      if (listRef.current || tracker.dismissed || !usable()) return null;
       const idx = suggestIndex();
       const q = idx && queryFor(idx, tracker.buf);
       const g = idx && q !== null ? ghostFor(idx, q, weightsFor(idx)) : null;
@@ -595,8 +607,9 @@ export const TerminalView = memo(function TerminalView({ id, session, active, vi
     };
     const drawSuggest = () => {
       // Línea redibujada o prompt que llegó después de teclear: se confirma con la pantalla.
+      // Tras Tab o "?" del equipo se relee la línea completa (prompt + lo que quedó escrito).
       if (tracker.canResync && visibleConnected()) {
-        const text = lineToCursor(tracker.buf.length + 80);
+        const text = lineToCursor(tracker.reread ? tracker.prompt.length + 300 : tracker.buf.length + 80);
         if (text !== null) tracker.resync(text);
       }
       const list = listRef.current;
@@ -610,20 +623,53 @@ export const TerminalView = memo(function TerminalView({ id, session, active, vi
         shown = null;
         if (ghostKey) {
           ghostKey = "";
-          el.textContent = "";
+          if (ghostTextRef.current) ghostTextRef.current.textContent = "";
           el.style.display = "none";
         }
         return;
       }
       shown = { buf: tracker.buf, insert: g.insert };
       const o = term.options;
+      const st0 = settingsRef.current;
       const font = `${o.fontSize}px ${o.fontFamily}`;
-      // Mezcla del texto con el fondo con al menos 3:1 de contraste en todos los temas.
-      const color = ghostColor(o.theme?.foreground, o.theme?.background) ?? "";
-      const key = `${g.rest}|${box.left}|${box.top}|${box.w}|${box.h}|${box.max}|${font}|${color}`;
+      // Color propio (acento del tema, cian o ámbar) con al menos 3:1 de contraste en todos los
+      // temas y distinto del texto y del cursor (ver ghostColor).
+      const color = ghostColor(o.theme, st0.suggestColor) ?? "";
+      const style = st0.suggestStyle;
+      // Ayuda "Tab o → acepta · Esc descarta": las primeras TIP_TIMES líneas por plataforma.
+      const idx = suggestIndex();
+      let tip = "";
+      if (st0.suggestTip && g.insert && idx) {
+        const before = tips.count(idx.platform);
+        if (tips.allow(idx.platform, `${connIdRef.current}:${tracker.line}`)) tip = tipText(st0.suggestTabAccept);
+        if (tips.count(idx.platform) !== before) saveTipsSoon();
+      }
+      const tipFont = `${Math.max(9, Math.round(o.fontSize! * 0.8))}px ${o.fontFamily}`;
+      // Solo si cabe en la línea junto a la sugerencia (si no, se omite: nunca tapa nada).
+      if (tip && [...g.rest].length * box.w + tip.length * charWidth(tipFont) + 2.5 * box.w > box.max) tip = "";
+      const key = `${g.rest}|${box.left}|${box.top}|${box.w}|${box.h}|${box.max}|${font}|${color}|${style}|${tip}`;
       if (key !== ghostKey) {
         ghostKey = key;
-        el.textContent = g.rest;
+        const textEl = ghostTextRef.current;
+        const tipEl = ghostTipRef.current;
+        if (textEl) {
+          textEl.textContent = g.rest;
+          textEl.style.fontStyle = style === "italic" ? "italic" : "";
+          textEl.style.textDecoration = style === "underline" ? "underline dotted" : "";
+        }
+        if (tipEl) {
+          tipEl.textContent = tip;
+          const ts = tipEl.style;
+          ts.display = tip ? "inline-block" : "none";
+          ts.font = tipFont;
+          // Arriba en la línea y más baja que la celda: no mueve la línea base de la sugerencia.
+          ts.verticalAlign = "top";
+          ts.marginTop = "2px";
+          ts.height = `${Math.max(1, box.h - 4)}px`;
+          ts.lineHeight = `${Math.max(1, box.h - 6)}px`;
+          ts.marginLeft = `${box.w}px`;
+          ts.borderColor = color || "currentColor";
+        }
         const st = el.style;
         st.display = "block";
         st.left = `${box.left}px`;
@@ -634,7 +680,7 @@ export const TerminalView = memo(function TerminalView({ id, session, active, vi
         st.font = font;
         st.letterSpacing = `${box.w - charWidth(font)}px`;
         st.color = color || (o.theme?.foreground ?? "");
-        st.opacity = color ? "1" : "0.45";
+        st.opacity = color ? "1" : "0.6";
       }
       if (perfLog && keyAt) {
         perfLog.push(performance.now() - keyAt);
@@ -691,13 +737,33 @@ export const TerminalView = memo(function TerminalView({ id, session, active, vi
       }
       const g = list ? null : currentGhost();
       const canAccept = !!g?.insert && shown?.insert === g.insert && shown.buf === tracker.buf;
-      switch (suggestKey(e, { enabled: true, listOpen: !!list, canAccept, listKey: settingsRef.current.suggestListKey })) {
+      const st = settingsRef.current;
+      // Doble Tab: si el anterior aceptó hace menos de 400 ms, este va al equipo (su autocompletado).
+      const now = performance.now();
+      const tabChain = e.key === "Tab" && tabChained(lastTabAccept, now);
+      if (e.key !== "Tab") lastTabAccept = 0;
+      const action = suggestKey(e, {
+        enabled: true,
+        listOpen: !!list,
+        canAccept,
+        ghostVisible: !!g && !!shown && shown.buf === tracker.buf,
+        tabAccept: st.suggestTabAccept,
+        tabChain,
+        listKey: st.suggestListKey,
+      });
+      if (e.key === "Tab") lastTabAccept = action === "accept" ? now : 0;
+      switch (action) {
         case "accept":
           typeInsert(g!.insert);
           remember(idx, g!.entry);
           return true;
         case "word":
           typeInsert(nextWord(g!.insert));
+          return true;
+        case "dismiss":
+          // Esc oculta la sugerencia de esta línea; no llega al equipo.
+          tracker.dismissed = true;
+          scheduleSuggest();
           return true;
         case "open":
           openList();
@@ -716,7 +782,7 @@ export const TerminalView = memo(function TerminalView({ id, session, active, vi
           scheduleSuggest();
           return true;
         default:
-          // Cualquier otra tecla (Tab incluido) va al equipo y cierra la lista.
+          // Cualquier otra tecla (Tab sin sugerencia, Esc sin sugerencia, Retroceso) va al equipo y cierra la lista.
           closeList();
           return false;
       }
@@ -734,7 +800,12 @@ export const TerminalView = memo(function TerminalView({ id, session, active, vi
       pick: pickSuggestion,
     };
 
+    /** Secuencia de la última pulsación de Retroceso (ver lib/backspace); null si fue otra tecla. */
+    let backspaceKey: string | null = null;
+
     term.onData((data) => {
+      data = translateBackspace(data, backspaceKey);
+      backspaceKey = null;
       if (statusRef.current === "closed") {
         if (sessionRef.current.scp) return;
         if (legacyOffer && (data === "l" || data === "L")) {
@@ -778,7 +849,7 @@ export const TerminalView = memo(function TerminalView({ id, session, active, vi
     /** Envía al equipo lo tecleado (o insertado por una sugerencia). */
     function sendInput(data: string) {
       const s = sessionRef.current;
-      if (s.local_echo) term.write(data.replace(/\r/g, "\r\n").replace(/\x7f/g, "\b \b"));
+      if (s.local_echo) term.write(data.replace(/\r/g, "\r\n").replace(/[\x7f\b]/g, "\b \b"));
       const out = s.newline && s.newline !== "cr" ? data.replace(/\r/g, newline()) : data;
       invoke("write", { id: connIdRef.current, data: out }).catch(() => {});
     }
@@ -818,11 +889,25 @@ export const TerminalView = memo(function TerminalView({ id, session, active, vi
     };
     hostRef.current!.addEventListener("paste", onNativePaste, true);
 
+    // Texto de la línea del cursor (para reconocer un prompt de Huawei sin plataforma detectada).
+    const currentLineText = () => {
+      const b = term.buffer.active;
+      return b.getLine(b.baseY + b.cursorY)?.translateToString(true) ?? "";
+    };
     term.attachCustomKeyEventHandler((e) => {
       // Una tecla que tomaron las sugerencias tampoco llega como "keypress" (Enter en la lista).
       if (e.type === "keydown") swallowPress = false;
       else if (e.type === "keypress" && swallowPress) return false;
       if (e.type !== "keydown") return true;
+      // Retroceso según la sesión (DEL o BS): xterm lo envía igual y onData lo traduce.
+      backspaceKey =
+        e.key === "Backspace"
+          ? backspaceSeq(
+              e,
+              backspaceMode(sessionRef.current, currentLineText()),
+              term.buffer.active.type !== "alternate",
+            )
+          : null;
       if (suggestKeyDown(e)) {
         e.preventDefault();
         e.stopPropagation();
@@ -996,14 +1081,14 @@ export const TerminalView = memo(function TerminalView({ id, session, active, vi
     if (active) termRef.current?.focus();
   }, [active]);
 
-  // Sugerencias: al activarlas se parte sin seguimiento (hasta el próximo prompt); el texto
-  // gris se recalcula al cambiar foco, visibilidad, plataforma, catálogo, tema o fuente.
+  // Sugerencias: al activarlas se parte sin seguimiento (hasta el próximo prompt); la
+  // sugerencia se recalcula al cambiar foco, visibilidad, plataforma, catálogo, tema, fuente o sus ajustes.
   useEffect(() => {
     suggestRef.current?.reset();
   }, [settings.commandSuggest]);
   useEffect(() => {
     suggestRef.current?.refresh();
-  }, [active, visible, settings.commandSuggest, session.platform, catalog, theme, settings.fontFamily, settings.fontSize, settings.lineHeight]);
+  }, [active, visible, settings.commandSuggest, session.platform, catalog, theme, settings.fontFamily, settings.fontSize, settings.lineHeight, settings.suggestColor, settings.suggestStyle, settings.suggestTip, settings.suggestTabAccept]);
   // Lista abierta: el foco sigue en la terminal (su textarea), así que es ella la que anuncia
   // la opción activa a los lectores de pantalla (patrón combobox de ARIA 1.2).
   useEffect(() => {
@@ -1047,8 +1132,11 @@ export const TerminalView = memo(function TerminalView({ id, session, active, vi
       onMouseDownCapture={rect && !active && onFocusPane ? () => onFocusPane(id) : undefined}
     >
       <div ref={hostRef} className="w-full h-full" />
-      {/* Texto gris de la sugerencia: solo visual, lo dibuja la terminal (sin render por tecla). */}
-      <div ref={ghostRef} aria-hidden="true" className="absolute z-[5] pointer-events-none whitespace-pre overflow-hidden" style={{ display: "none" }} />
+      {/* Sugerencia y su ayuda: solo visual (aria-hidden, sin eventos), la dibuja la terminal sin render por tecla. */}
+      <div ref={ghostRef} aria-hidden="true" className="absolute z-[5] pointer-events-none select-none whitespace-pre overflow-hidden" style={{ display: "none" }}>
+        <span ref={ghostTextRef} style={{ textUnderlineOffset: "3px" }} />
+        <span ref={ghostTipRef} className="rounded border px-1 tracking-normal" style={{ display: "none", letterSpacing: "normal" }} />
+      </div>
       {/* Aviso de plataforma desconocida (una vez por pestaña): lo muestra la terminal. */}
       <div ref={hintRef} role="status" className="absolute z-[6] pointer-events-none rounded-md border border-line bg-panel px-2 py-1 text-[11px] text-muted shadow-pop whitespace-nowrap" style={{ display: "none" }} />
       {suggestList && (

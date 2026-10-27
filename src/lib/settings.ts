@@ -5,7 +5,7 @@ import { type AlertRule, exampleAlerts } from "./alerts";
 import type { MonitorTarget } from "./monitors";
 import type { TopoSnapshot, TopoSources, Topology } from "./topology";
 import type { SnmpProfile } from "./snmp";
-import { type ListKey, SUGGEST_DEFAULT, migrateSuggest } from "./suggest";
+import { type GhostColor, type GhostStyle, type ListKey, SUGGEST_DEFAULT, migrateSuggest } from "./suggest";
 
 export type ModuleId = "monitor" | "diag" | "topology" | "subnet" | "perf" | "transfer" | "syslog" | "plugins" | "backup" | "snmp";
 
@@ -51,6 +51,14 @@ export interface Settings {
   commandSuggestSet: boolean;
   /** Tecla que abre la lista de sugerencias. */
   suggestListKey: ListKey;
+  /** Color de la sugerencia (automático según el tema o un tono fijo). */
+  suggestColor: GhostColor;
+  /** Estilo extra de la sugerencia: cursiva o subrayado punteado. */
+  suggestStyle: GhostStyle;
+  /** Tab acepta la sugerencia visible (sin sugerencia, Tab sigue yendo al equipo). */
+  suggestTabAccept: boolean;
+  /** Ayuda "Tab o → acepta · Esc descarta" junto a la sugerencia (sus primeras veces). */
+  suggestTip: boolean;
   autoLog: boolean;
   highlightEnabled: boolean;
   /** Esquemas activos por defecto (las sesiones pueden fijar su fabricante). */
@@ -134,6 +142,10 @@ export const defaultSettings: Settings = {
   commandSuggest: SUGGEST_DEFAULT,
   commandSuggestSet: false,
   suggestListKey: "ctrl+period",
+  suggestColor: "auto",
+  suggestStyle: "underline",
+  suggestTabAccept: true,
+  suggestTip: true,
   autoLog: false,
   highlightEnabled: true,
   highlightSchemes: ["cisco", "common"],

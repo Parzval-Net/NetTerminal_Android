@@ -161,6 +161,7 @@ impl SessionStore {
             highlight: None,
             on_connect: None,
             newline: None,
+            backspace: None,
             local_echo: None,
             encoding: None,
             auto_reconnect: None,

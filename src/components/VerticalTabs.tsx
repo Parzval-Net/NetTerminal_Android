@@ -3,7 +3,8 @@ import { PanelLeftClose, PanelLeftOpen, PanelTop, Plus, Wrench, X } from "lucide
 import { tabTitle } from "../types";
 import { ContextMenu } from "./Sidebar";
 import { SessionIcon, isQuickSession } from "./SessionIcon";
-import { TabBarProps, closeBtnClass, dotColor } from "./TabBar";
+import { TabBarProps, closeBtnClass, dotColor, dropMark } from "./TabBar";
+import { useTabDrag } from "../lib/tabDrag";
 import { MenuItem, layoutItem, newTabMenuItems, tabMenuItems } from "./tabMenu";
 import { modLabel } from "../lib/platform";
 
@@ -38,6 +39,7 @@ const clamp = (w: number) => Math.max(MIN_W, Math.min(MAX_W, Math.round(w)));
  */
 export const VerticalTabs = memo(function VerticalTabs(props: TabBarProps) {
   const { tabs, states, activeId, onSelect, onClose, onNew, toolsOpen, alerts, onRename, activity, alerted, onTabLayout } = props;
+  const drag = useTabDrag("data-id", "y", props.onReorder);
   const [width, setWidth] = useState(() => clamp(load("vtabsWidth", DEFAULT_W)));
   const [collapsed, setCollapsed] = useState(() => load("vtabsCollapsed", false));
   const [editing, setEditing] = useState<string | null>(null);
@@ -208,7 +210,10 @@ export const VerticalTabs = memo(function VerticalTabs(props: TabBarProps) {
                 if (e.button === 1) {
                   e.preventDefault();
                   onClose(t.id);
-                } else if (e.button === 0) onSelect(t.id);
+                } else if (e.button === 0) {
+                  onSelect(t.id);
+                  drag.begin(e, t.id);
+                }
               }}
               onDoubleClick={() => rename(t.id)}
               onContextMenu={(e) => {
@@ -216,8 +221,10 @@ export const VerticalTabs = memo(function VerticalTabs(props: TabBarProps) {
                 onSelect(t.id);
                 setMenu({ x: e.clientX, y: e.clientY, items: tabMenuItems(t, states[t.id], props, () => rename(t.id)) });
               }}
-              title={`${title}${t.title ? ` (${t.session.name})` : ""}\nDoble clic: renombrar · clic derecho: opciones · clic medio: cerrar`}
-              className={`${rowBase} ${rowState(active)} ${focusable}`}
+              title={`${title}${t.title ? ` (${t.session.name})` : ""}\nArrastra para mover · doble clic: renombrar · clic derecho: opciones · clic medio: cerrar`}
+              className={`${rowBase} ${rowState(active)} ${focusable} ${drag.dragId === t.id ? "opacity-50" : ""} ${
+                drag.target?.id === t.id ? dropMark(drag.target.after ? "bottom" : "top") : ""
+              }`}
             >
               <SessionIcon type={t.session.type} size={13} quick={isQuickSession(t.session)} />
               {collapsed ? (

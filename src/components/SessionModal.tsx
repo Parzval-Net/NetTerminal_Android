@@ -5,6 +5,7 @@ import { SerialPortInfo, Session, SessionType, Tunnel, TunnelKind } from "../typ
 import { SerialPortField } from "./SerialPortField";
 import { SessionIcon, typeLabel } from "./SessionIcon";
 import { vendorSchemes } from "../lib/highlight";
+import { backspaceOptions } from "../lib/backspace";
 import { normPath } from "../lib/folders";
 import { useDragResize } from "../lib/useDragResize";
 import { CredStatus, MASK, credStatus, needsUnlock, storageLabel } from "../lib/credentials";
@@ -378,7 +379,7 @@ export function SessionModal({ initial, title, defaultFolder, folders, onClose, 
           )}
 
           {s.type !== "local" && (
-            <details className="rounded-lg border border-line" open={!!(s.on_connect || s.local_echo || s.auto_reconnect)}>
+            <details className="rounded-lg border border-line" open={!!(s.on_connect || s.local_echo || s.auto_reconnect || s.backspace)}>
               <summary className="px-3 h-9 flex items-center text-[12.5px] cursor-default">Opciones de terminal</summary>
               <div className="px-3 pb-3 space-y-3">
                 <Field label="Comandos al conectar (uno por línea)">
@@ -415,6 +416,22 @@ export function SessionModal({ initial, title, defaultFolder, folders, onClose, 
                       ))}
                     </select>
                   </Field>
+                </Row>
+                <Row>
+                  <Field label="Retroceso envía">
+                    <select
+                      className="field"
+                      value={s.backspace ?? ""}
+                      onChange={(e) => set("backspace", (e.target.value || undefined) as Session["backspace"])}
+                    >
+                      {backspaceOptions(s.platform).map(([v, l]) => (
+                        <option key={v} value={v}>
+                          {l}
+                        </option>
+                      ))}
+                    </select>
+                  </Field>
+                  <p className="self-end pb-1.5 text-[11px] text-muted">Si Retroceso no borra (equipos Huawei VRP), usa BS. Shift+Retroceso envía el otro.</p>
                 </Row>
                 <label className="flex items-center gap-2.5 text-[12.5px]">
                   <input

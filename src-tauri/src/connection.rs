@@ -464,9 +464,9 @@ impl ConnectionManager {
         lock(&sink.mirror).watch = Some(Watcher::new(self.triggers.clone(), id.clone(), session.folder.as_deref()));
 
         let mut transport = match session.session_type {
-            SessionType::Local if session.scp.is_some() => spawn_pty(scp_command(session)?, cols, rows, &sink)?,
-            SessionType::Local => spawn_pty(local_shell(), cols, rows, &sink)?,
-            SessionType::Ssh => spawn_pty(ssh_command(session)?, cols, rows, &sink)?,
+            SessionType::Local if session.scp.is_some() => spawn_pty(scp_command(session)?, cols, rows, &sink, None)?,
+            SessionType::Local => spawn_pty(local_shell(), cols, rows, &sink, None)?,
+            SessionType::Ssh => spawn_pty(ssh_command(session)?, cols, rows, &sink, erase_of(session))?,
             SessionType::Telnet => open_telnet(session, cols, rows, &sink, false)?,
             SessionType::Raw => open_telnet(session, cols, rows, &sink, true)?,
             SessionType::Serial => open_serial(session, &sink)?,
@@ -1097,7 +1097,33 @@ fn split_args(s: &str) -> Vec<String> {
     out
 }
 
-fn spawn_pty(mut cmd: CommandBuilder, cols: u16, rows: u16, sink: &Sink) -> Result<Transport, String> {
+/// Carácter de borrado de la sesión para la PTY local: solo cambia si Retroceso envía BS (^H).
+/// La terminal manda el modo efectivo (el automático ya resuelto) en `session.backspace`.
+fn erase_of(session: &Session) -> Option<u8> {
+    (session.backspace.as_deref() == Some("bs")).then_some(0x08)
+}
+
+/// Fija el carácter de borrado (VERASE) de la PTY. OpenSSH lo informa al servidor en el pedido
+/// de terminal (RFC 4254 §8, opcode VERASE), como PuTTY con "The Backspace key", y el pedido
+/// de contraseña del propio ssh (modo canónico) borra con él.
+#[cfg(unix)]
+fn set_pty_erase(master: &dyn MasterPty, erase: u8) {
+    let Some(fd) = master.as_raw_fd() else { return };
+    // SAFETY: termios es una estructura C simple; tcgetattr la llena antes de usarla.
+    unsafe {
+        let mut t: libc::termios = std::mem::zeroed();
+        if libc::tcgetattr(fd, &mut t) == 0 {
+            t.c_cc[libc::VERASE] = erase as libc::cc_t;
+            libc::tcsetattr(fd, libc::TCSANOW, &t);
+        }
+    }
+}
+
+/// En Windows (ConPTY) no hay termios: ssh.exe informa sus propios modos.
+#[cfg(not(unix))]
+fn set_pty_erase(_master: &dyn MasterPty, _erase: u8) {}
+
+fn spawn_pty(mut cmd: CommandBuilder, cols: u16, rows: u16, sink: &Sink, erase: Option<u8>) -> Result<Transport, String> {
     cmd.env("TERM", "xterm-256color");
     cmd.env("COLORTERM", "truecolor");
     // Apps GUI en macOS no heredan LANG: sin esto zsh/ssh rompen los caracteres UTF-8.
@@ -1113,6 +1139,9 @@ fn spawn_pty(mut cmd: CommandBuilder, cols: u16, rows: u16, sink: &Sink) -> Resu
             pixel_height: 0,
         })
         .map_err(|e| format!("No se pudo crear la PTY: {e}"))?;
+    if let Some(erase) = erase {
+        set_pty_erase(pair.master.as_ref(), erase);
+    }
 
     let mut child = pair.slave.spawn_command(cmd).map_err(|e| {
         format!("No se pudo iniciar el proceso: {e}. Si es SSH, verifica que OpenSSH esté instalado.")
@@ -1758,6 +1787,127 @@ mod tests {
             assert_eq!(entries.iter().filter(|(_, d)| d.is_none()).count(), 1);
             let got: Vec<u8> = entries.iter().filter_map(|(_, d)| d.clone()).flatten().collect();
             assert_eq!(got, payload);
+        }
+    }
+
+    /// Equipo Telnet simulado como Huawei VRP: negocia ECHO y SGA, hace eco de lo tecleado,
+    /// borra con ^H (CTRL_H, tecla de sistema de VRP) respondiendo "\b \b" y, si `accepts_del`,
+    /// también con DEL. Al recibir CR devuelve la línea que quedó para comprobarla.
+    fn fake_vrp(accepts_del: bool) -> (u16, std::thread::JoinHandle<Vec<u8>>) {
+        use std::io::{Read, Write};
+        let listener = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
+        let port = listener.local_addr().unwrap().port();
+        let h = std::thread::spawn(move || {
+            let (mut s, _) = listener.accept().unwrap();
+            s.set_read_timeout(Some(std::time::Duration::from_secs(5))).unwrap();
+            s.write_all(&[255, 251, 1, 255, 251, 3]).unwrap();
+            s.write_all(b"\r\n<HUAWEI>").unwrap();
+            let (mut received, mut line, mut iac) = (Vec::new(), Vec::<u8>::new(), 0usize);
+            let mut buf = [0u8; 256];
+            'outer: while let Ok(n @ 1..) = s.read(&mut buf) {
+                for &b in &buf[..n] {
+                    // Respuestas de negociación del cliente (IAC DO x): no son datos.
+                    if iac > 0 || b == 255 {
+                        iac = if iac == 0 { 2 } else { iac - 1 };
+                        continue;
+                    }
+                    received.push(b);
+                    match b {
+                        0 => {}
+                        b'\r' => {
+                            s.write_all(format!("\r\nline={}\r\n<HUAWEI>", String::from_utf8_lossy(&line)).as_bytes()).unwrap();
+                            if line == b"quit" {
+                                break 'outer;
+                            }
+                            line.clear();
+                        }
+                        0x08 | 0x7f if b == 0x08 || accepts_del => {
+                            if line.pop().is_some() {
+                                s.write_all(b"\x08 \x08").unwrap();
+                            }
+                        }
+                        0x7f => {}
+                        _ => {
+                            line.push(b);
+                            s.write_all(&[b]).unwrap();
+                        }
+                    }
+                }
+            }
+            received
+        });
+        (port, h)
+    }
+
+    /// Con Retroceso = BS la PTY de ssh borra con ^H (y OpenSSH lo informa al servidor); por
+    /// defecto queda DEL (^?), el valor estándar de macOS y Linux.
+    #[cfg(unix)]
+    #[test]
+    fn ssh_pty_erase_follows_backspace_mode() {
+        for (erase, want) in [(None, "erase = ^?"), (Some(0x08), "erase = ^H")] {
+            let (sink, log) = test_sink();
+            let mut cmd = portable_pty::CommandBuilder::new("sh");
+            cmd.args(["-c", "stty -a; sleep 0.3"]);
+            let _t = super::spawn_pty(cmd, 80, 24, &sink, erase).unwrap();
+            let t = std::time::Instant::now();
+            loop {
+                let out: Vec<u8> = log.lock().unwrap().iter().filter_map(|(_, d)| d.clone()).flatten().collect();
+                if String::from_utf8_lossy(&out).contains(want) {
+                    break;
+                }
+                assert!(t.elapsed() < std::time::Duration::from_secs(5), "stty no mostró {want:?}: {}", String::from_utf8_lossy(&out));
+                std::thread::sleep(std::time::Duration::from_millis(10));
+            }
+        }
+        let s: crate::models::Session = serde_json::from_value(serde_json::json!({ "name": "s", "type": "ssh", "backspace": "bs" })).unwrap();
+        assert_eq!(super::erase_of(&s), Some(0x08));
+        let s: crate::models::Session = serde_json::from_value(serde_json::json!({ "name": "s", "type": "ssh" })).unwrap();
+        assert_eq!(super::erase_of(&s), None);
+    }
+
+    /// Retroceso por Telnet: ^H y DEL llegan al equipo sin cambios (solo CR pasa a CR NUL) y el
+    /// eco "\b \b" del equipo vuelve intacto. Un VRP que solo borra con ^H ignora DEL.
+    #[test]
+    fn telnet_backspace_reaches_vrp_unchanged() {
+        for accepts_del in [false, true] {
+            let (port, server) = fake_vrp(accepts_del);
+            let session: crate::models::Session = serde_json::from_value(serde_json::json!({
+                "name": "vrp", "type": "telnet", "host": "127.0.0.1", "port": port
+            }))
+            .unwrap();
+            let got = std::sync::Arc::new(std::sync::Mutex::new(Vec::<u8>::new()));
+            let g = got.clone();
+            let data = tauri::ipc::Channel::new(move |b| {
+                if let tauri::ipc::InvokeResponseBody::Raw(v) = b {
+                    g.lock().unwrap().extend(v);
+                }
+                Ok(())
+            });
+            let mgr = super::ConnectionManager::default();
+            mgr.connect("c1".into(), &session, 80, 24, data, None).unwrap();
+            let wait_for = |want: &str| {
+                let t = std::time::Instant::now();
+                while !String::from_utf8_lossy(&got.lock().unwrap()).contains(want) {
+                    assert!(t.elapsed() < std::time::Duration::from_secs(5), "no llegó {want:?} (DEL aceptado: {accepts_del})");
+                    std::thread::sleep(std::time::Duration::from_millis(5));
+                }
+            };
+            wait_for("<HUAWEI>");
+            // Como teclea la terminal: una tecla por escritura.
+            for k in ["d", "i", "x", "\x08", "s", "\r"] {
+                mgr.write("c1", k.as_bytes()).unwrap();
+            }
+            wait_for("line=dis\r\n");
+            for k in ["a", "b", "\x7f", "\r"] {
+                mgr.write("c1", k.as_bytes()).unwrap();
+            }
+            wait_for(if accepts_del { "line=a\r\n" } else { "line=ab\r\n" });
+            mgr.write("c1", b"quit\r").unwrap();
+            let received = server.join().unwrap();
+            assert_eq!(received, b"dix\x08s\r\0ab\x7f\r\0quit\r", "bytes de control intactos (el equipo cierra antes del NUL final)");
+            let screen = got.lock().unwrap().clone();
+            assert!(screen.windows(5).any(|w| w == b"dix\x08 "), "eco \\b \\b intacto y en orden");
+            mgr.disconnect("c1");
         }
     }
 

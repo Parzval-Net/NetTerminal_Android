@@ -229,8 +229,11 @@ jobs:
           # Las mismas novedades van al release y al aviso dentro de la app: los mensajes de
           # los commits desde la versión anterior (sin líneas de coautoría).
           prev=$(git -C repo describe --tags --abbrev=0 "$TAG^" 2>/dev/null || true)
+          # Si existe novedades/<tag>.md, se usa tal cual (solo los cambios, para usuarios finales).
+          if [ -s "repo/novedades/$TAG.md" ]; then cp "repo/novedades/$TAG.md" notas.md; else
           git -C repo log --no-merges --format='### %s%n%n%b' ${prev:+"$prev..$TAG"} \
             | grep -v -i '^co-authored-by:' | cat -s > notas.md
+          fi
           [ -s notas.md ] || gh api "repos/$REPO/releases/generate-notes" -f tag_name="$TAG" --jq .body > notas.md
           [ -n "$prev" ] && printf '\nCambios completos: https://github.com/%s/compare/%s...%s\n' "$REPO" "$prev" "$TAG" >> notas.md
           cat notas.md

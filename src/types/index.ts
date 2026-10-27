@@ -26,6 +26,8 @@ export interface Session {
   on_connect?: string;
   /** Qué envía Enter: "cr" (por defecto), "lf" o "crlf". */
   newline?: "cr" | "lf" | "crlf";
+  /** Qué envía Retroceso: "del" (^?) o "bs" (^H). Sin valor: automático (BS en Huawei, DEL en el resto). */
+  backspace?: "del" | "bs";
   local_echo?: boolean;
   /** Codificación de la salida del equipo. */
   encoding?: string;

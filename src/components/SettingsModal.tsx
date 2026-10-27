@@ -17,7 +17,7 @@ import { Settings, UpdateInfo, defaultSettings } from "../lib/settings";
 import { Session } from "../types";
 import { TermPreset, fontStack, presets } from "../lib/theme";
 import { zoomLabel } from "../lib/platform";
-import { LIST_KEYS, type ListKey, clearUsage } from "../lib/suggest";
+import { GHOST_COLORS, GHOST_STYLES, type GhostColor, type GhostStyle, LIST_KEYS, type ListKey, TIP_TIMES, clearUsage } from "../lib/suggest";
 
 import { plural } from "../lib/plural";
 import { ConfirmDialog } from "./ConfirmDialog";
@@ -397,7 +397,7 @@ export function SettingsModal({
                 </Item>
                 <Item
                   label="Sugerencias de comandos"
-                  hint="En sesiones remotas con plataforma detectada o fijada en el catálogo, muestra en gris el resto de un comando de consulta, también si lo escribes abreviado (sh ip int br). Flecha derecha lo acepta, Ctrl+→ u Option+→ acepta una palabra y la tecla de lista abre hasta 8 comandos. Tab sigue yendo al equipo y nunca se envía Enter; los comandos con riesgo solo aparecen en la lista y piden confirmación. En modo configuración solo sugiere tras do (Cisco) o run (Junos). No funciona en la terminal local"
+                  hint="En sesiones remotas con plataforma detectada o fijada en el catálogo, muestra en color el resto de un comando de consulta, también si lo escribes abreviado (sh ip int br). Tab o Flecha derecha lo acepta, Ctrl+→ u Option+→ acepta una palabra, Esc la descarta en esa línea y la tecla de lista abre hasta 8 comandos. Sin sugerencia visible, Tab y Esc van al equipo como siempre. Nunca se envía Enter; los comandos con riesgo solo aparecen en la lista y piden confirmación. En modo configuración solo sugiere tras do (Cisco) o run (Junos). No funciona en la terminal local"
                 >
                   <Switch checked={s.commandSuggest} onChange={(v) => onChange({ commandSuggest: v, commandSuggestSet: true })} />
                 </Item>
@@ -415,6 +415,36 @@ export function SettingsModal({
                           </option>
                         ))}
                       </select>
+                    </Item>
+                    <Item
+                      label="Tab acepta la sugerencia"
+                      hint="Solo cuando hay una sugerencia visible. Sin sugerencia (en un marcador como {{interfaz}}, un nombre que no está en el catálogo o tras Esc), Tab va al equipo y funciona su autocompletado. Un segundo Tab dentro de 400 ms también va al equipo, para seguir con su autocompletado"
+                    >
+                      <Switch checked={s.suggestTabAccept} onChange={(v) => onChange({ suggestTabAccept: v })} />
+                    </Item>
+                    <Item label="Color de la sugerencia" hint="Automático elige por tema un color con al menos 3:1 de contraste con el fondo, distinto del texto y del cursor. Un tono fijo se ajusta a cada tema para mantener ese contraste">
+                      <select className="field !w-40" value={s.suggestColor} onChange={(e) => onChange({ suggestColor: e.target.value as GhostColor })}>
+                        {(Object.keys(GHOST_COLORS) as GhostColor[]).map((k) => (
+                          <option key={k} value={k}>
+                            {GHOST_COLORS[k]}
+                          </option>
+                        ))}
+                      </select>
+                    </Item>
+                    <Item label="Estilo de la sugerencia" hint="Cursiva o subrayado punteado la distinguen aún más de la salida del equipo">
+                      <select className="field !w-40" value={s.suggestStyle} onChange={(e) => onChange({ suggestStyle: e.target.value as GhostStyle })}>
+                        {(Object.keys(GHOST_STYLES) as GhostStyle[]).map((k) => (
+                          <option key={k} value={k}>
+                            {GHOST_STYLES[k]}
+                          </option>
+                        ))}
+                      </select>
+                    </Item>
+                    <Item
+                      label="Mostrar ayuda junto a la sugerencia"
+                      hint={`Indica «Tab o → acepta · Esc descarta» en las primeras ${TIP_TIMES} líneas con sugerencia de cada plataforma y luego se oculta. Borrar el historial de sugerencias la vuelve a mostrar`}
+                    >
+                      <Switch checked={s.suggestTip} onChange={(v) => onChange({ suggestTip: v })} />
                     </Item>
                     <ClearSuggestHistory />
                   </>
@@ -757,7 +787,7 @@ function Label({ children }: { children: React.ReactNode }) {
 function ClearSuggestHistory() {
   const [done, setDone] = useState(false);
   return (
-    <Item label="Historial de sugerencias" hint="Los comandos del catálogo que aceptaste o ejecutaste suben en la lista. Solo se guarda la plantilla del catálogo, en este equipo">
+    <Item label="Historial de sugerencias" hint="Los comandos del catálogo que aceptaste o ejecutaste suben en la lista. Solo se guarda la plantilla del catálogo, en este equipo. Borrarlo también vuelve a mostrar la ayuda junto a la sugerencia">
       <button
         onClick={() => {
           clearUsage();
