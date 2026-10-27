@@ -651,7 +651,9 @@ function Workspace({
             return;
           }
         }
-        toast("No se reconoció la plataforma; elígela a mano", "error");
+        // Muestra la versión que informó el equipo para que se elija la plataforma más cercana.
+        const ver = output.split(/\r?\n/).find((l) => /version/i.test(l))?.trim().slice(0, 80);
+        toast(`No se reconoció la plataforma${ver ? ` (${ver})` : ""}; elige la más cercana a mano`, "error");
       }
     } catch (e) {
       toast(`No se pudo detectar: ${e}`, "error");

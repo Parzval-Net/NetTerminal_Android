@@ -3,6 +3,12 @@
   "name": "Fortinet",
   "platforms": [
     {
+      "id": "fos62",
+      "label": "FortiOS 6.2",
+      "detect": "Version:\\s*\\S+\\s+v6\\.2\\.",
+      "note": "Rama sin soporte de Fortinet desde 2023 (equipos como FortiGate 30E no pasan de 6.2). SD-WAN en diagnose usa virtual-wan-link e IKE debug log-filter dst-addr4, como 6.4. Los comandos generales se verificaron en 6.4 o superior: alguno puede no existir en 6.2."
+    },
+    {
       "id": "fos64",
       "label": "FortiOS 6.4",
       "detect": "Version:\\s*\\S+\\s+v6\\.4\\.",
@@ -677,6 +683,7 @@
       "variants": [
         {
           "platforms": [
+            "fos62",
             "fos64"
           ],
           "cmd": "diagnose sys virtual-wan-link health-check"
@@ -693,6 +700,7 @@
       "variants": [
         {
           "platforms": [
+            "fos62",
             "fos64"
           ],
           "cmd": "diagnose sys virtual-wan-link member"
@@ -707,6 +715,7 @@
       "cat": "Enrutamiento",
       "risk": "read",
       "platforms": [
+        "fos62",
         "fos64",
         "fos70",
         "fos72",
@@ -715,6 +724,7 @@
       "variants": [
         {
           "platforms": [
+            "fos62",
             "fos64"
           ],
           "cmd": "diagnose sys virtual-wan-link service"
@@ -743,6 +753,7 @@
       "variants": [
         {
           "platforms": [
+            "fos62",
             "fos64"
           ],
           "cmd": "diagnose sys virtual-wan-link intf-sla-log {{puerto}}"
@@ -857,6 +868,7 @@
       "variants": [
         {
           "platforms": [
+            "fos62",
             "fos64",
             "fos70",
             "fos72"
@@ -879,6 +891,7 @@
       "variants": [
         {
           "platforms": [
+            "fos62",
             "fos64",
             "fos70",
             "fos72"
