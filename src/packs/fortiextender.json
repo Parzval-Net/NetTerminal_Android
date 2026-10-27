@@ -1,0 +1,388 @@
+{
+  "vendor": "fortiextender",
+  "name": "FortiExtender",
+  "platforms": [
+    {
+      "id": "fext",
+      "label": "FortiExtender OS (4.x / 7.x)",
+      "detect": "Model\\s*:\\s*FortiExtender|Image version\\s*:\\s*FX",
+      "note": "CLI propia vía consola, SSH o Telnet. La sintaxis de estos comandos es la misma en 4.x y 7.x según las guías oficiales."
+    }
+  ],
+  "detectCommand": "get system version",
+  "commands": [
+    {
+      "cmd": "get system version",
+      "desc": "Versión de imagen OS, modelo, número de serie, BIOS e imagen de respaldo (fallback). Primer comando para identificar el equipo.",
+      "cat": "Sistema",
+      "risk": "read",
+      "source": "https://docs.fortinet.com/document/fortiextender/7.6.1/admin-guide-standalone/646707/get-system-version"
+    },
+    {
+      "cmd": "get system status",
+      "desc": "Estado general del sistema: serie, versión de BIOS, modelo y hora del sistema.",
+      "cat": "Sistema",
+      "risk": "read",
+      "source": "https://docs.fortinet.com/document/fortiextender/7.4.3/troubleshooting-guide/975914/fortiextender-debug-and-diagnose-commands-cheat-sheet"
+    },
+    {
+      "cmd": "get system performance status",
+      "desc": "Uso de CPU, memoria, uptime y temperatura del SoC. Útil ante lentitud o reinicios inesperados.",
+      "cat": "Sistema",
+      "risk": "read",
+      "source": "https://docs.fortinet.com/document/fortiextender/7.4.3/troubleshooting-guide/975914/fortiextender-debug-and-diagnose-commands-cheat-sheet"
+    },
+    {
+      "cmd": "get system app-status",
+      "desc": "Lista las aplicaciones (daemons) del sistema con su estado y PID.",
+      "cat": "Sistema",
+      "risk": "read",
+      "source": "https://docs.fortinet.com/document/fortiextender/7.4.3/troubleshooting-guide/975914/fortiextender-debug-and-diagnose-commands-cheat-sheet"
+    },
+    {
+      "cmd": "get system admin status",
+      "desc": "Sesiones de administradores activas (consola, GUI, SSH, Telnet) con perfil de acceso e IP de origen.",
+      "cat": "Seguridad",
+      "risk": "read",
+      "source": "https://docs.fortinet.com/document/fortiextender/7.6.1/admin-guide-standalone/993536/get-user-session-status-and-force-log-out"
+    },
+    {
+      "cmd": "execute disconnect-admin-session all {{usuario}}",
+      "desc": "Fuerza el cierre de todas las sesiones de un administrador. Se puede reemplazar all por console, telnet, ssh, gui o gui-console.",
+      "cat": "Seguridad",
+      "risk": "change",
+      "source": "https://docs.fortinet.com/document/fortiextender/7.6.1/admin-guide-standalone/993536/get-user-session-status-and-force-log-out"
+    },
+    {
+      "cmd": "get extender status",
+      "desc": "Modo de gestión (FortiGate, Cloud o local), dirección del controlador, management-state (CWWS_RUN = operativo), network-mode e intervalos de discovery y echo. Clave para validar la conexión con el FortiGate.",
+      "cat": "Sistema",
+      "risk": "read",
+      "source": "https://docs.fortinet.com/document/fortiextender/7.6.1/admin-guide-standalone/310622/check-current-manage-mode"
+    },
+    {
+      "cmd": "get cpm status",
+      "desc": "Estado de la conexión con FortiExtender Cloud / FortiManagement Cloud.",
+      "cat": "Sistema",
+      "risk": "read",
+      "source": "https://docs.fortinet.com/document/fortiextender/7.4.3/troubleshooting-guide/975914/fortiextender-debug-and-diagnose-commands-cheat-sheet"
+    },
+    {
+      "cmd": "get modem status",
+      "desc": "Estado detallado del módem: modelo, firmware, IMEI, ICCID, IMSI, SIM activa, carrier, APN, servicio (LTE/5G), RSSI, RSRP, RSRQ, SINR, banda, cell ID, plan de datos y connect_status. Comando base para troubleshooting LTE.",
+      "cat": "Hardware",
+      "risk": "read",
+      "note": "También muestra intentos restantes de PIN/PUK y códigos de error del módem. Si muestra Resetting o Not inserted, Fortinet Community recomienda actualizar FortiExtender OS a la última GA y el firmware del módem antes de abrir caso (KB 193609).",
+      "source": "https://docs.fortinet.com/document/fortiextender/7.6.1/admin-guide-standalone/175764/get-modem-status"
+    },
+    {
+      "cmd": "get modem firmware-version",
+      "desc": "Versión de firmware del módem. Útil para validar compatibilidad con el carrier antes de escalar.",
+      "cat": "Hardware",
+      "risk": "read",
+      "source": "https://docs.fortinet.com/document/fortiextender/7.4.3/troubleshooting-guide/975914/fortiextender-debug-and-diagnose-commands-cheat-sheet"
+    },
+    {
+      "cmd": "get modem data-usage",
+      "desc": "Consumo de datos actual por módem y por SIM.",
+      "cat": "Conexiones y tráfico",
+      "risk": "read",
+      "source": "https://docs.fortinet.com/document/fortiextender/7.4.3/troubleshooting-guide/975914/fortiextender-debug-and-diagnose-commands-cheat-sheet"
+    },
+    {
+      "cmd": "get lte plan",
+      "desc": "Planes de datos LTE configurados (capacidad, fecha de facturación, overage).",
+      "cat": "Configuración",
+      "risk": "read",
+      "source": "https://docs.fortinet.com/document/fortiextender/7.4.3/troubleshooting-guide/975914/fortiextender-debug-and-diagnose-commands-cheat-sheet"
+    },
+    {
+      "cmd": "get lte service",
+      "desc": "Muestra el servicio LTE.",
+      "cat": "Otros",
+      "risk": "read",
+      "source": "https://docs.fortinet.com/document/fortiextender/7.4.3/troubleshooting-guide/975914/fortiextender-debug-and-diagnose-commands-cheat-sheet"
+    },
+    {
+      "cmd": "get lte carrier {{mcc}} {{mnc}}",
+      "desc": "Información del carrier para la combinación MCC/MNC indicada.",
+      "cat": "Otros",
+      "risk": "read",
+      "source": "https://docs.fortinet.com/document/fortiextender/7.4.3/troubleshooting-guide/975914/fortiextender-debug-and-diagnose-commands-cheat-sheet"
+    },
+    {
+      "cmd": "get lte sim-imsi-record",
+      "desc": "IMSI registrados de las SIM activadas en cada módem.",
+      "cat": "Hardware",
+      "risk": "read",
+      "source": "https://docs.fortinet.com/document/fortiextender/7.6.1/admin-guide-standalone/441714/check-the-recorded-sim-card-imsi-number"
+    },
+    {
+      "cmd": "execute modem delete-sim-record modem1 all",
+      "desc": "Borra los registros IMSI de SIM del módem 1. Se puede indicar imsi {{imsi}} en vez de all.",
+      "cat": "Hardware",
+      "risk": "change",
+      "source": "https://docs.fortinet.com/document/fortiextender/7.4.3/troubleshooting-guide/975914/fortiextender-debug-and-diagnose-commands-cheat-sheet"
+    },
+    {
+      "cmd": "execute modem show-log latest modem1",
+      "desc": "Imprime el log más reciente del módem 1 (usar modem2 o all según corresponda).",
+      "cat": "Logs",
+      "risk": "change",
+      "source": "https://docs.fortinet.com/document/fortiextender/7.4.3/troubleshooting-guide/975914/fortiextender-debug-and-diagnose-commands-cheat-sheet"
+    },
+    {
+      "cmd": "execute modem data-usage clear",
+      "desc": "Limpia el contador de consumo de datos de un módem o SIM específico.",
+      "cat": "Conexiones y tráfico",
+      "risk": "change",
+      "source": "https://docs.fortinet.com/document/fortiextender/7.4.3/troubleshooting-guide/975914/fortiextender-debug-and-diagnose-commands-cheat-sheet"
+    },
+    {
+      "cmd": "execute modem data-usage set sim {{imsi}} {{megabytes}}",
+      "desc": "Fija manualmente el consumo de datos (MB) de una SIM, por ejemplo para alinearlo con la facturación del carrier.",
+      "cat": "Conexiones y tráfico",
+      "risk": "change",
+      "source": "https://docs.fortinet.com/document/fortiextender/7.4.3/troubleshooting-guide/975914/fortiextender-debug-and-diagnose-commands-cheat-sheet"
+    },
+    {
+      "cmd": "execute modem modem1 sim1 puk unlock {{puk}} {{nuevo_pin}}",
+      "desc": "Desbloquea una SIM bloqueada usando el código PUK y define un PIN nuevo.",
+      "cat": "Hardware",
+      "risk": "change",
+      "note": "Solo FEX-511F según la guía. Antes pausar el modem manager (config lte setting > config modem1 > set pause-modem-manager enable) y luego deshabilitarlo.",
+      "source": "https://docs.fortinet.com/document/fortiextender/7.6.1/admin-guide-standalone/102372/unlock-sim-pin"
+    },
+    {
+      "cmd": "execute sim-switch modem1",
+      "desc": "Cambio manual de SIM en el módem 1 (modem2 para el segundo). Corta la sesión LTE mientras conecta con la otra SIM.",
+      "cat": "Hardware",
+      "risk": "disruptive",
+      "source": "https://docs.fortinet.com/document/fortiextender/7.4.3/troubleshooting-guide/975914/fortiextender-debug-and-diagnose-commands-cheat-sheet"
+    },
+    {
+      "cmd": "execute modemfw show all",
+      "desc": "Lista los archivos de firmware de módem almacenados en el equipo.",
+      "cat": "Hardware",
+      "risk": "read",
+      "source": "https://docs.fortinet.com/document/fortiextender/7.4.3/troubleshooting-guide/558651/modem-lte-sessions"
+    },
+    {
+      "cmd": "execute modemfw AtTest modem1 {{at_cmd}}",
+      "desc": "Envía un comando AT al módem 1. Ejemplos: ati (IMEI y modelo), at+cimi (IMSI), at!gstatus# (señal, banda, RSRP, SINR), at+cgdcont# (APN), at!impref# (firmware preferido vs actual).",
+      "cat": "Diagnóstico",
+      "risk": "change",
+      "note": "El carácter ? del AT se escribe como #. En algunas versiones requiere execute show-hidden antes. Usar solo comandos AT de consulta. Sin argumento entra al modo AT interactivo (KB 179896). Los comandos AT dependen del fabricante del módem: at!gstatus es Sierra Wireless, AT+QNWPREFCFG es Quectel.",
+      "source": "https://community.fortinet.com/t5/FortiExtender/Technical-Tip-Commands-to-collect-AT-information/ta-p/192191"
+    },
+    {
+      "cmd": "execute modemfw checkSIM",
+      "desc": "Detecta las SIM insertadas en los slots.",
+      "cat": "Hardware",
+      "risk": "read",
+      "source": "https://docs.fortinet.com/document/fortiextender/7.4.3/troubleshooting-guide/975914/fortiextender-debug-and-diagnose-commands-cheat-sheet"
+    },
+    {
+      "cmd": "execute modemfw getIMEI",
+      "desc": "Obtiene el IMEI del módem.",
+      "cat": "Hardware",
+      "risk": "read",
+      "source": "https://docs.fortinet.com/document/fortiextender/7.4.3/troubleshooting-guide/975914/fortiextender-debug-and-diagnose-commands-cheat-sheet"
+    },
+    {
+      "cmd": "execute restore modem-fw tftp {{paquete}} {{ip_tftp}}",
+      "desc": "Actualiza el firmware del módem desde un servidor TFTP. El enlace LTE se cae durante el proceso.",
+      "cat": "Sistema",
+      "risk": "disruptive",
+      "note": "También existe ftp, usb y cloud. Desde el FortiGate se instala con execute extender install-forticloud-mdm-package.",
+      "source": "https://docs.fortinet.com/document/fortiextender/7.6.1/admin-guide-standalone/989115/upgrade-modem-firmware"
+    },
+    {
+      "cmd": "execute restore os-image tftp {{imagen}} {{ip_tftp}}",
+      "desc": "Actualiza la imagen de FortiExtender OS desde un servidor TFTP. El equipo reinicia.",
+      "cat": "Sistema",
+      "risk": "disruptive",
+      "note": "Variantes: ftp {{imagen}} {{ip}} {{usuario}} {{clave}} y cloud.",
+      "source": "https://docs.fortinet.com/document/fortiextender/7.6.1/admin-guide-standalone/618232/upgrade-os-firmware"
+    },
+    {
+      "cmd": "execute debuginfo export tftp {{archivo}}.tgz {{ip_tftp}}",
+      "desc": "Exporta un paquete comprimido con toda la información de diagnóstico (software, hardware, configuración, CPU) para TAC.",
+      "cat": "Diagnóstico",
+      "risk": "change",
+      "source": "https://docs.fortinet.com/document/fortiextender/7.6.1/admin-guide-standalone/769712/collect-complete-diagnostics-information"
+    },
+    {
+      "cmd": "execute debug log-to-console on",
+      "desc": "Envía los logs de debug a la sesión Telnet/SSH actual. Requisito para ver los debug por módulo.",
+      "cat": "Diagnóstico",
+      "risk": "change",
+      "source": "https://docs.fortinet.com/document/fortiextender/7.6.1/admin-guide-standalone/415381/status-diagnostics-and-debugging-commands"
+    },
+    {
+      "cmd": "execute debug CONNMGR info on",
+      "desc": "Debug del gestor de conexión del módem (sesión LTE, SIM, APN). Usar state en vez de info para menor verbosidad.",
+      "cat": "Diagnóstico",
+      "risk": "change",
+      "note": "Detener con execute debug clear.",
+      "source": "https://docs.fortinet.com/document/fortiextender/7.4.3/troubleshooting-guide/558651/modem-lte-sessions"
+    },
+    {
+      "cmd": "execute debug EXTD info on",
+      "desc": "Debug del canal de control CAPWAP con el FortiGate. Útil si el equipo no llega a CWWS_RUN.",
+      "cat": "Diagnóstico",
+      "risk": "change",
+      "note": "Para discovery usar execute debug EXTD ac_disc on. Detener con execute debug clear.",
+      "source": "https://docs.fortinet.com/document/fortiextender/7.4.3/troubleshooting-guide/21290/fortigate-managed-mode-wan-extension-and-lan-extension"
+    },
+    {
+      "cmd": "execute debug clear",
+      "desc": "Detiene la recolección de logs de debug.",
+      "cat": "Diagnóstico",
+      "risk": "change",
+      "source": "https://docs.fortinet.com/document/fortiextender/7.4.3/troubleshooting-guide/558651/modem-lte-sessions"
+    },
+    {
+      "cmd": "get system interface",
+      "desc": "Estado de todas las interfaces: link, tipo, MAC, modo (static/dhcp), IP, MTU y gateway, incluidas lte1/lte2 y vwan.",
+      "cat": "Interfaces",
+      "risk": "read",
+      "source": "https://docs.fortinet.com/document/fortiextender/7.6.1/admin-guide-standalone/592495/get-interface-status"
+    },
+    {
+      "cmd": "get system lan-switch status",
+      "desc": "Estado e información del LAN switch.",
+      "cat": "Interfaces",
+      "risk": "read",
+      "source": "https://docs.fortinet.com/document/fortiextender/7.4.3/troubleshooting-guide/975914/fortiextender-debug-and-diagnose-commands-cheat-sheet"
+    },
+    {
+      "cmd": "get system dhcp-client lease-info",
+      "desc": "Leases DHCP obtenidos por las interfaces cliente.",
+      "cat": "Interfaces",
+      "risk": "read",
+      "source": "https://docs.fortinet.com/document/fortiextender/7.4.3/troubleshooting-guide/975914/fortiextender-debug-and-diagnose-commands-cheat-sheet"
+    },
+    {
+      "cmd": "get system dhcp-server clients {{dhcp_server}}",
+      "desc": "Clientes conectados al servidor DHCP indicado.",
+      "cat": "Interfaces",
+      "risk": "read",
+      "source": "https://docs.fortinet.com/document/fortiextender/7.4.3/troubleshooting-guide/975914/fortiextender-debug-and-diagnose-commands-cheat-sheet"
+    },
+    {
+      "cmd": "execute interface dhcpclient-renew {{interfaz}}",
+      "desc": "Renueva el lease DHCP de la interfaz.",
+      "cat": "Interfaces",
+      "risk": "change",
+      "source": "https://docs.fortinet.com/document/fortiextender/7.4.3/troubleshooting-guide/975914/fortiextender-debug-and-diagnose-commands-cheat-sheet"
+    },
+    {
+      "cmd": "get router info routing-table all",
+      "desc": "Tabla de ruteo completa (kernel, conectadas, estáticas, OSPF).",
+      "cat": "Enrutamiento",
+      "risk": "read",
+      "source": "https://docs.fortinet.com/document/fortiextender/7.6.1/admin-guide-standalone/490631/verify-routing-table"
+    },
+    {
+      "cmd": "get router info policy",
+      "desc": "Reglas de policy-based routing (PBR) configuradas.",
+      "cat": "Enrutamiento",
+      "risk": "read",
+      "source": "https://docs.fortinet.com/document/fortiextender/7.6.1/admin-guide-standalone/661782/view-routing-configurations"
+    },
+    {
+      "cmd": "get router info target",
+      "desc": "Targets de ruteo con dispositivo, next-hop y tabla asociada.",
+      "cat": "Enrutamiento",
+      "risk": "read",
+      "source": "https://docs.fortinet.com/document/fortiextender/7.6.1/admin-guide-standalone/661782/view-routing-configurations"
+    },
+    {
+      "cmd": "get vwan status",
+      "desc": "Estado de la interfaz virtual-WAN y sus miembros (prioridad, sesiones, nexthop, salud).",
+      "cat": "Enrutamiento",
+      "risk": "read",
+      "source": "https://docs.fortinet.com/document/fortiextender/7.6.1/admin-guide-standalone/474414/check-sd-wan-health"
+    },
+    {
+      "cmd": "get vwan member",
+      "desc": "Información de los miembros virtual-WAN.",
+      "cat": "Enrutamiento",
+      "risk": "read",
+      "source": "https://docs.fortinet.com/document/fortiextender/7.4.3/troubleshooting-guide/975914/fortiextender-debug-and-diagnose-commands-cheat-sheet"
+    },
+    {
+      "cmd": "get hmon hchk {{nombre}}",
+      "desc": "Estadísticas del health check: RTT mediano (avg/max/min/now), desviación y pérdida de paquetes.",
+      "cat": "Diagnóstico",
+      "risk": "read",
+      "source": "https://docs.fortinet.com/document/fortiextender/7.6.1/admin-guide-standalone/474414/check-sd-wan-health"
+    },
+    {
+      "cmd": "get hmon interface-monitoring {{nombre}}",
+      "desc": "Contadores del monitor de interfaz: bytes, paquetes, descartes y tasas rx/tx.",
+      "cat": "Conexiones y tráfico",
+      "risk": "read",
+      "source": "https://docs.fortinet.com/document/fortiextender/7.6.1/admin-guide-standalone/403856/monitor-interface-status"
+    },
+    {
+      "cmd": "get vpn ipsec tunnel details",
+      "desc": "Estado de los túneles IPsec: IKE, algoritmos, SPI, bytes y paquetes por SA.",
+      "cat": "MPLS / VPN",
+      "risk": "read",
+      "source": "https://docs.fortinet.com/document/fortiextender/7.6.1/admin-guide-standalone/14540/check-vpn-tunnel-status"
+    },
+    {
+      "cmd": "get system dns",
+      "desc": "Configuración DNS del sistema.",
+      "cat": "DNS",
+      "risk": "read",
+      "source": "https://docs.fortinet.com/document/fortiextender/7.4.3/troubleshooting-guide/975914/fortiextender-debug-and-diagnose-commands-cheat-sheet"
+    },
+    {
+      "cmd": "get dnsproxy stats",
+      "desc": "Estadísticas del DNS proxy.",
+      "cat": "DNS",
+      "risk": "read",
+      "source": "https://docs.fortinet.com/document/fortiextender/7.4.3/troubleshooting-guide/975914/fortiextender-debug-and-diagnose-commands-cheat-sheet"
+    },
+    {
+      "cmd": "execute iptables-save",
+      "desc": "Muestra el contenido de las tablas iptables. Útil para validar reglas y ruteo aplicados.",
+      "cat": "Seguridad",
+      "risk": "change",
+      "source": "https://docs.fortinet.com/document/fortiextender/7.4.3/troubleshooting-guide/975914/fortiextender-debug-and-diagnose-commands-cheat-sheet"
+    },
+    {
+      "cmd": "execute tcpdump -i {{interfaz}} port 5246",
+      "desc": "Captura paquetes CAPWAP (puerto 5246) en la interfaz de discovery para validar la comunicación con el FortiGate.",
+      "cat": "Diagnóstico",
+      "risk": "change",
+      "note": "Detener con Ctrl+C. En Fortinet Community (FEX 7.4.3 con FortiOS 7.4.4 offline) se recomienda capturar primero en el FortiExtender; otro caso se debió a una imagen FEX distinta a la cargada en el FortiGate.",
+      "source": "https://docs.fortinet.com/document/fortiextender/7.4.3/troubleshooting-guide/21290/fortigate-managed-mode-wan-extension-and-lan-extension"
+    },
+    {
+      "cmd": "execute ping {{ip}}",
+      "desc": "Ping desde el FortiExtender para validar salida a Internet por LTE o hacia el FortiGate.",
+      "cat": "Diagnóstico",
+      "risk": "read",
+      "note": "Sintaxis con IP mostrada en KB 97767 de Fortinet Community.",
+      "source": "https://docs.fortinet.com/document/fortiextender/7.4.3/troubleshooting-guide/975914/fortiextender-debug-and-diagnose-commands-cheat-sheet"
+    },
+    {
+      "cmd": "get system vxlan status",
+      "desc": "Estado de las interfaces VXLAN. Útil en modo LAN extension.",
+      "cat": "Interfaces",
+      "risk": "read",
+      "source": "https://docs.fortinet.com/document/fortiextender/7.4.3/troubleshooting-guide/975914/fortiextender-debug-and-diagnose-commands-cheat-sheet"
+    },
+    {
+      "cmd": "get vpn ipsec negotiation error",
+      "desc": "Errores de negociación IPsec. Útil cuando el túnel LAN extension no levanta.",
+      "cat": "MPLS / VPN",
+      "risk": "read",
+      "source": "https://docs.fortinet.com/document/fortiextender/7.4.3/troubleshooting-guide/975914/fortiextender-debug-and-diagnose-commands-cheat-sheet"
+    }
+  ]
+}

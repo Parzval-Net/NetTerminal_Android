@@ -289,9 +289,12 @@ export interface SuggestIndex {
 
 /**
  * Fabricantes cuya CLI resuelve palabras abreviadas por prefijo único. Las shells de
- * sistemas operativos, Check Point y WatchGuard quedan fuera: ahí `sh` no es `show`.
+ * sistemas operativos, Check Point, WatchGuard y la shell de FortiAP quedan fuera: ahí `sh`
+ * no es `show`. FortiSwitchOS y FortiExtender usan la CLI de FortiOS y los switches GWN de
+ * Grandstream una tipo Cisco; ante la duda se marcan: así lo abreviado no puede ser un
+ * comando riesgoso.
  */
-export const ABBREV_VENDORS = new Set(["cisco", "huawei", "juniper", "fortinet"]);
+export const ABBREV_VENDORS = new Set(["cisco", "huawei", "juniper", "fortinet", "fortiswitch", "fortiextender", "grandstream"]);
 
 /** {{variable}} de las plantillas o <marcador> de la documentación de los fabricantes. */
 const PLACEHOLDER = /\{\{[^}]*\}\}|<[A-Za-z][\w .:/-]*>/;
