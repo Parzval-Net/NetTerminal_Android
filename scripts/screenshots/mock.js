@@ -928,6 +928,8 @@ if (new URLSearchParams(location.search).has("video")) {
   const vrpStrict = q.get("vrp") === "strict";
   const vrpErase = q.get("vrpecho") === "k" ? "\b\x1b[K" : "\b \b";
   window.__ntWrites = [];
+  /** Palabras que el equipo simulado completa con Tab. */
+  const MOCK_WORDS = ["show", "interface", "interfaces", "brief", "version", "running-config", "clock", "ip", "vlan"];
   handlers.write = ({ id, data }) => {
     window.__ntWrites.push(data);
     const vrp = connSessions.get(id)?.highlight === "huawei";
@@ -949,6 +951,17 @@ if (new URLSearchParams(location.search).has("video")) {
       } else if (ch === "\x17") {
         const n = buf.length - buf.replace(/\S*\s*$/, "").length;
         (buf = buf.slice(0, buf.length - n)), (echo += erase.repeat(n));
+      } else if (ch === "\t") {
+        // Autocompletado del equipo (como IOS): completa la última palabra si es única.
+        const last = /(\S+)$/.exec(buf)?.[1] ?? "";
+        const hits = last ? MOCK_WORDS.filter((w) => w.startsWith(last.toLowerCase())) : [];
+        if (hits.length === 1) {
+          const add = `${hits[0].slice(last.length)} `;
+          (buf += add), (echo += add);
+        }
+      } else if (ch === "?") {
+        // Ayuda del equipo: opciones y luego prompt + lo escrito (sin el "?").
+        echo += `\r\n  brief      Resumen de interfaces\r\n  interface  Estado por interfaz\r\n\r\n${promptOf(id)}${buf}`;
       } else if (ch >= " ") (buf += ch), (echo += ch);
     }
     if (echo) {
