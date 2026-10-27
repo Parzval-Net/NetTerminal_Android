@@ -14,6 +14,7 @@ export function MacroModal({ initial, onSave, onClose }: Props) {
     initial ?? { id: `m${Date.now().toString(36)}`, label: "", kind: "send", text: "" },
   );
   const [scripts, setScripts] = useState<string[]>([]);
+  const [pickError, setPickError] = useState("");
   const win = useDragResize<HTMLFormElement>("macroWindow");
 
   useEffect(() => {
@@ -22,6 +23,19 @@ export function MacroModal({ initial, onSave, onClose }: Props) {
     window.addEventListener("keydown", onKey);
     return () => window.removeEventListener("keydown", onKey);
   }, [onClose]);
+
+  // Trae un .py de cualquier carpeta a scripts/ (el diálogo lo abre el backend) y lo selecciona.
+  const browse = async () => {
+    setPickError("");
+    try {
+      const name = await invoke<string | null>("import_script");
+      if (!name) return;
+      setScripts(await invoke<string[]>("list_scripts").catch(() => [...scripts, name]));
+      setM((cur) => ({ ...cur, script: name, label: cur.label.trim() ? cur.label : name.replace(/\.py$/, "") }));
+    } catch (e) {
+      setPickError(String(e));
+    }
+  };
 
   const valid = m.label.trim() && (m.kind === "send" ? m.text?.trim() : m.script);
 
@@ -81,25 +95,37 @@ export function MacroModal({ initial, onSave, onClose }: Props) {
               />
             </label>
           ) : (
-            <label className="block">
+            <div className="block">
               <span className="block mb-1 text-[11.5px] font-medium text-muted">Script</span>
-              <select
-                className="field"
-                value={m.script ?? ""}
-                onChange={(e) => setM({ ...m, script: e.target.value })}
-              >
-                <option value="" disabled>
-                  Selecciona un script
-                </option>
-                {scripts.map((s) => (
-                  <option key={s}>{s}</option>
-                ))}
-              </select>
+              <div className="flex gap-2">
+                <select
+                  aria-label="Script"
+                  className="field flex-1 min-w-0"
+                  value={m.script ?? ""}
+                  onChange={(e) => setM({ ...m, script: e.target.value })}
+                >
+                  <option value="" disabled>
+                    Selecciona un script
+                  </option>
+                  {scripts.map((s) => (
+                    <option key={s}>{s}</option>
+                  ))}
+                </select>
+                <button
+                  type="button"
+                  onClick={browse}
+                  title="Elegir un .py de cualquier carpeta: se copia a scripts/"
+                  className="shrink-0 px-3 h-8 rounded-md border border-line hover:bg-hover text-[12.5px]"
+                >
+                  Buscar en el equipo…
+                </button>
+              </div>
+              {pickError && <span className="block mt-1.5 text-[11.5px] text-danger">{pickError}</span>}
               <span className="block mt-1.5 text-[11.5px] text-muted">
                 Los scripts viven en la carpeta de datos, en <code>scripts/</code>. Usan{" "}
-                <code>import netterminal as nt</code> y requieren Python 3 instalado.
+                <code>import netterminal as nt</code> y requieren Python 3 instalado. Si eliges uno de otra carpeta, se copia ahí.
               </span>
-            </label>
+            </div>
           )}
         </div>
         <footer className="flex justify-end gap-2 px-5 py-3 border-t border-line">
