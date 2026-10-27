@@ -16,10 +16,23 @@ export const CTRL_W = "\x17";
 /** Plataformas del catálogo Huawei (VRP 5, VRP 8 y YunShan, basado en VRP). */
 export const HUAWEI_PLATFORMS: ReadonlySet<string> = new Set(["vrp5", "vrp8", "yunshan"]);
 
-/** Modo efectivo: el elegido en la sesión o, en automático, BS para Huawei y DEL para el resto. */
-export function backspaceMode(s: Pick<Session, "backspace" | "platform">): BackspaceMode {
+/**
+ * Prompt típico de Huawei VRP al inicio de la línea: vista de usuario `<equipo>` o vista de
+ * sistema `[equipo]` / `[~equipo]` / `[*equipo]` (VRP8 y YunShan). Sirve cuando la plataforma
+ * aún no se detectó (conexión rápida). Un prompt de Linux como `[user@host ~]$` no calza:
+ * tiene espacio y termina en `$`.
+ */
+const HUAWEI_PROMPT = /^(?:<[^<>\s]{1,64}>|\[[~*]{0,2}[^[\]\s]{1,64}\])/;
+export const looksHuaweiPrompt = (line: string) => HUAWEI_PROMPT.test(line);
+
+/**
+ * Modo efectivo: el elegido en la sesión o, en automático, BS para Huawei (por plataforma o,
+ * si aún no se conoce, por el prompt de la línea actual) y DEL para el resto.
+ */
+export function backspaceMode(s: Pick<Session, "backspace" | "platform">, promptLine?: string): BackspaceMode {
   if (s.backspace === "del" || s.backspace === "bs") return s.backspace;
-  return s.platform && HUAWEI_PLATFORMS.has(s.platform) ? "bs" : "del";
+  if (s.platform) return HUAWEI_PLATFORMS.has(s.platform) ? "bs" : "del";
+  return promptLine && looksHuaweiPrompt(promptLine) ? "bs" : "del";
 }
 
 /** Opciones del selector "Retroceso envía" (sesión y conexión rápida); "" = automático. */

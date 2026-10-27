@@ -797,6 +797,11 @@ export const TerminalView = memo(function TerminalView({ id, session, active, vi
     };
     hostRef.current!.addEventListener("paste", onNativePaste, true);
 
+    // Texto de la línea del cursor (para reconocer un prompt de Huawei sin plataforma detectada).
+    const currentLineText = () => {
+      const b = term.buffer.active;
+      return b.getLine(b.baseY + b.cursorY)?.translateToString(true) ?? "";
+    };
     term.attachCustomKeyEventHandler((e) => {
       // Una tecla que tomaron las sugerencias tampoco llega como "keypress" (Enter en la lista).
       if (e.type === "keydown") swallowPress = false;
@@ -804,7 +809,13 @@ export const TerminalView = memo(function TerminalView({ id, session, active, vi
       if (e.type !== "keydown") return true;
       // Retroceso según la sesión (DEL o BS): xterm lo envía igual y onData lo traduce.
       backspaceKey =
-        e.key === "Backspace" ? backspaceSeq(e, backspaceMode(sessionRef.current), term.buffer.active.type !== "alternate") : null;
+        e.key === "Backspace"
+          ? backspaceSeq(
+              e,
+              backspaceMode(sessionRef.current, currentLineText()),
+              term.buffer.active.type !== "alternate",
+            )
+          : null;
       if (suggestKeyDown(e)) {
         e.preventDefault();
         e.stopPropagation();

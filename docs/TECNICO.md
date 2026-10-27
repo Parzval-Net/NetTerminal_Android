@@ -128,11 +128,11 @@ Opción por sesión "Retroceso envía" (Opciones de terminal de la sesión y Opc
 
 | Valor | Envía | Cuándo |
 | --- | --- | --- |
-| Automático (por defecto) | BS (0x08, ^H) en plataformas Huawei (`vrp5`, `vrp8`, `yunshan`); DEL (0x7f, ^?) en el resto | Sesiones nuevas y existentes |
+| Automático (por defecto) | BS (0x08, ^H) en plataformas Huawei (`vrp5`, `vrp8`, `yunshan`) o, sin plataforma detectada, cuando la línea empieza con un prompt de Huawei (`<equipo>`, `[equipo]`, `[~equipo]`); DEL (0x7f, ^?) en el resto | Sesiones nuevas y existentes |
 | DEL (^?) | 0x7f | Valor de xterm, PuTTY y la mayoría de las terminales |
 | BS (^H) | 0x08 | Equipos que solo borran con Ctrl+H |
 
-- Huawei documenta CTRL_H como tecla de sistema que borra el carácter a la izquierda del cursor (no se puede reasignar con `hotkey`, que solo cambia CTRL_G, CTRL_L, CTRL_O y CTRL_U) y no documenta DEL. Por eso el automático usa BS con la plataforma Huawei detectada o fijada. En Conexión rápida la plataforma aún no se conoce: elige BS si Retroceso no borra.
+- Huawei documenta CTRL_H como tecla de sistema que borra el carácter a la izquierda del cursor (no se puede reasignar con `hotkey`, que solo cambia CTRL_G, CTRL_L, CTRL_O y CTRL_U) y no documenta DEL. Por eso el automático usa BS con la plataforma Huawei detectada o fijada y, mientras la plataforma no se conoce (por ejemplo en Conexión rápida), cuando el prompt de la línea es de Huawei. Si aun así Retroceso no borra, elige BS en la sesión.
 - Shift+Retroceso envía el otro código (como en PuTTY), para probar sin cambiar la sesión.
 - Ctrl+Retroceso y Alt/Option+Retroceso envían ^W (borrar la palabra a la izquierda; VRP CTRL_W, IOS, ASA, Junos, bash y zsh). En pantalla completa (vim, nano) siguen la convención de xterm.
 - SSH: con BS, la PTY local de `ssh` usa ^H como carácter de borrado (VERASE). OpenSSH lo informa al servidor al pedir la terminal (RFC 4254, sección 8), igual que PuTTY, y el pedido de contraseña del propio `ssh` también borra con ^H. En Windows (ConPTY) no aplica.

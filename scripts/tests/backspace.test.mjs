@@ -253,4 +253,21 @@ for (const dev of DEVICES) {
 assert.equal(simulate(DEVICES.find((d) => d.platform === "vrp8"), "ssh", "del").line, "show versxion", "VRP con DEL: no borra");
 if (process.env.VERBOSE) console.log(matrix.join("\n"));
 
+// Sin plataforma detectada: el prompt de Huawei en la línea activa BS en automático.
+{
+  const { looksHuaweiPrompt, backspaceMode } = await import("../../src/lib/backspace.ts");
+  for (const l of ["<ar-wan01>dis ver", "[ar-wan01]int g0/0/1", "[~HUAWEI]commit", "[*CE-01]"]) {
+    assert.ok(looksHuaweiPrompt(l), l);
+    assert.equal(backspaceMode({}, l), "bs", l);
+  }
+  for (const l of ["[user@host ~]$ ls", "router#show ver", "admin@sw> show", "FGT # get", ""]) {
+    assert.ok(!looksHuaweiPrompt(l), l);
+    assert.equal(backspaceMode({}, l), "del", l);
+  }
+  // La plataforma conocida y la elección explícita mandan sobre el prompt.
+  assert.equal(backspaceMode({ platform: "iosxe" }, "<x>"), "del");
+  assert.equal(backspaceMode({ backspace: "del" }, "<x>"), "del");
+  assert.equal(backspaceMode({ backspace: "bs" }, "router#"), "bs");
+}
+
 console.log("backspace: OK");
