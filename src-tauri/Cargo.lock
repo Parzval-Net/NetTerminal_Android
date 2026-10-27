@@ -2788,6 +2788,7 @@ dependencies = [
  "hmac 0.13.0",
  "if-addrs",
  "keyring",
+ "libc",
  "md-5",
  "portable-pty",
  "regex",

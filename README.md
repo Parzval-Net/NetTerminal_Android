@@ -100,6 +100,9 @@ Sí. Importa desde PuTTY, SecureCRT, MobaXterm, ssh_config o CSV, con vista prev
 **Un equipo antiguo no me deja entrar por SSH. ¿Qué hago?**
 Activa los algoritmos legacy en la sesión. Son algoritmos débiles: úsalos solo en redes de gestión confiables.
 
+**Retroceso no borra en un equipo (por ejemplo, Huawei). ¿Qué hago?**
+En la sesión, Opciones de terminal › "Retroceso envía", elige BS (^H). Con la plataforma Huawei detectada se usa BS automáticamente. Para probar sin cambiar nada, Shift+Retroceso envía el otro código. Detalle en [Tecla Retroceso](docs/TECNICO.md#tecla-retroceso).
+
 ## Seguridad
 
 - **Contraseñas cifradas** en una bóveda que nunca las muestra; solo se escriben en el equipo de destino, nunca en el bastión.

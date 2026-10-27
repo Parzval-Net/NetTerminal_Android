@@ -14,6 +14,7 @@ import { fontStack } from "../lib/theme";
 import { Settings, logOptions } from "../lib/settings";
 import { alertHighlights } from "../lib/alerts";
 import { StreamHighlighter, compile, effectiveRules } from "../lib/highlight";
+import { backspaceMode, backspaceSeq, translateBackspace } from "../lib/backspace";
 import { isMac, modLabel, shortcutFor } from "../lib/platform";
 import { paneBodyStyle } from "../lib/split";
 import { credStatus, needsUnlock } from "../lib/credentials";
@@ -392,7 +393,8 @@ export const TerminalView = memo(function TerminalView({ id, session, active, vi
       try {
         await invoke("connect", {
           id: connId,
-          session: s,
+          // Modo de Retroceso ya resuelto: con BS, la PTY de ssh borra con ^H y se lo informa al servidor.
+          session: { ...s, backspace: backspaceMode(s) },
           cols: term.cols,
           rows: term.rows,
           onData,
@@ -712,7 +714,12 @@ export const TerminalView = memo(function TerminalView({ id, session, active, vi
       pick: pickSuggestion,
     };
 
+    /** Secuencia de la última pulsación de Retroceso (ver lib/backspace); null si fue otra tecla. */
+    let backspaceKey: string | null = null;
+
     term.onData((data) => {
+      data = translateBackspace(data, backspaceKey);
+      backspaceKey = null;
       if (statusRef.current === "closed") {
         if (sessionRef.current.scp) return;
         if (legacyOffer && (data === "l" || data === "L")) {
@@ -750,7 +757,7 @@ export const TerminalView = memo(function TerminalView({ id, session, active, vi
     /** Envía al equipo lo tecleado (o insertado por una sugerencia). */
     function sendInput(data: string) {
       const s = sessionRef.current;
-      if (s.local_echo) term.write(data.replace(/\r/g, "\r\n").replace(/\x7f/g, "\b \b"));
+      if (s.local_echo) term.write(data.replace(/\r/g, "\r\n").replace(/[\x7f\b]/g, "\b \b"));
       const out = s.newline && s.newline !== "cr" ? data.replace(/\r/g, newline()) : data;
       invoke("write", { id: connIdRef.current, data: out }).catch(() => {});
     }
@@ -795,6 +802,9 @@ export const TerminalView = memo(function TerminalView({ id, session, active, vi
       if (e.type === "keydown") swallowPress = false;
       else if (e.type === "keypress" && swallowPress) return false;
       if (e.type !== "keydown") return true;
+      // Retroceso según la sesión (DEL o BS): xterm lo envía igual y onData lo traduce.
+      backspaceKey =
+        e.key === "Backspace" ? backspaceSeq(e, backspaceMode(sessionRef.current), term.buffer.active.type !== "alternate") : null;
       if (suggestKeyDown(e)) {
         e.preventDefault();
         e.stopPropagation();

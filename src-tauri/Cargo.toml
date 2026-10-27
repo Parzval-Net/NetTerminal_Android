@@ -58,6 +58,10 @@ cbc = "0.2"
 suppaftp = { version = "12.2", default-features = false, features = ["rustls-ring", "no-log"] }
 rustls-platform-verifier = "0.7"
 
+# termios de la PTY local (carácter de borrado para SSH); ya venía con portable-pty.
+[target.'cfg(unix)'.dependencies]
+libc = "0.2"
+
 [target.'cfg(target_os = "macos")'.dependencies]
 keyring = { version = "3.6", default-features = false, features = ["apple-native"] }
 

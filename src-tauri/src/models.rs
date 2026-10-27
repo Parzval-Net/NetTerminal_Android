@@ -61,6 +61,10 @@ pub struct Session {
     /// Qué envía Enter: "cr" (por defecto), "lf" o "crlf".
     #[serde(default)]
     pub newline: Option<String>,
+    /// Qué envía Retroceso: "del" (^?) o "bs" (^H). Sin valor: automático (BS en Huawei).
+    /// La traducción la hace la terminal; aquí solo se guarda con la sesión.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub backspace: Option<String>,
     #[serde(default)]
     pub local_echo: Option<bool>,
     /// Codificación de la salida: "utf-8" (por defecto), "iso-8859-1", "windows-1252".
@@ -132,6 +136,7 @@ impl Session {
             highlight: None,
             on_connect: None,
             newline: None,
+            backspace: None,
             local_echo: None,
             encoding: None,
             auto_reconnect: None,

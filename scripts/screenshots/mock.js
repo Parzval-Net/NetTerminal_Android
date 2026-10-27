@@ -172,6 +172,13 @@ if (location.search.includes("scene=suggest")) {
   window.__ntSuggestPerf = [];
   window.__ntSuggestCost = [];
 }
+// ?scene=vrp (con &video=1): ar-wan01 como Huawei VRP para probar Retroceso; &vrpplatform=1 le
+// asigna la plataforma vrp8 (Retroceso en automático envía BS) y &bs=del|bs fija el modo.
+if (location.search.includes("scene=vrp")) {
+  const q = new URLSearchParams(location.search);
+  if (q.has("vrpplatform")) sessions[3].platform = "vrp8";
+  if (q.get("bs") === "del" || q.get("bs") === "bs") sessions[3].backspace = q.get("bs");
+}
 if (location.search.includes("scene=vertical") || location.search.includes("layout=vertical")) settings.tabLayout = "vertical";
 // ?toast=1: una alerta por palabra clave activa que dispara un aviso (toast) y marca la primera pestaña.
 if (location.search.includes("toast=1")) {
@@ -914,7 +921,17 @@ if (new URLSearchParams(location.search).has("video")) {
     queues.set(id, at);
     setTimeout(fn, at - Date.now());
   };
+  // Huawei VRP simulado: CTRL_H (^H) borra con eco "\b \b" (&vrpecho=k: "\b\x1b[K"); con
+  // &vrp=strict el equipo ignora DEL, como el que reportó el usuario; ^W borra la palabra.
+  // window.__ntWrites guarda lo que llega al equipo, para revisar los bytes.
+  const q = new URLSearchParams(location.search);
+  const vrpStrict = q.get("vrp") === "strict";
+  const vrpErase = q.get("vrpecho") === "k" ? "\b\x1b[K" : "\b \b";
+  window.__ntWrites = [];
   handlers.write = ({ id, data }) => {
+    window.__ntWrites.push(data);
+    const vrp = connSessions.get(id)?.highlight === "huawei";
+    const erase = vrp ? vrpErase : "\b \b";
     let buf = lineBuf.get(id) ?? "";
     let echo = "";
     for (const ch of data) {
@@ -926,8 +943,12 @@ if (new URLSearchParams(location.search).has("video")) {
         later(id, () => out(id, reply(id, line) + promptOf(id)), 200);
         buf = "";
         echo = "";
-      } else if (ch === "\x7f") {
-        if (buf) (buf = buf.slice(0, -1)), (echo += "\b \b");
+      } else if (ch === "\x7f" || ch === "\b") {
+        if (ch === "\x7f" && vrp && vrpStrict) continue;
+        if (buf) (buf = buf.slice(0, -1)), (echo += erase);
+      } else if (ch === "\x17") {
+        const n = buf.length - buf.replace(/\S*\s*$/, "").length;
+        (buf = buf.slice(0, buf.length - n)), (echo += erase.repeat(n));
       } else if (ch >= " ") (buf += ch), (echo += ch);
     }
     if (echo) {
@@ -1288,6 +1309,7 @@ Object.assign(scenes, {
   "t-backup": scenes.backup,
   "t-plugins": tool("Plugins"),
   suggest: async () => { await open("core-sw01"); },
+  vrp: async () => { await open("ar-wan01"); },
   "suggest-config": async () => { await open("core-sw01"); },
   // Revisión de la interfaz: confirmaciones y textos de las herramientas de red.
   "q-syslog": tool("Syslog"),

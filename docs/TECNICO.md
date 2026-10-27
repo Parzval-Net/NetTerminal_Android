@@ -81,7 +81,7 @@ Construido con [Tauri 2](https://tauri.app) (backend en Rust) y xterm.js. Usa el
 | Agentes IA (MCP) | Servidor MCP local para Claude Code, Claude Desktop, Gemini CLI y Codex: listar sesiones, leer salida, ejecutar comandos con aprobación del usuario y modo solo lectura. Apagado por defecto. |
 | Topología | Diagrama de vecinos CDP/LLDP (Cisco, Huawei, Juniper, Fortinet) por consola o por SNMP con un perfil v2c/v3 (LLDP-MIB, CISCO-CDP-MIB y, según las fuentes, OSPF-MIB, BGP4-MIB, BRIDGE/Q-BRIDGE-MIB e IP-MIB), vecinos OSPF/EIGRP/BGP opcionales, equipos y enlaces manuales, sugerencias desde descripciones y desde la tabla MAC (HSRP/VRRP y fabricante por OUI), con estado de puertos y Port-channel, tráfico por sentido en cada enlace (opcional, por SNMP o por consola, con color por utilización), ruta entre dos equipos, snapshots para comparar antes y después de un cambio, y exportación a SVG, draw.io, CSV o Mermaid. |
 | Comandos (⌘L) | Catálogo de 1.776 comandos verificados con fuente oficial. Equipos de red: Cisco (IOS, IOS-XE, NX-OS, IOS-XR, ASA), Juniper (Junos, Evolved, EX sin ELS), Fortinet (FortiOS 6.4 a 7.6), Huawei (VRP5, VRP8, YunShan OS en AR5700/AR6700/AR8000), Check Point (R80.40 a R82, clish y expert) y WatchGuard (Fireware 12.x y 2025+). Sistemas operativos (consultas de red: interfaces, DNS, rutas, ARP, conexiones, tráfico, Wi-Fi, firewall): Windows 10/11/Server (PowerShell), macOS 12 a 27 y Linux (Debian, Ubuntu, RHEL/Rocky/Alma, Fedora, SUSE, Arch, Alpine). Sintaxis por plataforma detectada, nivel de riesgo, favoritos, comandos propios y packs importables. En la terminal local se abre el catálogo del sistema del PC. |
-| Opciones por sesión | Comandos al conectar, reconexión automática, Enter como CR/LF/CRLF, eco local y codificación (UTF-8, Latin-1, Windows-1252). |
+| Opciones por sesión | Comandos al conectar, reconexión automática, Enter como CR/LF/CRLF, Retroceso como DEL o BS (ver [Tecla Retroceso](#tecla-retroceso)), eco local y codificación (UTF-8, Latin-1, Windows-1252). |
 | Pestañas | Horizontales (por defecto) o verticales a la izquierda, con ancho ajustable y modo solo íconos. Renombrar, desconectar sin cerrar, copiar toda la salida, limpiar historial, reiniciar terminal e indicador de actividad en segundo plano. Cerrar las demás, las de la derecha (o de abajo) o todas, con un aviso que detalla las sesiones conectadas que se cortan, las transferencias SCP/SFTP que se cancelan y las conexiones rápidas sin guardar que se pierden (los logs ya grabados quedan en disco). |
 | Herramientas (⌘E) | Monitoreo ICMP/TCP con gráfico y alarma sonora; ping, traceroute y puertos; topología; calculadora de subredes; speedtest (Cloudflare, respeta el proxy del sistema) e iperf3; respaldos; transferencias (TFTP, HTTP, FTP y SFTP); Syslog; SNMP. Cada módulo se activa en Ajustes › Módulos. Abierta desde el Dock o el Finder en macOS, la app agrega al final del PATH `/opt/homebrew/bin`, `/usr/local/bin` y el Python de python.org (en Linux, `~/.local/bin`), para encontrar iperf3 y Python. |
 | SNMP | Cliente de consulta v1, v2c y v3 (USM): GET, GETNEXT, WALK acotado y cancelable y GETBULK. Solo lectura, sin SET. v3 con SHA-256 + AES-128 por defecto (RFC 7860 y RFC 3826), AES-192/256 en variantes net-snmp y Cisco, MD5/DES solo como legado. Conjuntos de OIDs (identidad, interfaces con contadores de 64 bits y tasas, almacenamiento, CPU, procesos, carga y memoria) con exportación CSV. Receptor de traps apagado por defecto: v1, v2c, informs confirmados y traps v3 verificados con el usuario del perfil. Community y contraseñas v3 solo en la bóveda cifrada, atadas al host y puerto del perfil. |
@@ -121,6 +121,36 @@ Construido con [Tauri 2](https://tauri.app) (backend en Rust) y xterm.js. Usa el
 En Windows/Linux los atajos usan Ctrl+Shift para no interferir con Ctrl+C, Ctrl+W, etc. dentro de la terminal.
 
 Conexión rápida (⌘K): `ssh admin@192.0.2.1:2222`, `telnet 192.0.2.5 23`, `admin@router` o solo la IP. Para Serial o TCP crudo usa el formulario del rayo en la pantalla de inicio.
+
+### Tecla Retroceso
+
+Opción por sesión "Retroceso envía" (Opciones de terminal de la sesión y Opciones avanzadas de la conexión rápida):
+
+| Valor | Envía | Cuándo |
+| --- | --- | --- |
+| Automático (por defecto) | BS (0x08, ^H) en plataformas Huawei (`vrp5`, `vrp8`, `yunshan`); DEL (0x7f, ^?) en el resto | Sesiones nuevas y existentes |
+| DEL (^?) | 0x7f | Valor de xterm, PuTTY y la mayoría de las terminales |
+| BS (^H) | 0x08 | Equipos que solo borran con Ctrl+H |
+
+- Huawei documenta CTRL_H como tecla de sistema que borra el carácter a la izquierda del cursor (no se puede reasignar con `hotkey`, que solo cambia CTRL_G, CTRL_L, CTRL_O y CTRL_U) y no documenta DEL. Por eso el automático usa BS con la plataforma Huawei detectada o fijada. En Conexión rápida la plataforma aún no se conoce: elige BS si Retroceso no borra.
+- Shift+Retroceso envía el otro código (como en PuTTY), para probar sin cambiar la sesión.
+- Ctrl+Retroceso y Alt/Option+Retroceso envían ^W (borrar la palabra a la izquierda; VRP CTRL_W, IOS, ASA, Junos, bash y zsh). En pantalla completa (vim, nano) siguen la convención de xterm.
+- SSH: con BS, la PTY local de `ssh` usa ^H como carácter de borrado (VERASE). OpenSSH lo informa al servidor al pedir la terminal (RFC 4254, sección 8), igual que PuTTY, y el pedido de contraseña del propio `ssh` también borra con ^H. En Windows (ConPTY) no aplica.
+- Telnet y Serial: el byte llega sin cambios (Telnet solo duplica 0xFF y manda CR como CR NUL). No se negocia LINEMODE, así que no hay carácter de borrado acordado por protocolo.
+- Importar desde PuTTY: `BackspaceIsDelete=0` (Control-H) se importa como BS.
+
+| Plataforma | Borra con | App por defecto | Fuente |
+| --- | --- | --- | --- |
+| Huawei VRP5, VRP8, YunShan | CTRL_H (BS); DEL no documentado | BS | Huawei, "Using Command Line Shortcut Keys" (S1720/S5700 V200R011C10, S12700 V200R024C00) |
+| Cisco IOS, IOS-XE | Delete o Backspace | DEL | Cisco IOS Configuration Fundamentals 12.2 |
+| Cisco NX-OS, IOS-XR, ASA | Sin tabla oficial encontrada; DEL es el estándar de la terminal | DEL | Cisco ASA Command Reference (solo ^W y ^U) |
+| Juniper Junos | Ctrl+h, Delete o Backspace | DEL | Juniper, "Getting Started: A Quick Tour of the CLI" |
+| Fortinet FortiOS | Backspace (Ctrl+H solo documentado en FortiPolicy) | DEL | Fortinet docs |
+| Check Point Gaia clish | Backspace o CTRL H | DEL | Gaia R82 Administration Guide, "Moving and Editing in Gaia Clish" |
+| Check Point expert, Linux, macOS | `stty erase` (DEL por defecto en glibc y util-linux); bash y zsh aceptan ambos | DEL | glibc `ttydefaults.h` (CERASE 0177), util-linux `agetty(8)` |
+| WatchGuard Fireware | Sin tabla oficial encontrada | DEL | Sin fuente |
+
+Las pruebas `scripts/tests/backspace.test.mjs` simulan cada plataforma por SSH, Telnet y Serial (eco "\b \b", "\b ESC[K" o "ESC[D ESC[K") y comprueban que el resaltado entregue el eco sin cambios y en orden. `connection.rs` prueba un VRP Telnet que solo acepta ^H y otro que acepta DEL, y el VERASE de la PTY de SSH.
 
 ## Resaltado de sintaxis
 

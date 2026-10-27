@@ -481,6 +481,10 @@ fn parse_putty(text: &str, w: &mut Warn) -> Vec<Session> {
         };
         let mut s = session(&name, kind.clone());
         s.folder = Some("PuTTY".into());
+        // "The Backspace key": 1 = Control-? (DEL, por defecto), 0 = Control-H (BS).
+        if num("BackspaceIsDelete") == Some(0) {
+            s.backspace = Some("bs".into());
+        }
         if kind == SessionType::Serial {
             s.serial_port = Some(get("SerialLine").to_string());
             s.baud_rate = num("SerialSpeed");
@@ -1055,7 +1059,7 @@ mod tests {
 [HKEY_CURRENT_USER\\Software\\SimonTatham\\PuTTY\\Sessions\\Default%20Settings]\r\n\"HostName\"=\"\"\r\n\r\n\
 [HKEY_CURRENT_USER\\Software\\SimonTatham\\PuTTY\\Sessions\\Core%20SW%2F01]\r\n\"HostName\"=\"192.0.2.1\"\r\n\"PortNumber\"=dword:00000016\r\n\"Protocol\"=\"ssh\"\r\n\"UserName\"=\"admin\"\r\n\"PublicKeyFile\"=\"C:\\\\keys\\\\a.ppk\"\r\n\"PortForwardings\"=\"L8080=192.0.2.5:80\"\r\n\r\n\
 [HKEY_CURRENT_USER\\Software\\SimonTatham\\PuTTY\\Sessions\\consola]\r\n\"Protocol\"=\"serial\"\r\n\"SerialLine\"=\"COM3\"\r\n\"SerialSpeed\"=dword:0001c200\r\n\"SerialDataBits\"=dword:00000008\r\n\"SerialStopHalfbits\"=dword:00000002\r\n\"SerialParity\"=dword:00000000\r\n\"SerialFlowControl\"=dword:00000000\r\n\r\n\
-[HKEY_CURRENT_USER\\Software\\SimonTatham\\PuTTY\\Sessions\\tel]\r\n\"HostName\"=\"noc@192.0.2.2\"\r\n\"Protocol\"=\"telnet\"\r\n\"PortNumber\"=dword:00000017\r\n\r\n\
+[HKEY_CURRENT_USER\\Software\\SimonTatham\\PuTTY\\Sessions\\tel]\r\n\"HostName\"=\"noc@192.0.2.2\"\r\n\"Protocol\"=\"telnet\"\r\n\"PortNumber\"=dword:00000017\r\n\"BackspaceIsDelete\"=dword:00000000\r\n\r\n\
 [HKEY_CURRENT_USER\\Software\\SimonTatham\\PuTTY\\Sessions\\rl]\r\n\"HostName\"=\"192.0.2.3\"\r\n\"Protocol\"=\"rlogin\"\r\n";
         // regedit exporta en UTF-16LE con BOM.
         let mut bytes = vec![0xFF, 0xFE];
@@ -1076,6 +1080,8 @@ mod tests {
         assert_eq!(c.flow_control.as_deref(), Some("none"));
         assert_eq!(p.sessions[2].username, None, "telnet no lleva usuario");
         assert_eq!(p.sessions[2].host.as_deref(), Some("192.0.2.2"));
+        assert_eq!(p.sessions[2].backspace.as_deref(), Some("bs"), "Backspace = Control-H en PuTTY");
+        assert_eq!(s.backspace, None, "por defecto PuTTY envía DEL: queda en automático");
         let warn = p.warnings.join("\n");
         assert!(warn.contains(".ppk") && warn.contains("túneles") && warn.contains("rlogin"));
     }
