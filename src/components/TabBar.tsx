@@ -9,6 +9,7 @@ import { ContextMenu } from "./Sidebar";
 import { SessionIcon, isQuickSession } from "./SessionIcon";
 import { modLabel } from "../lib/platform";
 import type { CloseScope } from "../lib/closeAll";
+import { useTabDrag } from "../lib/tabDrag";
 
 export interface TabBarProps {
   tabs: Tab[];
@@ -46,7 +47,18 @@ export interface TabBarProps {
   /** "vertical": las pestañas van en VerticalTabs y esta barra solo deja las acciones globales. */
   tabLayout?: TabLayout;
   onTabLayout?: (layout: TabLayout) => void;
+  /** Arrastrar una pestaña: la deja antes o después de `to`. */
+  onReorder?: (from: string, to: string, after: boolean) => void;
 }
+
+/** Línea que marca dónde caerá la pestaña arrastrada. */
+export const dropMark = (side: "left" | "right" | "top" | "bottom") =>
+  `after:content-[''] after:absolute after:bg-accent after:pointer-events-none ${
+    side === "left" ? "after:left-0 after:top-1 after:bottom-1 after:w-0.5"
+    : side === "right" ? "after:right-0 after:top-1 after:bottom-1 after:w-0.5"
+    : side === "top" ? "after:top-0 after:left-1 after:right-1 after:h-0.5"
+    : "after:bottom-0 after:left-1 after:right-1 after:h-0.5"
+  }`;
 
 export const statusColor: Record<ConnStatus, string> = {
   connecting: "var(--warn)",
@@ -95,6 +107,7 @@ export const TabBar = memo(function TabBar(props: TabBarProps) {
   const [editing, setEditing] = useState<string | null>(null);
   const [menu, setMenu] = useState<{ x: number; y: number; items: MenuItem[] } | null>(null);
   const closeMenu = useCallback(() => setMenu(null), []);
+  const drag = useTabDrag("data-tab", "x", props.onReorder);
   // La pestaña activa siempre visible: con muchas pestañas o la ventana angosta quedaba fuera
   // de la franja (que se desplaza sin barra visible).
   const stripRef = useRef<HTMLDivElement>(null);
@@ -170,7 +183,10 @@ export const TabBar = memo(function TabBar(props: TabBarProps) {
                 if (e.button === 1) {
                   e.preventDefault();
                   onClose(t.id);
-                } else onSelect(t.id);
+                } else {
+                  onSelect(t.id);
+                  if (editing !== t.id) drag.begin(e, t.id);
+                }
               }}
               onDoubleClick={() => setEditing(t.id)}
               onContextMenu={(e) => {
@@ -182,8 +198,10 @@ export const TabBar = memo(function TabBar(props: TabBarProps) {
                   items: tabMenuItems(t, states[t.id], props, () => setEditing(t.id)),
                 });
               }}
-              title={`${tabTitle(t)}${t.title ? ` (${t.session.name})` : ""}\nDoble clic: renombrar · clic derecho: opciones · clic medio: cerrar`}
+              title={`${tabTitle(t)}${t.title ? ` (${t.session.name})` : ""}\nArrastra para mover · doble clic: renombrar · clic derecho: opciones · clic medio: cerrar`}
               className={`group relative flex items-center gap-2 h-8 pl-3 pr-1.5 min-w-[120px] max-w-[220px] rounded-t-lg text-[12.5px] ${
+                drag.dragId === t.id ? "opacity-50" : ""
+              } ${drag.target?.id === t.id ? dropMark(drag.target.after ? "right" : "left") : ""} ${
                 active
                   ? "bg-term text-term-fg border border-line border-b-transparent -mb-px"
                   : "text-muted hover:text-fg hover:bg-hover"

@@ -1,4 +1,5 @@
 import { type ReactNode, Suspense, lazy, useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { moveItem } from "./lib/tabDrag";
 import { invoke } from "@tauri-apps/api/core";
 import { Sidebar } from "./components/Sidebar";
 import { TabBar, type TabBarProps } from "./components/TabBar";
@@ -832,8 +833,9 @@ function Workspace({
     }
   };
 
-  /** Importa sesiones omitiendo las que ya existen (mismo tipo, host/puerto o nombre). */
-  const importSessions = async (list: Session[]) => {
+  /** Importa sesiones omitiendo las que ya existen (mismo tipo, host/puerto o nombre). `updates`
+   * son sesiones existentes ya combinadas con lo importado (reimportación con cambios). */
+  const importSessions = async (list: Session[], updates: Session[] = []) => {
     const key = (s: Session) =>
       [s.type, s.host ?? "", s.port ?? "", s.serial_port ?? "", s.name.trim().toLowerCase()].join("|");
     const existing = new Set(sessions.map(key));
@@ -846,6 +848,14 @@ function Workspace({
       const { ssh_args: _dropped, on_connect: _cmds, scp: _scp, tunnels: _tunnels, save_password: _pw, ...safe } = s;
       fresh.push({ ...safe, id: "", created_at: "" });
       existing.add(key(s));
+    }
+    if (updates.length) {
+      await invoke<Session[]>("update_sessions", { sessions: updates });
+      // Cambió el destino: la contraseña guardada no debe seguir al host nuevo.
+      for (const u of updates) {
+        if (!u.save_password && sessions.find((s) => s.id === u.id)?.save_password)
+          await invoke("cred_delete", { sessionId: u.id }).catch(() => {});
+      }
     }
     // Una sola escritura aunque sean cientos de sesiones.
     setSessions(await invoke<Session[]>(fresh.length ? "add_sessions" : "list_sessions", { sessions: fresh }));
@@ -949,6 +959,7 @@ function Workspace({
     requestCloseMany,
     toggleSidebar: () => setSidebarOpen((o) => !o),
     setTabLayout: (tabLayout: Settings["tabLayout"]) => update({ tabLayout }),
+    reorderTab: (from: string, to: string, after: boolean) => setTabs((ts) => moveItem(ts, from, to, after)),
     renameTab: (id: string, title: string | undefined) => setTabs((ts) => ts.map((t) => (t.id === id ? { ...t, title } : t))),
     duplicateTab: (id: string) => {
       const t = tabs.find((x) => x.id === id);
@@ -1073,6 +1084,7 @@ function Workspace({
     onOpenTools: openTools,
     alerts: monitors.downCount,
     onRename: h.renameTab,
+    onReorder: h.reorderTab,
     onDuplicate: h.duplicateTab,
     onReconnect: h.reconnectTab,
     onDisconnect: h.disconnectTab,
@@ -1256,6 +1268,8 @@ function Workspace({
             onStopScript={h.stopScript}
             onEdit={setMacroEdit}
             onDelete={h.deleteMacro}
+            onNotice={toast}
+            onDeleteMacros={(ids) => update((s) => ({ macros: s.macros.filter((x) => !ids.includes(x.id)) }))}
           />
         )}
 
@@ -1410,7 +1424,7 @@ function Workspace({
       )}
       {importOpen && (
         <Suspense fallback={null}>
-          <ImportDialog folders={folders} onImport={importSessions} onClose={() => setImportOpen(false)} />
+          <ImportDialog folders={folders} sessions={sessions} onImport={importSessions} onClose={() => setImportOpen(false)} />
         </Suspense>
       )}
       {paletteOpen && (

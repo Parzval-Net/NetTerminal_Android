@@ -10,8 +10,14 @@ use serde::Serialize;
 use std::collections::HashMap;
 use std::path::Path;
 
-/// Tamaño máximo del archivo a importar.
-pub const MAX_FILE: u64 = 5 * 1024 * 1024;
+/// Tamaño máximo del archivo a importar. El XML de SecureCRT (Export Settings) incluye toda la
+/// configuración global y en instalaciones reales pesa 8 a 10 MB o más.
+pub const MAX_FILE: u64 = 64 * 1024 * 1024;
+/// Tope para los demás formatos, que solo traen sesiones.
+const MAX_OTHER: usize = 8 * 1024 * 1024;
+/// Tope de elementos del XML: acota la memoria ante un archivo armado con etiquetas mínimas
+/// (un export real de 10 MB tiene del orden de cientos de miles).
+const MAX_XML_TOKENS: usize = 3_000_000;
 /// Máximo de sesiones por importación y de avisos que se devuelven.
 const MAX_SESSIONS: usize = 5000;
 const MAX_WARNINGS: usize = 200;
@@ -55,7 +61,7 @@ pub fn parse_file(path: &Path, format: Option<&str>) -> Result<ImportPreview, St
         return Err("No es un archivo".into());
     }
     if meta.len() > MAX_FILE {
-        return Err("El archivo supera 5 MB".into());
+        return Err(format!("El archivo supera {} MB", MAX_FILE / 1024 / 1024));
     }
     let bytes = std::fs::read(path).map_err(|e| e.to_string())?;
     let text = decode(&bytes);
@@ -66,6 +72,9 @@ pub fn parse_file(path: &Path, format: Option<&str>) -> Result<ImportPreview, St
             "No se reconoce el formato. Elige OpenSSH, PuTTY (.reg), SecureCRT (.xml), MobaXterm o CSV.",
         )?,
     };
+    if fmt != "securecrt" && text.len() > MAX_OTHER {
+        return Err(format!("El archivo supera {} MB", MAX_OTHER / 1024 / 1024));
+    }
     parse_text(&fmt, &text)
 }
 
@@ -597,6 +606,9 @@ fn xml_tokens(text: &str) -> Result<Vec<Tok>, String> {
     let mut out = Vec::new();
     let mut rest = text;
     while let Some(i) = rest.find('<') {
+        if out.len() >= MAX_XML_TOKENS {
+            return Err("El XML tiene demasiados elementos".into());
+        }
         let before = &rest[..i];
         if !before.trim().is_empty() {
             out.push(Tok::Text(xml_unescape(before)));
@@ -1212,6 +1224,34 @@ rdp=#91#4%192.0.2.9%3389%#MobaFont#0# #-1\r\n\
         assert_eq!(url_decode("Core%20SW%2F01"), "Core SW/01");
         assert_eq!(clean_folder(["a/b", " ", "c"]).as_deref(), Some("a b/c"));
         assert_eq!(moba_baud("1115200"), Some(115200));
+    }
+
+    #[test]
+    fn securecrt_large_export() {
+        // Exportación grande: mucha configuración global de relleno y 3000 sesiones (~12 MB).
+        let mut xml = String::from("<?xml version=\"1.0\"?>\n<VanDyke version=\"3.0\">\n<key name=\"Global\">\n");
+        while xml.len() < 9 * 1024 * 1024 {
+            xml.push_str("<string name=\"Keymap\">VK_F1 \"\\033OP\" relleno de configuración global</string>\n");
+        }
+        xml.push_str("</key>\n<key name=\"Sessions\">\n");
+        for i in 0..3000 {
+            xml.push_str(&format!(
+                "<key name=\"r{i}\"><dword name=\"Is Session\">1</dword><string name=\"Protocol Name\">SSH2</string><string name=\"Hostname\">192.0.2.{}</string><dword name=\"[SSH2] Port\">22</dword></key>\n",
+                i % 250 + 1
+            ));
+        }
+        xml.push_str("</key>\n</VanDyke>\n");
+        assert!(xml.len() as u64 > 9 * 1024 * 1024 && (xml.len() as u64) < MAX_FILE);
+        let dir = std::env::temp_dir().join(format!("nt-import-{}", uuid::Uuid::new_v4()));
+        std::fs::create_dir_all(&dir).unwrap();
+        let f = dir.join("export.xml");
+        std::fs::write(&f, &xml).unwrap();
+        let p = parse_file(&f, None).unwrap();
+        std::fs::remove_dir_all(&dir).unwrap();
+        assert_eq!(p.format, "securecrt");
+        assert_eq!(p.sessions.len(), 3000);
+        // Etiquetas mínimas repetidas: se corta antes de agotar memoria.
+        assert!(xml_tokens(&"<a>".repeat(MAX_XML_TOKENS + 1)).is_err());
     }
 
     #[test]

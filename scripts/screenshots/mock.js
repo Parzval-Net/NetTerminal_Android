@@ -458,8 +458,8 @@ const handlers = {
   },
   get_settings: () => settings,
   save_settings: () => null,
-  app_version: () => "0.9.11",
-  update_check: () => ({ current: "0.9.11", latest: "0.9.11", newer: false, url: "", notes: "", published: "", supported: true, reason: null }),
+  app_version: () => "0.9.12",
+  update_check: () => ({ current: "0.9.12", latest: "0.9.12", newer: false, url: "", notes: "", published: "", supported: true, reason: null }),
   app_repo: () => "Parzval-Net/Net_Terminal",
   cmdpacks_list: () => [],
   list_notes: () => [
@@ -522,6 +522,8 @@ const handlers = {
     sessions: [
       { id: "", name: "core-sw03", type: "ssh", host: "192.0.2.3", port: 22, username: "admin", folder: "PuTTY", created_at: "" },
       { id: "", name: "consola-lab", type: "serial", serial_port: "COM3", baud_rate: 9600, folder: "PuTTY", created_at: "" },
+      // Con destino "Sucursales/Norte" coincide con una sesión existente que cambia de host.
+      { id: "", name: "sw-acceso-norte", type: "telnet", host: "203.0.113.99", created_at: "" },
     ],
     warnings: ["core-sw03: la llave .ppk de PuTTY no se importa (OpenSSH usa otro formato)"],
   }),
@@ -997,10 +999,10 @@ if (new URLSearchParams(location.search).has("video")) {
     return null;
   };
   if (location.search.includes("update=1")) {
-    // La revisión automática al abrir no encuentra nada; "Buscar ahora" encuentra la 0.9.11.
+    // La revisión automática al abrir no encuentra nada; "Buscar ahora" encuentra la 0.9.12.
     let checks = 0;
     handlers.update_check = () => ({
-      current: "0.9.1", latest: "0.9.11", newer: checks++ > 0, supported: true, reason: null, published: new Date(now).toISOString(),
+      current: "0.9.1", latest: "0.9.12", newer: checks++ > 0, supported: true, reason: null, published: new Date(now).toISOString(),
       url: "https://github.com/Parzval-Net/Net_Terminal/releases/latest",
       notes: "- Vista dividida: selector de pestaña más rápido\n- Cliente SNMP: exportación CSV de traps\n- Catálogo: nuevos comandos de diagnóstico",
     });

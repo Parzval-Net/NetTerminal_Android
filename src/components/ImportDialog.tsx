@@ -1,4 +1,4 @@
-import { useEffect, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import { invoke } from "@tauri-apps/api/core";
 import { open } from "@tauri-apps/plugin-dialog";
 import { homeDir, join } from "@tauri-apps/api/path";
@@ -6,6 +6,7 @@ import { AlertTriangle, FileUp, X } from "lucide-react";
 import { Session, sessionTarget } from "../types";
 import { SessionIcon, typeLabel } from "./SessionIcon";
 import { joinPath, normPath } from "../lib/folders";
+import { mergeImported, planImport } from "../lib/importMerge";
 
 import { plural } from "../lib/plural";
 interface Preview {
@@ -16,8 +17,10 @@ interface Preview {
 
 interface Props {
   folders: string[];
-  /** Importa con la deduplicación existente; devuelve cuántas se agregaron. */
-  onImport: (list: Session[]) => Promise<number>;
+  /** Sesiones guardadas, para avisar cuáles ya existen y cuáles cambian. */
+  sessions: Session[];
+  /** Agrega `list` (con la deduplicación existente) y guarda `updates`; devuelve cuántas se agregaron. */
+  onImport: (list: Session[], updates: Session[]) => Promise<number>;
   onClose: () => void;
 }
 
@@ -32,7 +35,7 @@ const FORMATS: { id: string; label: string; ext: string[] }[] = [
 const NAMES: Record<string, string> = { openssh: "OpenSSH", putty: "PuTTY", securecrt: "SecureCRT", mobaxterm: "MobaXterm", csv: "CSV" };
 
 /** Importación desde otros clientes con vista previa, selección y carpeta de destino. */
-export function ImportDialog({ folders, onImport, onClose }: Props) {
+export function ImportDialog({ folders, sessions, onImport, onClose }: Props) {
   const [format, setFormat] = useState("auto");
   const [preview, setPreview] = useState<Preview | null>(null);
   const [file, setFile] = useState("");
@@ -40,6 +43,8 @@ export function ImportDialog({ folders, onImport, onClose }: Props) {
   const [dest, setDest] = useState("");
   const [busy, setBusy] = useState(false);
   const [msg, setMsg] = useState("");
+  // Sesiones que ya existen (misma carpeta y nombre) con datos de conexión distintos.
+  const [overwrite, setOverwrite] = useState(true);
 
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => e.key === "Escape" && onClose();
@@ -84,16 +89,41 @@ export function ImportDialog({ folders, onImport, onClose }: Props) {
     }
   };
 
+  // Sesiones con su carpeta final y su estado frente a lo ya guardado.
+  const resolved = useMemo(() => {
+    if (!preview) return [];
+    const base = normPath(dest);
+    return preview.sessions.map((s) => ({ ...s, folder: joinPath(base, s.folder ?? "") || undefined }));
+  }, [preview, dest]);
+  const plan = useMemo(() => planImport(sessions, resolved), [sessions, resolved]);
+  const changing = plan.filter((p, i) => p.status === "update" && selected.has(i)).length;
+  // Sesiones que cambian de destino teniendo contraseña guardada, túneles o comandos al conectar.
+  const risky = plan.flatMap((p, i) => (p.status === "update" && p.drops && selected.has(i) ? [{ p, s: resolved[i] }] : []));
+  // Con cambios de destino sensibles la opción por defecto es conservar.
+  useEffect(() => setOverwrite(risky.length === 0), [risky.length]);
+
   const doImport = async () => {
     if (!preview) return;
-    const base = normPath(dest);
-    const list = preview.sessions
-      .filter((_, i) => selected.has(i))
-      .map((s) => ({ ...s, folder: joinPath(base, s.folder ?? "") || undefined }));
+    const fresh: Session[] = [];
+    const updates: Session[] = [];
+    let same = 0;
+    let kept = 0;
+    resolved.forEach((s, i) => {
+      if (!selected.has(i)) return;
+      const p = plan[i];
+      if (p.status === "new") fresh.push(s);
+      else if (p.status === "same") same++;
+      else if (overwrite && p.existing) updates.push(mergeImported(p.existing, s));
+      else kept++;
+    });
     setBusy(true);
     try {
-      const added = await onImport(list);
-      setMsg(`${plural(added, "sesión importada", "sesiones importadas")}${added < list.length ? `, ${plural(list.length - added, "ya existía", "ya existían")}` : ""}.`);
+      const added = await onImport(fresh, updates);
+      const parts = [plural(added, "sesión nueva", "sesiones nuevas")];
+      if (updates.length) parts.push(plural(updates.length, "actualizada", "actualizadas"));
+      if (same + fresh.length - added) parts.push(plural(same + fresh.length - added, "ya existía igual", "ya existían iguales"));
+      if (kept) parts.push(`${plural(kept, "existente", "existentes")} sin cambios por tu elección`);
+      setMsg(`Importación lista: ${parts.join(", ")}.`);
       setPreview(null);
     } catch (e) {
       setMsg(`Importación incompleta: ${e}`);
@@ -184,6 +214,42 @@ export function ImportDialog({ folders, onImport, onClose }: Props) {
                   ))}
                 </datalist>
               </div>
+              {changing > 0 && (
+                <div className="rounded-lg border border-warn/40 bg-warn/10 px-3 py-2 text-[12px] space-y-1.5">
+                  <p className="flex items-center gap-1.5 font-medium">
+                    <AlertTriangle size={13} className="text-warn" />
+                    {plural(changing, "sesión ya existe", "sesiones ya existen")} en esa carpeta con datos de conexión distintos
+                  </p>
+                  <label className="flex items-center gap-2">
+                    <input type="radio" className="accent-[var(--accent)]" checked={overwrite} onChange={() => setOverwrite(true)} />
+                    Sobrescribir con lo importado (host, puerto, usuario, tipo y serial)
+                  </label>
+                  <label className="flex items-center gap-2">
+                    <input type="radio" className="accent-[var(--accent)]" checked={!overwrite} onChange={() => setOverwrite(false)} />
+                    Conservar las existentes y omitirlas
+                  </label>
+                  {risky.length > 0 && (
+                    <div className="text-[11.5px] space-y-0.5">
+                      <p className="font-medium text-warn">
+                        {plural(risky.length, "sesión cambia", "sesiones cambian")} de destino y tiene contraseña guardada, túneles o
+                        comandos al conectar. Al sobrescribir se quitan para que no lleguen a otro equipo:
+                      </p>
+                      <ul className="font-mono text-[11px] text-muted">
+                        {risky.slice(0, 5).map(({ p, s }) => (
+                          <li key={s.name} className="truncate">
+                            {s.name}: {p.existing ? sessionTarget(p.existing) : ""} → {sessionTarget(s)}
+                          </li>
+                        ))}
+                        {risky.length > 5 && <li>… y {risky.length - 5} más</li>}
+                      </ul>
+                    </div>
+                  )}
+                  <p className="text-[11px] text-muted">
+                    Se conservan el resaltado, SSH legacy y lo que el archivo no trae. Pasa el mouse sobre "Cambia" para ver qué
+                    campos se actualizan.
+                  </p>
+                </div>
+              )}
               <div className="rounded-lg border border-line overflow-hidden">
                 <div className="flex items-center gap-2 px-3 h-8 bg-chrome border-b border-line text-[11.5px] text-muted">
                   <input
@@ -208,6 +274,7 @@ export function ImportDialog({ folders, onImport, onClose }: Props) {
                           {s.jump_host ? ` vía ${s.jump_host}` : ""}
                         </span>
                         <span className="w-[24%] truncate text-muted text-[11.5px]">{s.folder ?? ""}</span>
+                        <StatusBadge status={plan[i]?.status} changes={plan[i]?.changes ?? []} overwrite={overwrite} />
                         <span className="w-12 text-right text-[10.5px] text-muted uppercase">{typeLabel[s.type]}</span>
                       </label>
                     </li>
@@ -249,4 +316,35 @@ export function ImportDialog({ folders, onImport, onClose }: Props) {
       </div>
     </div>
   );
+}
+
+const FIELD_LABEL: Record<string, string> = {
+  type: "tipo",
+  host: "host",
+  port: "puerto",
+  username: "usuario",
+  identity_file: "llave",
+  legacy_ssh: "SSH legacy",
+  jump_host: "jump host",
+  serial_port: "puerto serial",
+  baud_rate: "velocidad",
+  data_bits: "bits de datos",
+  stop_bits: "bits de parada",
+  parity: "paridad",
+  flow_control: "control de flujo",
+};
+
+/** Estado de cada fila: nueva, ya existe igual, o cambia (y si se sobrescribirá). */
+function StatusBadge({ status, changes, overwrite }: { status?: string; changes: string[]; overwrite: boolean }) {
+  if (status === "same") return <span className="w-16 text-right text-[10.5px] text-muted">Ya existe</span>;
+  if (status === "update")
+    return (
+      <span
+        className={`w-16 text-right text-[10.5px] ${overwrite ? "text-warn font-medium" : "text-muted line-through"}`}
+        title={`Cambia: ${changes.map((c) => FIELD_LABEL[c] ?? c).join(", ")}`}
+      >
+        Cambia
+      </span>
+    );
+  return <span className="w-16 text-right text-[10.5px] text-accent">Nueva</span>;
 }

@@ -759,10 +759,122 @@ pub fn scripts_dir(data_dir: &Path) -> PathBuf {
         let _ = fs::write(helper, HELPER);
     }
     let example = dir.join("ejemplo_respaldo.py");
-    if !example.exists() {
+    // Si el usuario lo eliminó no se vuelve a crear.
+    if !example.exists() && !dir.join(TRASH).join("ejemplo_respaldo.py").exists() {
         let _ = fs::write(example, EXAMPLE);
     }
     dir
+}
+
+/// Tamaño máximo de un script traído desde otra carpeta.
+const MAX_IMPORT: u64 = 1024 * 1024;
+/// Subcarpeta donde quedan los scripts eliminados desde la app (recuperables).
+const TRASH: &str = "eliminados";
+
+/// Nombre de script seguro: un solo componente de ruta, .py, sin prefijo de unidad (`C:x.py`
+/// en Windows reemplaza la carpeta base al unirlo), sin ocultos ni el helper.
+fn valid_name(name: &str) -> bool {
+    use std::path::Component;
+    let mut comps = Path::new(name).components();
+    matches!((comps.next(), comps.next()), (Some(Component::Normal(_)), None))
+        && !name.contains(['/', '\\', ':'])
+        && !name.starts_with('.')
+        && !name.chars().any(char::is_control)
+        && name.len() > 3
+        && name.ends_with(".py")
+        && name != "netterminal.py"
+}
+
+/// Guarda `content` con el primer nombre libre (`x.py`, `x-2.py`…). Si ya hay un archivo
+/// idéntico con ese nombre lo reutiliza. Nunca sobrescribe ni sigue enlaces (create_new) y
+/// salta los nombres que están en eliminados, para que un botón que apuntaba a un script
+/// eliminado no pase a ejecutar otro distinto.
+fn store_unique(dir: &Path, name: &str, content: &[u8]) -> Result<String, String> {
+    let stem = &name[..name.len() - 3];
+    for i in 1..1000 {
+        let candidate = if i == 1 { name.to_string() } else { format!("{stem}-{i}.py") };
+        let dest = dir.join(&candidate);
+        if dir.join(TRASH).join(&candidate).exists() {
+            continue;
+        }
+        match fs::OpenOptions::new().write(true).create_new(true).open(&dest) {
+            Ok(mut f) => {
+                f.write_all(content).map_err(|e| e.to_string())?;
+                return Ok(candidate);
+            }
+            Err(e) if e.kind() == std::io::ErrorKind::AlreadyExists => {
+                if fs::symlink_metadata(&dest).is_ok_and(|m| m.is_file()) && fs::read(&dest).is_ok_and(|c| c == content) {
+                    return Ok(candidate);
+                }
+            }
+            Err(e) => return Err(e.to_string()),
+        }
+    }
+    Err("Demasiados scripts con ese nombre".into())
+}
+
+/// Copia a la carpeta de scripts un .py que el usuario eligió en el diálogo del sistema (la ruta
+/// nunca viene del frontend) y devuelve su nombre. Solo se ejecuta desde esa carpeta: así los
+/// botones guardan un nombre y nunca una ruta.
+pub fn import(data_dir: &Path, src: &Path) -> Result<String, String> {
+    let meta = fs::metadata(src).map_err(|e| e.to_string())?;
+    let name = src.file_name().map(|n| n.to_string_lossy().into_owned()).unwrap_or_default();
+    if !name.ends_with(".py") {
+        return Err("Elige un archivo .py".into());
+    }
+    if !meta.is_file() || !valid_name(&name) {
+        return Err("Archivo de script inválido".into());
+    }
+    if meta.len() > MAX_IMPORT {
+        return Err("El script supera 1 MB".into());
+    }
+    let content = fs::read(src).map_err(|e| e.to_string())?;
+    store_unique(&scripts_dir(data_dir), &name, &content)
+}
+
+/// Quita un script de la lista moviéndolo a `scripts/eliminados`, sin borrarlo del disco.
+pub fn remove(data_dir: &Path, name: &str) -> Result<(), String> {
+    if !valid_name(name) {
+        return Err("Nombre de script inválido".into());
+    }
+    let dir = scripts_dir(data_dir);
+    let src = dir.join(name);
+    if !fs::symlink_metadata(&src).is_ok_and(|m| m.is_file()) {
+        return Err(format!("No existe {name}"));
+    }
+    let content = fs::read(&src).map_err(|e| e.to_string())?;
+    let trash = dir.join(TRASH);
+    fs::create_dir_all(&trash).map_err(|e| e.to_string())?;
+    store_unique(&trash, name, &content)?;
+    fs::remove_file(&src).map_err(|e| e.to_string())
+}
+
+/// Scripts en eliminados, para restaurarlos.
+pub fn list_deleted(data_dir: &Path) -> Vec<String> {
+    let mut names: Vec<String> = fs::read_dir(scripts_dir(data_dir).join(TRASH))
+        .into_iter()
+        .flatten()
+        .flatten()
+        .filter_map(|e| e.file_name().to_str().map(String::from))
+        .filter(|n| valid_name(n))
+        .collect();
+    names.sort();
+    names
+}
+
+/// Devuelve un script eliminado a la carpeta de scripts (con sufijo si el nombre está ocupado).
+pub fn restore(data_dir: &Path, name: &str) -> Result<String, String> {
+    if !valid_name(name) {
+        return Err("Nombre de script inválido".into());
+    }
+    let dir = scripts_dir(data_dir);
+    let src = dir.join(TRASH).join(name);
+    if !fs::symlink_metadata(&src).is_ok_and(|m| m.is_file()) {
+        return Err(format!("No existe {name}"));
+    }
+    let content = fs::read(&src).map_err(|e| e.to_string())?;
+    fs::remove_file(&src).map_err(|e| e.to_string())?;
+    store_unique(&dir, name, &content)
 }
 
 pub fn list(data_dir: &Path) -> Vec<String> {
@@ -962,7 +1074,7 @@ impl ScriptRunner {
     ) -> Result<String, String> {
         let dir = scripts_dir(data_dir);
         // Solo archivos .py dentro de la carpeta de scripts (sin rutas).
-        if script.contains(['/', '\\']) || !script.ends_with(".py") {
+        if !valid_name(&script) {
             return Err("Nombre de script inválido".into());
         }
         let path = dir.join(&script);
@@ -1147,6 +1259,44 @@ impl ScriptRunner {
 
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn import_and_remove_scripts() {
+        let root = std::env::temp_dir().join(format!("nt-scripts-{}", uuid::Uuid::new_v4()));
+        let ext = root.join("externo");
+        fs::create_dir_all(&ext).unwrap();
+        let a = ext.join("respaldo.py");
+        fs::write(&a, "print(1)").unwrap();
+        assert_eq!(import(&root, &a).unwrap(), "respaldo.py");
+        // Mismo contenido: no duplica. Distinto: sufijo, nunca sobrescribe.
+        assert_eq!(import(&root, &a).unwrap(), "respaldo.py");
+        let b = root.join("otro");
+        fs::create_dir_all(&b).unwrap();
+        fs::write(b.join("respaldo.py"), "print(2)").unwrap();
+        assert_eq!(import(&root, &b.join("respaldo.py")).unwrap(), "respaldo-2.py");
+        assert_eq!(fs::read_to_string(root.join("scripts/respaldo.py")).unwrap(), "print(1)");
+        // Solo .py y nunca el helper.
+        fs::write(ext.join("x.sh"), "echo").unwrap();
+        assert!(import(&root, &ext.join("x.sh")).is_err());
+        fs::write(ext.join("netterminal.py"), "x").unwrap();
+        assert!(import(&root, &ext.join("netterminal.py")).is_err());
+
+        // Eliminar mueve a scripts/eliminados y el ejemplo no reaparece.
+        remove(&root, "ejemplo_respaldo.py").unwrap();
+        remove(&root, "respaldo.py").unwrap();
+        assert!(remove(&root, "netterminal.py").is_err());
+        assert!(remove(&root, "../x.py").is_err());
+        assert!(remove(&root, "C:x.py").is_err());
+        assert_eq!(list(&root), vec!["respaldo-2.py".to_string()]);
+        assert!(root.join("scripts/eliminados/respaldo.py").is_file());
+        // Un nombre que está en eliminados no se reutiliza para otro contenido.
+        fs::write(ext.join("respaldo.py"), "print(3)").unwrap();
+        assert_eq!(import(&root, &ext.join("respaldo.py")).unwrap(), "respaldo-3.py");
+        assert_eq!(list_deleted(&root), vec!["ejemplo_respaldo.py".to_string(), "respaldo.py".to_string()]);
+        assert_eq!(restore(&root, "respaldo.py").unwrap(), "respaldo.py");
+        assert!(!root.join("scripts/eliminados/respaldo.py").exists());
+        fs::remove_dir_all(&root).unwrap();
+    }
+
     use super::*;
     use std::io::Cursor;
 
