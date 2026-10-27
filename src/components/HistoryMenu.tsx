@@ -54,7 +54,7 @@ export function HistoryMenu({ historyKey, connected, onResend }: Props) {
       <button
         onClick={() => setOpen((o) => !o)}
         title="Historial de comandos enviados a este equipo"
-        className={`flex items-center gap-1 h-5 px-1.5 rounded hover:bg-hover hover:text-fg ${open ? "text-fg bg-hover" : ""}`}
+        className={`flex items-center justify-center gap-1 h-6 min-w-6 px-1.5 rounded hover:bg-hover hover:text-fg ${open ? "text-fg bg-hover" : ""}`}
       >
         <History size={12} />
         {/* Como en StatusBar: solo el icono cuando la barra es angosta (el title queda). */}
@@ -101,7 +101,7 @@ export function HistoryMenu({ historyKey, connected, onResend }: Props) {
                       {lines[0]}
                       {lines.length > 1 && <span className="text-muted"> (+{lines.length - 1} líneas)</span>}
                     </span>
-                    <span className="text-[10.5px] text-muted shrink-0">
+                    <span className="text-[11px] text-muted shrink-0">
                       {new Date(e.ts).toLocaleString(undefined, { dateStyle: "short", timeStyle: "short" })}
                     </span>
                     {connected && <Send size={12} className="text-accent shrink-0 opacity-0 group-hover:opacity-100" />}

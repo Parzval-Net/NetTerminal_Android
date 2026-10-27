@@ -624,7 +624,7 @@ function PresetsSection({ target, profile, onConfirm }: { target: TargetFn; prof
                 {res.scalars.map(({ col, row }) => (
                   <tr key={col.oid} className="border-t border-line first:border-0 align-top">
                     <td className="py-1.5 pr-4 text-muted whitespace-nowrap w-48">{col.label}</td>
-                    <td className="py-1.5 break-all select-text">{formatCell(col, row)}</td>
+                    <td className="py-1.5 break-words select-text">{formatCell(col, row)}</td>
                   </tr>
                 ))}
               </tbody>
@@ -657,7 +657,7 @@ function PresetsSection({ target, profile, onConfirm }: { target: TargetFn; prof
                         const v = formatCell(t.columns[i], c);
                         const tone = t.columns[i].fmt === "status" ? (v === "up" ? "text-ok" : v === "down" ? "text-danger" : "") : "";
                         return (
-                          <td key={i} className={`px-2 break-all select-text ${tone}`}>
+                          <td key={i} className={`px-2 break-words select-text ${tone}`}>
                             {v}
                           </td>
                         );

@@ -43,12 +43,14 @@ export function AlertSettings({ settings: s, folders, onChange }: Props) {
       <div className="space-y-1.5">
         {rules.map((r) => (
           <div key={r.id} className="flex items-center gap-2 rounded-lg border border-line px-2.5 h-10">
-            <input
-              type="checkbox"
-              checked={r.enabled}
-              title={r.enabled ? "Activa" : "Inactiva"}
-              onChange={(e) => save(rules.map((x) => (x.id === r.id ? { ...x, enabled: e.target.checked } : x)))}
-            />
+            <label className="p-1 -m-1 grid place-items-center cursor-pointer">
+              <input
+                type="checkbox"
+                checked={r.enabled}
+                title={r.enabled ? "Activa" : "Inactiva"}
+                onChange={(e) => save(rules.map((x) => (x.id === r.id ? { ...x, enabled: e.target.checked } : x)))}
+              />
+            </label>
             <div className="min-w-0 flex-1">
               <div className={`truncate ${r.enabled ? "" : "text-muted"}`}>{r.name || r.pattern}</div>
               <div className="text-[11px] text-muted truncate font-mono">

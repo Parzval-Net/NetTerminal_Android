@@ -153,13 +153,15 @@ export function PacksModal({ packs, disabled, onToggle, onChanged, onClose }: Pr
               const enabled = !disabled.includes(p.id);
               return (
                 <div key={p.id} className="flex items-center gap-3 px-3 py-2">
-                  <input
-                    type="checkbox"
-                    className="accent-[var(--accent)]"
-                    checked={enabled}
-                    onChange={(e) => onToggle(p.id, e.target.checked)}
-                    title={enabled ? "Desactivar" : "Activar"}
-                  />
+                  <label className="p-1 -m-1 grid place-items-center cursor-pointer">
+                    <input
+                      type="checkbox"
+                      className="accent-[var(--accent)]"
+                      checked={enabled}
+                      onChange={(e) => onToggle(p.id, e.target.checked)}
+                      title={enabled ? "Desactivar" : "Activar"}
+                    />
+                  </label>
                   <div className="min-w-0 flex-1">
                     <div className="flex items-center gap-1.5">
                       {p.builtin && <Lock size={11} className="text-muted" />}

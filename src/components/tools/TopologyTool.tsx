@@ -1410,7 +1410,7 @@ export function TopologyTool({
                             → {s.target} {s.bPort}
                           </span>
                         </span>
-                        <span className="text-[10.5px] font-medium shrink-0" style={{ color: CONFIDENCE_COLOR[s.confidence] }} title={`Confianza ${s.confidence}`}>
+                        <span className="text-[11px] font-medium shrink-0" style={{ color: CONFIDENCE_COLOR[s.confidence] }} title={`Confianza ${s.confidence}`}>
                           {s.confidence}
                         </span>
                       </div>
@@ -1504,7 +1504,7 @@ export function TopologyTool({
                             <span className="font-mono text-[11.5px]">
                               {myPort || "?"} → {other?.name} {(mine ? l.bPort : l.aPort) || ""}
                             </span>
-                            {!isPhysicalProto(l.proto) && <span className="ml-1.5 text-[10.5px] text-muted">{protoLabel(l)}</span>}
+                            {!isPhysicalProto(l.proto) && <span className="ml-1.5 text-[11px] text-muted">{protoLabel(l)}</span>}
                             {info && <span className="block text-[11px] text-muted truncate">{info}</span>}
                           </button>
                           {editable && (

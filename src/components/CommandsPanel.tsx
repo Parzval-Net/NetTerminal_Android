@@ -218,7 +218,7 @@ export const CommandsPanel = memo(function CommandsPanel(p: Props) {
           </label>
           <span className="ml-auto">{total}</span>
           {vendor && (
-            <button title="Agregar un comando propio" onClick={() => p.onAdd(vendor.id)} className="text-accent hover:underline flex items-center gap-0.5">
+            <button title="Agregar un comando propio" onClick={() => p.onAdd(vendor.id)} className="h-6 px-1 -mx-1 text-accent hover:underline flex items-center gap-0.5">
               <Plus size={12} /> Propio
             </button>
           )}
@@ -260,7 +260,10 @@ export const CommandsPanel = memo(function CommandsPanel(p: Props) {
       </div>
 
       <footer className="flex items-center gap-2 px-3 py-1.5 border-t border-line text-[11px] text-muted">
-        <span className="flex-1 min-w-0 truncate">
+        <span
+          className="flex-1 min-w-0 truncate"
+          title={`${p.target ? `Destino: ${p.target}` : "Sin sesión conectada"}${platform ? ` · ${platLabel(platform)}` : ""} · verifica la sintaxis en tu versión`}
+        >
           {p.target ? `Destino: ${p.target}` : "Sin sesión conectada"}
           {platform ? ` · ${platLabel(platform)}` : ""} · verifica la sintaxis en tu versión
         </span>
@@ -308,7 +311,7 @@ const CommandRow = memo(function CommandRow({
             </div>
           ) : null}
           {c.note && <p className="text-[11px] text-muted mt-0.5 italic leading-snug">{c.note}</p>}
-          <div className="flex flex-wrap items-center gap-x-2 mt-0.5 text-[10.5px]">
+          <div className="flex flex-wrap items-center gap-x-2 mt-0.5 text-[11px]">
             <span className={riskStyle[c.risk]} title={c.escalated ? `El pack lo declaró "${riskLabel[c.declaredRisk]}"; la app lo subió por seguridad` : undefined}>
               {riskIcon[c.risk]} {riskLabel[c.risk]}
               {c.escalated ? " (ajustado)" : ""}

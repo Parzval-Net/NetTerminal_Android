@@ -438,6 +438,7 @@ export const NotesPanel = memo(function NotesPanel(p: Props) {
               ))}
             <select
               className="field !h-7 flex-1 min-w-0 !text-[12.5px]"
+              title={current ?? undefined}
               value={current ?? ""}
               onChange={(e) => open(e.target.value)}
             >
@@ -631,7 +632,9 @@ export const NotesPanel = memo(function NotesPanel(p: Props) {
           </FootBtn>
         </div>
         <div className="flex items-center gap-2 text-[11px] text-muted h-6">
-          <span className="truncate flex-1 min-w-0">{notice || (p.target ? `Destino: ${p.target}` : "Sin sesión conectada")}</span>
+          <span className="truncate flex-1 min-w-0" title={notice || (p.target ? `Destino: ${p.target}` : "Sin sesión conectada")}>
+            {notice || (p.target ? `Destino: ${p.target}` : "Sin sesión conectada")}
+          </span>
           <BroadcastTargetPicker />
           <span className="flex items-center gap-1 shrink-0">
             {locked ? <Lock size={11} /> : saved ? <Check size={11} /> : null}

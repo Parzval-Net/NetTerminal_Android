@@ -175,7 +175,7 @@ export const VerticalTabs = memo(function VerticalTabs(props: TabBarProps) {
               <>
                 <span className="truncate flex-1">Herramientas</span>
                 {alerts > 0 && (
-                  <span className="px-1.5 rounded-full bg-danger text-danger-fg text-[10.5px] font-semibold shrink-0" title={`${alerts} sondas caídas`}>
+                  <span className="px-1.5 rounded-full bg-danger text-danger-fg text-[11px] font-semibold shrink-0" title={`${alerts} sondas caídas`}>
                     ✕ {alerts}
                   </span>
                 )}

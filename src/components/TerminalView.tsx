@@ -1133,14 +1133,14 @@ function SuggestPopup({ list, listId, fontFamily, onPick }: { list: SuggestList;
                 {matchSpans(it, list.q).map((p, j) => (p.hit ? <span key={j} className="font-semibold">{p.text}</span> : p.text))}
               </span>
               {it.risk !== "read" && (
-                <span className="ml-auto shrink-0 rounded px-1.5 text-[10.5px] font-medium bg-danger text-danger-fg">{riskLabel[it.risk]}</span>
+                <span className="ml-auto shrink-0 rounded px-1.5 text-[11px] font-medium bg-danger text-danger-fg">{riskLabel[it.risk]}</span>
               )}
             </div>
             <div className="text-[11px] text-muted truncate">{it.desc}</div>
           </li>
         ))}
       </ul>
-      <div className="px-2.5 py-1 border-t border-line text-[10.5px] text-muted">↑↓ elegir · Enter escribe sin ejecutar · Esc cerrar</div>
+      <div className="px-2.5 py-1 border-t border-line text-[11px] text-muted">↑↓ elegir · Enter escribe sin ejecutar · Esc cerrar</div>
     </div>
   );
 }

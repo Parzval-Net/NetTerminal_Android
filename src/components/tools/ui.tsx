@@ -100,7 +100,7 @@ export function Btn({
   return (
     <button
       {...props}
-      className={`inline-flex items-center justify-center gap-1.5 px-3 h-8 rounded-md text-[12.5px] disabled:opacity-40 disabled:pointer-events-none ${styles} ${className}`}
+      className={`shrink-0 whitespace-nowrap inline-flex items-center justify-center gap-1.5 px-3 h-8 rounded-md text-[12.5px] disabled:opacity-40 disabled:pointer-events-none ${styles} ${className}`}
     />
   );
 }

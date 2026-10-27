@@ -145,7 +145,7 @@ export const TabBar = memo(function TabBar(props: TabBarProps) {
             <Wrench size={13} />
             Herramientas
             {alerts > 0 && (
-              <span className="px-1.5 rounded-full bg-danger text-danger-fg text-[10.5px] font-semibold" title={`${alerts} sondas caídas`}>
+              <span className="px-1.5 rounded-full bg-danger text-danger-fg text-[11px] font-semibold" title={`${alerts} sondas caídas`}>
                 ✕ {alerts}
               </span>
             )}

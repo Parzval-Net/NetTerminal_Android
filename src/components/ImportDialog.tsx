@@ -208,7 +208,7 @@ export function ImportDialog({ folders, onImport, onClose }: Props) {
                           {s.jump_host ? ` vía ${s.jump_host}` : ""}
                         </span>
                         <span className="w-[24%] truncate text-muted text-[11.5px]">{s.folder ?? ""}</span>
-                        <span className="w-12 text-right text-[10.5px] text-muted uppercase">{typeLabel[s.type]}</span>
+                        <span className="w-12 text-right text-[11px] text-muted uppercase">{typeLabel[s.type]}</span>
                       </label>
                     </li>
                   ))}

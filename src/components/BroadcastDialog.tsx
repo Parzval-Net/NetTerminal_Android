@@ -100,7 +100,7 @@ export function BroadcastDialog({ text, resolved, declared, delayMs, onCancel, o
             <div className="rounded-md bg-hover max-h-56 overflow-auto font-mono text-[11.5px] py-1">
               {lines.map((l, i) => (
                 <div key={i} className="flex gap-2 px-2 leading-[1.55]">
-                  <span className={`w-20 shrink-0 font-sans text-[10.5px] ${riskColor[risks[i]]}`}>
+                  <span className={`w-20 shrink-0 font-sans text-[11px] ${riskColor[risks[i]]}`}>
                     {risks[i] === "read" ? "" : risks[i] === "change" ? "cambio" : "disruptivo"}
                   </span>
                   <span className="whitespace-pre">{l || " "}</span>

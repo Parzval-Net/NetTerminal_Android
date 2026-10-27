@@ -209,7 +209,7 @@ export function CommandPalette({ sessions, onClose, onOpen, actions = [] }: Prop
                   {!quick && s.folder ? ` · ${s.folder}` : ""}
                 </div>
               </div>
-              <span className="text-[10.5px] font-medium text-muted uppercase">{typeLabel[s.type]}</span>
+              <span className="text-[11px] font-medium text-muted uppercase">{typeLabel[s.type]}</span>
             </li>
             );
           })}

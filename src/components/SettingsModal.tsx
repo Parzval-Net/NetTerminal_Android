@@ -202,7 +202,7 @@ export function SettingsModal({
           {groups.map((g) => (
             <div key={g.name} className="pb-1.5">
               {g.name !== "Acerca de" && (
-                <div className="hidden @[640px]:block px-2 pt-1.5 pb-1 text-[10.5px] font-semibold uppercase tracking-wide text-muted">{g.name}</div>
+                <div className="hidden @[640px]:block px-2 pt-1.5 pb-1 text-[11px] font-semibold uppercase tracking-wide text-muted">{g.name}</div>
               )}
               {g.items.map(({ id, label, Icon }) => (
                 <button
@@ -603,7 +603,7 @@ function LogNaming({ settings: s, onChange }: { settings: Settings; onChange: (p
           <button
             key={v}
             onClick={() => onChange({ logPattern: (s.logPattern || "") + v })}
-            className="px-1.5 h-5 rounded border border-line hover:bg-hover font-mono"
+            className="px-1.5 h-6 rounded border border-line hover:bg-hover font-mono"
           >
             {v}
           </button>
@@ -790,7 +790,7 @@ function Switch({ checked, onChange }: { checked: boolean; onChange: (v: boolean
       role="switch"
       aria-checked={checked}
       onClick={() => onChange(!checked)}
-      className={`relative w-9 h-5 rounded-full transition-colors ${checked ? "bg-accent" : "bg-field-line"}`}
+      className={`relative w-9 h-5 rounded-full transition-colors before:absolute before:-inset-[3px] before:content-[''] ${checked ? "bg-accent" : "bg-field-line"}`}
     >
       <span
         className={`absolute top-0.5 left-0.5 w-4 h-4 rounded-full bg-white shadow transition-transform ${
