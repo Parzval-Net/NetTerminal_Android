@@ -101,8 +101,10 @@ for (const [name, key] of [
   t.input("#");
   t.output("sh#", tail("core-sw01#sh#"));
   assert.equal(t.active, false, `${name}: un # en la misma línea no es prompt`);
-  // El próximo prompt (tras un salto de línea) vuelve a habilitar.
+  // El próximo prompt (tras un salto de línea) vuelve a habilitar. Tras Tab se relee la línea
+  // real de la pantalla (lo que hace la terminal en cada cuadro), no el texto crudo.
   t.output("\r\ncore-sw01#", tail("\ncore-sw01#"));
+  if (key === "\t") t.resync("core-sw01#");
   assert.equal(t.active, true, `${name}: vuelve con el prompt`);
 }
 // ---------- Re-sincronía ----------
@@ -702,7 +704,7 @@ const EXEC_PROMPTS = {
   };
   const pick = (a) => a[Math.floor(rnd() * a.length)];
   const CTRL = /[\x00-\x1f\x7f-\x9f]/;
-  const SPECIAL = ["\x7f", "\x7f", "\t", "\x1b[A", "\x1b[D", "\x03", "\x15", "\x17", " ", " ", "|", ";", "&", "| ", "; reload", "\x1b[200~x\x1b[201~", "\u00e9", "\u00b4x"];
+  const SPECIAL = ["\x7f", "\x7f", "\b", "\t", "\t", "?", "\x1b[A", "\x1b[D", "\x03", "\x15", "\x17", " ", " ", "|", ";", "&", "| ", "; reload", "\x1b[200~x\x1b[201~", "\u00e9", "\u00b4x"];
   const EVENTS = [
     { key: "ArrowRight" },
     { key: "ArrowRight", ctrlKey: true },
@@ -732,9 +734,18 @@ const EXEC_PROMPTS = {
             if (ch === "\r") {
               line = prompt;
               t.output(`\r\n${prompt}`, tail(`\n${prompt}`));
-            } else if (ch === "\x7f") {
+            } else if (ch === "\x7f" || ch === "\b") {
               line = line.length > prompt.length ? line.slice(0, -1) : line;
               t.output("\b \b", tail(line));
+            } else if (ch === "\t") {
+              // Autocompletado del equipo: a veces completa una palabra, a veces nada.
+              if (rnd() < 0.5) {
+                line += "ab ";
+                t.output("ab ", tail(line));
+              }
+            } else if (ch === "?" && rnd() < 0.5) {
+              // Ayuda del equipo: imprime opciones y repite prompt + lo escrito (sin el "?").
+              t.output(`\r\n  brief  Resumen\r\n\r\n${line}`, tail(`\n  brief  Resumen\n\n${line}`));
             } else if (!CTRL.test(ch)) {
               line += ch;
               t.output(ch, tail(line));
@@ -753,10 +764,15 @@ const EXEC_PROMPTS = {
           t.insert(safe);
           device(safe);
         };
+        let lastTabAccept = 0;
         for (let k = 0; k < 40; k++) {
           steps++;
+          // Como la terminal en cada cuadro: confirma o relee con la línea real de la pantalla.
+          if (t.canResync) t.resync(line);
+          // Invariante: con la línea sincronizada, la pantalla termina en lo que se cree tecleado.
+          if (t.active) assert.ok(line.endsWith(t.buf), `${pl.id}: pantalla ${JSON.stringify(line)} vs ${JSON.stringify(t.buf)}`);
           const q = t.active ? S.suggestQuery(t.buf, t.prompt, idx) : null;
-          const g = q === null ? null : S.ghostFor(idx, q);
+          const g = q === null || t.dismissed ? null : S.ghostFor(idx, q);
           if (g) {
             ghostsSeen++;
             assert.equal(g.entry.risk, "read", `${pl.id} ${prompt}: "${t.buf}" → ${g.entry.cmd}`);
@@ -788,8 +804,15 @@ const EXEC_PROMPTS = {
             list = null;
           } else {
             const ev = { ctrlKey: false, altKey: false, metaKey: false, shiftKey: false, ...pick(EVENTS) };
-            const action = S.suggestKey(ev, { enabled: true, listOpen: !!list, canAccept: !!g?.insert });
-            if (action === "accept") fromSuggest(g.insert);
+            const tabChain = ev.key === "Tab" && lastTabAccept > 0 && rnd() < 0.5;
+            const tabAccept = rnd() < 0.8;
+            const action = S.suggestKey(ev, { enabled: true, listOpen: !!list, canAccept: !!g?.insert, ghostVisible: !!g, tabAccept, tabChain });
+            lastTabAccept = ev.key === "Tab" && action === "accept" ? 1 : 0;
+            if (ev.key === "Tab" && action === "accept") assert.ok(g?.insert && tabAccept && !tabChain && !list, "Tab acepta solo con sugerencia visible");
+            if (action === "dismiss") {
+              assert.ok(g && ev.key === "Escape");
+              t.dismissed = true;
+            } else if (action === "accept") fromSuggest(g.insert);
             else if (action === "word") fromSuggest(S.nextWord(g.insert));
             else if (action === "open") {
               list = q === null ? null : S.lookup(idx, q, 8);
@@ -804,8 +827,9 @@ const EXEC_PROMPTS = {
               list = null;
             } else if (action === "close") list = null;
             else {
-              // pass: la tecla va al equipo (Tab, Enter sin lista, Dead): nunca la produce una sugerencia.
+              // pass: la tecla va al equipo (Tab, Esc o Enter sin sugerencia, Dead): nunca la produce una sugerencia.
               if (ev.key === "Tab") t.input("\t"), device("\t");
+              if (ev.key === "Escape") t.input("\x1b"), device("\x1b");
               list = null;
             }
           }
@@ -980,21 +1004,337 @@ const EXEC_PROMPTS = {
   }
 }
 
-// ---------- Tema: el texto gris se ve en los 17 temas (≥ 3:1) y queda por debajo del texto ----------
+// ---------- Color de la sugerencia: se ve y se distingue en los 17 temas ----------
 
 {
   const { presets } = await import("../../src/lib/theme.ts");
   assert.equal(presets.length, 17);
+  const rows = [];
   for (const p of presets) {
-    const { foreground: fg, background: bg } = p.theme;
-    const g = S.ghostColor(fg, bg);
-    assert.ok(g, p.id);
-    const c = S.contrastRatio(g, bg);
-    assert.ok(c >= S.GHOST_CONTRAST, `${p.id}: texto gris ${c.toFixed(2)}:1`);
-    assert.ok(c < S.contrastRatio(fg, bg), `${p.id}: el texto gris es secundario`);
+    const t = p.theme;
+    for (const choice of Object.keys(S.GHOST_COLORS)) {
+      const g = S.ghostColor(t, choice);
+      assert.ok(g, `${p.id} ${choice}`);
+      const c = S.contrastRatio(g, t.background);
+      // WCAG 1.4.11 (contraste no textual): al menos 3:1 con el fondo, en automático y en cada tono.
+      assert.ok(c >= S.GHOST_CONTRAST, `${p.id} ${choice}: ${g} ${c.toFixed(2)}:1`);
+      // Nunca gris ni blanco: con croma propio.
+      assert.ok(S.chroma(g) >= S.GHOST_CHROMA, `${p.id} ${choice}: ${g} es gris (C* ${S.chroma(g).toFixed(0)})`);
+      assert.ok(!/^#(?:ffffff|000000)$/i.test(g));
+      if (choice !== "auto") continue;
+      // Automático: distinto del texto normal y del cursor (ΔE ≥ 30 y otro tono si son de color).
+      assert.ok(S.distinctFrom(g, t.foreground), `${p.id}: ${g} se parece al texto ${t.foreground} (ΔE ${S.colorDistance(g, t.foreground).toFixed(0)})`);
+      assert.ok(S.distinctFrom(g, t.cursor), `${p.id}: ${g} se parece al cursor ${t.cursor}`);
+      assert.ok(S.colorDistance(g, t.foreground) >= S.GHOST_DISTANCE);
+      rows.push(`${p.id} ${g} ${c.toFixed(1)}:1`);
+    }
   }
-  assert.equal(S.ghostColor("var(--x)", "#000"), null, "colores no reconocidos: opacidad fija");
+  // Temas monocromo: en Ámbar y Fósforo verde el automático cambia de tono (no ámbar ni verde).
+  const byId = Object.fromEntries(presets.map((p) => [p.id, p.theme]));
+  assert.ok(S.hueDifference(S.ghostColor(byId.amber), byId.amber.foreground) >= S.GHOST_HUE);
+  assert.ok(S.hueDifference(S.ghostColor(byId.phosphor), byId.phosphor.foreground) >= S.GHOST_HUE);
+  // El tema propio decide cuando su color sirve (cian de NetTerminal, Dracula y GitHub).
+  assert.equal(S.ghostColor(byId["nt-dark"]), byId["nt-dark"].cyan);
+  assert.equal(S.ghostColor(byId["nt-light"]), byId["nt-light"].cyan);
+  assert.equal(S.ghostColor(byId.dracula), byId.dracula.cyan);
+  // Un tono elegido se respeta aunque se parezca al texto (ámbar en el tema Ámbar).
+  assert.ok(S.hueDifference(S.ghostColor(byId.amber, "amber"), byId.amber.foreground) < S.GHOST_HUE);
+  // Valor desconocido (settings.json editado a mano): como automático.
+  assert.equal(S.ghostColor(byId["nt-dark"], "rosado"), S.ghostColor(byId["nt-dark"], "auto"));
+  assert.equal(S.ghostColor({ foreground: "#fff", background: "var(--x)" }), null, "fondo no reconocido: la terminal usa opacidad fija");
+  assert.equal(S.ghostColor(undefined), null);
   assert.equal(S.contrastRatio("#000", "#fff").toFixed(0), "21");
+  console.log(`color automático: ${rows.join(" · ")}`);
+}
+
+// ---------- Tab: acepta solo la sugerencia visible; sin ella va al equipo ----------
+
+{
+  const ios = S.getIndex(catalog, "iosxe");
+  const ctx = { enabled: true, listOpen: false, canAccept: true, ghostVisible: true, tabAccept: true };
+  assert.equal(S.suggestKey(k("Tab"), ctx), "accept", "Tab acepta con sugerencia visible");
+  assert.equal(S.suggestKey(k("Tab"), { ...ctx, canAccept: false, ghostVisible: false }), "pass", "sin sugerencia, Tab va al equipo");
+  // En un marcador ({{interfaz}}) la sugerencia se ve pero ya no inserta nada: Tab va al equipo.
+  assert.equal(S.suggestKey(k("Tab"), { ...ctx, canAccept: false, ghostVisible: true }), "pass", "en un marcador, Tab va al equipo");
+  assert.equal(S.suggestKey(k("Tab"), { ...ctx, tabAccept: false }), "pass", "ajuste apagado: Tab va al equipo");
+  assert.equal(S.suggestKey(k("Tab"), { ...ctx, tabAccept: undefined }), "pass", "sin ajuste, como siempre");
+  assert.equal(S.suggestKey(k("Tab"), { ...ctx, listOpen: true }), "pass", "con la lista abierta, Tab va al equipo");
+  for (const mods of [{ shiftKey: true }, { ctrlKey: true }, { altKey: true }, { metaKey: true }])
+    assert.equal(S.suggestKey(k("Tab", mods), ctx), "pass", `Tab con modificador: ${Object.keys(mods)}`);
+  assert.equal(S.suggestKey(k("Tab", { isComposing: true }), ctx), "pass");
+  assert.equal(S.suggestKey(k("Tab"), { ...ctx, enabled: false }), "pass");
+  // Doble Tab: si el primero aceptó hace menos de 400 ms, el segundo va al equipo.
+  assert.equal(S.suggestKey(k("Tab"), { ...ctx, tabChain: true }), "pass", "segundo Tab encadenado va al equipo");
+  assert.equal(S.TAB_CHAIN_MS, 400);
+  assert.equal(S.tabChained(0, 1000), false, "sin Tab anterior que aceptara");
+  assert.equal(S.tabChained(1000, 1100), true);
+  assert.equal(S.tabChained(1000, 1399), true);
+  assert.equal(S.tabChained(1000, 1400), false, "a los 400 ms ya no");
+  assert.equal(S.tabChained(1000, 900), false, "reloj hacia atrás: no encadena");
+
+  // De punta a punta: tracker + sugerencia + Tab. Lo que se envía nunca trae Tab ni Enter.
+  const t = atPrompt();
+  const sent = [];
+  const key = (ev) => {
+    const q = t.active ? S.suggestQuery(t.buf, t.prompt, ios) : null;
+    const g = q === null || t.dismissed ? null : S.ghostFor(ios, q);
+    const a = S.suggestKey(ev, { enabled: true, listOpen: false, canAccept: !!g?.insert, ghostVisible: !!g, tabAccept: true });
+    if (a === "accept") {
+      const ins = S.safeInsert(g.insert);
+      t.insert(ins);
+      sent.push(ins);
+    } else if (a === "dismiss") t.dismissed = true;
+    else if (a === "pass") {
+      const data = ev.key === "Tab" ? "\t" : ev.key === "Escape" ? "\x1b" : ev.key;
+      t.input(data);
+      sent.push(data);
+    }
+    return a;
+  };
+  type(t, "sh ip int");
+  t.output("sh ip int", tail("\ncore-sw01#sh ip int"));
+  const want = S.ghostFor(ios, "sh ip int").insert;
+  assert.ok(want);
+  assert.equal(key(k("Tab")), "accept");
+  assert.equal(t.buf, "sh ip int" + want, "Tab completa igual que →");
+  assert.equal(t.active, true, "aceptar no desincroniza");
+  assert.ok(sent.every((x) => !/[\r\n\t]/.test(x)), "aceptar no envía Tab ni Enter");
+  // Esc con sugerencia visible: la descarta y no llega al equipo; luego Tab va al equipo.
+  const t2 = atPrompt();
+  t.buf = "";
+  type(t2, "sh ver");
+  t2.output("sh ver", tail("\ncore-sw01#sh ver"));
+  const before = sent.length;
+  const tt = t;
+  // Reusa el ayudante sobre la segunda línea.
+  Object.assign(tt, { buf: t2.buf, sync: true, prompt: t2.prompt, dismissed: false });
+  assert.equal(key(k("Escape")), "dismiss");
+  assert.equal(sent.length, before, "Esc que descarta no llega al equipo");
+  assert.equal(key(k("Tab")), "pass", "tras Esc, Tab va al equipo");
+  assert.equal(sent[sent.length - 1], "\t");
+  // Sin sugerencia (nombre fuera del catálogo): Tab llega al equipo.
+  const u = atPrompt();
+  type(u, "zzzz");
+  assert.equal(S.ghostFor(ios, S.suggestQuery(u.buf, u.prompt, ios)), null);
+  assert.equal(S.suggestKey(k("Tab"), { ...ctx, canAccept: false, ghostVisible: false }), "pass");
+  // Aceptar hasta un marcador: la sugerencia que queda ({{interfaz}}) no inserta nada, Tab va al equipo.
+  const ph = ios.entries.find((e) => e.placeholder && e.risk === "read" && e.insert.length > 6 && S.ghostFor(ios, e.insert.slice(0, 4))?.entry === e);
+  if (ph) {
+    const g = S.ghostFor(ios, ph.insert);
+    assert.ok(!g || g.entry !== ph || g.insert === "", "en el marcador no queda nada que insertar");
+  }
+}
+
+// ---------- Esc: descarta la sugerencia de la línea; sin sugerencia llega al equipo ----------
+
+{
+  const ctx = { enabled: true, listOpen: false, canAccept: true, ghostVisible: true, tabAccept: true };
+  assert.equal(S.suggestKey(k("Escape"), ctx), "dismiss");
+  assert.equal(S.suggestKey(k("Escape"), { ...ctx, canAccept: false, ghostVisible: true }), "dismiss", "también en un marcador visible");
+  assert.equal(S.suggestKey(k("Escape"), { ...ctx, canAccept: false, ghostVisible: false }), "pass", "sin sugerencia, Esc va al equipo");
+  assert.equal(S.suggestKey(k("Escape"), { ...ctx, listOpen: true }), "close", "con la lista abierta, Esc la cierra");
+  assert.equal(S.suggestKey(k("Escape", { altKey: true }), ctx), "pass");
+  const ios = S.getIndex(catalog, "iosxe");
+  const t = atPrompt();
+  type(t, "sh ver");
+  t.dismissed = true;
+  type(t, "s");
+  assert.equal(t.dismissed, true, "sigue descartada al seguir escribiendo en la misma línea");
+  t.input("\r");
+  assert.equal(t.dismissed, false, "Enter vuelve a mostrar sugerencias en la próxima línea");
+  t.output("\r\ncore-sw01#", tail("\ncore-sw01#"));
+  type(t, "sh ver");
+  assert.ok(S.ghostFor(ios, t.buf));
+  // Línea perdida (Ctrl+C): el salto de línea del equipo también la libera.
+  const u = atPrompt();
+  type(u, "sh");
+  u.dismissed = true;
+  u.input("\x03");
+  u.output("\r\ncore-sw01#", tail("\ncore-sw01#"));
+  assert.equal(u.dismissed, false);
+}
+
+// ---------- Re-sincronía tras el Tab nativo del equipo y la ayuda "?" ----------
+
+{
+  const ios = S.getIndex(catalog, "iosxe");
+  // IOS completa la palabra: "sh ip int" + Tab → el equipo escribe "erface ".
+  const t = atPrompt();
+  type(t, "sh ip int");
+  t.output("sh ip int", tail("\ncore-sw01#sh ip int"));
+  t.input("\t");
+  assert.equal(t.active, false, "esperando la respuesta del equipo");
+  assert.equal(t.reread, true);
+  assert.equal(t.resync("core-sw01#sh ip int"), false, "antes de la respuesta no se lee la pantalla");
+  t.output("erface ", tail("\ncore-sw01#sh ip interface "));
+  assert.equal(t.active, false, "el texto crudo no basta: puede traer retrocesos o redibujos");
+  assert.equal(t.resync("core-sw01#sh ip interface "), true, "la línea real de la pantalla re-sincroniza");
+  assert.equal(t.buf, "sh ip interface ");
+  assert.equal(t.active, true);
+  assert.ok(S.ghostFor(ios, t.buf), "las sugerencias siguen en el resto de la línea");
+  type(t, "b");
+  assert.equal(t.buf, "sh ip interface b");
+  assert.equal(S.ghostFor(ios, t.buf)?.insert, "rief");
+  // Teclas escritas antes de que el equipo responda: la pantalla debe terminar con ellas.
+  const u = atPrompt();
+  type(u, "sh ver");
+  u.input("\t");
+  type(u, " x");
+  u.output("sion", tail("\ncore-sw01#sh version"));
+  assert.equal(u.resync("core-sw01#sh version"), false, "falta el eco de lo tecleado después");
+  u.output(" x", tail("\ncore-sw01#sh version x"));
+  assert.equal(u.resync("core-sw01#sh version x"), true);
+  assert.equal(u.buf, "sh version x");
+  // Retroceso mientras se espera: BS (0x08).
+  const w = atPrompt();
+  type(w, "sh");
+  w.input("\t");
+  type(w, "ab");
+  w.input("\b");
+  w.output("ow a", tail("\ncore-sw01#show a"));
+  assert.equal(w.resync("core-sw01#show a"), true);
+  assert.equal(w.buf, "show a");
+  // Doble Tab de una shell: lista candidatos con saltos de línea y repite prompt + lo escrito.
+  const sh = new S.InputTracker();
+  sh.output("\r\nnetops@srv01:~$ ", tail("\nnetops@srv01:~$ "));
+  type(sh, "ip ro");
+  sh.input("\t");
+  sh.input("\t");
+  sh.output("\r\nroute  rule\r\nnetops@srv01:~$ ip ro", tail("\nroute  rule\nnetops@srv01:~$ ip ro"));
+  assert.equal(sh.resync("netops@srv01:~$ ip ro"), true, "tras el listado de la shell vuelve");
+  assert.equal(sh.buf, "ip ro");
+  // Protecciones: otro prompt, desplazamiento horizontal de IOS y credenciales no se adoptan.
+  const x = atPrompt();
+  type(x, "sh");
+  x.input("\t");
+  x.output("ow", tail("\ncore-sw01#show"));
+  assert.equal(x.resync("core-sw01(config)#show"), false, "otro prompt: no se adopta");
+  assert.equal(x.resync("core-sw01#$terface brief"), false, "desplazamiento de IOS: el inicio no se ve");
+  assert.equal(x.resync("core-sw01#sh\x07ow"), false, "con caracteres de control no se adopta");
+  x.output("\r\nPassword: ", tail("\nPassword: "));
+  assert.equal(x.cred, true);
+  assert.equal(x.reread, false);
+  assert.equal(x.resync("core-sw01#show"), false, "con credenciales no se relee nada");
+  // Tab sin línea sincronizada (prompt no confirmado): como antes, queda perdida.
+  const y = new S.InputTracker();
+  type(y, "sh");
+  y.input("\t");
+  assert.equal(y.lost, true);
+  // Ayuda "?" de Cisco: el equipo no hace eco del "?", imprime opciones y repite prompt + lo escrito.
+  const h = atPrompt();
+  type(h, "show ");
+  h.output("show ", tail("\ncore-sw01#show "));
+  h.input("?");
+  assert.equal(h.active, false);
+  h.output("\r\n  version     System hardware and software status\r\n  vlan        VTP VLAN status\r\n\r\ncore-sw01#show ", tail("\n  vlan        VTP VLAN status\n\ncore-sw01#show "));
+  assert.equal(h.resync("core-sw01#show "), true, "tras la ayuda vuelve con prompt + lo escrito");
+  assert.equal(h.buf, "show ");
+  type(h, "ver");
+  assert.equal(S.ghostFor(ios, h.buf)?.insert, "sion");
+  // En una shell "?" es un carácter más (con eco): también se lee de la pantalla.
+  const lx = new S.InputTracker();
+  lx.output("\r\nnetops@srv01:~$ ", tail("\nnetops@srv01:~$ "));
+  type(lx, "ls fil");
+  lx.input("?");
+  lx.output("?", tail("\nnetops@srv01:~$ ls fil?"));
+  assert.equal(lx.resync("netops@srv01:~$ ls fil?"), true);
+  assert.equal(lx.buf, "ls fil?");
+  // Enter durante la espera: vuelve al seguimiento normal con el próximo prompt.
+  const e = atPrompt();
+  type(e, "sh");
+  e.input("\t");
+  e.input("\r");
+  assert.equal(e.reread, false);
+  e.output("\r\ncore-sw01#", tail("\ncore-sw01#"));
+  assert.equal(e.active, true);
+}
+
+// ---------- Retroceso: siempre llega al equipo; DEL (0x7f) y BS (0x08) valen igual ----------
+
+{
+  const all = [
+    { enabled: true, listOpen: false, canAccept: true, ghostVisible: true, tabAccept: true },
+    { enabled: true, listOpen: true, canAccept: false, tabAccept: true },
+    { enabled: true, listOpen: false, canAccept: false, tabAccept: false },
+    { enabled: false, listOpen: false, canAccept: false },
+  ];
+  for (const ctx of all) {
+    for (const mods of [{}, { ctrlKey: true }, { altKey: true }, { metaKey: true }]) {
+      assert.equal(S.suggestKey(k("Backspace", mods), ctx), "pass", "Retroceso nunca lo toma una sugerencia");
+      assert.equal(S.suggestKey(k("Delete", mods), ctx), "pass");
+    }
+  }
+  for (const bs of ["\x7f", "\x08"]) {
+    const t = atPrompt();
+    type(t, "show vx");
+    t.input(bs);
+    assert.equal(t.buf, "show v", `retroceso ${JSON.stringify(bs)}`);
+    assert.equal(t.active, true, "borrar no desincroniza");
+    t.input(bs);
+    t.input(bs);
+    assert.equal(t.buf, "shor".slice(0, 3) + "w");
+  }
+  const t = atPrompt();
+  type(t, "x\u{1F600}");
+  t.input("\x08");
+  assert.equal(t.buf, "x", "BS borra un par sustituto completo");
+}
+
+// ---------- Ayuda "Tab o → acepta · Esc descarta": solo las primeras veces ----------
+
+{
+  assert.equal(S.tipText(true), "Tab o → acepta · Esc descarta");
+  assert.equal(S.tipText(false), "→ acepta · Esc descarta");
+  assert.equal(S.TIP_TIMES, 5);
+  const c = new S.TipCounter();
+  const shown = [];
+  for (let line = 1; line <= 8; line++) {
+    // Varios cuadros en la misma línea cuentan una sola vez.
+    const a = c.allow("iosxe", `c1:${line}`);
+    assert.equal(c.allow("iosxe", `c1:${line}`), a);
+    shown.push(a);
+  }
+  assert.deepEqual(shown, [true, true, true, true, true, false, false, false], "solo las primeras 5 líneas");
+  assert.equal(c.count("iosxe"), 5);
+  assert.equal(c.allow("vrp8", "c1:9"), true, "cada plataforma cuenta aparte");
+  // Se guarda y se carga (solo números por plataforma).
+  const back = new S.TipCounter(c.serialize());
+  assert.equal(back.allow("iosxe", "c2:1"), false);
+  assert.equal(back.count("vrp8"), 1);
+  assert.ok(!/c1:/.test(c.serialize()), "no guarda líneas ni texto");
+  for (const bad of ["no json", "[1,2]", '{"__proto__":9,"x y":3,"ok":"5"}', "null"]) {
+    const d = new S.TipCounter(bad);
+    assert.equal(d.allow("iosxe", "z"), true, `valor dañado: ${bad}`);
+  }
+  assert.equal(new S.TipCounter('{"iosxe":999}').allow("iosxe", "z"), false, "tope en TIP_TIMES");
+  c.clear();
+  assert.equal(c.allow("iosxe", "c3:1"), true, "borrar el historial la vuelve a mostrar");
+}
+
+// ---------- Nunca se produce Enter (Tab, →, palabra y lista) ----------
+
+{
+  for (const p of platforms) {
+    const idx = S.getIndex(catalog, p);
+    for (const e of idx.entries.slice(0, 200)) {
+      for (const n of [2, 3, 5]) {
+        const g = S.ghostFor(idx, e.cmd.slice(0, n));
+        if (!g) continue;
+        for (const text of [g.insert, S.nextWord(g.insert), S.remainderToInsert(e, e.cmd.slice(0, n))])
+          assert.ok(!/[\r\n\t\x00-\x1f\x7f-\x9f]/.test(S.safeInsert(text)), `${p}: ${JSON.stringify(text)}`);
+      }
+    }
+  }
+  // Ninguna tecla, en ningún contexto, se traduce en una acción que envíe Enter.
+  for (const key of ["Enter", "Tab", "Escape", "ArrowRight", "Backspace", " ", "a", "?"])
+    for (const listOpen of [false, true])
+      for (const canAccept of [false, true])
+        for (const tabAccept of [false, true])
+          for (const tabChain of [false, true]) {
+            const a = S.suggestKey(k(key), { enabled: true, listOpen, canAccept, ghostVisible: canAccept, tabAccept, tabChain });
+            if (key === "Enter") assert.ok(a === "pass" || a === "pick", "Enter solo elige de la lista (sin enviarlo)");
+            if (a === "accept") assert.ok(canAccept && !listOpen && (key !== "Tab" || (tabAccept && !tabChain)));
+          }
 }
 
 // ---------- Rendimiento ----------

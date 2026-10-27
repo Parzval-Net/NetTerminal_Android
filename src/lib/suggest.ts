@@ -15,7 +15,9 @@
  * - Modo: el prompt dice si la CLI está en configuración (`(config-if)#`, `[HUAWEI]`, `#` de
  *   Junos, `FGT (interface) #`). Ahí una abreviatura puede ser otro comando (`sh` es `shutdown`),
  *   así que solo se sugiere tras `do `/`run ` o con `display`/`show` completo (Huawei, ASA).
- * - Seguridad: el texto gris solo ofrece consultas; lo que inserta una sugerencia nunca
+ * - Tab nativo y ayuda `?`: el equipo reescribe la línea; lo tecleado se vuelve a leer de la
+ *   pantalla (prompt conocido + resto) cuando responde, y las sugerencias siguen en esa línea.
+ * - Seguridad: la sugerencia solo ofrece consultas; lo que inserta una sugerencia nunca
  *   incluye Enter, saltos de línea ni caracteres de control, y se corta en el primer
  *   marcador ({{interfaz}} o <interfaz>).
  */
@@ -71,7 +73,7 @@ const PAREN_MODE = /\([^()]*\)\s*#\s*$/;
 const BRACKET_MODE = /\[[^[\]]*\]\s*$/;
 
 /**
- * Modo según el prompt. Ante la duda se elige config: apagar el texto gris nunca es un riesgo.
+ * Modo según el prompt. Ante la duda se elige config: apagar la sugerencia nunca es un riesgo.
  * Junos usa `#` en configuración y `%`/`$` en la shell de FreeBSD: solo `>` es modo operacional.
  */
 export function cliMode(prompt: string, vendor: string): CliMode {
@@ -104,7 +106,7 @@ function configEscape(vendor: string, platform: string) {
 /**
  * Lo que se busca en el catálogo según el modo: en exec, lo tecleado; en configuración, solo
  * lo que va detrás de un escape (`do `, `run `) o un `display`/`show` completo; si no, null
- * (ni texto gris ni lista).
+ * (ni sugerencia ni lista).
  */
 export function suggestQuery(buf: string, prompt: string, idx: Pick<SuggestIndex, "vendor" | "platform">): string | null {
   if (cliMode(prompt, idx.vendor) === "exec") return buf;
@@ -132,12 +134,26 @@ export class InputTracker {
   lost = false;
   /** Prompt de la línea sincronizada (define el modo: consulta o configuración). Solo en memoria. */
   prompt = "";
+  /**
+   * El equipo cambió la línea por su cuenta (Tab nativo o ayuda `?`): lo tecleado se vuelve a
+   * leer de la pantalla (prompt conocido + resto) cuando el equipo responde.
+   */
+  reread = false;
+  /** Llegó salida del equipo desde la última tecla (la pantalla ya refleja la respuesta). */
+  private fresh = false;
+  /** Lo tecleado mientras se espera la respuesta del equipo (la pantalla debe terminar así). */
+  private after = "";
+  /** Esc descartó la sugerencia de esta línea: no se muestra otra hasta el próximo Enter. */
+  dismissed = false;
+  /** Número de línea (cambia con cada Enter): la ayuda cuenta una vez por línea. */
+  line = 0;
 
   /** Deja de seguir la línea hasta el próximo Enter o salto de línea. */
   reset() {
     this.buf = "";
     this.sync = false;
     this.lost = true;
+    this.reread = false;
   }
 
   /** Estado inicial (conexión nueva). */
@@ -147,6 +163,9 @@ export class InputTracker {
     this.cred = false;
     this.lost = false;
     this.prompt = "";
+    this.reread = false;
+    this.dismissed = false;
+    this.line++;
   }
 
   /** Se puede sugerir sobre la línea actual. */
@@ -154,7 +173,7 @@ export class InputTracker {
     return this.sync && !this.cred;
   }
 
-  /** Falta sincronizar, pero lo tecleado es conocido: vale la pena mirar la pantalla. */
+  /** Falta sincronizar, pero lo tecleado es conocido (o se puede leer de la pantalla). */
   get canResync() {
     return !this.sync && !this.lost && !this.cred;
   }
@@ -166,6 +185,9 @@ export class InputTracker {
       this.buf = "";
       this.sync = false;
       this.lost = false;
+      this.reread = false;
+      this.dismissed = false;
+      this.line++;
       return;
     }
     if (this.cred || this.lost) {
@@ -173,18 +195,42 @@ export class InputTracker {
       this.reset();
       return;
     }
-    if (data === "\x7f" || data === "\b") {
-      const n = this.buf.length;
-      const low = n > 1 && /[\udc00-\udfff]/.test(this.buf[n - 1]);
-      this.buf = this.buf.slice(0, low ? n - 2 : n - 1);
+    // Retroceso: DEL (0x7f) o BS (0x08), según lo que envíe la sesión.
+    const back = data === "\x7f" || data === "\b";
+    if (this.reread) {
+      // Esperando la respuesta del equipo: lo tecleado se confirma con la pantalla.
+      this.fresh = false;
+      // Otro Tab o "?" (doble Tab de las shells): se sigue esperando la línea que redibuje.
+      if (data === "\t" || data === "?") this.after = "";
+      else if (back) this.after = dropLast(this.after);
+      else if (isPrintable(data) && this.after.length + data.length <= MAX_BUF) this.after += data;
+      else this.reset();
+      return;
+    }
+    if (back) {
+      this.buf = dropLast(this.buf);
+      return;
+    }
+    // Tab nativo del equipo o ayuda "?" sobre una línea sincronizada: el equipo reescribe la
+    // línea (completa la palabra o imprime la ayuda y repite prompt + lo tecleado).
+    if ((data === "\t" || data === "?") && this.sync) {
+      this.startReread();
       return;
     }
     if (isPrintable(data) && this.buf.length + data.length <= MAX_BUF) {
       this.buf += data;
       return;
     }
-    // Flechas, Tab, Esc, Ctrl+A/E/U/W/R, Inicio/Fin, pegado o texto compuesto (IME).
+    // Flechas, Esc, Ctrl+A/E/U/W/R, Inicio/Fin, pegado o texto compuesto (IME).
     this.reset();
+  }
+
+  private startReread() {
+    this.buf = "";
+    this.sync = false;
+    this.reread = true;
+    this.fresh = false;
+    this.after = "";
   }
 
   /** Texto insertado por una sugerencia (ya saneado con safeInsert). */
@@ -204,31 +250,57 @@ export class InputTracker {
     const nl = /[\r\n]/.test(chunk);
     if (this.sync && !nl) return;
     this.sync = false;
+    if (this.reread) this.fresh = true;
     // Tras una tecla de control, una línea nueva del equipo vuelve a partir de cero.
     if (this.lost && chunk.includes("\n")) {
       this.lost = false;
       this.buf = "";
+      this.dismissed = false;
     }
     if (this.lost) return;
     const t = tail();
     this.cred = CREDENTIALS.test(t);
     if (this.cred) {
       this.buf = "";
+      this.reread = false;
       return;
     }
+    // Releyendo tras Tab o "?": solo vale la línea real de la pantalla (resync desde la
+    // terminal), no el texto crudo, que puede traer retrocesos o redibujos.
+    if (this.reread) return;
     this.resync(t.slice(t.lastIndexOf("\n") + 1));
   }
 
   /**
    * Vuelve a sincronizar si la línea en pantalla (hasta el cursor) es prompt + lo
    * tecleado. La usa la terminal tras cada escritura, con la línea real de xterm.
+   * Tras Tab o "?" lee lo tecleado de la pantalla: la línea debe empezar con el prompt
+   * conocido, haber recibido respuesta del equipo y terminar con lo tecleado después.
    */
   resync(line: string): boolean {
-    if (!this.canResync || !atPrompt(line, this.buf)) return false;
+    if (!this.canResync) return false;
+    if (this.reread) {
+      if (!this.fresh || !line.startsWith(this.prompt) || !line.endsWith(this.after)) return false;
+      const rest = line.slice(this.prompt.length);
+      // "$" tras el prompt es el desplazamiento horizontal de IOS: el inicio no se ve.
+      if (rest.startsWith("$") || rest.length > MAX_BUF || !isPlainText(rest)) return false;
+      this.buf = rest;
+      this.reread = false;
+      this.sync = true;
+      return true;
+    }
+    if (!atPrompt(line, this.buf)) return false;
     this.sync = true;
     this.prompt = promptPart(line, this.buf);
     return true;
   }
+}
+
+/** Quita el último carácter (o par sustituto). */
+function dropLast(s: string): string {
+  const n = s.length;
+  const low = n > 1 && /[\udc00-\udfff]/.test(s[n - 1]);
+  return s.slice(0, low ? n - 2 : n - 1);
 }
 
 /** Una tecla imprimible (un carácter, o un par sustituto). */
@@ -283,7 +355,7 @@ export interface SuggestIndex {
   abbrev: boolean;
   /** Ordenado por `key`. */
   entries: SuggestEntry[];
-  /** Los que no son consulta: lo tecleado no debe poder ser uno de ellos si se ofrece texto gris. */
+  /** Los que no son consulta: lo tecleado no debe poder ser uno de ellos si se ofrece sugerencia. */
   risky: SuggestEntry[];
 }
 
@@ -482,24 +554,24 @@ export function lookup(idx: SuggestIndex, buf: string, limit: number, opts: Look
 
 export interface Ghost {
   entry: SuggestEntry;
-  /** Lo que se ve en gris (resto del comando, con su marcador). */
+  /** Lo que se ve en color (resto del comando, con su marcador). */
   rest: string;
   /** Lo que inserta Flecha derecha ("" si ya se llegó al marcador). */
   insert: string;
 }
 
-/** Mínimo de caracteres tecleados para mostrar texto gris. */
+/** Mínimo de caracteres tecleados para mostrar sugerencia. */
 export const GHOST_MIN = 2;
 
 /**
- * Sugerencia en gris: la mejor consulta que extiende lo tecleado. Lo que cambia
+ * Sugerencia en línea: la mejor consulta que extiende lo tecleado. Lo que cambia
  * configuración o puede cortar servicio nunca se ofrece así.
  */
 export function ghostFor(idx: SuggestIndex, buf: string, weights?: Weights): Ghost | null {
   const q = queryOf(buf);
   if (q.length < GHOST_MIN) return null;
   // Si lo tecleado, tal como está, ya puede ser un comando con riesgo, no se sugiere nada:
-  // el texto gris haría creer que Enter ejecuta la consulta.
+  // la sugerencia haría creer que Enter ejecuta la consulta.
   if (riskyAsTyped(idx, buf)) return null;
   const toks = q.split(" ");
   let best: SuggestEntry | null = null;
@@ -537,7 +609,7 @@ export function remainderToInsert(entry: SuggestEntry, buf: string): string {
   return completionFor(entry, buf)?.insert ?? "";
 }
 
-/** Siguiente palabra del texto gris (con el espacio que la sigue), para Ctrl/Alt+→. */
+/** Siguiente palabra dla sugerencia (con el espacio que la sigue), para Ctrl/Alt+→. */
 export function nextWord(insert: string): string {
   return /^\s*\S+\s?/.exec(insert)?.[0] ?? insert;
 }
@@ -791,9 +863,13 @@ export function saveUsageSoon() {
 /** "Borrar historial de sugerencias". */
 export function clearUsage() {
   usageStore().clear();
+  // La ayuda "Tab o → acepta" vuelve a mostrarse sus primeras veces.
+  tipStore().clear();
+  clearTimeout(tipTimer);
   clearTimeout(saveTimer);
   try {
     storage()?.removeItem(USAGE_KEY);
+    storage()?.removeItem(TIP_KEY);
   } catch {
     /* sin almacenamiento */
   }
@@ -856,17 +932,36 @@ export function isListKey(e: KeyLike, k: ListKey): boolean {
   }
 }
 
+/** Un segundo Tab antes de este plazo (ms) tras uno que aceptó va al equipo (autocompletado nativo). */
+export const TAB_CHAIN_MS = 400;
+
+/** El Tab anterior aceptó la sugerencia hace menos de TAB_CHAIN_MS. */
+export const tabChained = (lastTabAccept: number, now: number) => lastTabAccept > 0 && now - lastTabAccept >= 0 && now - lastTabAccept < TAB_CHAIN_MS;
+
 /**
  * Qué hace una tecla con las sugerencias activas:
- * pass (va al equipo), accept (inserta el texto gris), word (inserta la siguiente palabra),
- * open (abre la lista), up/down (mueve la selección), pick (inserta el elegido), close.
+ * pass (va al equipo), accept (inserta la sugerencia), word (inserta la siguiente palabra),
+ * dismiss (Esc: oculta la sugerencia de esta línea), open (abre la lista), up/down (mueve
+ * la selección), pick (inserta el elegido), close.
  */
-export type KeyAction = "pass" | "accept" | "word" | "open" | "up" | "down" | "pick" | "close";
+export type KeyAction = "pass" | "accept" | "word" | "dismiss" | "open" | "up" | "down" | "pick" | "close";
 
-export function suggestKey(e: KeyLike, ctx: { enabled: boolean; listOpen: boolean; canAccept: boolean; listKey?: ListKey }): KeyAction {
+export interface KeyContext {
+  enabled: boolean;
+  listOpen: boolean;
+  /** Hay una sugerencia visible con texto para insertar, y es la que el usuario está viendo. */
+  canAccept: boolean;
+  /** Hay una sugerencia visible (aunque ya no inserte nada, como en un marcador). */
+  ghostVisible?: boolean;
+  /** Ajuste "Tab acepta la sugerencia". */
+  tabAccept?: boolean;
+  /** El Tab anterior aceptó hace menos de TAB_CHAIN_MS: este va al equipo. */
+  tabChain?: boolean;
+  listKey?: ListKey;
+}
+
+export function suggestKey(e: KeyLike, ctx: KeyContext): KeyAction {
   if (!ctx.enabled || e.isComposing) return "pass";
-  // Tab siempre llega al equipo: se conserva el autocompletado nativo.
-  if (e.key === "Tab") return "pass";
   // Enter nunca lo toma una sugerencia, salvo para elegir de la lista (que tampoco lo envía).
   const plain = !e.ctrlKey && !e.altKey && !e.metaKey && !e.shiftKey;
   if (ctx.listOpen) {
@@ -874,8 +969,14 @@ export function suggestKey(e: KeyLike, ctx: { enabled: boolean; listOpen: boolea
     if (plain && e.key === "ArrowDown") return "down";
     if (plain && e.key === "Enter") return "pick";
     if (e.key === "Escape") return "close";
+    // Tab y cualquier otra tecla van al equipo (y cierran la lista).
     return "pass";
   }
+  // Tab acepta solo lo que se ve; sin sugerencia visible (o con el ajuste apagado, o justo
+  // después de un Tab que aceptó) va al equipo y se conserva su autocompletado.
+  if (e.key === "Tab") return plain && ctx.tabAccept && ctx.canAccept && !ctx.tabChain ? "accept" : "pass";
+  // Esc descarta la sugerencia visible; sin sugerencia llega al equipo.
+  if (e.key === "Escape") return plain && (ctx.ghostVisible ?? ctx.canAccept) ? "dismiss" : "pass";
   if (isListKey(e, ctx.listKey ?? "ctrl+period")) return "open";
   if (e.key === "ArrowRight" && ctx.canAccept) {
     if (plain) return "accept";
@@ -885,7 +986,7 @@ export function suggestKey(e: KeyLike, ctx: { enabled: boolean; listOpen: boolea
   return "pass";
 }
 
-// ---------- Color del texto gris ----------
+// ---------- Color de la sugerencia ----------
 
 /** "#rgb", "#rrggbb" o "rgb(r, g, b)" a [r, g, b] (null si no se reconoce). */
 function parseColor(c: string | undefined): [number, number, number] | null {
@@ -899,9 +1000,10 @@ function parseColor(c: string | undefined): [number, number, number] | null {
   return m ? [+m[1], +m[2], +m[3]] : null;
 }
 
+const lin = (v: number) => ((v /= 255) <= 0.04045 ? v / 12.92 : ((v + 0.055) / 1.055) ** 2.4);
+
 /** Luminancia relativa (WCAG 2.x). */
 function luminance([r, g, b]: number[]): number {
-  const lin = (v: number) => ((v /= 255) <= 0.03928 ? v / 12.92 : ((v + 0.055) / 1.055) ** 2.4);
   return 0.2126 * lin(r) + 0.7152 * lin(g) + 0.0722 * lin(b);
 }
 
@@ -917,22 +1019,249 @@ export function contrastRatio(a: string, b: string): number {
   return x && y ? ratioOf(x, y) : 0;
 }
 
-/** Contraste mínimo del texto gris con el fondo (WCAG 1.4.11, componentes no textuales). */
-export const GHOST_CONTRAST = 3;
+/** sRGB a CIELAB (D65). */
+function lab([r, g, b]: number[]): [number, number, number] {
+  const [R, G, B] = [lin(r), lin(g), lin(b)];
+  const f = (t: number) => (t > 216 / 24389 ? Math.cbrt(t) : (24389 / 27 * t + 16) / 116);
+  const x = f((0.4124 * R + 0.3576 * G + 0.1805 * B) / 0.95047);
+  const y = f(0.2126 * R + 0.7152 * G + 0.0722 * B);
+  const z = f((0.0193 * R + 0.1192 * G + 0.9505 * B) / 1.08883);
+  return [116 * y - 16, 500 * (x - y), 200 * (y - z)];
+}
+
+/** Diferencia de color percibida (CIE76, ΔE*ab): sobre 30 se distinguen a simple vista sin compararlos lado a lado. */
+export function colorDistance(a: string, b: string): number {
+  const x = parseColor(a);
+  const y = parseColor(b);
+  if (!x || !y) return 0;
+  const [p, q] = [lab(x), lab(y)];
+  return Math.hypot(p[0] - q[0], p[1] - q[1], p[2] - q[2]);
+}
+
+/** Croma (C*ab): bajo 25 el color se lee como gris. */
+export function chroma(c: string): number {
+  const x = parseColor(c);
+  if (!x) return 0;
+  const [, a, b] = lab(x);
+  return Math.hypot(a, b);
+}
+
+/** Diferencia de tono (h*ab, en grados, 0 a 180). */
+export function hueDifference(a: string, b: string): number {
+  const x = parseColor(a);
+  const y = parseColor(b);
+  if (!x || !y) return 0;
+  const [, a1, b1] = lab(x);
+  const [, a2, b2] = lab(y);
+  const d = Math.abs(Math.atan2(b1, a1) - Math.atan2(b2, a2)) * (180 / Math.PI);
+  return d > 180 ? 360 - d : d;
+}
 
 /**
- * Color del texto gris: el del texto mezclado con el fondo, con la menor opacidad (desde 45%)
- * que llega a 3:1 con el fondo. Así se ve en todos los temas y queda por debajo del texto real
- * (en temas de poco contraste, como Solarized, se le acerca sin igualarlo).
- * null si los colores no se reconocen (la terminal usa entonces opacidad fija).
+ * La sugerencia se distingue de otro color (texto o cursor): ΔE de al menos 30 y, si el otro
+ * tiene color propio (temas monocromo como Ámbar o Fósforo), otro tono (40° o más).
  */
-export function ghostColor(fg: string | undefined, bg: string | undefined): string | null {
-  const f = parseColor(fg);
-  const b = parseColor(bg);
-  if (!f || !b) return null;
-  const mix = (a: number) => f.map((v, i) => Math.round(v * a + b[i] * (1 - a)));
-  let a = 0.45;
-  while (a < 0.9 && ratioOf(mix(a), b) < GHOST_CONTRAST) a += 0.025;
-  const [r, g, bl] = mix(a);
-  return `rgb(${r}, ${g}, ${bl})`;
+export function distinctFrom(c: string, other: string | undefined): boolean {
+  if (!parseColor(other)) return true;
+  if (colorDistance(c, other!) < GHOST_DISTANCE) return false;
+  return chroma(other!) < GHOST_CHROMA || hueDifference(c, other!) >= GHOST_HUE;
+}
+
+/** Contraste mínimo de la sugerencia con el fondo (WCAG 1.4.11, componentes no textuales). */
+export const GHOST_CONTRAST = 3;
+/** Croma mínimo: la sugerencia nunca es gris. */
+export const GHOST_CHROMA = 25;
+/** Distancia mínima (ΔE) con el texto normal y con el cursor. */
+export const GHOST_DISTANCE = 30;
+/** Diferencia mínima de tono con un texto o cursor de color (grados). */
+export const GHOST_HUE = 40;
+
+/** Color de la sugerencia: automático o un tono fijo (que se ajusta a cada tema). */
+export type GhostColor = "auto" | "cyan" | "amber" | "magenta" | "blue";
+export const GHOST_COLORS: Record<GhostColor, string> = {
+  auto: "Automático",
+  cyan: "Cian",
+  amber: "Ámbar",
+  magenta: "Magenta",
+  blue: "Azul",
+};
+/** Estilo extra de la sugerencia. */
+export type GhostStyle = "none" | "italic" | "underline";
+export const GHOST_STYLES: Record<GhostStyle, string> = {
+  none: "Solo color",
+  italic: "Cursiva",
+  underline: "Subrayado punteado",
+};
+
+/** Colores del tema de terminal que usa la sugerencia (subconjunto de ITheme de xterm). */
+export interface GhostTheme {
+  background?: string;
+  foreground?: string;
+  cursor?: string;
+  cyan?: string;
+  brightCyan?: string;
+  yellow?: string;
+  brightYellow?: string;
+  magenta?: string;
+  brightMagenta?: string;
+  blue?: string;
+  brightBlue?: string;
+}
+
+type Tone = Exclude<GhostColor, "auto">;
+/** Colores ANSI del tema para cada tono (primero el normal, luego el brillante). */
+const SLOTS: Record<Tone, (keyof GhostTheme)[]> = {
+  cyan: ["cyan", "brightCyan"],
+  amber: ["yellow", "brightYellow"],
+  magenta: ["magenta", "brightMagenta"],
+  blue: ["blue", "brightBlue"],
+};
+/** Tono (HSL) de respaldo cuando el tema no trae uno que sirva. */
+const HUE: Record<Tone, number> = { cyan: 188, amber: 38, magenta: 315, blue: 215 };
+/** Orden de preferencia en automático: cian se confunde menos con el texto y con los avisos. */
+const AUTO_ORDER: Tone[] = ["cyan", "blue", "magenta", "amber"];
+
+const hex = (c: number[]) => `#${c.map((v) => Math.round(v).toString(16).padStart(2, "0")).join("")}`;
+
+function hsl(h: number, s: number, l: number): number[] {
+  const k = (n: number) => (n + h / 30) % 12;
+  const a = s * Math.min(l, 1 - l);
+  return [0, 8, 4].map((n) => 255 * (l - a * Math.max(-1, Math.min(k(n) - 3, 9 - k(n), 1))));
+}
+
+/**
+ * Un tono con la luminosidad justa para llegar a 3:1 con el fondo (más claro en fondos
+ * oscuros, más oscuro en fondos claros). null si ni el extremo alcanza.
+ */
+function synth(tone: Tone, bg: number[]): string | null {
+  const dark = luminance(bg) < 0.18;
+  for (let i = 0; i <= 24; i++) {
+    const l = dark ? 0.55 + i * 0.015 : 0.42 - i * 0.012;
+    const c = hsl(HUE[tone], 0.8, l);
+    if (ratioOf(c, bg) >= GHOST_CONTRAST + 0.2) return hex(c);
+  }
+  return null;
+}
+
+/** El color sirve para la sugerencia: contraste con el fondo y no es gris. */
+const legible = (c: string, bg: string) => contrastRatio(c, bg) >= GHOST_CONTRAST && chroma(c) >= GHOST_CHROMA;
+
+/** Además se distingue del texto normal y del cursor. */
+const distinct = (c: string, t: GhostTheme) => distinctFrom(c, t.foreground) && distinctFrom(c, t.cursor);
+
+/** Candidatos de un tono: los del tema (normal y brillante) y el de respaldo. */
+function candidates(tone: Tone, t: GhostTheme, bg: number[]): string[] {
+  const out: string[] = [];
+  for (const k of SLOTS[tone]) if (parseColor(t[k])) out.push(t[k]!);
+  const s = synth(tone, bg);
+  if (s) out.push(s);
+  return out;
+}
+
+const colorCache = new WeakMap<GhostTheme, Map<string, string | null>>();
+
+/**
+ * Color de la sugerencia para un tema. Automático: el primer color del tema (cian, azul,
+ * magenta, ámbar) con al menos 3:1 con el fondo, que no sea gris y que se distinga del texto
+ * y del cursor (ΔE y tono); si ninguno del tema sirve, el mismo tono ajustado al fondo. Un
+ * tono elegido usa el del tema o el ajustado, prefiriendo el que se distingue del texto y del
+ * cursor; si ninguno se distingue, el primero legible. null si el fondo no se reconoce (la
+ * terminal usa entonces el color de acento con opacidad fija).
+ */
+export function ghostColor(theme: GhostTheme | undefined, choice: GhostColor | string = "auto"): string | null {
+  const bg = parseColor(theme?.background);
+  if (!theme || !bg || !parseColor(theme.foreground)) return null;
+  let byChoice = colorCache.get(theme);
+  if (!byChoice) colorCache.set(theme, (byChoice = new Map()));
+  const hit = byChoice.get(choice);
+  if (hit !== undefined) return hit;
+  const tones: Tone[] = choice in SLOTS ? [choice as Tone] : AUTO_ORDER;
+  const all = tones.flatMap((tone) => candidates(tone, theme, bg)).filter((c) => legible(c, theme.background!));
+  // Un tono elegido a mano se respeta aunque se parezca al texto (por ejemplo, ámbar en el tema Ámbar).
+  const color = all.find((c) => distinct(c, theme)) ?? all[0] ?? null;
+  byChoice.set(choice, color);
+  return color;
+}
+
+// ---------- Ayuda junto a la sugerencia ----------
+
+/** Veces (líneas) que se muestra la ayuda "Tab o → acepta · Esc descarta" por plataforma. */
+export const TIP_TIMES = 5;
+export const TIP_KEY = "nt.suggestTips.v1";
+
+/** Texto de la ayuda según si Tab acepta. */
+export const tipText = (tabAccepts: boolean) => (tabAccepts ? "Tab o → acepta · Esc descarta" : "→ acepta · Esc descarta");
+
+/**
+ * Cuenta en cuántas líneas se mostró la ayuda, por plataforma: cada línea (entre Enter y
+ * Enter) cuenta una vez, y tras TIP_TIMES líneas deja de mostrarse. Solo guarda números.
+ */
+export class TipCounter {
+  private seen: Record<string, number> = dict();
+  private line = "";
+  private readonly times: number;
+  constructor(raw?: string | null, times = TIP_TIMES) {
+    this.times = times;
+    try {
+      const p = raw ? JSON.parse(raw) : null;
+      if (p && typeof p === "object" && !Array.isArray(p))
+        for (const [k, v] of Object.entries(p).slice(0, MAX_PLATFORMS))
+          if (/^[\w.-]{1,40}$/.test(k) && Number.isFinite(v)) this.seen[k] = Math.max(0, Math.min(times, Math.floor(v as number)));
+    } catch {
+      /* valor dañado: se parte de cero */
+    }
+  }
+
+  /** Se puede mostrar la ayuda en esta línea; la primera vez en una línea nueva la cuenta. */
+  allow(platform: string, line: string): boolean {
+    const key = `${platform}\u0000${line}`;
+    if (key === this.line) return true;
+    const n = this.seen[platform] ?? 0;
+    if (n >= this.times) return false;
+    this.seen[platform] = n + 1;
+    this.line = key;
+    return true;
+  }
+
+  /** Veces que ya se mostró en la plataforma. */
+  count(platform: string): number {
+    return this.seen[platform] ?? 0;
+  }
+
+  serialize(): string {
+    return JSON.stringify(this.seen);
+  }
+
+  clear() {
+    this.seen = dict();
+    this.line = "";
+  }
+}
+
+let tips: TipCounter | null = null;
+let tipTimer: ReturnType<typeof setTimeout> | undefined;
+
+/** Contador compartido por todas las pestañas (en localStorage; sin él, solo en memoria). */
+export function tipStore(): TipCounter {
+  if (!tips) {
+    let raw: string | null = null;
+    try {
+      raw = storage()?.getItem(TIP_KEY) ?? null;
+    } catch {
+      /* sin almacenamiento */
+    }
+    tips = new TipCounter(raw);
+  }
+  return tips;
+}
+
+export function saveTipsSoon() {
+  clearTimeout(tipTimer);
+  tipTimer = setTimeout(() => {
+    try {
+      storage()?.setItem(TIP_KEY, tipStore().serialize());
+    } catch {
+      /* sin almacenamiento */
+    }
+  }, 1000);
 }

@@ -914,6 +914,8 @@ if (new URLSearchParams(location.search).has("video")) {
     queues.set(id, at);
     setTimeout(fn, at - Date.now());
   };
+  /** Palabras que el equipo simulado completa con Tab. */
+  const MOCK_WORDS = ["show", "interface", "interfaces", "brief", "version", "running-config", "clock", "ip", "vlan"];
   handlers.write = ({ id, data }) => {
     let buf = lineBuf.get(id) ?? "";
     let echo = "";
@@ -926,8 +928,19 @@ if (new URLSearchParams(location.search).has("video")) {
         later(id, () => out(id, reply(id, line) + promptOf(id)), 200);
         buf = "";
         echo = "";
-      } else if (ch === "\x7f") {
+      } else if (ch === "\x7f" || ch === "\b") {
         if (buf) (buf = buf.slice(0, -1)), (echo += "\b \b");
+      } else if (ch === "\t") {
+        // Autocompletado del equipo (como IOS): completa la última palabra si es única.
+        const last = /(\S+)$/.exec(buf)?.[1] ?? "";
+        const hits = last ? MOCK_WORDS.filter((w) => w.startsWith(last.toLowerCase())) : [];
+        if (hits.length === 1) {
+          const add = `${hits[0].slice(last.length)} `;
+          (buf += add), (echo += add);
+        }
+      } else if (ch === "?") {
+        // Ayuda del equipo: opciones y luego prompt + lo escrito (sin el "?").
+        echo += `\r\n  brief      Resumen de interfaces\r\n  interface  Estado por interfaz\r\n\r\n${promptOf(id)}${buf}`;
       } else if (ch >= " ") (buf += ch), (echo += ch);
     }
     if (echo) {
