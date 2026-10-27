@@ -1,6 +1,5 @@
 import { memo, useCallback, useDeferredValue, useMemo, useRef, useState } from "react";
 import { writeText } from "@tauri-apps/plugin-clipboard-manager";
-import { BroadcastTargetPicker } from "./BroadcastTarget";
 import { openUrl } from "@tauri-apps/plugin-opener";
 import {
   ChevronRight,
@@ -19,9 +18,13 @@ import {
 } from "lucide-react";
 import { CATEGORIES, CatalogEntry, CatalogVendor, OS_VENDORS, Risk, appliesTo, commandFor, riskLabel } from "../lib/packs";
 import { modLabel } from "../lib/platform";
+import { PanelResize, panelClass } from "./PanelResize";
 
 interface Props {
   width: number;
+  onResize: (w: number) => void;
+  /** Ventana angosta: el panel se superpone a la terminal. */
+  overlay?: boolean;
   catalog: CatalogVendor[];
   vendor: string;
   onVendor: (v: string) => void;
@@ -41,7 +44,13 @@ interface Props {
   onClose: () => void;
 }
 
+// Familia Fortinet agrupada: el pack "fortinet" es FortiGate (FortiOS) y gestiona al resto.
+const FORTI_ORDER = ["fortinet", "fortiswitch", "fortiap", "fortiextender"];
+const FORTI_LABEL: Record<string, string> = { fortinet: "FortiGate (FortiOS)" };
+const isForti = (id: string) => FORTI_ORDER.includes(id);
+
 const riskStyle: Record<Risk, string> = { read: "text-ok", change: "text-warn", disruptive: "text-danger" };
+const riskBorder: Record<Risk, string> = { read: "border-transparent", change: "border-[var(--warn)]", disruptive: "border-[var(--danger)]" };
 const riskIcon: Record<Risk, string> = { read: "●", change: "▲", disruptive: "✕" };
 
 function CmdText({ cmd }: { cmd: string }) {
@@ -137,7 +146,8 @@ export const CommandsPanel = memo(function CommandsPanel(p: Props) {
   const platLabel = useCallback((id: string) => vendor?.platforms.find((x) => x.id === id)?.label ?? id, [vendor]);
 
   return (
-    <aside className="relative shrink-0 flex flex-col border-l border-line bg-chrome" style={{ width: p.width }}>
+    <aside className={panelClass(!!p.overlay)} style={{ width: p.width }}>
+      <PanelResize width={p.width} onResize={p.onResize} />
       <header className="flex items-center gap-1 px-2 h-9 border-b border-line">
         {/* Lista agrupada: con equipos de red y sistemas operativos ya no caben como pestañas. */}
         <select
@@ -147,14 +157,15 @@ export const CommandsPanel = memo(function CommandsPanel(p: Props) {
           onChange={(e) => p.onVendor(e.target.value)}
         >
           {[
-            ["Equipos de red", p.catalog.filter((v) => !OS_VENDORS.includes(v.id))],
+            ["Equipos de red", p.catalog.filter((v) => !OS_VENDORS.includes(v.id) && !isForti(v.id))],
+            ["Fortinet", FORTI_ORDER.map((id) => p.catalog.find((v) => v.id === id)).filter((v): v is CatalogVendor => !!v)],
             ["Sistemas operativos", p.catalog.filter((v) => OS_VENDORS.includes(v.id))],
           ].map(([label, list]) =>
             (list as CatalogVendor[]).length ? (
               <optgroup key={label as string} label={label as string}>
                 {(list as CatalogVendor[]).map((v) => (
                   <option key={v.id} value={v.id}>
-                    {v.name} · {v.commands.length}
+                    {(label === "Fortinet" && FORTI_LABEL[v.id]) || v.name} · {v.commands.length}
                   </option>
                 ))}
               </optgroup>
@@ -267,7 +278,6 @@ export const CommandsPanel = memo(function CommandsPanel(p: Props) {
           {p.target ? `Destino: ${p.target}` : "Sin sesión conectada"}
           {platform ? ` · ${platLabel(platform)}` : ""} · verifica la sintaxis en tu versión
         </span>
-        <BroadcastTargetPicker />
       </footer>
     </aside>
   );
@@ -295,7 +305,9 @@ const CommandRow = memo(function CommandRow({
   actions: RowActions;
 }) {
   return (
-    <div className="group rounded-lg px-2 py-1.5 hover:bg-hover [content-visibility:auto] [contain-intrinsic-size:auto_64px]">
+    <div
+      className={`group rounded-lg px-2 py-1.5 hover:bg-hover border-l-2 [content-visibility:auto] [contain-intrinsic-size:auto_64px] ${riskBorder[c.risk]}`}
+    >
       <div className="flex items-start gap-2">
         <div className="min-w-0 flex-1">
           <CmdText cmd={cmd} />
@@ -316,7 +328,7 @@ const CommandRow = memo(function CommandRow({
               {riskIcon[c.risk]} {riskLabel[c.risk]}
               {c.escalated ? " (ajustado)" : ""}
             </span>
-            {c.platforms?.length ? <span className="text-muted">{c.platforms.map(platLabel).join(", ")}</span> : null}
+            {showVariants && c.platforms?.length ? <span className="text-muted">{c.platforms.map(platLabel).join(", ")}</span> : null}
             {!c.builtin && <span className="text-accent">{c.packName}</span>}
           </div>
         </div>

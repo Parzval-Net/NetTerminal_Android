@@ -186,12 +186,15 @@ export function ImportDialog({ folders, onImport, onClose }: Props) {
               </div>
               <div className="rounded-lg border border-line overflow-hidden">
                 <div className="flex items-center gap-2 px-3 h-8 bg-chrome border-b border-line text-[11.5px] text-muted">
-                  <input
-                    type="checkbox"
-                    className="accent-[var(--accent)]"
-                    checked={all}
-                    onChange={() => setSelected(all ? new Set() : new Set(preview.sessions.map((_, i) => i)))}
-                  />
+                  <label className="p-1 -m-1 grid place-items-center">
+                    <input
+                      type="checkbox"
+                      className="accent-[var(--accent)]"
+                      checked={all}
+                      aria-label="Seleccionar todas"
+                      onChange={() => setSelected(all ? new Set() : new Set(preview.sessions.map((_, i) => i)))}
+                    />
+                  </label>
                   <span className="flex-1 truncate">
                     {NAMES[preview.format] ?? preview.format} · {plural(preview.sessions.length, "sesión", "sesiones")} · {file}
                   </span>

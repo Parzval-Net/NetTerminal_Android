@@ -255,11 +255,11 @@ export const VerticalTabs = memo(function VerticalTabs(props: TabBarProps) {
                     <span className={`truncate flex-1 min-w-0 ${t.title ? "italic" : ""}`}>{title}</span>
                   )}
                   {marker === "alert" ? (
-                    <span className="text-[10px] font-semibold text-danger shrink-0" title="Alerta por palabra clave">
+                    <span className="text-[11px] font-semibold text-danger shrink-0" title="Alerta por palabra clave">
                       ▲
                     </span>
                   ) : marker === "activity" ? (
-                    <span className="text-[10px] font-semibold text-accent shrink-0" title="Salida nueva">
+                    <span className="text-[11px] font-semibold text-accent shrink-0" title="Salida nueva">
                       ●
                     </span>
                   ) : null}

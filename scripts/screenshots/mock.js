@@ -1088,6 +1088,7 @@ const scenes = {
     await wait(100);
     pw.form.requestSubmit();
     await wait(400);
+    await click("Más acciones de la nota");
     await click("Protección de la nota");
   },
   snmp: async () => { await click("Herramientas: monitoreo, diagnóstico, TFTP, syslog, plugins"); await click("SNMP"); await click("IF-MIB (RFC 2863): ifXTable con contadores de 64 bits; ifTable si el agente no la tiene"); await wait(400); await click("Iniciar"); await wait(600); [...document.querySelectorAll("h3")].find((h) => h.textContent === "Conjuntos de OIDs")?.scrollIntoView(); },

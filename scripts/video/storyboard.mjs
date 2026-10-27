@@ -148,7 +148,7 @@ export const chapters = [
           [["hl", "has:{{vlan}}"], ["@", 2600], ["click", "text:Todo"], ["wait", 500], ["type", "30\tCAMARAS\tGigabitEthernet1/0/7\tCamara piso 2", 45]],
           [["hl", "text:Completar plantilla"], ["@end", 1500], ["click", "text:Continuar"], ["wait", 500], ["click", "text:Enviar", { timeout: 1200 }]],
           [["hl", "text:Capturar"], ["hover", "text:Capturar"]],
-          [["click", "title:Proteger con contraseña"], ["wait", 400], ["hl", "has:Proteger con contraseña"]],
+          [["click", "title:Más acciones de la nota"], ["wait", 200], ["click", "title:Proteger con contraseña"], ["wait", 400], ["hl", "has:Proteger con contraseña"]],
         ],
       },
       {
@@ -156,7 +156,7 @@ export const chapters = [
         cues: [
           [["hl", "css:input[type=password]"], ["hover", "css:input[type=password]"]],
           [["click", "css:input[type=password]"], ["type", "demo-clave-2026", 40], ["key", "Enter"], ["wait", 500], ["hl", "has:Accesos de emergencia"]],
-          [["click", "title:Protección de la nota"], ["wait", 400], ["hl", "text:Bloquear ahora"], ["@", 2600], ["hl", "text:Quitar protección"]],
+          [["click", "title:Más acciones de la nota"], ["wait", 200], ["click", "title:Protección de la nota"], ["wait", 400], ["hl", "text:Bloquear ahora"], ["@", 2600], ["hl", "text:Quitar protección"]],
           [["click", "text:Bloquear ahora"], ["click", "title:Buscar en todas las notas"], ["type", "tacacs"], ["wait", 600], ["hl", "ph:Buscar en todas las notas"]],
         ],
       },

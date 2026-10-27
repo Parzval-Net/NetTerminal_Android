@@ -287,6 +287,12 @@ export const schemes: HlScheme[] = [
 
 export const vendorSchemes = schemes.filter((s) => s.id !== "common");
 
+/** Esquema de resaltado para un fabricante del catálogo (la familia Fortinet comparte uno). */
+export function schemeForVendor(vendor: string): string | undefined {
+  if (/^forti/.test(vendor)) return "fortinet";
+  return schemes.some((s) => s.id === vendor && s.id !== "common") ? vendor : undefined;
+}
+
 // ---------- Motor ----------
 
 export interface Compiled {

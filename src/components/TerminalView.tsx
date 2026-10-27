@@ -68,6 +68,8 @@ export interface TermController {
   reset: () => void;
   /** Copia todo el historial al portapapeles; devuelve las líneas copiadas. */
   copyAll: () => Promise<number>;
+  /** Últimas líneas del historial como texto (para detectar la plataforma sin enviar nada). */
+  recentText: (lines: number) => string;
 }
 
 const NEWLINE = { cr: "\r", lf: "\n", crlf: "\r\n" } as const;
@@ -866,6 +868,12 @@ export const TerminalView = memo(function TerminalView({ id, session, active, vi
       disconnect,
       clearScrollback: () => term.clear(),
       reset: () => term.reset(),
+      recentText: (n) => {
+        const buf = term.buffer.active;
+        const out: string[] = [];
+        for (let i = Math.max(0, buf.length - n); i < buf.length; i++) out.push(buf.getLine(i)?.translateToString(true) ?? "");
+        return out.join("\n");
+      },
       copyAll: async () => {
         const buf = term.buffer.active;
         const lines: string[] = [];

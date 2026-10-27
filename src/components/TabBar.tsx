@@ -208,11 +208,11 @@ export const TabBar = memo(function TabBar(props: TabBarProps) {
                 <span className={`truncate flex-1 ${t.title ? "italic" : ""}`}>{tabTitle(t)}</span>
               )}
               {alerted?.has(t.id) && !active ? (
-                <span className="text-[10px] font-semibold text-danger shrink-0" title="Alerta por palabra clave">
+                <span className="text-[11px] font-semibold text-danger shrink-0" title="Alerta por palabra clave">
                   ▲
                 </span>
               ) : activity.has(t.id) && !active && (
-                <span className="text-[10px] font-semibold text-accent shrink-0" title="Salida nueva">
+                <span className="text-[11px] font-semibold text-accent shrink-0" title="Salida nueva">
                   ●
                 </span>
               )}

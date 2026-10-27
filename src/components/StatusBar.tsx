@@ -2,6 +2,7 @@ import { memo } from "react";
 import { ArrowLeftRight, BookOpen, KeyRound, Bot, Circle, CircleDot, NotebookPen, RotateCcw, Search, Settings, Unplug, Zap } from "lucide-react";
 import { Tab, TabState, historyKey, sessionTarget, tunnelLabel } from "../types";
 import { HistoryMenu } from "./HistoryMenu";
+import { BroadcastTargetPicker } from "./BroadcastTarget";
 import { QuickBolt, typeLabel } from "./SessionIcon";
 import { statusColor } from "./TabBar";
 import { isMac, modLabel } from "../lib/platform";
@@ -118,6 +119,9 @@ export const StatusBar = memo(function StatusBar({
       )}
 
       <div className="ml-auto shrink-0 flex items-center gap-0.5">
+        {/* Destino único de Notas, catálogo, botones y scripts: siempre a la vista. */}
+        <BroadcastTargetPicker />
+        <span className="w-px h-3.5 mx-1 bg-line" />
         <BarBtn
           onClick={onToggleLog}
           disabled={!connected && !logging}

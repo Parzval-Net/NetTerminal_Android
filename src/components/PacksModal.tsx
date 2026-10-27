@@ -1,8 +1,8 @@
 import { useEffect, useMemo, useState } from "react";
 import { invoke } from "@tauri-apps/api/core";
 import { open, save } from "@tauri-apps/plugin-dialog";
-import { AlertTriangle, Download, FileJson, Lock, Trash2, Upload, X } from "lucide-react";
-import { Pack, Risk, Validation, buildCatalog, riskLabel, validatePack } from "../lib/packs";
+import { AlertTriangle, Download, FileJson, Lock, Search, Trash2, Upload, X } from "lucide-react";
+import { OS_VENDORS, Pack, Risk, Validation, buildCatalog, riskLabel, validatePack } from "../lib/packs";
 import { useDragResize } from "../lib/useDragResize";
 
 interface Props {
@@ -20,6 +20,17 @@ export function PacksModal({ packs, disabled, onToggle, onChanged, onClose }: Pr
   const [preview, setPreview] = useState<Validation | null>(null);
   const [error, setError] = useState("");
   const [confirmDelete, setConfirmDelete] = useState<string | null>(null);
+  const [query, setQuery] = useState("");
+  // Con 13+ packs incluidos: búsqueda y grupos como en el selector del catálogo.
+  const grouped = useMemo(() => {
+    const q = query.trim().toLowerCase();
+    const match = packs.filter((p) => !q || `${p.name} ${p.vendorName ?? ""} ${p.vendor}`.toLowerCase().includes(q));
+    const groupOf = (p: Pack) =>
+      !p.builtin ? "Importados" : OS_VENDORS.includes(p.vendor) ? "Sistemas operativos" : /^forti/.test(p.vendor) ? "Fortinet" : "Equipos de red";
+    return (["Equipos de red", "Fortinet", "Sistemas operativos", "Importados"] as const)
+      .map((g) => [g, match.filter((p) => groupOf(p) === g)] as const)
+      .filter(([, l]) => l.length);
+  }, [packs, query]);
 
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => e.key === "Escape" && onClose();
@@ -148,53 +159,69 @@ export function PacksModal({ packs, disabled, onToggle, onChanged, onClose }: Pr
             </div>
           )}
 
-          <div className="rounded-lg border border-line divide-y divide-[var(--border)]">
-            {packs.map((p) => {
-              const enabled = !disabled.includes(p.id);
-              return (
-                <div key={p.id} className="flex items-center gap-3 px-3 py-2">
-                  <label className="p-1 -m-1 grid place-items-center cursor-pointer">
-                    <input
-                      type="checkbox"
-                      className="accent-[var(--accent)]"
-                      checked={enabled}
-                      onChange={(e) => onToggle(p.id, e.target.checked)}
-                      title={enabled ? "Desactivar" : "Activar"}
-                    />
-                  </label>
-                  <div className="min-w-0 flex-1">
-                    <div className="flex items-center gap-1.5">
-                      {p.builtin && <Lock size={11} className="text-muted" />}
-                      <span className="truncate">{p.name}</span>
+          <label className="flex items-center gap-2 h-8 px-2.5 rounded-md border border-field-line bg-field focus-within:border-accent">
+            <Search size={13} className="text-muted shrink-0" />
+            <input
+              className="flex-1 min-w-0 bg-transparent outline-none text-[12.5px] placeholder:text-muted"
+              placeholder="Buscar pack o fabricante"
+              aria-label="Buscar pack o fabricante"
+              value={query}
+              onChange={(e) => setQuery(e.target.value)}
+            />
+          </label>
+          {grouped.map(([label, list]) => (
+            <section key={label} className="space-y-1">
+              <h3 className="px-1 text-[11px] font-semibold uppercase tracking-wide text-muted">{label}</h3>
+              <div className="rounded-lg border border-line divide-y divide-[var(--border)]">
+                {list.map((p) => {
+                  const enabled = !disabled.includes(p.id);
+                  return (
+                    <div key={p.id} className="flex items-center gap-3 px-3 py-2">
+                      <label className="p-1 -m-1 grid place-items-center cursor-pointer">
+                        <input
+                          type="checkbox"
+                          className="accent-[var(--accent)]"
+                          checked={enabled}
+                          onChange={(e) => onToggle(p.id, e.target.checked)}
+                          title={enabled ? "Desactivar" : "Activar"}
+                        />
+                      </label>
+                      <div className="min-w-0 flex-1">
+                        <div className="flex items-center gap-1.5">
+                          {p.builtin && <Lock size={11} className="text-muted" />}
+                          <span className="truncate">{p.name}</span>
+                        </div>
+                        <div className="text-[11.5px] text-muted truncate">
+                          {p.vendorName} · {p.commands.length} comandos{p.version ? ` · v${p.version}` : ""}
+                          {p.author ? ` · ${p.author}` : ""}
+                        </div>
+                      </div>
+                      {!p.builtin && (
+                        <>
+                          <button title="Exportar para compartir" onClick={() => exportPack(p.id)} className="w-7 h-7 grid place-items-center rounded-md text-muted hover:text-fg hover:bg-hover">
+                            <Download size={14} />
+                          </button>
+                          <button
+                            title={confirmDelete === p.id ? "Clic para confirmar" : "Eliminar"}
+                            onMouseLeave={() => setConfirmDelete(null)}
+                            onClick={async () => {
+                              if (confirmDelete !== p.id) return setConfirmDelete(p.id);
+                              await invoke("cmdpack_delete", { id: p.id }).catch((e) => setError(String(e)));
+                              onChanged();
+                            }}
+                            className={`w-7 h-7 grid place-items-center rounded-md hover:bg-hover ${confirmDelete === p.id ? "text-danger" : "text-muted hover:text-danger"}`}
+                          >
+                            <Trash2 size={14} />
+                          </button>
+                        </>
+                      )}
                     </div>
-                    <div className="text-[11.5px] text-muted truncate">
-                      {p.vendorName} · {p.commands.length} comandos{p.version ? ` · v${p.version}` : ""}
-                      {p.author ? ` · ${p.author}` : ""}
-                    </div>
-                  </div>
-                  {!p.builtin && (
-                    <>
-                      <button title="Exportar para compartir" onClick={() => exportPack(p.id)} className="w-7 h-7 grid place-items-center rounded-md text-muted hover:text-fg hover:bg-hover">
-                        <Download size={14} />
-                      </button>
-                      <button
-                        title={confirmDelete === p.id ? "Clic para confirmar" : "Eliminar"}
-                        onMouseLeave={() => setConfirmDelete(null)}
-                        onClick={async () => {
-                          if (confirmDelete !== p.id) return setConfirmDelete(p.id);
-                          await invoke("cmdpack_delete", { id: p.id }).catch((e) => setError(String(e)));
-                          onChanged();
-                        }}
-                        className={`w-7 h-7 grid place-items-center rounded-md hover:bg-hover ${confirmDelete === p.id ? "text-danger" : "text-muted hover:text-danger"}`}
-                      >
-                        <Trash2 size={14} />
-                      </button>
-                    </>
-                  )}
-                </div>
-              );
-            })}
-          </div>
+                  );
+                })}
+              </div>
+            </section>
+          ))}
+          {!grouped.length && <p className="text-center text-[12px] text-muted py-2">Sin resultados para "{query}"</p>}
 
           <p className="text-[11.5px] text-muted flex gap-1.5">
             <AlertTriangle size={13} className="shrink-0 text-warn" />

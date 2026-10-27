@@ -71,7 +71,8 @@ Construido con [Tauri 2](https://tauri.app) (backend en Rust) y xterm.js. Usa el
 | Importar | Sesiones desde `~/.ssh/config`, PuTTY (.reg), SecureCRT (XML), MobaXterm (.mobaconf/.mxtsessions) y CSV, con vista previa. Nunca importa contraseñas, comandos al conectar, proxies ni túneles. |
 | Conexión rápida | Formulario SSH, Telnet, TCP crudo o Serial sin guardar la sesión, primera opción de la pantalla de inicio, rayo antes del "+" de nueva sesión o ⌘O / Ctrl+Shift+O (ícono de rayo en la pestaña). "Guardar como sesión…" en el menú de la pestaña y en la barra de estado. |
 | Historial | Destinos recientes en la conexión rápida (⌘K) y últimos comandos enviados a cada equipo desde Notas, catálogo o botones (nunca lo tecleado). |
-| Notas | Panel lateral con notas en `.txt` (autoguardado, resaltado por fabricante), búsqueda en todas las notas y buscar/reemplazar. Envía la línea, la selección o todo a la sesión activa (con control de riesgo y pausa por línea opcional) y captura texto de la terminal. |
+| Notas | Panel lateral con notas en `.txt` (autoguardado, resaltado por fabricante), búsqueda en todas las notas y buscar/reemplazar (renombrar, proteger, eliminar y abrir la carpeta van en el menú "…"). Envía la línea, la selección o todo a la sesión activa (con control de riesgo y pausa por línea opcional) y captura texto de la terminal. |
+| Paneles laterales | Comandos y Notas comparten un ancho ajustable desde su borde. Si la terminal quedaría bajo 560 px (por ejemplo en una pantalla de 1024 px), el panel se superpone a la terminal en vez de achicarla, para que salidas como `show ip interface brief` no se partan. |
 | Notas protegidas | Una nota se puede proteger con contraseña: queda cifrada en disco (`.ntenc`, XChaCha20-Poly1305 con llave Argon2id por nota) y se bloquea a mano, por inactividad (5 min por defecto), al cambiar de nota o al cerrar el panel. No aparece en la búsqueda de contenido. |
 | Logs | Grabación de la sesión a texto plano (sin códigos de color) en la carpeta `logs` o en una carpeta que elijas (validada, archivos 600): nombre por patrón (`{session}`, `{host}`, `{folder}`, `{date}`, `{time}`), anexar o archivo nuevo, rotación diaria, hora por línea y secretos enmascarados (activado por defecto). El log continúa en el mismo archivo al reconectar. |
 | Plantillas | Variables `{{nombre}}` en Notas: al enviar se piden los valores (se recuerdan los últimos, salvo las que parecen contraseñas o claves, que se piden ocultas y no se guardan). |
@@ -223,7 +224,8 @@ Pendiente para distribución corporativa: firmar con Developer ID + notarizació
 
 El catálogo (⌘L) combina los packs incluidos (investigados con fuentes oficiales, con variantes por plataforma y versión) con packs que cada usuario puede crear, importar y compartir.
 
-- **Plataforma:** el botón "Detectar" ejecuta `show version` / `display version` / `get system status` en la sesión y ajusta la sintaxis (por ejemplo IOS-XE frente a NX-OS, FortiOS 6.4 frente a 7.x).
+- **Plataforma:** el botón "Detectar" ejecuta `show version` / `display version` / `get system status` en la sesión y ajusta la sintaxis (por ejemplo IOS-XE frente a NX-OS, FortiOS 6.4 frente a 7.x). Al abrir el catálogo en una pestaña sin plataforma, la app busca primero en lo que ya muestra la pantalla (sin enviar nada al equipo). Si reconoce la plataforma y la sesión resalta "Según ajustes", la pestaña toma también el resaltado del fabricante.
+- **Familias:** el selector agrupa equipos de red, la familia Fortinet (FortiGate, FortiSwitch, FortiAP y FortiExtender) y sistemas operativos. Con una plataforma elegida se ocultan las líneas de plataformas de cada comando; los cambios y lo que puede cortar servicio llevan además un borde de color.
 - **Mis comandos:** "+ Propio" agrega comandos a un pack personal por fabricante.
 - **Seguridad:** un pack es solo JSON y nunca se ejecuta al importarlo. La app recalcula el riesgo de cada comando y usa el mayor entre el declarado y el calculado.
 
@@ -309,7 +311,7 @@ Herramientas › Topología lee los vecinos del equipo conectado y dibuja el dia
 
 Los scripts viven en la carpeta `scripts/` de la app (barra de botones › Scripts › Abrir carpeta de scripts) y usan `import netterminal as nt`, que la app mantiene al día en esa carpeta. Al ejecutar un script (menú Scripts o un botón de tipo script) se eligen:
 
-- **Destino**: el mismo selector de la difusión (pestaña actual, pestañas elegidas, una carpeta o los paneles visibles). Se omiten terminales locales y pestañas desconectadas. El script solo puede usar esas sesiones; la pestaña activa, si está entre ellas, es la principal.
+- **Destino**: el mismo selector de la difusión, en la barra de estado (pestaña actual, pestañas elegidas, una carpeta o los paneles visibles; en color cuando el envío va a varias sesiones). Se omiten terminales locales y pestañas desconectadas. El script solo puede usar esas sesiones; la pestaña activa, si está entre ellas, es la principal.
 - **Modo**: solo lectura por defecto. Con "permitir cambios" los comandos que cambian configuración se envían sin preguntar; lo que puede cortar servicio se confirma igual.
 - **En paralelo** (1 a 4) y **tiempo máximo** (5 a 120 minutos).
 
