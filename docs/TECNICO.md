@@ -93,7 +93,7 @@ Construido con [Tauri 2](https://tauri.app) (backend en Rust) y xterm.js. Usa el
 | Actualizaciones | Aviso de versión nueva desde GitHub Releases y botón "Actualizar y reiniciar": descarga, verifica la firma del proyecto e instala. Nunca instala sin confirmación y avisa si hay sesiones abiertas. En modo portable y en `.deb` la actualización sigue siendo manual. |
 | Compartir | Exportar/importar sesiones y reglas de resaltado como JSON vía portapapeles. |
 | Apariencia | Interfaz en modo sistema, claro u oscuro, con contraste WCAG AA en textos (4,5:1) y controles (3:1). 17 temas de terminal (Ámbar, Fósforo verde, Clásico, Dracula, Nord, Solarized, Gruvbox, One Dark, Tokyo Night, Catppuccin Mocha y Latte, Monokai, GitHub Dark, Rosé Pine, etc.), fuente, tamaño, interlineado y cursor configurables. |
-| Resaltado | Coloreo de salida por regex para Cisco/Arista, Juniper, Huawei/H3C, Fortinet y reglas comunes (IPv4/IPv6, MAC, up/down, permit/deny, contadores de error > 0, syslog por severidad). Perfil por sesión, reglas propias con vista previa e importación/exportación JSON. |
+| Resaltado | Coloreo de salida por regex para Cisco/Arista (IOS, IOS-XE, NX-OS, IOS-XR, ASA), Juniper, Huawei/H3C (VRP y Comware), Fortinet (FortiGate, FortiSwitch, FortiAP y FortiExtender), Aruba (AOS-CX, ArubaOS-Switch y ArubaOS), Grandstream (GWN78xx), Check Point (clish, expert y ClusterXL) y reglas comunes (IPv4/IPv6, MAC, up/down, permit/deny, contadores de error > 0, syslog por severidad). Perfil por sesión, reglas propias con vista previa e importación/exportación JSON. |
 
 ## Atajos
 
@@ -129,6 +129,8 @@ Sigue el modelo de keyword highlighting de SecureCRT y de ChromaTerm: cada regla
 - Prioridad: reglas propias, luego fabricante, luego comunes.
 - Solo se procesan líneas sin secuencias de escape previas y nunca en pantallas completas (vim, top, less), para no alterar salidas que ya traen color.
 - Los logs se graban sin resaltado.
+- WatchGuard, Windows, macOS y Linux usan solo las reglas comunes: sus salidas no tienen nombres de interfaz o prompts propios que justifiquen un esquema.
+- Pruebas: `node scripts/tests/highlight.test.mjs` revisa líneas reales de cada fabricante.
 - "Personalizar" en un esquema copia sus reglas a tus reglas propias para cambiar colores.
 - Exportar/Importar copia las reglas como JSON, útil para compartir un estándar en el equipo.
 

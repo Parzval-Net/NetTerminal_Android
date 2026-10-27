@@ -111,7 +111,8 @@ export const schemes: HlScheme[] = [
     name: "Cisco / Arista",
     description: "IOS, IOS-XE, IOS-XR, NX-OS y EOS: interfaces, secciones, shutdown, syslog",
     rules: [
-      r("Prompt", String.raw`^[\w.\-\/:]+(?:\([\w\-\/.]+\))?[#>](?=\s|$)`, { bold: true }),
+      // El eco del comando va pegado al prompt ("core-sw01#show ..."): no se exige espacio.
+      r("Prompt", String.raw`^[\w.\-\/:]+(?:\([\w\-\/.]+\))?[#>]`, { bold: true }),
       r("Comentario", String.raw`(?<=^\s*)!.*$`, { color: "gray" }),
       r("Error de comando", String.raw`(?<=^\s*)% .*$`, { color: "red", bold: true }),
       r("Syslog crítico (0-3)", String.raw`%[A-Z0-9_]+-[0-3]-[A-Z0-9_]+`, { color: "red", bold: true }),
@@ -128,7 +129,7 @@ export const schemes: HlScheme[] = [
       ),
       r(
         "Interfaz",
-        String.raw`\b(?:(?:Hundred|Forty|TwentyFive|Ten|Two|Five)?Gig(?:abit)?E(?:thernet)?|FastEthernet|Ethernet|Port-channel|Bundle-Ether|Loopback|Tunnel|Serial|Vlan|BDI|nve|mgmt|Management|Hu|Fo|Twe|Te|Tw|Gi|Fa|Eth|Et|Po|BE|Lo|Tu|Se|Vl)\d+(?:[\/.:]\d+)*\b`,
+        String.raw`\bMgmtEth\d+\/RS?P\d+\/CPU\d+\/\d+\b|\b(?:(?:FourHundred|TwoHundred|Hundred|Fifty|Forty|TwentyFive|Ten|Two|Five)?Gig(?:abit)?E(?:thernet)?|AppGigabitEthernet|FastEthernet|Ethernet|Port-channel|port-channel|Bundle-Ether|Loopback|Tunnel|Serial|Vlan|BDI|nve|mgmt|Management|Hu|Fo|Twe|Te|Tw|Gi|Fa|Eth|Et|Po|BE|Lo|Tu|Se|Vl|Ap)\d+(?:[\/.:]\d+)*\b`,
         { color: "cyan" },
       ),
     ],
@@ -155,14 +156,15 @@ export const schemes: HlScheme[] = [
   {
     id: "huawei",
     name: "Huawei / H3C",
-    description: "VRP y Comware: undo, display, interfaces GE/XGE/Eth-Trunk, Vlanif",
+    description: "VRP y Comware: undo, display, interfaces GE/XGE/Eth-Trunk, Vlanif, Bridge-Aggregation",
     rules: [
       r("Prompt", String.raw`^[<\[][\w.\-~]+(?:-[\w\-\/.:]+)?[>\]]`, { bold: true }),
       r("Separador", String.raw`(?<=^\s*)#\s*$`, { color: "gray" }),
       r("Error de comando", String.raw`(?<=^\s*)Error:.*$`, { color: "red", bold: true }),
-      r("Syslog crítico", String.raw`%%\d+[A-Z0-9_]+\/[0-3]\/[A-Z0-9_]+`, { color: "red", bold: true }),
-      r("Syslog warning", String.raw`%%\d+[A-Z0-9_]+\/4\/[A-Z0-9_]+`, { color: "yellow", bold: true }),
-      r("Syslog info", String.raw`%%\d+[A-Z0-9_]+\/[5-7]\/[A-Z0-9_]+`, { color: "cyan" }),
+      // Huawei "%%01IFNET/4/LINK_STATE"; H3C "IFNET/3/PHY_UPDOWN:" (sin %% y seguido de ":").
+      r("Syslog crítico", String.raw`%%\d+[A-Z0-9_]+\/[0-3]\/[A-Z0-9_]+|\b[A-Z][A-Z0-9_]*\/[0-3]\/[A-Z0-9_]+(?=:)`, { color: "red", bold: true }),
+      r("Syslog warning", String.raw`%%\d+[A-Z0-9_]+\/4\/[A-Z0-9_]+|\b[A-Z][A-Z0-9_]*\/4\/[A-Z0-9_]+(?=:)`, { color: "yellow", bold: true }),
+      r("Syslog info", String.raw`%%\d+[A-Z0-9_]+\/[5-7]\/[A-Z0-9_]+|\b[A-Z][A-Z0-9_]*\/[5-7]\/[A-Z0-9_]+(?=:)`, { color: "cyan" }),
       r("Descripción", String.raw`\bdescription\s+(.+)$`, { color: "brightYellow", italic: true }, { group: 1 }),
       r("undo shutdown", String.raw`\bundo shutdown\b`, { color: "green" }),
       r("shutdown", String.raw`(?<=^\s*)shutdown\b`, { color: "red", bold: true }),
@@ -174,7 +176,7 @@ export const schemes: HlScheme[] = [
       ),
       r(
         "Interfaz",
-        String.raw`\b(?:XGigabitEthernet|GigabitEthernet|100GE|40GE|25GE|10GE|XGE|GE|Ethernet|Eth-Trunk|Vlanif|LoopBack|MEth|NULL|Tunnel)\s?\d+(?:[\/.:]\d+)*\b`,
+        String.raw`\b(?:Ten-GigabitEthernet|M-GigabitEthernet|XGigabitEthernet|GigabitEthernet|FortyGigE|HundredGigE|Bridge-Aggregation|Route-Aggregation|Vlan-interface|MultiGE|400GE|200GE|100GE|50GE|40GE|25GE|10GE|XGE|FGE|HGE|MGE|GE|BAGG|RAGG|Ethernet|Eth-Trunk|Vlanif|Vbdif|Nve|LoopBack|InLoopBack|MEth|NULL|Tunnel)\s?\d+(?:[\/.:]\d+)*\b`,
         { color: "cyan" },
       ),
     ],
@@ -182,7 +184,7 @@ export const schemes: HlScheme[] = [
   {
     id: "fortinet",
     name: "Fortinet",
-    description: "FortiOS: config/edit/set/next/end, strings y acciones de política",
+    description: "FortiOS, FortiSwitchOS, FortiAP y FortiExtender: config/edit/set, port1/wan1 y nivel de logs",
     rules: [
       r("Prompt", String.raw`^[\w.\-]+(?: \([\w\-.]+\))? [#$](?=\s|$)`, { bold: true }),
       r("Comentario", String.raw`(?<=^\s*)#.*$`, { color: "gray" }),
@@ -190,7 +192,81 @@ export const schemes: HlScheme[] = [
       r("edit / next", String.raw`(?<=^\s*)(?:edit|next)\b`, { color: "cyan", bold: true }),
       r("set", String.raw`(?<=^\s*)set\b`, { color: "green" }),
       r("unset", String.raw`(?<=^\s*)(?:unset|delete|purge)\b`, { color: "yellow" }),
+      // Logs (log display, diagnose): el nivel manda sobre el color del texto entre comillas.
+      r("Log crítico", String.raw`\blevel="?(?:emergency|alert|critical|error)"?`, { color: "red", bold: true }),
+      r("Log warning", String.raw`\blevel="?warning"?`, { color: "yellow", bold: true }),
+      r(
+        "Interfaz",
+        String.raw`\b(?:port\d+|wan\d|dmz\d?|internal\d+|lan\d+|modem\d|lte\d|wwan\d?|x\d{1,2}|ha\d|mgmt\d?|fortilink|npu\d+_vlink\d+|ssl\.root)(?:\.\d+)?\b`,
+        { color: "cyan" },
+      ),
       r("Texto", String.raw`"[^"]*"`, { color: "brightYellow" }),
+    ],
+  },
+  {
+    id: "aruba",
+    name: "Aruba",
+    description: "AOS-CX, ArubaOS-Switch y ArubaOS: puertos 1/1/1, lag, VSX, event log",
+    rules: [
+      // AOS-CX y ArubaOS-Switch "core-cx(config-if)#"; controladora "(Aruba7005) [mynode] (config) #".
+      r("Prompt", String.raw`^\([\w.\-]+\)\s*(?:\[[\w\-\/.]+\]\s*)?(?:\([\w\-]+\)\s*)?#|^[\w.\-:]+(?:\([\w\-\/.]+\))?[#>]`, { bold: true }),
+      r("Comentario", String.raw`(?<=^\s*)!.*$`, { color: "gray" }),
+      r("Error de comando", String.raw`(?<=^\s*)(?:%\s.*|Invalid input.*)$`, { color: "red", bold: true }),
+      r("Log crítico", String.raw`\bLOG_(?:EMER|ALERT|CRIT|ERR)\b|^[CE](?= \d{2}\/\d{2}\/\d{2} )`, { color: "red", bold: true }),
+      r("Log warning", String.raw`\bLOG_WARN(?:ING)?\b|^W(?= \d{2}\/\d{2}\/\d{2} )`, { color: "yellow", bold: true }),
+      r("Descripción", String.raw`\bdescription\s+(.+)$`, { color: "brightYellow", italic: true }, { group: 1 }),
+      r("no shutdown", String.raw`\bno shutdown\b`, { color: "green" }),
+      r("shutdown", String.raw`(?<=^\s*)shutdown\b`, { color: "red", bold: true }),
+      r("Negación", String.raw`(?<=^\s*)no(?=\s)`, { color: "yellow" }),
+      r(
+        "Sección",
+        String.raw`^(?:interface|vlan|router|vsx|vrf|aaa|radius-server|tacacs-server|ntp|logging|snmp-server|spanning-tree|access-list|class|policy|wlan|ap-group|trunk)\b`,
+        { color: "brightBlue", bold: true },
+      ),
+      // AOS-CX miembro/ranura/puerto (1/1/1, sin tomar fechas 10/14/26), lag, vlan, loopback;
+      // ArubaOS-Switch Trk y puertos de chasis o stack (A1, 1/A1); controladora GE0/0/0.
+      r(
+        "Interfaz",
+        String.raw`\b\d{1,2}\/\d\/\d{1,3}(?:[.:]\d+)?\b|\b(?:lag|vlan|loopback|tunnel|port-channel)\s?\d+\b|\bmgmt\b|\bTrk\d+\b|\b\d+\/[A-L]\d{1,2}\b|(?<=^\s*)[A-L]\d{1,2}\b|\bGE\d+\/\d+\/\d+\b`,
+        { color: "cyan" },
+      ),
+    ],
+  },
+  {
+    id: "grandstream",
+    name: "Grandstream",
+    description: "Switches GWN78xx: CLI tipo Cisco con Ethernet 1/0/1 y lag",
+    rules: [
+      r("Prompt", String.raw`^[\w.\-]+(?:\([\w\-\/.]+\))?[#>]`, { bold: true }),
+      r("Comentario", String.raw`(?<=^\s*)!.*$`, { color: "gray" }),
+      r("Error de comando", String.raw`(?<=^\s*)%\s?.*$`, { color: "red", bold: true }),
+      r("Descripción", String.raw`\bdescription\s+(.+)$`, { color: "brightYellow", italic: true }, { group: 1 }),
+      r("no shutdown", String.raw`\bno shutdown\b`, { color: "green" }),
+      r("shutdown", String.raw`(?<=^\s*)shutdown\b`, { color: "red", bold: true }),
+      r("Negación", String.raw`(?<=^\s*)no(?=\s)`, { color: "yellow" }),
+      r(
+        "Sección",
+        String.raw`^(?:interface|router|ip route|spanning-tree|aaa|radius|tacacs|snmp-server|logging|ntp|username)\b`,
+        { color: "brightBlue", bold: true },
+      ),
+      r(
+        "Interfaz",
+        String.raw`\b(?:(?:Ethernet|GigabitEthernet|TenGigabitEthernet)\s?\d+\/\d+\/\d+|(?:lag|vlan|VLAN|Loopback)\s?\d+)\b`,
+        { color: "cyan" },
+      ),
+    ],
+  },
+  {
+    id: "checkpoint",
+    name: "Check Point",
+    description: "Gaia clish y expert: prompt, interfaces eth1-01/bond, estados de ClusterXL",
+    rules: [
+      r("Prompt", String.raw`^\[Expert@[\w.\-]+(?::\d+)?\]#|^[\w.\-]+:\d+>`, { bold: true }),
+      // ClusterXL: "ACTIVE(!)" o "Active Attention" es un miembro activo con problemas.
+      r("Cluster con problema", String.raw`\bACTIVE\(!\S*\)|\bActive Attention\b|\bDOWN\b|\bLost\b`, { color: "red", bold: true }),
+      r("Cluster activo", String.raw`\bACTIVE\b|\bActive\b`, { color: "green", bold: true }),
+      r("Cluster en espera", String.raw`\b(?:STANDBY|Standby|BACKUP|Backup|READY|Ready)\b`, { color: "yellow" }),
+      r("Interfaz", String.raw`\b(?:eth\d+(?:-\d+)?|bond\d+|wrp\d+|Mgmt|Sync)(?:\.\d+)?\b`, { color: "cyan" }),
     ],
   },
   {

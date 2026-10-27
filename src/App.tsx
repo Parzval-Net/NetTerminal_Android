@@ -692,8 +692,11 @@ function Workspace({
   const toggleCommands = () => {
     if (!commandsOpen && activeTab?.session.type === "local" && !activeTab.session.scp)
       update({ catalogVendor: localOsVendor() });
-    else if (!commandsOpen && activeTab?.session.highlight && activeTab.session.highlight !== "default")
-      update({ catalogVendor: vendorFor(activeTab.session.highlight) });
+    else if (!commandsOpen && activeTab?.session.highlight && activeTab.session.highlight !== "default") {
+      // Aruba, Grandstream y Check Point tienen catálogo con el mismo id que su resaltado.
+      const h = activeTab.session.highlight;
+      update({ catalogVendor: catalog.some((v) => v.id === h) ? h : vendorFor(h) });
+    }
     setCommandsOpen((o) => !o);
   };
 
