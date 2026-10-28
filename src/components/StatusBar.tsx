@@ -1,6 +1,21 @@
 import { memo, useEffect, useState } from "react";
 import { ArrowLeftRight, BookOpen, KeyRound, Bot, Circle, CircleDot, NotebookPen, RotateCcw, Search, Settings, ShieldAlert, ShieldCheck, Unplug, Zap } from "lucide-react";
-import { DeviceInfo, LIFE_LABEL, LifeLevel, Lifecycle, findLifecycle, lifeDetail, lifeLevel, loadLifecycle } from "../lib/lifecycle";
+import {
+  DeviceInfo,
+  LIFE_LABEL,
+  LifeLevel,
+  Lifecycle,
+  OsEntry,
+  behind,
+  findLifecycle,
+  findOs,
+  lifeDetail,
+  lifeLevel,
+  loadLifecycle,
+  loadOs,
+  osDetail,
+  osTarget,
+} from "../lib/lifecycle";
 import { Tab, TabState, historyKey, sessionTarget, tunnelLabel } from "../types";
 import { HistoryMenu } from "./HistoryMenu";
 import { BroadcastTargetPicker } from "./BroadcastTarget";
@@ -190,11 +205,11 @@ const LIFE_CLASS: Record<LifeLevel, string> = {
  * recién aquí, la primera vez que una pestaña muestra un modelo.
  */
 export function LifecycleChip({ model, version, name }: { model: string; version?: string; name?: string }) {
-  const [life, setLife] = useState<{ model: string; l: Lifecycle | null } | null>(null);
+  const [life, setLife] = useState<{ model: string; l: Lifecycle | null; os: OsEntry | null } | null>(null);
   useEffect(() => {
     let live = true;
-    loadLifecycle()
-      .then((db) => live && setLife({ model, l: findLifecycle(db, model) }))
+    Promise.all([loadLifecycle(), loadOs()])
+      .then(([db, os]) => live && setLife({ model, l: findLifecycle(db, model), os: findOs(os.db, os.res, model) }))
       .catch(() => live && setLife(null));
     return () => {
       live = false;
@@ -202,14 +217,27 @@ export function LifecycleChip({ model, version, name }: { model: string; version
   }, [model]);
   if (!life || life.model !== model) return null;
   const level = lifeLevel(life.l, new Date().toISOString().slice(0, 10));
-  const bad = level !== "none";
-  const tip = `${name ? `Equipo: ${name}\n` : ""}${lifeDetail(model, life.l, version)}\nSe actualiza con cada show version (o equivalente) que ejecutes.`;
+  const late = behind(life.os, version);
+  const bad = level !== "none" || late === true;
+  const tip = [
+    name && `Equipo: ${name}`,
+    lifeDetail(model, life.l, version),
+    ...osDetail(life.os, version),
+    "Se actualiza con cada show version (o equivalente) que ejecutes.",
+  ]
+    .filter(Boolean)
+    .join("\n");
   return (
-    <span className={`flex items-center gap-1 min-w-0 shrink ${LIFE_CLASS[level]}`} title={tip} aria-label={`${model}: ${LIFE_LABEL[level]}`}>
+    <span
+      className={`flex items-center gap-1 min-w-0 shrink ${level === "none" && late ? "text-warn" : LIFE_CLASS[level]}`}
+      title={tip}
+      aria-label={`${model}: ${LIFE_LABEL[level]}${late ? `, actualizable a ${osTarget(life.os!)}` : ""}`}
+    >
       {bad ? <ShieldAlert size={11} className="shrink-0" /> : <ShieldCheck size={11} className="shrink-0" />}
       <span className="truncate">
         <span className="font-medium">{model}</span>
         {version && <span className="hidden @[60rem]:inline text-muted"> · {version}</span>} · {LIFE_LABEL[level]}
+        {late && <span className="hidden @[52rem]:inline"> · actualizar a {osTarget(life.os!)}</span>}
       </span>
     </span>
   );

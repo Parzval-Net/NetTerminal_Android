@@ -77,4 +77,38 @@ assert.equal(map["10.0.0.1"], undefined);
 assert.equal(L.deviceKey({ type: "ssh", host: " 10.0.0.1 " }), "10.0.0.1");
 assert.equal(L.deviceKey({ type: "serial" }), null);
 
+// ---------- Versión del sistema operativo ----------
+assert.equal(L.compareVersions("17.09.04a", "17.12.5"), -1);
+assert.equal(L.compareVersions("17.12.05", "17.12.5"), 0);
+assert.equal(L.compareVersions("15.2(7)E4", "15.2(7)E12"), -1);
+assert.equal(L.compareVersions("9.3(10)", "9.3(9)"), 1);
+assert.equal(L.compareVersions("21.4R3-S5", "21.4R3-S10"), -1);
+assert.equal(L.compareVersions("abc", "1.0"), null);
+const osDb = {
+  generated: "",
+  entries: [
+    { vendor: "Cisco", family: "Catalyst 9300", match: ["^C9300"], os: "IOS-XE", recommended: "17.12.5", latest: "17.15.4", lastAvailable: null, source: "https://www.cisco.com/x", checked: "2026-10-28" },
+    { vendor: "Fortinet", family: "FortiGate E", match: ["^FORTIGATE-(60|100)E$", "[invalida"], os: "FortiOS", recommended: null, latest: "7.2.11", lastAvailable: "7.2.11", source: "https://docs.fortinet.com/x", checked: "2026-10-28" },
+  ],
+};
+const res = L.compileOs(osDb);
+assert.equal(res[1].length, 1);
+const c93 = L.findOs(osDb, res, "c9300-48p");
+assert.equal(c93.family, "Catalyst 9300");
+assert.equal(L.behind(c93, "17.09.04a"), true);
+assert.equal(L.behind(c93, "17.12.5"), false);
+assert.equal(L.behind(c93, undefined), null);
+const fg = L.findOs(osDb, res, "FortiGate-60E");
+assert.equal(L.osTarget(fg), "7.2.11");
+assert.match(L.osDetail(fg, "6.4.9").join("\n"), /Actualizable: corre 6.4.9, objetivo 7.2.11/);
+assert.equal(L.findOs(osDb, res, "MX68"), null);
+// La base real (generada) compila completa y cada familia trae fuente oficial.
+const realOs = JSON.parse(readFileSync(new URL("../../src/lib/osData.json", import.meta.url), "utf8"));
+const realRes = L.compileOs(realOs);
+realOs.entries.forEach((e, i) => {
+  assert.equal(realRes[i].length, e.match.length, `${e.family}: expresión inválida`);
+  assert.match(e.source, /^https:\/\//);
+});
+fastEnough("versión por modelo", 2, () => L.findOs(realOs, realRes, "WS-C2960X-48FPD-L"));
+
 console.log("lifecycle: ok");

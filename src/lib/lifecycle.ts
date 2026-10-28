@@ -225,3 +225,108 @@ export function rememberDevice(map: DeviceInfoMap, key: string, info: DeviceInfo
 
 /** Clave del equipo para recordar su modelo: el host de una sesión SSH o Telnet (por serie no se recuerda). */
 export const deviceKey = (s: { type: string; host?: string }) => ((s.type === "ssh" || s.type === "telnet") && s.host ? s.host.trim().toLowerCase() : null);
+
+// ---------- Versión recomendada y última del sistema operativo ----------
+
+export interface OsEntry {
+  vendor: string;
+  family: string;
+  /** Expresiones (texto) contra el modelo en mayúsculas. */
+  match: string[];
+  os: string;
+  /** Versión que recomienda el fabricante (null si no publica una). */
+  recommended: string | null;
+  /** Versión más nueva publicada para la plataforma. */
+  latest: string | null;
+  /** Última versión que tendrá la plataforma (desarrollo terminado o rama tope). */
+  lastAvailable: string | null;
+  notes?: string;
+  source: string;
+  checked: string;
+}
+
+export interface OsDb {
+  generated: string;
+  entries: OsEntry[];
+}
+
+let osPromise: Promise<{ db: OsDb; res: RegExp[][] }> | null = null;
+/** Base de versiones de sistema operativo por familia (módulo aparte, con sus expresiones compiladas una vez). */
+export function loadOs(): Promise<{ db: OsDb; res: RegExp[][] }> {
+  osPromise ??= import("./osData.json").then((m) => {
+    const db = (m.default ?? m) as unknown as OsDb;
+    return { db, res: compileOs(db) };
+  });
+  return osPromise;
+}
+
+export function compileOs(db: OsDb): RegExp[][] {
+  return db.entries.map((e) =>
+    e.match.flatMap((src) => {
+      try {
+        return [new RegExp(src)];
+      } catch {
+        return [];
+      }
+    }),
+  );
+}
+
+export function findOs(db: OsDb, res: RegExp[][], model: string): OsEntry | null {
+  const m = model.trim().toUpperCase().slice(0, 64);
+  const i = res.findIndex((list) => list.some((re) => re.test(m)));
+  return i >= 0 ? db.entries[i] : null;
+}
+
+/**
+ * Compara versiones de distinto formato (17.09.04a, 15.2(7)E4, 9.3(10), 7.4.8, 21.4R3-S5,
+ * V200R011C10SPC500): por tramos numéricos y de letras. null si alguna no tiene números.
+ */
+export function compareVersions(a: string, b: string): number | null {
+  const tok = (v: string) => v.toLowerCase().match(/\d+|[a-z]+/g) ?? [];
+  const x = tok(a);
+  const y = tok(b);
+  if (!x.some((t) => /\d/.test(t)) || !y.some((t) => /\d/.test(t))) return null;
+  for (let i = 0; i < Math.max(x.length, y.length); i++) {
+    const p = x[i];
+    const q = y[i];
+    if (p === undefined) return -1;
+    if (q === undefined) return 1;
+    const pn = /^\d/.test(p);
+    const qn = /^\d/.test(q);
+    if (pn && qn) {
+      const d = Number(p) - Number(q);
+      if (d) return Math.sign(d);
+    } else if (pn !== qn) return pn ? 1 : -1;
+    else if (p !== q) return p < q ? -1 : 1;
+  }
+  return 0;
+}
+
+/** Versión a la que conviene llegar: la recomendada, o la última publicada si no hay recomendada. */
+export const osTarget = (o: OsEntry) => o.recommended ?? o.lastAvailable ?? o.latest;
+
+/** El equipo corre una versión anterior a la objetivo (null si no se puede comparar). */
+export function behind(o: OsEntry | null, version: string | undefined): boolean | null {
+  const target = o && osTarget(o);
+  if (!target || !version) return null;
+  const c = compareVersions(version, target);
+  return c === null ? null : c < 0;
+}
+
+/** Líneas de detalle del sistema operativo para el tooltip. */
+export function osDetail(o: OsEntry | null, version: string | undefined): string[] {
+  if (!o) return [];
+  const lines = [`Sistema: ${o.os} (${o.family})`];
+  if (version) lines.push(`Versión del equipo: ${version}`);
+  if (o.recommended) lines.push(`Recomendada por el fabricante: ${o.recommended}`);
+  if (o.latest) lines.push(`Última publicada: ${o.latest}`);
+  if (o.lastAvailable && o.lastAvailable !== o.latest) lines.push(`Última para este modelo: ${o.lastAvailable}`);
+  else if (o.lastAvailable) lines.push("El modelo ya no recibe ramas nuevas");
+  const late = behind(o, version);
+  if (late === true) lines.push(`Actualizable: corre ${version}, objetivo ${osTarget(o)}`);
+  if (late === false) lines.push("Al día respecto de la versión objetivo");
+  if (o.notes) lines.push(o.notes);
+  lines.push(`Fuente: ${o.source} (revisado ${fmtDate(o.checked)})`);
+  return lines;
+}
