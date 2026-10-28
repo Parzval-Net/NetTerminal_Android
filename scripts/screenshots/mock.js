@@ -327,6 +327,34 @@ const topoMac = {
   ],
   links: [...topoSources.links, { a: "dist-sw01", aPort: "Gi1/0/30", b: "mac-00e0.fc12.3456", bPort: "", proto: "MAC/OUI" }],
 };
+// Revisiones de enlaces: dúplex y VLAN nativa distintos, miembro fuera del Po, CRC, asimetría y
+// puertos activos sin vecino (L2 desconocido).
+const topoChecks = {
+  nodes: topology.nodes.map((n) => ({ ...n })),
+  links: topology.links.map((l) => ({ ...l, seenBy: [l.a, ...(topology.nodes.find((x) => x.id === l.b)?.explored ? [l.b] : [])] })),
+};
+const nodeOf = (id) => topoChecks.nodes.find((n) => n.id === id);
+nodeOf("core-sw01").ports = {
+  "gi1/0/1": { status: "connected", speed: "a-1000", duplex: "a-full", vlan: "trunk", desc: "UPLINK dist-sw01", group: "Po1", lag: "P", native: "1" },
+  "gi1/0/2": { status: "connected", speed: "a-1000", duplex: "a-full", vlan: "trunk", desc: "UPLINK dist-sw01", group: "Po1", lag: "s" },
+  "te1/1/1": { status: "connected", speed: "10G", duplex: "full", vlan: "trunk", desc: "ISL core-sw02", crc: "1843" },
+  "gi1/0/10": { status: "connected", speed: "a-1000", duplex: "a-full", vlan: "trunk" },
+  "gi1/0/20": { status: "connected", speed: "a-100", duplex: "a-full", vlan: "30", desc: "camara acceso" },
+  "gi1/0/21": { status: "connected", speed: "a-1000", duplex: "a-full", vlan: "30" },
+};
+nodeOf("dist-sw01").ports = {
+  "gi1/0/48": { status: "connected", speed: "a-1000", duplex: "a-full", vlan: "trunk", native: "99", group: "Po1", lag: "P" },
+  "gi1/0/47": { status: "connected", speed: "a-1000", duplex: "a-full", vlan: "trunk", group: "Po1", lag: "P" },
+  "gi1/0/1": { status: "connected", speed: "a-100", duplex: "a-half", vlan: "trunk" },
+  "gi1/0/2": { status: "connected", speed: "a-1000", duplex: "a-full", vlan: "10" },
+};
+nodeOf("sw-acceso-01").ports = { "gi1/0/24": { duplex: "full" } };
+nodeOf("sw-acceso-02").ports = { "gi1/0/24": { vlan: "trunk" } };
+nodeOf("fw-perimetro").caps = "Router";
+// core-sw02 no informa a core-sw01: asimetría.
+topoChecks.links.find((l) => l.b === "core-sw02").seenBy = ["core-sw01"];
+topoChecks.nodes.push({ id: "sep001122334455", name: "SEP001122334455", ip: "192.0.2.150", platform: "Cisco IP Phone 8845", caps: "Host Phone", explored: false, x: 130, y: 560 });
+topoChecks.links.push({ a: "sw-acceso-01", aPort: "Gi1/0/5", b: "sep001122334455", bPort: "Port 1", proto: "CDP" });
 // ?scene=topology-*: diagrama y fuentes de cada demo (activadas o apagadas).
 const topoScene = new URLSearchParams(location.search).get("scene");
 const TOPO_SCENES = {
@@ -335,6 +363,7 @@ const TOPO_SCENES = {
   "topology-ospf": [topoOspf, { routing: true }],
   "topology-manual": [topoManual, { descriptions: true }],
   "topology-mac": [topoMac, { routing: true, descriptions: true, mac: true }],
+  "topology-checks": [topoChecks, {}],
 };
 if (TOPO_SCENES[topoScene]) [settings.topology, settings.topoSources] = TOPO_SCENES[topoScene];
 // Estado visual de Topología (panel y secciones) para cada captura, sin arrastrar el de la anterior:
