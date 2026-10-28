@@ -228,7 +228,36 @@ export function mergeSettings(loaded: unknown): Settings {
     const d = defaults[k];
     if (d === undefined || (v !== null && typeof v === typeof d && Array.isArray(v) === Array.isArray(d))) out[k] = v;
   }
+  // topology.json y los equipos recordados se pueden compartir o editar: forma mínima para que un
+  // archivo mal formado no deje la vista en blanco.
+  out.topology = cleanTopology(out.topology) ?? defaultSettings.topology;
+  out.topoSnapshots = Array.isArray(out.topoSnapshots)
+    ? (out.topoSnapshots as unknown[]).flatMap((x) => {
+        const s = isObj(x) ? x : null;
+        const topo = s && cleanTopology(s.topo);
+        return s && topo && typeof s.id === "string" && typeof s.name === "string" ? [{ ...s, topo, ts: Number(s.ts) || 0 }] : [];
+      })
+    : [];
+  out.deviceInfo = Object.fromEntries(
+    Object.entries(isObj(out.deviceInfo) ? out.deviceInfo : {}).filter(([, v]) => isObj(v) && (v.model === undefined || typeof v.model === "string") && (v.version === undefined || typeof v.version === "string")),
+  );
   return out as unknown as Settings;
+}
+
+const isObj = (v: unknown): v is Record<string, unknown> => !!v && typeof v === "object" && !Array.isArray(v);
+
+/** Topología con equipos y enlaces de forma válida (los que no la tienen se descartan); null si no es una topología. */
+function cleanTopology(v: unknown): Settings["topology"] | null {
+  if (!isObj(v) || !Array.isArray(v.nodes) || !Array.isArray(v.links)) return null;
+  const nodes = v.nodes.filter(
+    (n): n is Settings["topology"]["nodes"][number] =>
+      isObj(n) && typeof n.id === "string" && typeof n.name === "string" && Number.isFinite(n.x) && Number.isFinite(n.y),
+  );
+  const links = v.links.filter(
+    (l): l is Settings["topology"]["links"][number] =>
+      isObj(l) && typeof l.a === "string" && typeof l.b === "string" && typeof l.aPort === "string" && typeof l.bPort === "string" && typeof l.proto === "string",
+  );
+  return { nodes, links };
 }
 
 /** Carga los ajustes desde el backend y los guarda (con debounce) en cada cambio. */
@@ -262,8 +291,10 @@ export function useSettings() {
         await invoke("save_topology", { data: { topology, topoSnapshots } });
         savedHeavy.current = { topology, topoSnapshots };
       } catch (e) {
-        // Sin topology.json la topología sigue en settings.json, como antes: no se pierde.
         console.error(e);
+        // Sobre el tope no se copia a settings.json (lo haría igual de grande): se guarda el resto.
+        if (String(e).includes("64 MB")) return invoke("save_settings", { settings: light }).catch(console.error);
+        // Sin topology.json la topología sigue en settings.json, como antes: no se pierde.
         return invoke("save_settings", { settings: next }).catch(console.error);
       }
     }

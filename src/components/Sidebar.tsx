@@ -40,6 +40,7 @@ import {
   parentOf,
   rebase,
   sessionsWithin,
+  own,
 } from "../lib/folders";
 
 import { plural } from "../lib/plural";
@@ -266,7 +267,7 @@ export const Sidebar = memo(function Sidebar(p: Props) {
       key = `f:${baseName(moved.fpath)}`;
     } else return;
     const node = findFolder(buildTree(sessions, extraFolders), parent);
-    const current = node ? orderedItems(node, p.order[parent]).map(itemKey) : [];
+    const current = node ? orderedItems(node, own(p.order, parent)).map(itemKey) : [];
     p.onSetOrder({ ...p.order, [parent]: placeKey(current, key, anchor, where) });
   };
 
@@ -274,7 +275,7 @@ export const Sidebar = memo(function Sidebar(p: Props) {
   const shiftItem = (it: TreeItem, parent: string, dir: -1 | 1) => {
     const node = findFolder(buildTree(sessions, extraFolders), parent);
     if (!node) return;
-    const list = orderedItems(node, p.order[parent]).map(itemKey);
+    const list = orderedItems(node, own(p.order, parent)).map(itemKey);
     const i = list.indexOf(itemKey(it));
     const j = i + dir;
     if (i < 0 || j < 0 || j >= list.length) return;
@@ -338,7 +339,7 @@ export const Sidebar = memo(function Sidebar(p: Props) {
         if (q) return "into";
         if (y < 0.3) return "before";
         // Abierta, lo de abajo del encabezado ya es su contenido: el borde inferior es "dentro".
-        if (y > 0.7 && collapsed[it.node.path]) return "after";
+        if (y > 0.7 && own(collapsed, it.node.path)) return "after";
         return "into";
       }
       return q ? null : y < 0.5 ? "before" : "after";
@@ -354,7 +355,7 @@ export const Sidebar = memo(function Sidebar(p: Props) {
         e.dataTransfer.dropEffect = "move";
         setDropTarget(null);
         setDropHint((h) => (h?.row === row && h.pos === pos ? h : { row, pos }));
-        if (pos === "into" && it.kind === "folder" && collapsed[it.node.path] && expandTimer.current === undefined) {
+        if (pos === "into" && it.kind === "folder" && own(collapsed, it.node.path) && expandTimer.current === undefined) {
           const path = it.node.path;
           expandTimer.current = window.setTimeout(() => {
             expandTimer.current = undefined;
@@ -401,7 +402,7 @@ export const Sidebar = memo(function Sidebar(p: Props) {
   // ---------- Render ----------
 
   const renderFolder = (node: FolderNode, depth: number): React.ReactNode => {
-    const isCollapsed = !q && collapsed[node.path];
+    const isCollapsed = !q && own(collapsed, node.path);
     const isSel = selected?.kind === "folder" && selected.path === node.path;
     return (
         <div
@@ -519,14 +520,14 @@ export const Sidebar = memo(function Sidebar(p: Props) {
   const rows = useMemo(() => {
     const out: { it: TreeItem; depth: number }[] = [];
     const walk = (node: FolderNode, depth: number) => {
-      for (const it of orderedItems(node, p.order[node.path])) {
+      for (const it of orderedItems(node, own(p.order, node.path))) {
         out.push({ it, depth });
-        if (it.kind === "folder" && (q || !collapsed[it.node.path])) walk(it.node, depth + 1);
+        if (it.kind === "folder" && (q || !own(collapsed, it.node.path))) walk(it.node, depth + 1);
       }
     };
-    for (const it of orderedItems(tree, p.order[""])) {
+    for (const it of orderedItems(tree, own(p.order, ""))) {
       out.push({ it, depth: it.kind === "folder" ? 0 : -1 });
-      if (it.kind === "folder" && (q || !collapsed[it.node.path])) walk(it.node, 1);
+      if (it.kind === "folder" && (q || !own(collapsed, it.node.path))) walk(it.node, 1);
     }
     return out;
   }, [tree, p.order, collapsed, q]);

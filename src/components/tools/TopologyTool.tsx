@@ -1121,13 +1121,16 @@ export function TopologyTool({
 
   const box = useMemo(() => {
     if (!shown.nodes.length) return { x: 0, y: 0, w: 800, h: 400 };
-    const xs = [...shown.nodes.map((n) => n.x), ...l2Nodes.map((n) => n.x)];
-    const ys = [...shown.nodes.map((n) => n.y), ...l2Nodes.map((n) => n.y)];
+    // En mapas grandes el nodo L2 es solo el del seleccionado: no cuenta para el encuadre, que si
+    // no cambiaría (y se redibujaría todo el mapa) con cada selección.
+    const l2Box = l2 && l2.size > MAX_L2_NODES ? [] : l2Nodes;
+    const xs = [...shown.nodes.map((n) => n.x), ...l2Box.map((n) => n.x)];
+    const ys = [...shown.nodes.map((n) => n.y), ...l2Box.map((n) => n.y)];
     const pad = 30;
     const x = Math.min(...xs) - W / 2 - pad;
     const y = Math.min(...ys) - H / 2 - pad;
     return { x, y, w: Math.max(...xs) - x + W / 2 + pad, h: Math.max(...ys) - y + H / 2 + pad };
-  }, [shown.nodes, l2Nodes]);
+  }, [shown.nodes, l2Nodes, l2]);
 
   /** Suelta el equipo: la posición final se guarda en el diagrama una sola vez. */
   const endDrag = () => {

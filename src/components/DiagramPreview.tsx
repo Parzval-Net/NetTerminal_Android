@@ -18,7 +18,16 @@ function loadMermaid(dark: boolean): Promise<Mermaid> {
     if (themeSet !== theme) {
       // strict: sin clics con scripts; htmlLabels false: las etiquetas son texto SVG, nunca HTML
       // (una nota compartida no puede meter imágenes ni enlaces en el diagrama).
-      m.initialize({ startOnLoad: false, securityLevel: "strict", htmlLabels: false, flowchart: { htmlLabels: false }, theme, fontFamily: "inherit" });
+      // `secure`: claves que una directiva %%{init: …}%% de la nota no puede cambiar.
+      m.initialize({
+        startOnLoad: false,
+        securityLevel: "strict",
+        htmlLabels: false,
+        flowchart: { htmlLabels: false },
+        theme,
+        fontFamily: "inherit",
+        secure: ["secure", "securityLevel", "startOnLoad", "maxTextSize", "maxEdges", "htmlLabels", "flowchart", "themeCSS", "fontFamily", "dompurifyConfig"],
+      });
       themeSet = theme;
     }
     return m;
@@ -103,7 +112,18 @@ export function DiagramPreview({ text, dark, name, onNotice }: { text: string; d
           </figcaption>
           {it.svg ? (
             // SVG generado por Mermaid en modo strict (saneado con DOMPurify).
-            <div className="p-2 overflow-auto [&_svg]:max-w-full [&_svg]:h-auto" dangerouslySetInnerHTML={{ __html: it.svg }} />
+            <div
+              className="p-2 overflow-auto [&_svg]:max-w-full [&_svg]:h-auto"
+              // Un "click … href" del diagrama no navega: la vista de la app no sale a un sitio externo.
+              onClickCapture={(e) => {
+                if ((e.target as Element).closest("a")) {
+                  e.preventDefault();
+                  e.stopPropagation();
+                  onNotice("Los enlaces de los diagramas están desactivados");
+                }
+              }}
+              dangerouslySetInnerHTML={{ __html: it.svg }}
+            />
           ) : (
             <pre className="p-2 text-[11.5px] text-danger whitespace-pre-wrap">{it.error}</pre>
           )}

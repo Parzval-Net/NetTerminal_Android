@@ -104,13 +104,17 @@ export const itemKey = (it: TreeItem) => (it.kind === "folder" ? `f:${it.node.na
  * resto como siempre (carpetas y luego sesiones, alfabético). Claves de elementos que ya no
  * existen se ignoran.
  */
+/** Valor propio de un mapa por ruta de carpeta: una carpeta "constructor" no lee Object.prototype. */
+export const own = <T,>(map: Record<string, T> | undefined, key: string): T | undefined => (map && Object.hasOwn(map, key) ? map[key] : undefined);
+
 export function orderedItems(node: FolderNode, order?: string[]): TreeItem[] {
   const items: TreeItem[] = [
     ...node.children.map((n): TreeItem => ({ kind: "folder", node: n })),
     ...node.sessions.map((s): TreeItem => ({ kind: "session", session: s })),
   ];
-  if (!order?.length) return items;
-  const pos = new Map(order.map((k, i) => [k, i]));
+  // El orden viene de ajustes que se pueden editar o compartir: solo se usa si es una lista de textos.
+  if (!Array.isArray(order) || !order.length) return items;
+  const pos = new Map(order.filter((k): k is string => typeof k === "string").map((k, i) => [k, i]));
   return items
     .map((it, i) => ({ it, i, p: pos.get(itemKey(it)) ?? Number.POSITIVE_INFINITY }))
     .sort((a, b) => a.p - b.p || a.i - b.i)

@@ -52,4 +52,25 @@ assert.deepEqual(mergeSettings({ sidebarOrder: { "": ["s:local", "f:Core"] } }).
 assert.deepEqual(mergeSettings({ sidebarOrder: null }).sidebarOrder, {});
 assert.deepEqual(mergeSettings({ sidebarOrder: ["x"] }).sidebarOrder, {});
 
+// Carpetas con nombres de Object.prototype (archivo de sesiones compartido): no rompen el orden.
+const proto = F.buildTree([{ id: "c", name: "c", type: "ssh", folder: "constructor", created_at: "" }], []);
+assert.equal(F.own({ "": ["x"] }, "constructor"), undefined);
+assert.equal(F.own(undefined, "x"), undefined);
+assert.deepEqual(F.orderedItems(proto, F.own({}, "constructor")).map(F.itemKey), ["f:constructor"]);
+assert.deepEqual(F.orderedItems(proto, /** @type {any} */ (Object.prototype.constructor)).map(F.itemKey), ["f:constructor"]);
+assert.deepEqual(F.orderedItems(proto, /** @type {any} */ (["f:constructor", 3, null])).map(F.itemKey), ["f:constructor"]);
+
+// Topología y equipos recordados mal formados (archivo compartido o editado): se descartan sin romper.
+const bad = mergeSettings({
+  topology: { nodes: "x", links: [] },
+  topoSnapshots: [{ id: "s", name: "ok", ts: 1, topo: { nodes: [{ id: "a", name: "a", x: 1, y: 2 }, { id: 3 }], links: [{ a: "a" }] } }, "basura", { id: "s2", name: "sin topo" }],
+  deviceInfo: { "10.0.0.1": { model: "ISR4331/K9" }, "10.0.0.2": "x", "10.0.0.3": { model: 5 } },
+});
+assert.deepEqual(bad.topology, { nodes: [], links: [] });
+assert.equal(bad.topoSnapshots.length, 1);
+assert.deepEqual(bad.topoSnapshots[0].topo, { nodes: [{ id: "a", name: "a", x: 1, y: 2 }], links: [] });
+assert.deepEqual(Object.keys(bad.deviceInfo), ["10.0.0.1"]);
+const good = { nodes: [{ id: "a", name: "a", x: 0, y: 0, explored: true }], links: [{ a: "a", aPort: "", b: "b", bPort: "", proto: "CDP" }] };
+assert.deepEqual(mergeSettings({ topology: good }).topology, good);
+
 console.log("folders: ok");

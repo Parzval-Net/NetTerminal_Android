@@ -900,6 +900,7 @@ fn get_settings(state: State<'_, AppState>) -> serde_json::Value {
 /// reescribían con cada ajuste (un interruptor, el orden de la barra lateral).
 const TOPOLOGY_FILE: &str = "topology.json";
 const TOPOLOGY_KEYS: [&str; 2] = ["topology", "topoSnapshots"];
+const MAX_TOPOLOGY_BYTES: usize = 64 * 1024 * 1024;
 
 /// Agrega a los ajustes lo guardado en topology.json (que manda) y marca `__topoStore` para que
 /// la app sepa que ya no tiene que migrarlo desde settings.json.
@@ -932,6 +933,10 @@ fn write_json(path: &std::path::Path, value: &serde_json::Value) -> Result<(), S
 #[tauri::command]
 fn save_topology(data: serde_json::Value, state: State<'_, AppState>) -> Result<(), String> {
     let serde_json::Value::Object(o) = data else { return Err("topología inválida".into()) };
+    // Tope de tamaño: un diagrama de miles de equipos con 20 snapshots no llena el disco.
+    if serde_json::to_string(&o).map(|s| s.len()).unwrap_or(0) > MAX_TOPOLOGY_BYTES {
+        return Err("La topología supera 64 MB: elimina snapshots antiguos o equipos que no uses.".into());
+    }
     let kept: serde_json::Map<String, serde_json::Value> = o.into_iter().filter(|(k, _)| TOPOLOGY_KEYS.contains(&k.as_str())).collect();
     write_json(&state.data_dir.join(TOPOLOGY_FILE), &serde_json::Value::Object(kept))
 }
