@@ -1,7 +1,7 @@
 import { memo, useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { invoke } from "@tauri-apps/api/core";
 import type { ITheme } from "@xterm/xterm";
-import { ArrowDownToLine, Check, FolderOpen, Lock, MoreHorizontal, Network, Pencil, Plus, Replace, Search, Send, SendHorizontal, ShieldCheck, SquareTerminal, Trash2, Workflow, X } from "lucide-react";
+import { ArrowDownToLine, Check, FolderOpen, Lock, MoreHorizontal, Network, Pencil, Plus, Replace, Search, Send, SendHorizontal, ShieldCheck, Trash2, Workflow, X } from "lucide-react";
 import { DiagramPreview } from "./DiagramPreview";
 import { NETWORK_TEMPLATE } from "../lib/mermaidBlocks";
 import { CodeEditor } from "./CodeEditor";
@@ -10,7 +10,6 @@ import { Compiled } from "../lib/highlight";
 import { fontStack } from "../lib/theme";
 import { isMac, modLabel } from "../lib/platform";
 import { PanelResize, panelClass } from "./PanelResize";
-import { openLab } from "../lib/cliLab";
 
 interface NoteInfo {
   name: string;
@@ -529,20 +528,6 @@ export const NotesPanel = memo(function NotesPanel(p: Props) {
                   setMenuOpen(false);
                 }}
               />
-              <MenuItem
-                icon={<SquareTerminal size={14} />}
-                label="Abrir en CLI Lab"
-                hint="Ejecuta la selección (o la nota completa) línea a línea en las sesiones del destino y muestra cada respuesta"
-                disabled={locked || !content.trim()}
-                onClick={() => {
-                  const ta = editorRef.current;
-                  const part = ta && ta.selectionEnd > ta.selectionStart;
-                  // La nota completa queda vinculada: "Guardar" en el Lab la actualiza.
-                  if (part) openLab(content.slice(ta.selectionStart, ta.selectionEnd));
-                  else openLab(content, current ?? undefined);
-                  setMenuOpen(false);
-                }}
-              />
               <MenuItem icon={<Pencil size={13} />} label="Renombrar" onClick={() => { if (current) setRenaming(current); setMenuOpen(false); }} />
               <MenuItem icon={<FolderOpen size={14} />} label="Abrir carpeta de notas" onClick={() => { invoke("open_dir", { which: "notes" }); setMenuOpen(false); }} />
               <div className="my-1 border-t border-line" />
@@ -708,17 +693,6 @@ export const NotesPanel = memo(function NotesPanel(p: Props) {
           </FootBtn>
           <FootBtn onClick={() => p.onSend(content)} disabled={!p.target || locked || !content.trim()} title={`${isMac ? "⌘⇧" : "Ctrl+Shift+"}Enter`}>
             <Send size={13} /> Todo
-          </FootBtn>
-          <FootBtn
-            onClick={() => {
-              const ta = editorRef.current;
-              if (ta && ta.selectionEnd > ta.selectionStart) openLab(content.slice(ta.selectionStart, ta.selectionEnd));
-              else openLab(content, current ?? undefined);
-            }}
-            disabled={locked || !content.trim()}
-            title="Ejecutar en el CLI Lab: línea a línea, leyendo cada respuesta y deteniéndose al primer error"
-          >
-            <SquareTerminal size={13} /> CLI Lab
           </FootBtn>
           <FootBtn onClick={capture} disabled={locked} title="Agregar a la nota el texto seleccionado en la terminal">
             <ArrowDownToLine size={13} /> Capturar

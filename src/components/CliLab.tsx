@@ -32,9 +32,6 @@ const cleanNoteName = (v: string) =>
     .trim();
 
 interface Props {
-  initialText?: string;
-  /** Nota de la que viene el texto (Notas › "Abrir en CLI Lab" sin selección): "Guardar" la actualiza. */
-  initialNote?: string;
   /** Fabricante de la pestaña activa (catálogo): comando de guardado sugerido. */
   vendor: string;
   compiled: Compiled[];
@@ -60,11 +57,9 @@ const statusColor = { pending: "text-muted", running: "text-accent", ok: "text-o
  * del equipo salvo que se pida (o sea un comando de guardado).
  */
 export function CliLab(p: Props) {
-  const [text, setText] = useState(() => p.initialText ?? stored(DRAFT, { text: "" }).text ?? "");
+  const [text, setText] = useState(() => stored(DRAFT, { text: "" }).text ?? "");
   /** Nota abierta en el Lab y su texto guardado (para saber si hay cambios). */
-  const [note, setNote] = useState<{ name: string; saved: string } | null>(() =>
-    p.initialNote && p.initialText !== undefined ? { name: p.initialNote, saved: p.initialText } : null,
-  );
+  const [note, setNote] = useState<{ name: string; saved: string } | null>(null);
   const [notes, setNotes] = useState<NoteInfo[]>([]);
   const loadNotes = () => invoke<NoteInfo[]>("list_notes").then(setNotes, () => {});
   useEffect(() => {

@@ -1,6 +1,5 @@
 import { memo, useEffect, useMemo, useRef, useState } from "react";
-import { ChevronDown, Radio, SquareTerminal } from "lucide-react";
-import { openLab } from "../lib/cliLab";
+import { ChevronDown, Radio } from "lucide-react";
 import {
   TargetMode,
   openFolders,
@@ -87,16 +86,6 @@ export const BroadcastTargetPicker = memo(function BroadcastTargetPicker() {
           aria-label="Destino del envío"
         >
           <TargetOptions />
-          <button
-            onClick={() => {
-              setOpen(null);
-              openLab();
-            }}
-            title="Script de varias líneas: se ejecuta en orden en el destino elegido y muestra la respuesta de cada equipo"
-            className="w-full flex items-center gap-2 px-2 h-7 mt-1 rounded-md text-[12px] text-accent hover:bg-hover border-t border-line"
-          >
-            <SquareTerminal size={13} /> Abrir CLI Lab (script multilínea)…
-          </button>
           <p className="px-2 pt-1.5 pb-0.5 text-[11px] text-muted leading-snug border-t border-line mt-1">
             Antes de enviar se confirma la lista de equipos. Se omiten terminales locales y pestañas desconectadas. Los scripts
             usan este destino al lanzarse; "Escribir" va solo a la pestaña actual.

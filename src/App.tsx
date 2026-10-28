@@ -559,7 +559,7 @@ function Workspace({
   const bcTarget = useBroadcastTarget();
   const broadcastMode = bcTarget.mode !== "current";
   const workspace = useWorkspace();
-  const [broadcast, setBroadcast] = useState<{ text: string; resolved: Resolved; declared?: Risk; source?: string } | null>(null);
+  const [broadcast, setBroadcast] = useState<{ text: string; resolved: Resolved; declared?: Risk } | null>(null);
   const [bcDelay, setBcDelay] = useState(() => stored("broadcastDelay", 300));
   useEffect(() => persist("broadcastDelay", bcDelay), [bcDelay]);
   useEffect(() => {
@@ -571,12 +571,11 @@ function Workspace({
   }, [tabs, states, activeId, visiblePanes]);
   /** Destino que muestran Notas y catálogo: la pestaña activa o el grupo de difusión. */
   const sendTarget = broadcastMode ? targetLabel(bcTarget, workspace) : activeConnected ? tabTitle(activeTab!) : null;
-  /** `source`: la plantilla sin completar, para pasarla al CLI Lab sin los valores (pueden ser claves). */
-  const openBroadcast = (text: string, declared?: Risk, source?: string) => {
+  const openBroadcast = (text: string, declared?: Risk) => {
     if (isBroadcastRunning()) return toast("Hay un envío a varias sesiones en curso", "error");
     if (isLabRunning()) return toast("El CLI Lab está ejecutando un script: espera a que termine o usa Detener", "error");
     const resolved = resolveTargets(bcTarget, tabs, (id) => states[id]?.status, activeId, visiblePanes);
-    setBroadcast({ text, resolved, declared, source });
+    setBroadcast({ text, resolved, declared });
   };
   const startBroadcast = (deviceDelayMs: number) => {
     if (!broadcast) return;
@@ -825,7 +824,7 @@ function Workspace({
   /** `checked`: el riesgo ya se confirmó (catálogo) y no se vuelve a preguntar. */
   const sendToSession = (text: string, checked = false, declared?: Risk) => {
     // Las variables {{...}} se piden una sola vez, también al enviar a varias sesiones.
-    const then = (t: string) => (broadcastMode ? openBroadcast(t, declared, text) : sendResolved(t, checked));
+    const then = (t: string) => (broadcastMode ? openBroadcast(t, declared) : sendResolved(t, checked));
     if (templateVars(text).length) return setTemplate({ text, then });
     then(text);
   };
@@ -1516,7 +1515,6 @@ function Workspace({
           text={broadcast.text}
           resolved={broadcast.resolved}
           declared={broadcast.declared}
-          labText={broadcast.source}
           delayMs={bcDelay}
           onCancel={h.cancelBroadcast}
           onConfirm={h.startBroadcast}
@@ -1586,8 +1584,6 @@ function Workspace({
       {labOpen && (
         <CliLab
           key={labOpen.n}
-          initialText={labOpen.text}
-          initialNote={labOpen.note}
           vendor={settings.catalogVendor}
           compiled={notesRules}
           theme={preset.theme}
