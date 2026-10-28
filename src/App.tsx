@@ -407,6 +407,9 @@ function Workspace({
       return next;
     });
     setStates(({ [id]: _, ...rest }) => rest);
+    // Ciclo de vida: lo visto en la pestaña cerrada no se conserva.
+    setTabDevice((d) => (id in d ? (({ [id]: _d, ...rest }) => rest)(d) : d));
+    tabHome.current.delete(id);
   }, []);
 
   // Evita cortar por accidente una sesión remota activa.

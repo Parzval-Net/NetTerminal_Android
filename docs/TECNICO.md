@@ -400,7 +400,7 @@ La respuesta trae el resultado en `result.content[0].text`. Con "Solo lectura" n
 
 En el panel de Notas, el botón de diagramas abre debajo del editor la vista de los bloques ```` ```mermaid ```` de la nota (o de la nota completa si empieza como un diagrama: `flowchart`, `sequenceDiagram`, `gantt`, `stateDiagram`, `mindmap`, etc.). Se redibuja al dejar de escribir y cada diagrama se copia o guarda como SVG; un error de sintaxis se muestra en su lugar sin afectar a los demás. "Insertar diagrama de red" en el menú de la nota agrega un ejemplo, y lo que copia Topología › Exportar › "Copiar como Mermaid" se pega tal cual.
 
-- **Rendimiento**: Mermaid 11.17.2 va en módulos aparte que se descargan la primera vez que se abre la vista (unos 0,8 s); el arranque no cambia. Hasta 12 diagramas por nota y 20.000 caracteres por diagrama.
+- **Rendimiento**: Mermaid 12.2.0 va en módulos aparte que se descargan la primera vez que se abre la vista (unos 0,8 s); el arranque no cambia. Hasta 12 diagramas por nota y 20.000 caracteres por diagrama.
 - **Seguridad**: modo `strict` (sin clics con scripts) y etiquetas como texto SVG, nunca HTML (`htmlLabels: false`), dentro de la misma CSP de la app (`script-src 'self'`, sin `eval`). Una directiva `%%{init: …}%%` en la nota no puede cambiar el nivel de seguridad, las etiquetas HTML, el tema CSS ni la fuente, y los enlaces de un diagrama (`click … href`) no navegan. Una nota compartida no puede ejecutar código ni insertar imágenes o enlaces en el diagrama. Las notas protegidas solo muestran diagramas mientras están desbloqueadas.
 
 ## Ciclo de vida del equipo (EoL)

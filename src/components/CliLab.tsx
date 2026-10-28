@@ -77,7 +77,14 @@ export function CliLab(p: Props) {
   const ws = useWorkspace();
   const win = useDragResize<HTMLDivElement>("cliLabWindow");
 
-  useEffect(() => persist(DRAFT, { text }), [text]);
+  // El borrador se guarda al dejar de escribir (300 ms), no en cada tecla, y siempre al cerrar.
+  const draft = useRef(text);
+  draft.current = text;
+  useEffect(() => {
+    const t = window.setTimeout(() => persist(DRAFT, { text }), 300);
+    return () => window.clearTimeout(t);
+  }, [text]);
+  useEffect(() => () => persist(DRAFT, { text: draft.current }), []);
   useEffect(() => persist(OPTS, opts), [opts]);
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => e.key === "Escape" && !confirm && naming === null && p.onClose();

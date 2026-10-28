@@ -281,15 +281,19 @@ function loadDismissed(): DismissedMap {
 type ConfirmReq = { title: string; message: string; label: string; danger?: boolean; defaultCancel?: boolean; action: () => void };
 
 /** El sistema pide reducir movimiento (se respeta aunque "Animación" esté activa). */
+const reducedQuery = () =>
+  typeof window !== "undefined" && window.matchMedia ? window.matchMedia("(prefers-reduced-motion: reduce)") : null;
+
 function useReducedMotion(): boolean {
-  const q = typeof window !== "undefined" && window.matchMedia ? window.matchMedia("(prefers-reduced-motion: reduce)") : null;
-  const [reduced, setReduced] = useState(() => !!q?.matches);
+  const [reduced, setReduced] = useState(() => !!reducedQuery()?.matches);
+  // Una sola suscripción: la topología se vuelve a dibujar con cada muestra del monitoreo.
   useEffect(() => {
+    const q = reducedQuery();
     if (!q) return;
     const on = () => setReduced(q.matches);
     q.addEventListener("change", on);
     return () => q.removeEventListener("change", on);
-  }, [q]);
+  }, []);
   return reduced;
 }
 
