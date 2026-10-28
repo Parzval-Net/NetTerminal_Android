@@ -1205,8 +1205,9 @@ export function TopologyTool({
             <Search size={13} className="absolute left-2 top-1/2 -translate-y-1/2 text-muted pointer-events-none" aria-hidden />
             <input
               type="search"
-              className="field !h-8 !pl-7 !w-64 @max-[860px]:!w-40 !text-[12px]"
-              placeholder="Buscar equipo, IP, MAC o interfaz"
+              className="field !h-8 !pl-7 !w-64 @max-[860px]:!w-48 !text-[12px]"
+              placeholder="Buscar (nombre, IP, MAC, puerto)"
+              title="Busca por nombre, IP, MAC, interfaz o descripción; Enter va al primero"
               aria-label="Buscar en el diagrama"
               disabled={!topo.nodes.length}
               value={query}
