@@ -15,6 +15,7 @@ Detalle técnico de NetTerminal: funciones completas, seguridad, formatos, API d
 - [Seguridad](#seguridad)
 - [Packs de comandos](#packs-de-comandos)
 - [Topología CDP / LLDP, ruteo y manual](#topología-cdp--lldp-ruteo-y-manual)
+- [Ciclo de vida del equipo (EoL)](#ciclo-de-vida-del-equipo-eol)
 - [Scripts Python](#scripts-python)
 - [Crear un plugin](#crear-un-plugin)
 - [Publicar una versión](#publicar-una-versión)
@@ -341,6 +342,17 @@ Herramientas › Topología lee los vecinos del equipo conectado y dibuja el dia
 - **L2 desconocido**: con "Estado de puertos", cada equipo explorado con interfaces físicas activas sin vecino (ni su agregado con enlace) muestra un nodo virtual con la cantidad de puertos y, si se leyó la tabla MAC, cuántas MAC y de qué fabricantes. Ahí hay algo que no anuncia CDP/LLDP: un PC, una cámara, un AP o un switch no administrable. No se guarda en el diagrama ni se exporta; se apaga en Filtros.
 - **Alcance del descubrimiento** (panel): sin teléfonos IP ni access points, solo vecinos con IP de gestión dentro de las redes indicadas (CIDR IPv4) y profundidad máxima desde el primer equipo explorado. Se aplica al incorporar vecinos nuevos (los que ya están conservan su enlace) y el mensaje dice cuántos quedaron fuera y por qué. No cambia los comandos que se envían. Un vecino sin IP informada se agrega igual.
 - Check Point y WatchGuard no tienen descubrimiento: no hay comandos LLDP documentados y verificables para Gaia ni Fireware. Aparecen cuando otro equipo los reporta como vecinos.
+
+## Ciclo de vida del equipo (EoL)
+
+La barra de estado muestra el modelo, la versión y la etapa del ciclo de vida del equipo de la pestaña: **Sin anuncio EoL**, **EoL anunciado**, **Fin de venta**, **Fin de soporte SW** o **Sin soporte (LDoS)**, en color según la etapa. Al pasar el mouse se ven las fechas (anuncio, EoS, EoSW, LDoS), el reemplazo sugerido, el boletín y la fuente oficial. El detalle de un equipo en Topología muestra lo mismo a partir de la plataforma que informa CDP/LLDP.
+
+- **Sin comandos**: el modelo y la versión se leen de la pantalla, al conectar y cada vez que ejecutas `show version`, `show inventory`, `display version`, `get system status` o equivalentes. Se reconocen Cisco IOS, IOS-XE, IOS-XR y NX-OS (`Model Number`, `PID:`, `cisco ISR4331/K9 (…) processor`, `cisco Nexus9000 C93180YC-EX chassis`), FortiOS (`Version: FortiGate-60F v7.2.5`), Huawei VRP y Junos.
+- **Por equipo**: en SSH y Telnet se recuerda por host (hasta 2.000 equipos, en Ajustes `deviceInfo`), solo si el prompt es el mismo con que se conectó la pestaña: lo que se lee tras saltar a otro equipo con ssh desde la consola no se guarda para el host de la sesión. Por consola serie no se recuerda (el mismo puerto sirve para equipos distintos).
+- **Base**: `src/lib/lifecycleData.json` (unos 8.100 PID y series, 53 KB comprimida), en un módulo aparte que se descarga la primera vez que hay un modelo que buscar. Hoy trae Cisco Catalyst y Small Business, Nexus y MDS, ISR, ASR y Catalyst 8000 (boletines EoS/EoL de cisco.com, base del 22-10-2026), la corrección de ISR 4000 según el boletín EOL14896 y Meraki (página oficial de fin de vida, 19-10-2026). Un modelo Meraki se busca también por su SKU `-HW` y por su serie (`MS225-48LP` → `MS225 Series`).
+- **Sin fila no significa vigente**: un modelo que no está en la base se muestra "Sin anuncio EoL" y el detalle pide validar en la fuente oficial del fabricante.
+- **Actualizar la base**: `node scripts/lifecycle/generar-lifecycle.mjs <carpeta>` lee los `.md` de la carpeta. Cada uno lleva una cabecera citada (`> - Fabricante:`, `> - Fuente oficial: … URL`, fechas AAAA-MM-DD) y tablas cuya primera columna es `Product ID (PID)` o `Producto / SKU`; las demás se reconocen por su encabezado (`Fin de Venta`/`End-of-Sale`, `Fin Soporte SW`, `Último Día Soporte`/`End-of-Support`, `Anuncio EOL`, `Modelo base`, `Reemplazo`, `Boletín`). Un archivo con `PRIORIDAD` en la cabecera reemplaza las filas de los demás para sus PID. Solo pasan a la app el PID, las fechas, el reemplazo, el boletín y la fuente.
+- **Última versión recomendada del sistema operativo**: todavía no; falta una base por modelo con su fuente (por ejemplo, la matriz de FortiOS por modelo de Fortinet o las versiones sugeridas de Cisco). La barra muestra la versión que corre el equipo.
 
 ## Scripts Python
 

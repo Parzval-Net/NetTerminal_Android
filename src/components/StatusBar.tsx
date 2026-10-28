@@ -1,5 +1,6 @@
-import { memo } from "react";
-import { ArrowLeftRight, BookOpen, KeyRound, Bot, Circle, CircleDot, NotebookPen, RotateCcw, Search, Settings, Unplug, Zap } from "lucide-react";
+import { memo, useEffect, useState } from "react";
+import { ArrowLeftRight, BookOpen, KeyRound, Bot, Circle, CircleDot, NotebookPen, RotateCcw, Search, Settings, ShieldAlert, ShieldCheck, Unplug, Zap } from "lucide-react";
+import { DeviceInfo, LIFE_LABEL, LifeLevel, Lifecycle, findLifecycle, lifeDetail, lifeLevel, loadLifecycle } from "../lib/lifecycle";
 import { Tab, TabState, historyKey, sessionTarget, tunnelLabel } from "../types";
 import { HistoryMenu } from "./HistoryMenu";
 import { BroadcastTargetPicker } from "./BroadcastTarget";
@@ -32,6 +33,8 @@ interface Props {
   onResend?: (cmd: string) => void;
   /** Guarda la conexión rápida de la pestaña como sesión. */
   onSaveAs?: () => void;
+  /** Modelo y versión leídos de la pantalla (show version): ciclo de vida del equipo. */
+  device?: DeviceInfo;
 }
 
 export const StatusBar = memo(function StatusBar({
@@ -51,6 +54,7 @@ export const StatusBar = memo(function StatusBar({
   onAi,
   onResend,
   onSaveAs,
+  device,
 }: Props) {
   const gear = (
     <>
@@ -118,6 +122,8 @@ export const StatusBar = memo(function StatusBar({
         </span>
       )}
 
+      {device?.model && <LifecycleChip model={device.model} version={device.version} name={device.name} />}
+
       <div className="ml-auto shrink-0 flex items-center gap-0.5">
         {/* Destino único de Notas, catálogo, botones y scripts: siempre a la vista. */}
         <BroadcastTargetPicker />
@@ -167,5 +173,44 @@ function BarBtn(props: React.ButtonHTMLAttributes<HTMLButtonElement>) {
       {...props}
       className={`shrink-0 whitespace-nowrap flex items-center justify-center gap-1 h-6 min-w-6 px-1.5 rounded hover:bg-hover hover:text-fg disabled:opacity-40 disabled:hover:bg-transparent ${props.className ?? ""}`}
     />
+  );
+}
+
+const LIFE_CLASS: Record<LifeLevel, string> = {
+  ldos: "text-danger",
+  eosw: "text-danger",
+  eos: "text-warn",
+  announced: "text-warn",
+  none: "text-fg/80",
+  unknown: "text-warn",
+};
+
+/**
+ * Modelo y etapa del ciclo de vida (fin de venta, de software, de soporte). La base se descarga
+ * recién aquí, la primera vez que una pestaña muestra un modelo.
+ */
+export function LifecycleChip({ model, version, name }: { model: string; version?: string; name?: string }) {
+  const [life, setLife] = useState<{ model: string; l: Lifecycle | null } | null>(null);
+  useEffect(() => {
+    let live = true;
+    loadLifecycle()
+      .then((db) => live && setLife({ model, l: findLifecycle(db, model) }))
+      .catch(() => live && setLife(null));
+    return () => {
+      live = false;
+    };
+  }, [model]);
+  if (!life || life.model !== model) return null;
+  const level = lifeLevel(life.l, new Date().toISOString().slice(0, 10));
+  const bad = level !== "none";
+  const tip = `${name ? `Equipo: ${name}\n` : ""}${lifeDetail(model, life.l, version)}\nSe actualiza con cada show version (o equivalente) que ejecutes.`;
+  return (
+    <span className={`flex items-center gap-1 min-w-0 shrink ${LIFE_CLASS[level]}`} title={tip} aria-label={`${model}: ${LIFE_LABEL[level]}`}>
+      {bad ? <ShieldAlert size={11} className="shrink-0" /> : <ShieldCheck size={11} className="shrink-0" />}
+      <span className="truncate">
+        <span className="font-medium">{model}</span>
+        {version && <span className="hidden @[60rem]:inline text-muted"> · {version}</span>} · {LIFE_LABEL[level]}
+      </span>
+    </span>
   );
 }

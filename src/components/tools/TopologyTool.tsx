@@ -159,6 +159,8 @@ import type { Session } from "../../types";
 import type { TerminalRef } from "./FileManager";
 import { Btn, Collapsible, CountBadge, Label, Toggle } from "./ui";
 import { ContextMenu } from "../Sidebar";
+import { LifecycleChip } from "../StatusBar";
+import { modelFromPlatform } from "../../lib/lifecycle";
 import type { MenuItem } from "../tabMenu";
 
 import { plural } from "../../lib/plural";
@@ -1984,6 +1986,11 @@ export function TopologyTool({
                 {sel.platform && (
                   <p className="text-muted leading-snug" title={sel.platform}>
                     {sel.platform.length > 120 ? `${sel.platform.slice(0, 119)}…` : sel.platform}
+                  </p>
+                )}
+                {modelFromPlatform(sel.platform) && (
+                  <p className="text-[11.5px]">
+                    <LifecycleChip model={modelFromPlatform(sel.platform)!} name={sel.name} />
                   </p>
                 )}
                 <div className="space-y-1 max-h-56 overflow-y-auto">

@@ -3,6 +3,7 @@ import { invoke } from "@tauri-apps/api/core";
 import type { HlRule } from "./highlight";
 import { type AlertRule, exampleAlerts } from "./alerts";
 import type { MonitorTarget } from "./monitors";
+import type { DeviceInfoMap } from "./lifecycle";
 import type { TopoSnapshot, TopoSources, Topology } from "./topology";
 import type { SnmpProfile } from "./snmp";
 import { type GhostColor, type GhostStyle, type ListKey, SUGGEST_DEFAULT, migrateSuggest } from "./suggest";
@@ -71,6 +72,8 @@ export interface Settings {
   extraFolders: string[];
   /** Orden manual de la lista de sesiones por carpeta (ver SidebarOrder en folders.ts). */
   sidebarOrder: Record<string, string[]>;
+  /** Modelo y versión vistos por destino (host), para el ciclo de vida en la barra de estado. */
+  deviceInfo: DeviceInfoMap;
   confirmSend: boolean;
   macros: Macro[];
   showButtonBar: boolean;
@@ -156,6 +159,7 @@ export const defaultSettings: Settings = {
   logTimestamps: false,
   extraFolders: [],
   sidebarOrder: {},
+  deviceInfo: {},
   confirmSend: true,
   macros: [
     { id: "m1", label: "terminal length 0", kind: "send", text: "terminal length 0" },

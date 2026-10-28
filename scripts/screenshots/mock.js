@@ -910,7 +910,11 @@ if (new URLSearchParams(location.search).has("video")) {
       else if (/^dis(play)? clock/.test(c)) body = "2026-10-21 10:42:17\nWednesday";
       else if (/^dis(play)? int(erface)? br/.test(c)) body = HUAWEI.split("\n").slice(3, 15).join("\n");
     } else if (/^sh(ow)? clock/.test(c)) body = "*10:42:17.385 UTC Wed Oct 21 2026";
-    else if (/^sh(ow)? ver/.test(c)) body = `Cisco IOS XE Software, Version 17.12.04\nCisco IOS Software [Dublin], Catalyst L3 Switch Software (CAT9K_IOSXE)\n${s.name} uptime is 47 weeks, 17 hours, 30 minutes`;
+    else if (/^sh(ow)? ver/.test(c)) {
+      // Un router antiguo (ISR 4331, con fin de vida) y switches Catalyst 9500 (sin anuncio EoL).
+      const pid = /router|^rt-|^mx-borde/.test(s.name ?? "") ? "ISR4331/K9" : "C9500-24Y4C";
+      body = `Cisco IOS XE Software, Version 17.12.04\nCisco IOS Software [Dublin], Catalyst L3 Switch Software (CAT9K_IOSXE)\n${s.name} uptime is 47 weeks, 17 hours, 30 minutes\ncisco ${pid} (1RU) processor with 1795999K/6147K bytes of memory.\nModel Number                       : ${pid}`;
+    }
     else if (/^sh(ow)? ip int(erface)? br/.test(c)) body = IPBRIEF;
     else if (/^sh(ow)? (cdp|lldp) nei/.test(c)) body = "Device ID        Local Intrfce     Holdtme    Capability  Platform  Port ID\ncore-sw02        Ten 1/1/1         142             R S I  C9500-24Y Ten 1/1/1\ndist-sw01        Gig 1/0/1         131             R S I  C9300-48P Gig 1/0/48";
     else if (/^sh(ow)? int(erfaces?)? status/.test(c)) body = "Port      Name               Status       Vlan       Duplex  Speed Type\nGi1/0/1   UPLINK dist-sw01   connected    trunk      a-full a-1000 10/100/1000BaseTX\nGi1/0/3                      notconnect   10           auto   auto 10/100/1000BaseTX\nGi1/0/7   CAMARA PISO 2      connected    30         a-full a-1000 10/100/1000BaseTX";

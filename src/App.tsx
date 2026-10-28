@@ -15,6 +15,7 @@ import { CloseScope, summarizeClose, tabsToClose } from "./lib/closeAll";
 import { NotesPanel } from "./components/NotesPanel";
 import { CommandsPanel } from "./components/CommandsPanel";
 import { vendorFor } from "./lib/commands";
+import { DeviceInfo, detectDeviceInfo, deviceKey, promptHost, rememberDevice } from "./lib/lifecycle";
 import { CatalogEntry, Pack, PackCommand, Risk, buildCatalog, computeRisk, detectPlatform, riskLabel, validatePack } from "./lib/packs";
 import type { ScpRequest } from "./components/tools/FileManager";
 import { runOnDevice } from "./lib/deviceRun";
@@ -610,6 +611,32 @@ function Workspace({
   const [packsOpen, setPacksOpen] = useState(false);
   const [cmdEdit, setCmdEdit] = useState<{ vendor: string; initial?: PackCommand } | null>(null);
   const [detecting, setDetecting] = useState(false);
+  /** Modelo y versión vistos en cada pestaña (barra de estado: ciclo de vida). */
+  const [tabDevice, setTabDevice] = useState<Record<string, DeviceInfo>>({});
+  /** Prompt con que se conectó cada pestaña: lo leído tras saltar a otro equipo no se guarda para su host. */
+  const tabHome = useRef(new Map<string, string>());
+
+  /** Sin enviar nada: modelo y versión de lo que muestra la pantalla, o lo recordado para el host. */
+  const noteDevice = (tab: Tab, text: string) => {
+    const here = promptHost(text);
+    let home = tabHome.current.get(tab.id);
+    if (!home && here) tabHome.current.set(tab.id, (home = here));
+    const key = deviceKey(tab.session);
+    const info = detectDeviceInfo(text);
+    if (info.model || info.version) {
+      setTabDevice((m) => {
+        const prev = m[tab.id];
+        return { ...m, [tab.id]: prev && prev.name === here ? { ...prev, ...info } : { ...info, name: here } };
+      });
+      if (key && here && here === home) {
+        const next = rememberDevice(settings.deviceInfo, key, { ...info, name: here });
+        if (next !== settings.deviceInfo) update({ deviceInfo: next });
+      }
+    } else if (key && !tabDevice[tab.id]) {
+      const saved = settings.deviceInfo[key];
+      if (saved?.model && (!saved.name || !here || saved.name === here)) setTabDevice((m) => ({ ...m, [tab.id]: saved }));
+    }
+  };
 
   const loadPacks = useCallback(() => {
     invoke<unknown[]>("cmdpacks_list")
@@ -1109,7 +1136,10 @@ function Workspace({
     /** Lectura pasiva de pantalla (al conectar o tras un show version): fija plataforma y resaltado. */
     screenHint: (tabId: string) => {
       const tab = tabs.find((t) => t.id === tabId);
-      if (!tab || tab.session.platform || tab.session.type === "local") return;
+      if (!tab || tab.session.type === "local" || tab.session.scp) return;
+      const text = controllers.current.get(tabId)?.recentText(150);
+      if (text) noteDevice(tab, text);
+      if (tab.session.platform) return;
       const h = tab.session.highlight;
       const preferred = h && h !== "off" ? (catalog.some((v) => v.id === h) ? h : vendorFor(h)) : settings.catalogVendor;
       const found = detectFromScreen(tabId, preferred);
@@ -1342,6 +1372,7 @@ function Workspace({
 
         <StatusBar
           tab={activeTab}
+          device={activeId ? tabDevice[activeId] : undefined}
           state={activeId ? states[activeId] : undefined}
           onToggleLog={h.toggleLog}
           onBreak={h.sendBreak}
