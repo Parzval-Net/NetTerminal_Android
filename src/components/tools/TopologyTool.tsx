@@ -1,4 +1,4 @@
-import { memo, useCallback, useEffect, useId, useMemo, useRef, useState } from "react";
+import { memo, useCallback, useEffect, useId, useLayoutEffect, useMemo, useRef, useState } from "react";
 import { invoke } from "@tauri-apps/api/core";
 import { save } from "@tauri-apps/plugin-dialog";
 import { writeText } from "@tauri-apps/plugin-clipboard-manager";
@@ -160,6 +160,7 @@ import type { TerminalRef } from "./FileManager";
 import { Btn, Collapsible, CountBadge, Label, Toggle } from "./ui";
 import { ContextMenu } from "../Sidebar";
 import { LifecycleChip } from "../StatusBar";
+import { isMac } from "../../lib/platform";
 import { modelFromPlatform } from "../../lib/lifecycle";
 import type { MenuItem } from "../tabMenu";
 
@@ -174,6 +175,9 @@ const L2W = 128;
 const L2H = 38;
 /** Sobre esta cantidad de equipos con puertos sin vecino, el nodo L2 se dibuja solo para el seleccionado. */
 const MAX_L2_NODES = 120;
+/** Límites del zoom del mapa (botones, pellizco y Ctrl/⌘ + rueda). */
+const ZOOM_MIN = 0.4;
+const ZOOM_MAX = 4;
 /** Separación entre enlaces paralelos del mismo par de equipos. */
 const PARALLEL_GAP = 26;
 /** Máximo de interfaces que se consultan en detalle (Junos) para no saturar la sesión. */
@@ -1344,6 +1348,78 @@ export function TopologyTool({
     el.scrollTo({ left, top, behavior: reducedMotion ? "auto" : "smooth" });
   }, [focusReq, shown, zoom, box, reducedMotion]);
 
+  // Zoom con pellizco (touchpad) o Ctrl/⌘ + rueda, hacia el punto bajo el puntero.
+  const zoomRef = useRef(zoom);
+  zoomRef.current = zoom;
+  const zoomAnchor = useRef<{ cx: number; cy: number; sx: number; sy: number; from: number } | null>(null);
+  const zoomAt = useCallback((next: number, cx: number, cy: number) => {
+    const el = scroller.current;
+    const from = zoomRef.current;
+    const to = Math.min(ZOOM_MAX, Math.max(ZOOM_MIN, next));
+    if (!el || Math.abs(to - from) < 0.001) return;
+    // Varios eventos antes de redibujar (lo normal en un touchpad): el ancla parte del último zoom dibujado.
+    const pending = zoomAnchor.current;
+    zoomAnchor.current = pending ? { ...pending, cx, cy } : { cx, cy, sx: el.scrollLeft, sy: el.scrollTop, from };
+    zoomRef.current = to;
+    setZoom(to);
+  }, []);
+  // El dibujo crece en proporción al zoom: se corre el scroll para que el punto bajo el puntero no se mueva.
+  useLayoutEffect(() => {
+    const a = zoomAnchor.current;
+    const el = scroller.current;
+    if (!a || !el) return;
+    zoomAnchor.current = null;
+    const f = zoom / a.from;
+    el.scrollLeft = (a.sx + a.cx) * f - a.cx;
+    el.scrollTop = (a.sy + a.cy) * f - a.cy;
+  }, [zoom]);
+  useEffect(() => {
+    const el = scroller.current;
+    if (!el) return;
+    const local = (x: number, y: number) => {
+      const r = el.getBoundingClientRect();
+      return [x - r.left, y - r.top] as const;
+    };
+    // Windows, Linux y Chromium: el pellizco llega como rueda con ctrlKey (igual que Ctrl + rueda).
+    let gesturing = false;
+    const onWheel = (e: WheelEvent) => {
+      if (!e.ctrlKey && !e.metaKey) return; // dos dedos sin pellizco: desplazamiento normal
+      e.preventDefault();
+      if (gesturing) return;
+      const d = Math.max(-50, Math.min(50, e.deltaMode === 1 ? e.deltaY * 16 : e.deltaY));
+      const [cx, cy] = local(e.clientX, e.clientY);
+      zoomAt(zoomRef.current * Math.exp(-d * 0.01), cx, cy);
+    };
+    // macOS (WebKit): el pellizco llega como gesto con su escala.
+    let base = 1;
+    type Gesture = Event & { scale: number; clientX: number; clientY: number };
+    const onGestureStart = (e: Event) => {
+      e.preventDefault();
+      gesturing = true;
+      base = zoomRef.current;
+    };
+    const onGestureChange = (e: Event) => {
+      e.preventDefault();
+      const g = e as Gesture;
+      const [cx, cy] = local(g.clientX, g.clientY);
+      zoomAt(base * g.scale, cx, cy);
+    };
+    const onGestureEnd = (e: Event) => {
+      e.preventDefault();
+      gesturing = false;
+    };
+    el.addEventListener("wheel", onWheel, { passive: false });
+    el.addEventListener("gesturestart", onGestureStart);
+    el.addEventListener("gesturechange", onGestureChange);
+    el.addEventListener("gestureend", onGestureEnd);
+    return () => {
+      el.removeEventListener("wheel", onWheel);
+      el.removeEventListener("gesturestart", onGestureStart);
+      el.removeEventListener("gesturechange", onGestureChange);
+      el.removeEventListener("gestureend", onGestureEnd);
+    };
+  }, [zoomAt]);
+
   const pickHit = (h: SearchHit) => {
     focusOn(h.id);
     setSearchOpen(false);
@@ -1500,10 +1576,10 @@ export function TopologyTool({
           </p>
         )}
         <div className="flex flex-wrap items-center gap-1 mt-2.5 @max-[860px]:[&_button]:px-2" role="toolbar" aria-label="Diagrama">
-          <Btn kind="ghost" title="Acercar" onClick={() => setZoom((z) => Math.min(2.5, z + 0.2))}>
+          <Btn kind="ghost" title={`Acercar (o pellizca en el touchpad, o ${isMac ? "⌘" : "Ctrl"} + rueda sobre el mapa)`} onClick={() => setZoom((z) => Math.min(ZOOM_MAX, z + 0.2))}>
             <ZoomIn size={14} />
           </Btn>
-          <Btn kind="ghost" title="Alejar" onClick={() => setZoom((z) => Math.max(0.4, z - 0.2))}>
+          <Btn kind="ghost" title={`Alejar (o pellizca en el touchpad, o ${isMac ? "⌘" : "Ctrl"} + rueda sobre el mapa)`} onClick={() => setZoom((z) => Math.max(ZOOM_MIN, z - 0.2))}>
             <ZoomOut size={14} />
           </Btn>
           <Btn kind="ghost" title="Ajustar a la vista" aria-label="Ajustar a la vista" onClick={fit}>
