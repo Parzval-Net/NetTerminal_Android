@@ -91,7 +91,11 @@ export function CliLab(p: Props) {
 
   const start = () => {
     if (!confirm) return;
-    const { text: body, resolved } = confirm;
+    if (isBroadcastRunning()) {
+      setConfirm(null);
+      return setMsg("Hay un envío a varias sesiones en curso: espera a que termine");
+    }
+    const { text: body, shown, resolved } = confirm;
     setConfirm(null);
     setView(null);
     const timeout = Math.max(5, Math.min(600, opts.timeout));
@@ -102,6 +106,7 @@ export function CliLab(p: Props) {
         stopOnError: opts.stopOnError,
         parallel: opts.parallel,
         answer: opts.answer,
+        labels: shown.split("\n"),
         conn: p.connOf,
         exec: (conn, cmd, answer) => runOnDeviceResult(conn, cmd, timeout, answer),
       },

@@ -37,4 +37,13 @@ assert.match(xml, /<dword name="CTS Flow">1<\/dword>/);
 assert.doesNotMatch(xml, /Shell local|conf t|assword/i, "sin locales, comandos ni contraseñas");
 assert.equal((xml.match(/<key /g) || []).length, (xml.match(/<\/key>/g) || []).length);
 
+const reserved = sessionsToXml([
+  { id: "a", name: "Default", type: "ssh", host: "192.0.2.9" },
+  { id: "b", name: "__oculta", type: "ssh", host: "192.0.2.10" },
+  { id: "c", name: "Default", type: "ssh", host: "192.0.2.11", folder: "Lab" },
+]);
+assert.match(reserved, /<key name="Default \(sesión\)">/);
+assert.match(reserved, /<key name="_oculta">/);
+assert.match(reserved, /<key name="Lab">\n\s+<key name="Default">/, "fuera de la raíz se conserva");
+
 console.log("sessionXml: ok");

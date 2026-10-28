@@ -55,8 +55,10 @@ export function sessionsToXml(sessions: Session[]): string {
       if (!next) d.dirs.set(part, (next = { dirs: new Map(), items: [] }));
       d = next;
     }
+    // SecureCRT reserva "Default" en la raíz (plantilla) y oculta los nombres con "__" al inicio.
+    let base = (s.name.trim() || s.host || s.serial_port || "Sesión").replace(/^_{2,}/, "_");
+    if (d === root && /^Default(_|$)/i.test(base)) base = `${base} (sesión)`;
     // SecureCRT identifica la sesión por su nombre dentro de la carpeta: los repetidos se numeran.
-    const base = s.name.trim() || s.host || s.serial_port || "Sesión";
     const taken = new Set([...d.items.map(([n]) => n), ...d.dirs.keys()]);
     let name = base;
     for (let i = 2; taken.has(name); i++) name = `${base} (${i})`;

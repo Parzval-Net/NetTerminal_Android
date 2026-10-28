@@ -47,6 +47,8 @@ export interface LabOptions {
   /** Conexión de la pestaña; undefined si ya no está conectada. */
   conn: (tabId: string) => string | undefined;
   exec: (conn: string, cmd: string, answer: boolean) => Promise<DeviceResult>;
+  /** Texto que se muestra por línea (variables secretas enmascaradas); por defecto, la línea. */
+  labels?: string[];
 }
 
 /** Comandos de guardado por fabricante (catálogo integrado). FortiOS guarda solo al cerrar con "end". */
@@ -118,7 +120,7 @@ export async function runLab(targets: LabTarget[], lines: string[], opts: LabOpt
   const one = async (item: LabItem) => {
     item.status = "running";
     schedule();
-    for (const cmd of lines) {
+    for (const [n, cmd] of lines.entries()) {
       if (stopFlag) {
         item.status = "stopped";
         return;
@@ -133,9 +135,9 @@ export async function runLab(targets: LabTarget[], lines: string[], opts: LabOpt
       try {
         const r = await opts.exec(conn, cmd, opts.answer || SAVE_LINE.test(cmd.trim()));
         const err = r.declined ? `Pidió confirmación y se respondió que no: ${r.declined}` : cliError(r.output, cmd);
-        step = { cmd, ok: !err, output: r.output, note: err ?? undefined };
+        step = { cmd: opts.labels?.[n] ?? cmd, ok: !err, output: r.output, note: err ?? undefined };
       } catch (e) {
-        step = { cmd, ok: false, output: "", note: String(e instanceof Error ? e.message : e) };
+        step = { cmd: opts.labels?.[n] ?? cmd, ok: false, output: "", note: String(e instanceof Error ? e.message : e) };
       }
       item.steps.push(step);
       schedule();

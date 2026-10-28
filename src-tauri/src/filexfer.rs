@@ -34,15 +34,15 @@ fn patterns() -> &'static Patterns {
         // Los mismos prompts que src/lib/cliText.ts (lista común en scripts/tests/fixtures/prompts.json):
         // Huawei/H3C <SW>, [~SW], [*SW-GE1/0/1]; MikroTik [admin@MikroTik] >; shell RHEL
         // [user@host ~]$; Junos, PAN-OS y shells user@host>, user@host:~$; Cisco/Arista/Aruba
-        // Router#, Router(config-if)#, IOS-XR RP/0/RSP0/CPU0:asr9k#; FortiOS fw01 #, con VDOM
+        // Router#, Router(config-if)#, IOS-XR RP/0/RSP0/CPU0:asr9k#, ASA ciscoasa/admin#; FortiOS fw01 #, con VDOM
         // fw01 (root) (interface) #.
         prompt: Regex::new(concat!(
             r"(?m)^<[\w.\-]+>\s*$",
             r"|^\[[\w.\-]+@[\w.\-]+\](?: /[\w/\-]*)? ?>\s*$",
             r"|^\[[\w.\-]+@[\w.\-]+(?: [^\]\n]*)?\][#$]\s*$",
-            r"|^\[[~*]{0,2}[\w.\-]+(?:[^\]\w.\-\n][^\]\n]*)?\]\s*$",
+            r"|^\[[~*]{0,2}[\w.\-]+(?:[^\]\w.\-\s][^\]\s]*)?\]\s*$",
             r"|^[\w.\-]+@[\w.\-]+(?::\S*)?[>#%$]\s*$",
-            r"|^(?:[\w/]+:)?[\w.\-]+(?: ?\([^()\n]*\)){0,3} ?[#>$%]\s*$",
+            r"|^(?:[\w/]+:)?[\w.\-]+(?:/[\w.\-]+){0,2}(?: ?\([^()\n]*\)){0,3} ?[#>$%]\s*$",
         ))
         .unwrap(),
         // "Destination filename [ios.bin]?", "[confirm]", "Address or name of remote host []?"

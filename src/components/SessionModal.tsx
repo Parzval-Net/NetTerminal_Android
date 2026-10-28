@@ -85,6 +85,8 @@ export function SessionModal({ initial, title, defaultFolder, folders, onClose, 
   /** Hay una guardada y no se está cambiando: se muestra la máscara fija. */
   const hadPw = !!initial?.save_password;
   const [changing, setChanging] = useState(!hadPw);
+  /** Se pidió borrar la guardada: vaciar el campo no la recupera. */
+  const [deleted, setDeleted] = useState(false);
   const [cred, setCred] = useState<CredStatus | null>(null);
   const refreshCred = () => credStatus().then(setCred).catch(() => {});
   useEffect(() => {
@@ -127,14 +129,18 @@ export function SessionModal({ initial, title, defaultFolder, folders, onClose, 
       onChangeClick={() => setChanging(true)}
       onDelete={() => {
         setNewPw("");
+        setDeleted(true);
+        // Queda el campo para escribir otra; sin escribir nada, la guardada se borra al guardar.
+        setChanging(true);
         set("save_password", undefined);
       }}
       onNewPw={(v) => {
         setError("");
         setNewPw(v);
-        // Escribir una clave implica guardarla; vaciarla (sin una previa) la descarta.
+        // Escribir una clave implica guardarla; vaciarla la descarta, salvo al cambiar una guardada
+        // (vacío = mantenerla).
         if (v) set("save_password", true);
-        else if (!hadPw) set("save_password", undefined);
+        else if (!hadPw || deleted) set("save_password", undefined);
       }}
       onUnlocked={refreshCred}
       onUser={(v) => set("username", v || undefined)}

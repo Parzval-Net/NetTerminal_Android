@@ -2,7 +2,7 @@
  * Topología desde CDP/LLDP y vecinos de ruteo (OSPF, EIGRP, BGP): comandos por fabricante,
  * lectura de salidas, grafo, elementos manuales y sugerencias desde descripciones y tablas MAC.
  */
-import { cliErrorLine, promptName } from "./cliText";
+import { isRejected, promptName } from "./cliText";
 
 /** Origen de un enlace. */
 export type LinkProto = "CDP" | "LLDP" | "OSPF" | "EIGRP" | "BGP" | "manual" | "descripción" | "MAC/OUI";
@@ -171,7 +171,7 @@ export const junosDetailCommand = (iface: string): string | null => (isSafeIface
  * deshabilitado (IOS responde "% CDP is not enabled", "% LLDP is not enabled", "% BGP not active").
  */
 export function isCliError(out: string): boolean {
-  return cliErrorLine(out) !== null || /^\s*% ?(CDP|LLDP) is not enabled|^\s*% ?BGP not active/im.test(out);
+  return isRejected(out) || /^\s*% ?(CDP|LLDP) is not enabled|^\s*% ?BGP not active/im.test(out);
 }
 
 const IP_RE = String.raw`\d{1,3}(?:\.\d{1,3}){3}`;

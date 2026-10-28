@@ -7,6 +7,8 @@
     ["core-sw01(config-if-range)# ", "core-sw01"],
     ["RP/0/RSP0/CPU0:asr9k(config)#", "asr9k"],
     ["HP-2920# ", "HP-2920"],
+    ["ciscoasa/admin# ", "ciscoasa/admin"],
+    ["ciscoasa/pri/act(config)# ", "ciscoasa/pri/act"],
     ["sw-aruba(config)# ", "sw-aruba"],
     ["<HW>", "HW"],
     ["[HW-GigabitEthernet0/0/1]", "HW"],
@@ -17,6 +19,12 @@
     ["[H3C-Vlan-interface10]", "H3C"],
     ["[SW-01-Eth-Trunk1]", "SW-01"],
     ["[HW-Core-01]", "HW-Core-01"],
+    ["[CORE-MPLS-01]", "CORE-MPLS-01"],
+    ["[SW-VLAN100]", "SW-VLAN100"],
+    ["[PE-BGP-01-Vlanif100]", "PE-BGP-01"],
+    ["[LIM-ACL-CORE-ospf-1-area-0.0.0.0]", "LIM-ACL-CORE"],
+    ["[HW-acl-basic-2000]", "HW"],
+    ["[*PE1-GigabitEthernet0/1/0.100]", "PE1"],
     ["user@mx> ", "mx"],
     ["user@mx# ", "mx"],
     ["admin@PA-3220> ", "PA-3220"],
@@ -38,6 +46,8 @@
     "% Invalid input detected at '^' marker.",
     "Proceed with reload? [confirm]",
     "show running-config | include #",
+    "[OK - 33591768 bytes]",
+    "[edit interfaces ge-0/0/0]",
     ""
   ]
 }

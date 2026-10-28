@@ -34,6 +34,13 @@ assert.equal(T.cliErrorLine("sw01#show interfaces\nGi1/0/1 is up, 0 input errors
 assert.equal(T.commandError("error: show logging | i error:\nsw01#", "show logging | i error:"), null);
 assert.equal(T.commandError("sw01#show logging | i error:\nerror: real\n", "show logging | i error:"), "error: real");
 
+// Errores tras borrar "--More--" con retrocesos y colores ANSI (ProCurve, Huawei).
+assert.equal(T.cliErrorLine("sw# show x\n -- MORE --\b\b\b\b\b\b\b\b\b\b\b% Invalid input: x\n"), "% Invalid input: x");
+assert.equal(T.cliErrorLine("\x1b[31m% Invalid input detected\x1b[0m\n"), "% Invalid input detected");
+// isRejected (topología): estricto, no cuenta "error:" ni "% Error" de una salida válida.
+assert.equal(T.isRejected("sw01#show logging\nerror: link flap on Gi1/0/3\n% Error counters cleared\nsw01#"), false);
+assert.equal(T.isRejected("sw01#show lldp neighbors\n                ^\n% Invalid input detected at '^' marker."), true);
+
 // Sin backtracking caro en líneas largas o mal formadas.
 const long = "[" + "a".repeat(20000) + " (" + "(x) ".repeat(5000);
 fastEnough("promptName en línea larga", 5, () => T.promptName(long));

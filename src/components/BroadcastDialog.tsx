@@ -14,6 +14,8 @@ interface Props {
   /** Riesgo declarado (catálogo): se usa si es mayor que el calculado. */
   declared?: Risk;
   delayMs: number;
+  /** Texto que se lleva al CLI Lab: la plantilla sin completar (nunca los valores, que pueden ser claves). */
+  labText?: string;
   /** CLI Lab: sin pausa entre equipos (se ejecutan en paralelo) y con otro verbo. */
   verb?: string;
   onCancel: () => void;
@@ -25,7 +27,7 @@ interface Props {
  * de cada línea. Si algo cambia configuración o puede cortar servicio, hay que escribir
  * la cantidad de equipos para habilitar el envío.
  */
-export function BroadcastDialog({ text, resolved, declared, delayMs, verb, onCancel, onConfirm }: Props) {
+export function BroadcastDialog({ text, resolved, declared, delayMs, verb, labText, onCancel, onConfirm }: Props) {
   const lines = useMemo(() => text.replace(/\s+$/, "").split("\n"), [text]);
   // Comentarios, "!" y salidas de modo no se marcan: solo ensuciarían la vista.
   const risks = useMemo(
@@ -142,7 +144,7 @@ export function BroadcastDialog({ text, resolved, declared, delayMs, verb, onCan
             <button
               onClick={() => {
                 onCancel();
-                openLab(text);
+                openLab(labText ?? text);
               }}
               title="Ejecuta línea a línea leyendo cada respuesta y se detiene al primer error"
               className="mr-auto px-3 h-8 rounded-md text-accent hover:bg-hover"
