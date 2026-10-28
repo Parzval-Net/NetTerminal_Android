@@ -127,10 +127,9 @@ impl Jobs {
     }
 
     pub fn iperf(&self, app: AppHandle, p: IperfParams) -> Result<String, String> {
-        if iperf_version().is_none() {
-            return Err("iperf3 no está instalado. Instálalo desde iperf.fr o con el gestor de paquetes.".into());
-        }
-        let mut c = command("iperf3");
+        let Some(mut c) = crate::toolpath::iperf_command() else {
+            return Err("No se encontró iperf3. Instálalo o elige el ejecutable con \"Elegir iperf3…\" en esta sección.".into());
+        };
         let port = p.port.unwrap_or(5201).to_string();
         if p.server.unwrap_or(false) {
             c.args(["-s", "-p", &port, "--forceflush"]);
@@ -192,10 +191,9 @@ fn which(bin: &str) -> bool {
         || command("sh").args(["-c", &format!("command -v {bin}")]).output().map(|o| o.status.success()).unwrap_or(false)
 }
 
-pub fn iperf_version() -> Option<String> {
-    let out = command("iperf3").arg("--version").output().ok()?;
-    let v = String::from_utf8_lossy(&out.stdout).lines().next()?.trim().to_string();
-    v.starts_with("iperf").then_some(v)
+/// iperf3 detectado (ruta y versión): ver `toolpath`.
+pub fn iperf_version(custom: Option<&str>) -> Option<crate::toolpath::Found> {
+    crate::toolpath::find_iperf(custom)
 }
 
 /// Resumen legible del JSON de iperf3.

@@ -23,6 +23,7 @@ mod models;
 mod notes;
 mod session_store;
 mod telnet;
+mod toolpath;
 mod triggers;
 
 use connection::ConnectionManager;
@@ -598,8 +599,8 @@ fn tool_iperf(params: nettools::IperfParams, app: tauri::AppHandle, state: State
 }
 
 #[tauri::command(async)]
-fn tool_iperf_version() -> Option<String> {
-    nettools::iperf_version()
+fn tool_iperf_version(custom: Option<String>) -> Option<toolpath::Found> {
+    nettools::iperf_version(custom.as_deref())
 }
 
 #[tauri::command]

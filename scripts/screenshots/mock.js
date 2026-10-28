@@ -639,7 +639,11 @@ const handlers = {
   monitor_start: ({ cfg }) => startMonitor(cfg),
   monitor_stop: ({ id }) => (clearInterval(monitorTimers.get(id)), monitorTimers.delete(id), null),
   list_serial_ports: () => [{ port_name: "/dev/tty.usbserial-0001", port_type: "USB" }],
-  tool_iperf_version: () => "iperf 3.17",
+  // &iperf=0: iperf3 fuera del PATH; solo aparece al elegir un archivo llamado iperf3(.exe).
+  tool_iperf_version: ({ custom } = {}) =>
+    location.search.includes("iperf=0") && !/iperf3(\.exe)?$/i.test(custom ?? "")
+      ? null
+      : { version: "iperf 3.17.1 (cJSON 1.7.15)", path: custom || "/opt/homebrew/bin/iperf3" },
   data_dir: () => "~/NetTerminal/data",
   logs_dir_get: () => logsDirInfo(),
   logs_dir_set: ({ path }) => ((logsDir = path ?? ""), logsDirInfo()),

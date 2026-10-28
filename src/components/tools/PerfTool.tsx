@@ -1,6 +1,7 @@
 import { useEffect, useState } from "react";
 import { invoke } from "@tauri-apps/api/core";
-import { Gauge, Play, Square, Trash2 } from "lucide-react";
+import { open } from "@tauri-apps/plugin-dialog";
+import { FolderSearch, Gauge, Play, RefreshCw, Square, Trash2 } from "lucide-react";
 import { SpeedResult } from "../../lib/settings";
 import { LineChart, StatTile } from "./LineChart";
 import { Btn, Console, CopyText, Label, Section, Toggle } from "./ui";
@@ -168,8 +169,23 @@ function SpeedTest({ history, onResult, onHistory }: SpeedProps) {
   );
 }
 
+/** Ruta de iperf3 elegida a mano (comodidad de este equipo: cada PC lo tiene en otra carpeta). */
+const IPERF_PATH_KEY = "iperfPath";
+const storedIperfPath = () => {
+  try {
+    return localStorage.getItem(IPERF_PATH_KEY) ?? "";
+  } catch {
+    return "";
+  }
+};
+type IperfFound = { path: string; version: string };
+const isWindows = typeof navigator !== "undefined" && /Windows/i.test(navigator.userAgent);
+
 function Iperf() {
-  const [version, setVersion] = useState<string | null | undefined>(undefined);
+  const [found, setFound] = useState<IperfFound | null | undefined>(undefined);
+  const [searching, setSearching] = useState(false);
+  const [pickError, setPickError] = useState("");
+  const version = found === undefined ? undefined : found ? found.version : null;
   const [host, setHost] = useState("");
   const [port, setPort] = useState(5201);
   const [seconds, setSeconds] = useState(10);
@@ -181,17 +197,60 @@ function Iperf() {
   const server = useJob();
   const [ips, setIps] = useState<{ name: string; ip: string }[]>([]);
 
+  /** Busca iperf3 (también fuera del PATH: carpetas de descarga, winget, Homebrew, snap…). */
+  const detect = async (custom = storedIperfPath()) => {
+    setSearching(true);
+    try {
+      const f = await invoke<IperfFound | null>("tool_iperf_version", { custom: custom || null });
+      setFound(f);
+      return f;
+    } finally {
+      setSearching(false);
+    }
+  };
+  /** El usuario elige el ejecutable: se guarda solo si responde como iperf3. */
+  const pick = async () => {
+    setPickError("");
+    const file = await open({
+      multiple: false,
+      directory: false,
+      title: "Elegir el ejecutable de iperf3",
+      filters: isWindows ? [{ name: "iperf3", extensions: ["exe"] }] : undefined,
+    });
+    if (typeof file !== "string") return;
+    const f = await detect(file);
+    if (f && f.path === file) {
+      try {
+        localStorage.setItem(IPERF_PATH_KEY, file);
+      } catch {
+        /* solo comodidad */
+      }
+    } else setPickError(`"${file.split(/[\\/]/).pop()}" no respondió como iperf3 (el archivo debe llamarse iperf3${isWindows ? ".exe" : ""}).`);
+  };
+
   useEffect(() => {
-    invoke<string | null>("tool_iperf_version").then(setVersion);
+    void detect();
     invoke<{ name: string; ip: string }[]>("local_ips").then(setIps);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
   if (version === null)
     return (
       <Section title="iperf3" hint="Throughput, retransmisiones, jitter y pérdida entre dos puntos.">
         <p className="text-[12.5px]">
-          iperf3 no está instalado en este equipo. Instálalo y vuelve a abrir esta sección:
+          No se encontró iperf3 en el PATH ni en las carpetas habituales (Descargas, Archivos de programa, winget, Chocolatey, Scoop, Homebrew, MacPorts, snap). Si ya lo
+          instalaste o descomprimiste en otra carpeta, elige el ejecutable:
         </p>
+        <div className="mt-2 flex flex-wrap items-center gap-2">
+          <Btn kind="primary" onClick={() => void pick()}>
+            <FolderSearch size={14} /> Elegir iperf3{isWindows ? ".exe" : ""}…
+          </Btn>
+          <Btn onClick={() => void detect()} disabled={searching}>
+            <RefreshCw size={14} className={searching ? "animate-spin" : ""} /> {searching ? "Buscando…" : "Buscar de nuevo"}
+          </Btn>
+        </div>
+        {pickError && <p className="mt-1.5 text-[12px] text-danger">{pickError}</p>}
+        <p className="mt-3 text-[12px] text-muted">Para instalarlo:</p>
         <ul className="mt-2 space-y-1 text-[12px] text-muted">
           <li>
             macOS: <CopyText text="brew install iperf3" />
@@ -199,7 +258,10 @@ function Iperf() {
           <li>
             Linux: <CopyText text="sudo apt install iperf3" /> o <CopyText text="sudo dnf install iperf3" />
           </li>
-          <li>Windows: búscalo con <CopyText text="winget search iperf3" /> o usa una compilación de terceros enlazada desde iperf.fr (ESnet no publica binarios); deja iperf3.exe en el PATH o junto a NetTerminal.exe</li>
+          <li>
+            Windows: búscalo con <CopyText text="winget search iperf3" /> o usa una compilación de terceros enlazada desde iperf.fr (ESnet no publica binarios). Si es un zip,
+            descomprímelo completo (iperf3.exe necesita cygwin1.dll en la misma carpeta) y elige iperf3.exe arriba.
+          </li>
         </ul>
       </Section>
     );
@@ -208,7 +270,18 @@ function Iperf() {
 
   return (
     <div className="grid gap-4 [grid-template-columns:repeat(auto-fit,minmax(400px,1fr))]">
-      <Section title="iperf3 · cliente" hint={version ?? "Detectando…"}>
+      <Section
+        title="iperf3 · cliente"
+        hint={found ? `${found.version} · ${found.path}` : "Detectando…"}
+        right={
+          found && (
+            <Btn kind="ghost" className="!h-7 !px-2 !text-[11.5px]" title="Usar otro ejecutable de iperf3" onClick={() => void pick()}>
+              <FolderSearch size={13} /> Cambiar
+            </Btn>
+          )
+        }
+      >
+        {pickError && <p className="mb-2 text-[12px] text-danger">{pickError}</p>}
         <form
           className="space-y-3"
           onSubmit={(e) => {
