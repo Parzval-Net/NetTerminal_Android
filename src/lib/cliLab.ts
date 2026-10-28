@@ -82,6 +82,9 @@ let stopFlag = false;
 
 export const useLabRun = () => useSyncExternalStore(runStore.subscribe, runStore.get);
 export const isLabRunning = () => !!runStore.get()?.running;
+/** El CLI Lab está ejecutando (o tiene en cola) esta pestaña: otro envío se mezclaría con sus líneas. */
+export const labOwns = (tabId: string) =>
+  !!runStore.get()?.running && !!runStore.get()?.items.some((i) => i.tabId === tabId && (i.status === "running" || i.status === "pending"));
 export const stopLab = () => {
   stopFlag = true;
 };

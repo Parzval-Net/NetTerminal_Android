@@ -38,7 +38,7 @@ import { Settings, logOptions, useSettings } from "./lib/settings";
 import { useAlerts } from "./lib/alerts";
 import { BroadcastBar, BroadcastDialog } from "./components/BroadcastDialog";
 import { Resolved, getBroadcastRun, isBroadcastRunning, publishWorkspace, stopBroadcast, resolveTargets, runBroadcast, targetLabel, useBroadcastTarget, useWorkspace } from "./lib/broadcast";
-import { closeLab, openLab, useLabOpen } from "./lib/cliLab";
+import { closeLab, isLabRunning, labOwns, openLab, useLabOpen } from "./lib/cliLab";
 import { persist, stored } from "./lib/prefs";
 import { SplitPanes } from "./components/SplitPanes";
 import { SplitLayout, SplitState, fillPanes, paneRect } from "./lib/split";
@@ -573,11 +573,13 @@ function Workspace({
   const sendTarget = broadcastMode ? targetLabel(bcTarget, workspace) : activeConnected ? tabTitle(activeTab!) : null;
   const openBroadcast = (text: string, declared?: Risk) => {
     if (isBroadcastRunning()) return toast("Hay un envío a varias sesiones en curso", "error");
+    if (isLabRunning()) return toast("El CLI Lab está ejecutando un script: espera a que termine o usa Detener", "error");
     const resolved = resolveTargets(bcTarget, tabs, (id) => states[id]?.status, activeId, visiblePanes);
     setBroadcast({ text, resolved, declared });
   };
   const startBroadcast = (deviceDelayMs: number) => {
     if (!broadcast) return;
+    if (isLabRunning()) return toast("El CLI Lab está ejecutando un script: espera a que termine o usa Detener", "error");
     setBcDelay(deviceDelayMs);
     const { text, resolved } = broadcast;
     setBroadcast(null);
@@ -830,6 +832,7 @@ function Workspace({
   const sendResolved = (text: string, checked = false) => {
     const ctrl = activeCtrl();
     if (!ctrl || !activeTab || !ctrl.isConnected()) return;
+    if (labOwns(activeTab.id)) return toast("El CLI Lab está ejecutando en esta pestaña: espera a que termine o usa Detener", "error");
     // Cada línea se ejecuta con Enter, también la última.
     const trimmed = text.replace(/\s+$/, "");
     if (!trimmed) return;

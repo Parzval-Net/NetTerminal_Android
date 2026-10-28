@@ -7,7 +7,7 @@ import { TargetOptions } from "./BroadcastTarget";
 import { BroadcastDialog } from "./BroadcastDialog";
 import { fillTemplate, templateVars } from "./TemplateDialog";
 import { Compiled } from "../lib/highlight";
-import { Resolved, targetLabel, useBroadcastTarget, useWorkspace } from "../lib/broadcast";
+import { Resolved, isBroadcastRunning, targetLabel, useBroadcastTarget, useWorkspace } from "../lib/broadcast";
 import { LabItem, SAVE_COMMAND, clearLab, isLabRunning, labReport, runLab, scriptLines, stopLab, useLabRun } from "../lib/cliLab";
 import { runOnDeviceResult } from "../lib/deviceRun";
 import { isSecretVar } from "../lib/templateSecrets";
@@ -82,6 +82,7 @@ export function CliLab(p: Props) {
     if (!lines.length) return setMsg("El script no tiene comandos (las líneas con !, # o // son comentarios)");
     if (missing.length) return setMsg(`Completa: ${missing.join(", ")}`);
     if (isLabRunning()) return setMsg("Ya hay un script en ejecución");
+    if (isBroadcastRunning()) return setMsg("Hay un envío a varias sesiones en curso: espera a que termine");
     const filled = scriptLines(fillTemplate(text, values)).join("\n");
     const masked = Object.fromEntries(vars.map((v) => [v, isSecretVar(v) ? "••••••" : values[v]]));
     setMsg("");
