@@ -209,15 +209,25 @@ export function canonPort(p: string): string {
     .toLowerCase()
     .replace(/\s+/g, "")
     .replace(/^((?:ge|xe|et|ae|mge)-[\d/]+)\.0$/, "$1");
+  // Cada familia con su nombre completo y las abreviaturas de Cisco: "show interfaces" usa el
+  // nombre completo, LLDP la forma corta (Gi1/0/1, Tw1/0/1) y "show cdp neighbors" la de tres
+  // letras (Gig 1/0/1, Ten, Fas, For, Hun). Sin unificarlas, el enlace no encuentra sus
+  // contadores. Todas exigen un dígito después, y las más largas van primero.
   const families: [RegExp, string][] = [
-    [/^(hundredgig(abit)?e(thernet)?|hu|100ge)/, "hu"],
-    [/^(fortygig(abit)?e(thernet)?|fo|40ge)/, "fo"],
-    [/^(twentyfivegig(abit)?e(thernet)?|twe|25ge)/, "twe"],
-    [/^(tengig(abit)?e(thernet)?|xgigabitethernet|xge|te|10ge)/, "te"],
-    [/^(gigabitethernet|gige|gi|ge)(?=\d)/, "gi"],
-    [/^(fastethernet|fa)/, "fa"],
+    [/^(fourhundredgig(abit)?e(thernet)?|fou|400ge)(?=\d)/, "fou"],
+    [/^(hundredgig(abit)?e(thernet)?|hun|hu|100ge)(?=\d)/, "hu"],
+    [/^(fiftygig(abit)?e(thernet)?|fif|50ge)(?=\d)/, "fif"],
+    [/^(fortygig(abit)?e(thernet)?|for|fo|40ge)(?=\d)/, "fo"],
+    [/^(twentyfivegig(abit)?e(thernet)?|twe|25ge)(?=\d)/, "twe"],
+    [/^(tengig(abit)?e(thernet)?|xgigabitethernet|xge|ten|te|10ge)(?=\d)/, "te"],
+    [/^(fivegig(abit)?e(thernet)?|fiv|fi)(?=\d)/, "fi"],
+    [/^(twogig(abit)?e(thernet)?|two|tw)(?=\d)/, "tw"],
+    [/^(appgig(abit)?e(thernet)?|app|ap)(?=\d)/, "ap"],
+    [/^(gigabitethernet|gige|gig|gi|ge)(?=\d)/, "gi"],
+    [/^(fastethernet|fas|fa)(?=\d)/, "fa"],
     [/^(port-channel|po|eth-trunk|bundle-ether|be)(?=\d)/, "po"],
     [/^(ethernet|eth|et)(?=\d)/, "eth"],
+    [/^(vlan|vl)(?=\d)/, "vl"],
   ];
   for (const [re, fam] of families) if (re.test(s)) return s.replace(re, fam);
   return s;

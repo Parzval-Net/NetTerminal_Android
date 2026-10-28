@@ -1370,9 +1370,21 @@ export function TopologyTool({
                     {traffic.status.snmp.length > 0 && <p>SNMP: {traffic.status.snmp.join(", ")}</p>}
                     {traffic.status.cli.length > 0 && <p>Consola: {traffic.status.cli.join(", ")}</p>}
                     {traffic.status.none.length > 0 && (
-                      <p className="text-muted">
-                        Sin fuente: {traffic.status.none.join(", ")}. {trafficCli ? "Conecta su sesión o crea su perfil SNMP." : 'Crea su perfil SNMP o activa "También por consola".'}
-                      </p>
+                      <div className="space-y-1">
+                        {/* Sin SNMP ni consola no hay tráfico: el motivo y la acción, a la vista. */}
+                        <p className="text-warn">
+                          Sin datos de tráfico de {traffic.status.none.join(", ")}: {trafficCli ? "conecta su sesión o crea su perfil SNMP." : "no tiene perfil SNMP."}
+                        </p>
+                        {!trafficCli && terminals.length > 0 && (
+                          <button
+                            onClick={() => setTrafficCli(true)}
+                            className="h-7 px-2.5 rounded-md border border-line text-[12px] hover:bg-hover"
+                            title="Envía show interfaces, display interface o show interfaces extensive a su sesión conectada en cada lectura (solo consulta)"
+                          >
+                            Leer por consola
+                          </button>
+                        )}
+                      </div>
                     )}
                     {traffic.status.errors.map((e) => (
                       <p key={e} className="text-danger">

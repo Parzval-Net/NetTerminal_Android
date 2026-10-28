@@ -10,12 +10,11 @@ import {
   CounterSample,
   MAX_TRAFFIC_IFACES,
   PortRate,
-  TRAFFIC_COMMANDS,
-  TRAFFIC_FALLBACK,
   counterOids,
   parseCliCounters,
   parseCounterGets,
   portRate,
+  trafficCommands,
 } from "../../lib/topoTraffic";
 import type { TerminalRef } from "./FileManager";
 
@@ -93,6 +92,8 @@ export function useTopoTraffic({
   const prev = useRef(new Map<string, Map<string, CounterSample>>());
   const ifCache = useRef(new Map<string, IfCache>());
   const inFlight = useRef(new Set<string>());
+  /** Comando de contadores que respondió en cada equipo: no se reintentan los demás en cada ronda. */
+  const cliCmd = useRef(new Map<string, string>());
   const ratesRef = useRef(rates);
 
   /** El descubrimiento por SNMP ya leyó ifName: se reutiliza sin otra lectura. */
@@ -147,17 +148,23 @@ export function useTopoTraffic({
       return out;
     };
 
-    const readCli = async (term: TerminalRef, ports: string[]): Promise<Map<string, CounterSample>> => {
-      const vendor = vendorFor(term.highlight) as TopoVendor;
-      let cmd = TRAFFIC_COMMANDS[vendor];
-      if (!cmd) throw new Error("sin comando de contadores para este fabricante");
-      // Defensa en profundidad: solo se envía un comando de consulta.
-      if (computeRisk(cmd) !== "read") throw new Error("comando no permitido");
-      let out = await runOnDevice(term.connId, cmd, 60);
-      const alt = TRAFFIC_FALLBACK[cmd];
-      if (alt && isCliError(out) && computeRisk(alt) === "read") {
-        cmd = alt;
+    const readCli = async (n: TopoNode, term: TerminalRef, ports: string[]): Promise<Map<string, CounterSample>> => {
+      const h = term.highlight && term.highlight !== "off" ? (vendorFor(term.highlight) as TopoVendor) : undefined;
+      const known = cliCmd.current.get(n.id);
+      // Defensa en profundidad: solo se envían comandos de consulta.
+      const cmds = (known ? [known] : trafficCommands(term.session.platform, h)).filter((c) => computeRisk(c) === "read");
+      if (!cmds.length) throw new Error("sin comando de contadores para este fabricante");
+      let out = "";
+      for (const cmd of cmds) {
         out = await runOnDevice(term.connId, cmd, 60);
+        if (!isCliError(out)) {
+          cliCmd.current.set(n.id, cmd);
+          break;
+        }
+      }
+      if (isCliError(out)) {
+        cliCmd.current.delete(n.id);
+        throw new Error(`el equipo no reconoce ${cmds.join(" ni ")}`);
       }
       const ts = Date.now();
       const counters = parseCliCounters(out);
@@ -189,7 +196,7 @@ export function useTopoTraffic({
           if (inFlight.current.has(n.id)) return [n.id, ratesRef.current.get(n.id) ?? new Map()];
           inFlight.current.add(n.id);
           try {
-            const samples = p ? await readSnmp(n, p, ports) : await readCli(term!, ports);
+            const samples = p ? await readSnmp(n, p, ports) : await readCli(n, term!, ports);
             const before = prev.current.get(n.id) ?? new Map<string, CounterSample>();
             const out = new Map<string, PortRate>();
             for (const [k, s] of samples) out.set(k, portRate(before.get(k), s));
