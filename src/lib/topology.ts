@@ -233,6 +233,50 @@ export function canonPort(p: string): string {
   return s;
 }
 
+/**
+ * Fabricante según el prompt al final de la salida: <SW> o [SW] Huawei/H3C, usuario@equipo>
+ * Junos, "FGT #" (espacio antes de #) FortiOS y Router# o Router> Cisco. Tras saltar a otro
+ * equipo desde la misma sesión, la topología cambia sola la sintaxis de los comandos.
+ */
+export function vendorFromPrompt(output: string): TopoVendor | null {
+  const last = output.trimEnd().split("\n").pop()?.trim() ?? "";
+  if (/^<[\w.\-]+>$/.test(last) || /^\[~?\*?[\w.\-]+(?:[^\]\w.\-][^\]]*)?\]$/.test(last)) return "huawei";
+  if (/^[\w.\-]+@[\w.\-]+[>#%]$/.test(last)) return "juniper";
+  if (/^[\w.\-]+(?:\s\([^)]*\))?\s[#$]$/.test(last)) return "fortinet";
+  if (/^[\w.\-]+(?:\([^)]*\))?[#>]$/.test(last)) return "cisco";
+  return null;
+}
+
+/** Usuario que se puede escribir en un comando de salto (sin espacios ni opciones). */
+const HOP_USER = /^[A-Za-z0-9][\w.@\\-]{0,63}$/;
+
+/**
+ * Comando para saltar al vecino desde la consola del equipo actual (la misma pestaña), cuando
+ * el vecino solo es alcanzable desde ese equipo y no desde el PC. La IP viene de un vecino
+ * (dato del equipo): solo una IPv4/IPv6 literal. El usuario, sin espacios ni guiones al inicio.
+ * - Cisco IOS/IOS-XE: "ssh -l usuario IP"; NX-OS: "ssh usuario@IP"; Telnet: "telnet IP".
+ * - Huawei VRP: "stelnet IP" (pide el usuario en el equipo) o "telnet IP".
+ * - Junos: "ssh usuario@IP" o "telnet IP".
+ * - FortiOS: "execute ssh usuario@IP" o "execute telnet IP".
+ */
+export function hopCommand(vendor: TopoVendor, platform: string | undefined, proto: "ssh" | "telnet", user: string, ip: string): string | null {
+  if (!isIpv4(ip) && !isIpv6(ip)) return null;
+  const u = user.trim();
+  const needsUser = proto === "ssh" && vendor !== "huawei";
+  if (needsUser && !HOP_USER.test(u)) return null;
+  if (proto === "telnet") return vendor === "fortinet" ? `execute telnet ${ip}` : `telnet ${ip}`;
+  switch (vendor) {
+    case "huawei":
+      return `stelnet ${ip}`;
+    case "juniper":
+      return `ssh ${u}@${ip}`;
+    case "fortinet":
+      return `execute ssh ${u}@${ip}`;
+    default:
+      return platform === "nxos" ? `ssh ${u}@${ip}` : `ssh -l ${u} ${ip}`;
+  }
+}
+
 /** Hostname desde el prompt al final de la salida (Router#, <SW>, user@host>, FGT #). */
 export function promptName(output: string): string | null {
   const last = output.trimEnd().split("\n").pop() ?? "";

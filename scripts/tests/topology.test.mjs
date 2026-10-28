@@ -1416,4 +1416,34 @@ assert.deepEqual(T.parseDismissed([1, 2]), {});
   assert.deepEqual(lt, { ab: (2_000_000 * 8) / 15, ba: (15_000_000 * 8) / 15, speed: 1e9, util: 0.008, ts: 15_000 });
 }
 
+// ---------- Salto dentro de la misma pestaña (vecino que solo se alcanza desde el equipo) ----------
+{
+  const prompts = [["core-sw01#", "cisco"], ["core-sw01>", "cisco"], ["Router(config)#", "cisco"], ["<HUAWEI>", "huawei"], ["[~CE6800]", "huawei"], ["admin@mx01>", "juniper"], ["FGT-60F #", "fortinet"], ["FGT (global) #", "fortinet"], ["user@laptop:~$", null]];
+  for (const [p, want] of prompts) assert.equal(T.vendorFromPrompt(`salida\n${p}`), want, p);
+  const hops = [
+    [["cisco", "iosxe", "ssh", "admin", "10.1.1.2"], "ssh -l admin 10.1.1.2"],
+    [["cisco", "nxos", "ssh", "admin", "10.1.1.2"], "ssh admin@10.1.1.2"],
+    [["cisco", "ios", "telnet", "", "10.1.1.2"], "telnet 10.1.1.2"],
+    [["huawei", "vrp8", "ssh", "", "10.1.1.2"], "stelnet 10.1.1.2"],
+    [["juniper", undefined, "ssh", "netops", "2001:db8::2"], "ssh netops@2001:db8::2"],
+    [["fortinet", "fos72", "ssh", "admin", "10.1.1.2"], "execute ssh admin@10.1.1.2"],
+    [["fortinet", "fos72", "telnet", "", "10.1.1.2"], "execute telnet 10.1.1.2"],
+  ];
+  for (const [args, want] of hops) {
+    assert.equal(T.hopCommand(...args), want, JSON.stringify(args));
+    // Abre una sesión hacia el vecino: no cambia configuración.
+    assert.equal(computeRisk(want), "read", want);
+  }
+  // La IP y el usuario vienen de datos del equipo o de un campo: nada de opciones ni comandos extra.
+  for (const args of [
+    ["cisco", "ios", "ssh", "-oProxyCommand=x", "10.1.1.2"],
+    ["cisco", "ios", "ssh", "a b", "10.1.1.2"],
+    ["cisco", "ios", "ssh", "", "10.1.1.2"],
+    ["cisco", "ios", "ssh", "admin", "10.1.1.2; reload"],
+    ["cisco", "ios", "ssh", "admin", "core-sw02"],
+    ["huawei", "vrp8", "telnet", "", "10.1.1.2\nreboot"],
+  ])
+    assert.equal(T.hopCommand(...args), null, JSON.stringify(args));
+}
+
 console.log("topology: ok");

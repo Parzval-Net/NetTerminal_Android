@@ -68,6 +68,7 @@ import {
   dismissedSet,
   fmtBps,
   followedTerminal,
+  hopCommand,
   isCliError,
   isIpv4,
   isIpv6,
@@ -94,6 +95,7 @@ import {
   pathToText,
   portOf,
   promptName,
+  vendorFromPrompt,
   protoLabel,
   shortestPath,
   sourceOn,
@@ -357,6 +359,12 @@ export function TopologyTool({
       return next;
     });
   const [pendingFollow, setPendingFollow] = useState<PendingFollow | null>(null);
+  /**
+   * Saltos hechos dentro de cada pestaña (ssh/telnet desde la consola del equipo), para vecinos
+   * que solo se alcanzan desde el equipo inicial y no desde el PC. Pila por conexión.
+   */
+  const [hops, setHops] = useState<Record<string, { name: string; ip: string }[]>>({});
+  const [hopUser, setHopUser] = useState("");
   const drag = useRef<{ id: string; sx: number; sy: number; x: number; y: number } | null>(null);
   const [ui, setUi] = useState<TopoUi>(loadUi);
   const scroller = useRef<HTMLDivElement>(null);
@@ -375,6 +383,12 @@ export function TopologyTool({
   const profiles = useMemo(() => snmpProfiles.filter((p) => p.version !== "1" && p.host.trim()), [snmpProfiles]);
   const profile = profiles.find((p) => p.id === ui.snmpProfile) ?? profiles[0];
 
+  // Equipos alcanzados saltando en una pestaña: el tráfico por consola se lee por esa pestaña.
+  const hopVia = useMemo(() => {
+    const m: Record<string, string> = {};
+    for (const [conn, list] of Object.entries(hops)) for (const h of list) m[nodeId(h.name)] = conn;
+    return m;
+  }, [hops]);
   // Tráfico en enlaces: apagado al abrir; la lectura por consola también (envía comandos).
   const [trafficOn, setTrafficOn] = useState(false);
   const [trafficCli, setTrafficCli] = useState(false);
@@ -385,6 +399,7 @@ export function TopologyTool({
     terminals,
     opts: { on: trafficOn, cli: trafficCli, interval: ui.interval },
     visible,
+    via: hopVia,
   });
 
   // Migra el diagrama de versiones anteriores (antes vivía en el navegador, fuera de la carpeta de datos).
@@ -429,13 +444,26 @@ export function TopologyTool({
   const routingOn = sourceOn(sources, "routing");
   const macOn = sourceOn(sources, "mac");
 
-  const discover = async () => {
+  const selectedVendor = vendor;
+  const discover = async (forced?: TopoVendor): Promise<void> => {
     if (!term) return;
+    const vendor = forced ?? selectedVendor;
     setBusy(true);
     setMsg("");
     try {
       const outputs: string[] = [];
-      for (const cmd of NEIGHBOR_COMMANDS[vendor]) outputs.push(await run(cmd));
+      for (const cmd of NEIGHBOR_COMMANDS[vendor]) {
+        const out = await run(cmd);
+        // Tras un salto el equipo puede ser de otra marca: su prompt lo dice y se repite con su sintaxis.
+        if (!forced && !outputs.length) {
+          const seen = vendorFromPrompt(out);
+          if (seen && seen !== vendor) {
+            setVendor(seen);
+            return await discover(seen);
+          }
+        }
+        outputs.push(out);
+      }
       // "% CDP is not enabled", "% LLDP is not enabled" o comando inexistente en todos.
       const l2Off = outputs.every(isCliError);
       let neighbors = parseNeighbors(vendor, outputs);
@@ -486,7 +514,14 @@ export function TopologyTool({
       }
       const last = [...outputs].reverse().find((o) => o.trim()) ?? "";
       const name = promptName(last) ?? term.name;
-      onTopo((t) => mergeNeighbors(t, { name, ip: term.host, ports, addrs, macs }, [...neighbors, ...routing]));
+      // Dentro de un salto la IP es la del vecino al que se saltó, no la de la sesión del PC.
+      const chain = hops[term.connId] ?? [];
+      const at = chain.findIndex((h) => nodeId(h.name) === nodeId(name));
+      // La pila se ajusta a lo que dice el prompt (un "exit" tecleado a mano también cuenta).
+      if (at >= 0 && at < chain.length - 1) setHops((h) => ({ ...h, [term.connId]: chain.slice(0, at + 1) }));
+      if (at < 0 && chain.length && nodeId(name) === nodeId(term.name)) setHops((h) => ({ ...h, [term.connId]: [] }));
+      const ip = at >= 0 ? chain[at].ip : chain.length && nodeId(name) !== nodeId(term.name) ? undefined : term.host;
+      onTopo((t) => mergeNeighbors(t, { name, ip, ports, addrs, macs }, [...neighbors, ...routing]));
       setSelected(nodeId(name));
       const parts = [
         `${plural(neighbors.length, "vecino", "vecinos")} CDP/LLDP`,
@@ -743,6 +778,31 @@ export function TopologyTool({
     setMsg(`Abriendo ${proto.toUpperCase()} a ${n.name}: autentícate en su pestaña. Al conectar queda elegida aquí; vuelve y pulsa "Descubrir vecinos".`);
   };
 
+  const hopRoute = term ? (hops[term.connId] ?? []) : [];
+  const here = hopRoute.length ? hopRoute[hopRoute.length - 1].name : term?.name;
+
+  /** Salta al vecino desde la consola del equipo actual, en la misma pestaña. */
+  const hopTo = (n: TopoNode) => {
+    if (!term || !n.ip) return;
+    const user = (hopUser || term.session.username || "").trim();
+    const cmd = hopCommand(vendor, term.session.platform, proto, user, n.ip);
+    if (!cmd) {
+      setMsg(isIpv4(n.ip) || isIpv6(n.ip) ? "Escribe un usuario válido para el salto (sin espacios)." : `IP de gestión no válida: ${n.ip.slice(0, 64)}`);
+      return;
+    }
+    invoke("write", { id: term.connId, data: `${cmd}\r` }).catch((e) => setMsg(String(e)));
+    setHops((h) => ({ ...h, [term.connId]: [...(h[term.connId] ?? []), { name: n.name, ip: n.ip! }] }));
+    setMsg(`Enviado "${cmd}" en la pestaña de ${term.name}: autentícate ahí. Cuando veas el prompt de ${n.name}, vuelve y pulsa "Descubrir vecinos".`);
+  };
+
+  /** Vuelve al equipo anterior de la ruta (exit en la misma pestaña). */
+  const hopBack = () => {
+    if (!term || !hopRoute.length) return;
+    invoke("write", { id: term.connId, data: "exit\r" }).catch((e) => setMsg(String(e)));
+    setHops((h) => ({ ...h, [term.connId]: hopRoute.slice(0, -1) }));
+    setMsg(`Enviado "exit": vuelves a ${hopRoute.length > 1 ? hopRoute[hopRoute.length - 2].name : term.name}.`);
+  };
+
   const saveSnapshot = () => {
     const name = snapName?.trim() || `Topología ${new Date().toLocaleString()}`;
     const snap: TopoSnapshot = { id: `s${Date.now()}`, name, ts: Date.now(), topo };
@@ -932,7 +992,7 @@ export function TopologyTool({
             Estado de puertos
           </label>
           {mode === "cli" ? (
-            <Btn kind="primary" disabled={!term || busy} onClick={discover} title={hint}>
+            <Btn kind="primary" disabled={!term || busy} onClick={() => void discover()} title={hint}>
               <Radar size={14} className={busy ? "animate-pulse" : ""} /> {busy ? "Leyendo…" : "Descubrir vecinos"}
             </Btn>
           ) : (
@@ -941,6 +1001,15 @@ export function TopologyTool({
             </Btn>
           )}
         </div>
+        {mode === "cli" && term && hopRoute.length > 0 && (
+          <div className="mt-1.5 flex flex-wrap items-center gap-2 text-[11.5px]">
+            <span className="text-muted">Ruta en la pestaña de {term.name}:</span>
+            <span className="font-medium">{[term.name, ...hopRoute.map((h) => h.name)].join(" → ")}</span>
+            <Btn className="!h-6 !px-2 !text-[11.5px]" disabled={busy} onClick={hopBack} title='Envía "exit" en la pestaña: vuelve al equipo anterior'>
+              Volver a {hopRoute.length > 1 ? hopRoute[hopRoute.length - 2].name : term.name}
+            </Btn>
+          </div>
+        )}
         {mode === "snmp" && (
           <p className="mt-1.5 text-[11.5px] text-muted">
             Solo lectura con el perfil y sus secretos de la bóveda; tope de 10.000 filas y 20 s por tabla. Si LLDP y CDP vuelven vacíos por SNMP, el protocolo está apagado en el equipo.
@@ -1600,6 +1669,33 @@ export function TopologyTool({
                       </div>
                     );
                   })()}
+                {/* Equipo que solo se alcanza desde el actual: ssh/telnet en la misma pestaña (también ya explorado,
+                    p. ej. para volver a leer su tráfico por consola). */}
+                {sel.ip && term && mode === "cli" && nodeId(sel.name) !== nodeId(here ?? "") && (
+                  <div className="space-y-1.5 pt-1.5 border-t border-line">
+                    <p className="text-[11.5px] text-muted leading-snug">
+                      ¿No llegas desde tu PC? Salta desde <span className="font-medium text-fg">{here}</span> en su misma pestaña.
+                    </p>
+                    <div className="flex items-center gap-2">
+                      <select className="field !h-7 !text-[12px] !w-auto" aria-label="Protocolo del salto" value={proto} onChange={(e) => setProto(e.target.value as "ssh" | "telnet")}>
+                        <option value="ssh">{vendor === "huawei" ? "stelnet" : "ssh"}</option>
+                        <option value="telnet">telnet</option>
+                      </select>
+                      {proto === "ssh" && vendor !== "huawei" && (
+                        <input
+                          className="field !h-7 !text-[12px]"
+                          placeholder={`Usuario${term.session.username ? ` (${term.session.username})` : ""}`}
+                          aria-label="Usuario para el salto"
+                          value={hopUser}
+                          onChange={(e) => setHopUser(e.target.value)}
+                        />
+                      )}
+                    </div>
+                    <Btn className="w-full" disabled={busy} onClick={() => hopTo(sel)} title="Envía el comando de salto en la pestaña del equipo actual; te autenticas ahí">
+                      Saltar desde {here}
+                    </Btn>
+                  </div>
+                )}
                 {sel.ip && (
                   <Btn className="w-full" onClick={() => writeText(sel.ip!)}>
                     Copiar IP
