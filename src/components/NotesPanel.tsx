@@ -232,6 +232,19 @@ export const NotesPanel = memo(function NotesPanel(p: Props) {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
+  // El CLI Lab guardó una nota: aparece en la lista y, si es la abierta y no hay cambios sin
+  // guardar aquí, se recarga (si no, el autoguardado de Notas pisaría lo guardado en el Lab).
+  useEffect(() => {
+    const onSaved = (e: Event) => {
+      const name = (e as CustomEvent<{ name: string }>).detail?.name;
+      refresh();
+      if (name && name === current && !isProtected && !pendingSave.current)
+        invoke<string>("read_note", { name }).then(setContent, () => {});
+    };
+    window.addEventListener("nt-note-saved", onSaved);
+    return () => window.removeEventListener("nt-note-saved", onSaved);
+  }, [current, isProtected, refresh]);
+
   useEffect(() => {
     if (tool !== "search" || query.trim().length < 2) return setResults(null);
     const t = window.setTimeout(async () => {
@@ -523,8 +536,10 @@ export const NotesPanel = memo(function NotesPanel(p: Props) {
                 disabled={locked || !content.trim()}
                 onClick={() => {
                   const ta = editorRef.current;
-                  const sel = ta && ta.selectionEnd > ta.selectionStart ? content.slice(ta.selectionStart, ta.selectionEnd) : content;
-                  openLab(sel);
+                  const part = ta && ta.selectionEnd > ta.selectionStart;
+                  // La nota completa queda vinculada: "Guardar" en el Lab la actualiza.
+                  if (part) openLab(content.slice(ta.selectionStart, ta.selectionEnd));
+                  else openLab(content, current ?? undefined);
                   setMenuOpen(false);
                 }}
               />

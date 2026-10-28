@@ -1,5 +1,6 @@
 import { memo, useEffect, useState } from "react";
-import { ArrowLeftRight, BookOpen, KeyRound, Bot, Circle, CircleDot, NotebookPen, RotateCcw, Search, Settings, ShieldAlert, ShieldCheck, Unplug, Zap } from "lucide-react";
+import { ArrowLeftRight, BookOpen, KeyRound, Bot, Circle, CircleDot, NotebookPen, RotateCcw, Search, Settings, ShieldAlert, ShieldCheck, SquareTerminal, Unplug, Zap } from "lucide-react";
+import { openLab, useLabRun } from "../lib/cliLab";
 import {
   DeviceInfo,
   LIFE_LABEL,
@@ -87,6 +88,7 @@ export const StatusBar = memo(function StatusBar({
         <NotebookPen size={12} />
         <span className={LBL}>Notas</span>
       </BarBtn>
+      <LabBtn />
       <BarBtn onClick={onSettings} title={`Ajustes (${isMac ? "⌘" : "Ctrl+"},)`}>
         <Settings size={12} />
       </BarBtn>
@@ -179,6 +181,30 @@ export const StatusBar = memo(function StatusBar({
         {gear}
       </div>
     </div>
+  );
+});
+
+/** CLI Lab: abre el editor de scripts; mientras ejecuta muestra el avance y reabre el resultado. */
+const LabBtn = memo(function LabBtn() {
+  const run = useLabRun();
+  const done = run ? run.items.filter((i) => i.status !== "pending" && i.status !== "running").length : 0;
+  const failed = run ? run.items.filter((i) => i.status === "error").length : 0;
+  const tone = run?.running ? "!text-warn" : failed ? "!text-danger" : run ? "!text-ok" : "";
+  return (
+    <BarBtn
+      onClick={() => openLab()}
+      title={
+        run?.running
+          ? `CLI Lab ejecutando: ${done}/${run.items.length} equipos terminados`
+          : run
+            ? `CLI Lab: ${run.items.length - failed} de ${run.items.length} equipos OK${failed ? `, ${failed} con error` : ""}`
+            : "CLI Lab: script de varias líneas en el destino elegido, leyendo cada respuesta"
+      }
+      className={tone}
+    >
+      <SquareTerminal size={12} className={run?.running ? "animate-pulse" : ""} />
+      <span className={LBL}>CLI Lab{run?.running ? ` ${done}/${run.items.length}` : ""}</span>
+    </BarBtn>
   );
 });
 

@@ -1,7 +1,8 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import type { ITheme } from "@xterm/xterm";
 import { writeText } from "@tauri-apps/plugin-clipboard-manager";
-import { CircleAlert, CircleCheck, Copy, Play, Save, Square, Terminal, Trash2, X } from "lucide-react";
+import { CircleAlert, CircleCheck, Copy, Play, Save, Square, Terminal, X } from "lucide-react";
+import { invoke } from "@tauri-apps/api/core";
 import { CodeEditor } from "./CodeEditor";
 import { TargetOptions } from "./BroadcastTarget";
 import { BroadcastDialog } from "./BroadcastDialog";
@@ -17,12 +18,22 @@ import { persist, stored } from "../lib/prefs";
 import { tabTitle } from "../types";
 import { plural } from "../lib/plural";
 
-type Script = { id: string; name: string; text: string };
+type NoteInfo = { name: string; protected: boolean };
+
+/** Prefijo de las notas creadas desde el CLI Lab: se listan primero en su selector. */
+const SCRIPT_PREFIX = "Script ";
+/** El mismo filtro que aplica el backend al nombre de una nota (notes.rs). */
+const cleanNoteName = (v: string) =>
+  v
+    .replace(/[/\\:*?"<>|\u0000-\u001f\u007f]/g, "")
+    .trim()
+    .replace(/^\.+|\.+$/g, "")
+    .trim();
 
 interface Props {
   initialText?: string;
-  scripts: Script[];
-  onScripts: (list: Script[]) => void;
+  /** Nota de la que viene el texto (Notas › "Abrir en CLI Lab" sin selección): "Guardar" la actualiza. */
+  initialNote?: string;
   /** Fabricante de la pestaña activa (catálogo): comando de guardado sugerido. */
   vendor: string;
   compiled: Compiled[];
@@ -49,7 +60,15 @@ const statusColor = { pending: "text-muted", running: "text-accent", ok: "text-o
  */
 export function CliLab(p: Props) {
   const [text, setText] = useState(() => p.initialText ?? stored(DRAFT, { text: "" }).text ?? "");
-  const [scriptId, setScriptId] = useState<string>("");
+  /** Nota abierta en el Lab y su texto guardado (para saber si hay cambios). */
+  const [note, setNote] = useState<{ name: string; saved: string } | null>(() =>
+    p.initialNote && p.initialText !== undefined ? { name: p.initialNote, saved: p.initialText } : null,
+  );
+  const [notes, setNotes] = useState<NoteInfo[]>([]);
+  const loadNotes = () => invoke<NoteInfo[]>("list_notes").then(setNotes, () => {});
+  useEffect(() => {
+    loadNotes();
+  }, []);
   const [opts, setOpts] = useState(() => ({ ...LAB_DEFAULTS, ...stored(OPTS, LAB_DEFAULTS) }));
   const [values, setValues] = useState<Record<string, string>>({});
   const [confirm, setConfirm] = useState<{ text: string; shown: string; resolved: Resolved } | null>(null);
@@ -72,8 +91,14 @@ export function CliLab(p: Props) {
 
   const vars = useMemo(() => templateVars(text), [text]);
   const lines = useMemo(() => scriptLines(text), [text]);
-  const current = p.scripts.find((s) => s.id === scriptId);
-  const dirty = current ? current.text !== text : !!text.trim();
+  const dirty = note ? note.saved !== text : !!text.trim();
+  const openable = useMemo(() => {
+    const list = notes.filter((x) => !x.protected);
+    return {
+      scripts: list.filter((x) => x.name.startsWith(SCRIPT_PREFIX)),
+      others: list.filter((x) => !x.name.startsWith(SCRIPT_PREFIX)),
+    };
+  }, [notes]);
   const saveCmd = SAVE_COMMAND[p.vendor];
   const missing = vars.filter((v) => !values[v]?.trim());
   const running = !!run?.running;
@@ -113,21 +138,45 @@ export function CliLab(p: Props) {
     ).catch((e) => setMsg(String(e)));
   };
 
-  const saveScript = (asNew: boolean) => {
-    if (current && !asNew) {
-      p.onScripts(p.scripts.map((s) => (s.id === current.id ? { ...s, text } : s)));
-      return setMsg(`Guardado: ${current.name}`);
+  const writeNote = async (name: string) => {
+    try {
+      await invoke("save_note", { name, content: text });
+    } catch (e) {
+      setMsg(`No se pudo guardar: ${e}`);
+      return false;
     }
-    setNaming(current ? `${current.name} (copia)` : (lines[0]?.trim().slice(0, 40) ?? "Script"));
+    setNote({ name, saved: text });
+    setMsg(`Guardado en Notas: ${name}`);
+    loadNotes();
+    // Notas recarga la nota si la tiene abierta y sin cambios pendientes.
+    window.dispatchEvent(new CustomEvent("nt-note-saved", { detail: { name } }));
+    return true;
+  };
+  const saveScript = (asNew: boolean) => {
+    if (note && !asNew) return void writeNote(note.name);
+    const base = note ? `${note.name} (copia)` : `${SCRIPT_PREFIX}${cleanNoteName(lines[0]?.trim() ?? "").slice(0, 40) || "nuevo"}`;
+    setNaming(base);
   };
   const commitName = () => {
-    const name = naming?.trim();
+    const name = cleanNoteName(naming ?? "");
+    if (!name) return setNaming(null);
+    if (notes.some((x) => x.name.toLowerCase() === name.toLowerCase()) && name !== note?.name) {
+      return setMsg(`Ya existe una nota "${name}": elige otro nombre`);
+    }
     setNaming(null);
+    void writeNote(name);
+  };
+  const openNote = async (name: string) => {
     if (!name) return;
-    const id = crypto.randomUUID();
-    p.onScripts([...p.scripts, { id, name, text }]);
-    setScriptId(id);
-    setMsg(`Guardado: ${name}`);
+    try {
+      const content = await invoke<string>("read_note", { name });
+      setText(content);
+      setNote({ name, saved: content });
+      setValues({});
+      setMsg("");
+    } catch (e) {
+      setMsg(`No se pudo abrir ${name}: ${e}`);
+    }
   };
 
   const n = p.resolve().targets.length;
@@ -154,20 +203,31 @@ export function CliLab(p: Props) {
           <h2 className="text-[14px] font-semibold mr-2">CLI Lab</h2>
           <select
             className="field !h-7 !w-56 !text-[12px]"
-            value={scriptId}
-            aria-label="Script guardado"
-            onChange={(e) => {
-              const s = p.scripts.find((x) => x.id === e.target.value);
-              setScriptId(e.target.value);
-              if (s) setText(s.text);
-            }}
+            value={note?.name ?? ""}
+            aria-label="Abrir una nota"
+            title="Los scripts se guardan en Notas"
+            onFocus={loadNotes}
+            onChange={(e) => (e.target.value ? openNote(e.target.value) : setNote(null))}
           >
-            <option value="">{current ? "Script nuevo" : dirty ? "Script sin guardar" : "Scripts guardados…"}</option>
-            {p.scripts.map((s) => (
-              <option key={s.id} value={s.id}>
-                {s.name}
-              </option>
-            ))}
+            <option value="">{note ? "Desvincular (guardar como nueva)" : dirty ? "Sin guardar" : "Abrir desde Notas…"}</option>
+            {openable.scripts.length > 0 && (
+              <optgroup label="Scripts">
+                {openable.scripts.map((x) => (
+                  <option key={x.name} value={x.name}>
+                    {x.name.slice(SCRIPT_PREFIX.length)}
+                  </option>
+                ))}
+              </optgroup>
+            )}
+            {openable.others.length > 0 && (
+              <optgroup label="Otras notas">
+                {openable.others.map((x) => (
+                  <option key={x.name} value={x.name}>
+                    {x.name}
+                  </option>
+                ))}
+              </optgroup>
+            )}
           </select>
           {naming !== null ? (
             <input
@@ -183,30 +243,19 @@ export function CliLab(p: Props) {
                 if (e.key === "Enter") commitName();
                 if (e.key === "Escape") setNaming(null);
               }}
-              onBlur={commitName}
+              onBlur={() => setNaming(null)}
             />
           ) : (
-          <button onClick={() => saveScript(false)} disabled={!text.trim() || (!!current && !dirty)} title={current ? "Guardar cambios" : "Guardar script"} className="flex items-center gap-1 px-2 h-7 rounded-md border border-line hover:bg-hover disabled:opacity-40 text-[12px]">
+          <button onClick={() => saveScript(false)} disabled={!text.trim() || (!!note && !dirty)} title={note ? `Guardar cambios en la nota "${note.name}"` : "Guardar como nota nueva"} className="flex items-center gap-1 px-2 h-7 rounded-md border border-line hover:bg-hover disabled:opacity-40 text-[12px]">
             <Save size={13} /> Guardar
           </button>
           )}
-          {current && (
-            <>
-              <button onClick={() => saveScript(true)} className="px-2 h-7 rounded-md border border-line hover:bg-hover text-[12px]">
-                Guardar como…
-              </button>
-              <button
-                onClick={() => {
-                  p.onScripts(p.scripts.filter((s) => s.id !== current.id));
-                  setScriptId("");
-                }}
-                title="Eliminar script guardado"
-                className="w-7 h-7 grid place-items-center rounded-md text-danger hover:bg-hover"
-              >
-                <Trash2 size={13} />
-              </button>
-            </>
+          {note && (
+            <button onClick={() => saveScript(true)} className="px-2 h-7 rounded-md border border-line hover:bg-hover text-[12px]">
+              Guardar como…
+            </button>
           )}
+          {note && dirty && <span className="text-[11px] text-muted">Cambios sin guardar</span>}
           <span className="flex-1" />
           <button onClick={p.onClose} aria-label="Cerrar" className="w-7 h-7 grid place-items-center rounded-md text-muted hover:text-fg hover:bg-hover">
             <X size={16} />

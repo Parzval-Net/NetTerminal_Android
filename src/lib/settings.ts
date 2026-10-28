@@ -74,8 +74,6 @@ export interface Settings {
   sidebarOrder: Record<string, string[]>;
   /** Ciclo de vida (EoL) y versión de sistema operativo del equipo en la barra de estado (opcional). */
   lifecycleInfo: boolean;
-  /** Scripts guardados del CLI Lab (editor multilínea para varias sesiones). */
-  cliScripts: { id: string; name: string; text: string }[];
   /** Modelo y versión vistos por destino (host), para el ciclo de vida en la barra de estado. */
   deviceInfo: DeviceInfoMap;
   confirmSend: boolean;
@@ -164,7 +162,6 @@ export const defaultSettings: Settings = {
   extraFolders: [],
   sidebarOrder: {},
   lifecycleInfo: false,
-  cliScripts: [],
   deviceInfo: {},
   confirmSend: true,
   macros: [
@@ -244,9 +241,7 @@ export function mergeSettings(loaded: unknown): Settings {
   out.deviceInfo = Object.fromEntries(
     Object.entries(isObj(out.deviceInfo) ? out.deviceInfo : {}).filter(([, v]) => isObj(v) && (v.model === undefined || typeof v.model === "string") && (v.version === undefined || typeof v.version === "string")),
   );
-  out.cliScripts = (out.cliScripts as unknown[]).filter(
-    (x) => isObj(x) && typeof x.id === "string" && typeof x.name === "string" && typeof x.text === "string",
-  );
+
   return out as unknown as Settings;
 }
 

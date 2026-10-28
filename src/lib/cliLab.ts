@@ -75,10 +75,10 @@ export const cliError = commandError;
 
 const runStore = store<LabRun | null>(null);
 /** Ventana abierta (con el texto inicial, ej. desde Notas) o null. */
-const openStore = store<{ text?: string; n: number } | null>(null);
+const openStore = store<{ text?: string; note?: string; n: number } | null>(null);
 export const useLabOpen = () => useSyncExternalStore(openStore.subscribe, openStore.get);
 // `n` cambia en cada apertura: abrir desde Notas con la ventana ya abierta carga el texto nuevo.
-export const openLab = (text?: string) => openStore.set({ text, n: (openStore.get()?.n ?? 0) + 1 });
+export const openLab = (text?: string, note?: string) => openStore.set({ text, note, n: (openStore.get()?.n ?? 0) + 1 });
 export const closeLab = () => openStore.set(null);
 let stopFlag = false;
 

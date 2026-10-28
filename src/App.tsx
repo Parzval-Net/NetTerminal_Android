@@ -1584,8 +1584,7 @@ function Workspace({
         <CliLab
           key={labOpen.n}
           initialText={labOpen.text}
-          scripts={settings.cliScripts}
-          onScripts={(cliScripts) => update({ cliScripts })}
+          initialNote={labOpen.note}
           vendor={settings.catalogVendor}
           compiled={notesRules}
           theme={preset.theme}
