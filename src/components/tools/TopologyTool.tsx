@@ -1121,6 +1121,30 @@ export function TopologyTool({
     await invoke("save_text", { dest, content }).then(() => setMsg(`Guardado: ${dest}`)).catch((e) => setMsg(String(e)));
   };
 
+  /**
+   * draw.io con los íconos de red de su biblioteca Cisco, zonas por carpeta de la sesión guardada
+   * y, con el ciclo de vida activo, la etapa EoL bajo cada equipo.
+   */
+  const exportDrawioIcons = async () => {
+    const [{ toDrawioIcons }, life] = await Promise.all([
+      import("../../lib/topoDrawio"),
+      lifecycle ? import("../../lib/lifecycle").then(async (L) => ({ L, db: await L.loadLifecycle() })) : null,
+    ]);
+    const zones = new Map<string, string>();
+    const notes = new Map<string, string>();
+    const today = new Date().toISOString().slice(0, 10);
+    for (const n of topo.nodes) {
+      const folder = savedFor(n)?.folder?.trim();
+      if (folder) zones.set(n.id, folder);
+      const model = life && modelFromPlatform(n.platform);
+      if (life && model) {
+        const level = life.L.lifeLevel(life.L.findLifecycle(life.db, model), today);
+        if (level !== "none") notes.set(n.id, life.L.LIFE_LABEL[level]);
+      }
+    }
+    await exportFile("drawio", toDrawioIcons(topo, { zones, notes, l2: ui.l2 }));
+  };
+
   /** Sesión guardada que corresponde al equipo (misma IP o mismo nombre). */
   const savedFor = (n: TopoNode) =>
     sessions.find((s) => (s.type === "ssh" || s.type === "telnet") && ((n.ip && s.host === n.ip) || nodeId(s.name) === n.id));
@@ -1550,7 +1574,8 @@ export function TopologyTool({
                 y: r.bottom + 4,
                 items: [
                   ["Imagen SVG", <Download size={13} />, () => exportFile("svg", toSvg(topo, W, H, linkRates))],
-                  ["draw.io (editable)", <Download size={13} />, () => exportFile("drawio", toDrawio(topo, W, H))],
+                  ["draw.io con íconos de red", <Download size={13} />, () => void exportDrawioIcons()],
+                  ["draw.io simple (cajas)", <Download size={13} />, () => exportFile("drawio", toDrawio(topo, W, H))],
                   ["CSV de enlaces y puertos", <Download size={13} />, () => exportFile("csv", toCsv(topo, linkRates)), !topo.links.length],
                   [
                     "Copiar como Mermaid",
