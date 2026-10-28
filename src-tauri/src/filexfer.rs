@@ -53,7 +53,9 @@ const MAX_OUTPUT: usize = 16 * 1024 * 1024;
 /// Texto final que se conserva para reconocer preguntas de confirmación.
 const TAIL_KEEP: usize = 4096;
 
-pub fn run(app: AppHandle, conn: String, command: String, timeout_secs: u64) -> Result<String, String> {
+/// `answer = false`: no confirma nada; ante una pregunta responde que no (Ctrl+C en "[confirm]"),
+/// espera el prompt y lo informa en el resultado (`declined`).
+pub fn run(app: AppHandle, conn: String, command: String, timeout_secs: u64, answer: bool) -> Result<String, String> {
     if command.contains(['\r', '\n']) {
         return Err("Un solo comando por operación".into());
     }
@@ -79,6 +81,7 @@ pub fn run(app: AppHandle, conn: String, command: String, timeout_secs: u64) -> 
         let mut output = String::new();
         let mut tail = String::new(); // texto desde la última respuesta automática
         let mut answered = 0;
+        let mut declined: Option<String> = None;
         let mut echo = EchoScan::default();
         // Líneas completas hacia la interfaz: un fragmento puede cortar una línea a la mitad.
         let mut partial = String::new();
@@ -124,12 +127,23 @@ pub fn run(app: AppHandle, conn: String, command: String, timeout_secs: u64) -> 
             partial.push_str(&chunk);
             flush(&mut partial, false);
             let t = tail.trim_end_matches([' ', '\t']);
+            let question = || t.lines().last().unwrap_or("").trim().chars().take(200).collect::<String>();
             let reply = if p.more.is_match(t) {
                 Some(" ")
             } else if p.yes_no.is_match(t) {
-                Some("y\r")
+                if answer {
+                    Some("y\r")
+                } else {
+                    declined.get_or_insert_with(question);
+                    Some("n\r")
+                }
             } else if p.confirm.is_match(t) {
-                Some("\r")
+                if answer {
+                    Some("\r")
+                } else {
+                    declined.get_or_insert_with(question);
+                    Some("\x03")
+                }
             } else {
                 None
             };
@@ -148,8 +162,8 @@ pub fn run(app: AppHandle, conn: String, command: String, timeout_secs: u64) -> 
             }
         }
         flush(&mut partial, true);
-        let failed = p.error.is_match(&output);
-        emit("result", String::new(), Some(json!({ "ok": !failed, "output": output })));
+        let failed = p.error.is_match(&output) || declined.is_some();
+        emit("result", String::new(), Some(json!({ "ok": !failed, "output": output, "declined": declined })));
         emit("done", String::new(), None);
     });
     Ok(job)

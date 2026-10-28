@@ -30,6 +30,7 @@ interface Props {
   onImportSessions: (list: Session[]) => Promise<number>;
   /** Importación desde archivos de otros clientes. */
   onImportFile?: () => void;
+  onExportFile?: () => void;
   initialSection?: Section;
   mcpStatus: string;
   onChange: (patch: Partial<Settings>) => void;
@@ -93,6 +94,7 @@ export function SettingsModal({
   sessions,
   onImportSessions,
   onImportFile,
+  onExportFile,
   initialSection,
   mcpStatus,
   onChange,
@@ -517,7 +519,7 @@ export function SettingsModal({
 
             {section === "sessions" && (
               <>
-                <Item label="Sesiones" hint="Comparte tu lista de equipos vía portapapeles (JSON) o importa desde otros clientes">
+                <Item label="Sesiones" hint="Comparte tu lista de equipos en XML o JSON, o importa desde otros clientes">
                   <div className="flex gap-1.5">
                     <button
                       onClick={importSessions}
@@ -535,10 +537,11 @@ export function SettingsModal({
                       </button>
                     )}
                     <button
-                      onClick={exportSessions}
+                      onClick={onExportFile ?? exportSessions}
+                      title="Elige qué sesiones: XML (compatible con SecureCRT) o JSON"
                       className="px-3 h-7 rounded-md border border-line hover:bg-hover"
                     >
-                      Exportar
+                      Exportar…
                     </button>
                   </div>
                 </Item>

@@ -313,7 +313,7 @@ mod tests {
         std::fs::write(&other, "").unwrap();
         // Sin iperf3 real en la carpeta: no se encuentra con esa ruta (y no se ejecuta "calc").
         let found = find_iperf(Some(&other.to_string_lossy()));
-        assert!(found.map_or(true, |f| !f.path.ends_with("calc")));
+        assert!(found.is_none_or(|f| !f.path.ends_with("calc")));
         std::fs::remove_dir_all(&base).unwrap();
     }
 }

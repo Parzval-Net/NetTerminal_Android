@@ -1165,6 +1165,63 @@ mod tests {
         assert!(warn.contains("firewall") && warn.contains("túneles") && warn.contains("RDP"));
     }
 
+    /// El XML que genera "Exportar sesiones" (src/lib/sessionXml.ts) se reimporta completo.
+    #[test]
+    fn netterminal_xml_roundtrip() {
+        let xml = r#"<?xml version="1.0" encoding="UTF-8"?>
+<VanDyke version="3.0">
+  <key name="Sessions">
+    <key name="Sitio &amp; Core">
+      <key name="WAN">
+        <key name="core&lt;1&gt;">
+          <dword name="Is Session">1</dword>
+          <string name="Protocol Name">SSH2</string>
+          <string name="Hostname">192.0.2.1</string>
+          <string name="Username">netops</string>
+          <dword name="[SSH2] Port">2222</dword>
+        </key>
+        <key name="core&lt;1&gt; (2)">
+          <dword name="Is Session">1</dword>
+          <string name="Protocol Name">Telnet</string>
+          <string name="Hostname">192.0.2.2</string>
+          <dword name="Port">23</dword>
+        </key>
+      </key>
+    </key>
+    <key name="tcp">
+      <dword name="Is Session">1</dword>
+      <string name="Protocol Name">Raw</string>
+      <string name="Hostname">192.0.2.3</string>
+      <dword name="Port">2001</dword>
+    </key>
+    <key name="consola">
+      <dword name="Is Session">1</dword>
+      <string name="Protocol Name">Serial</string>
+      <string name="Com Port">COM3</string>
+      <dword name="Baud Rate">115200</dword>
+      <dword name="Data Bits">8</dword>
+      <dword name="Stop Bits">2</dword>
+      <dword name="Parity">2</dword>
+      <dword name="CTS Flow">1</dword>
+      <dword name="XON Flow">0</dword>
+    </key>
+  </key>
+</VanDyke>
+"#;
+        assert_eq!(detect("sesiones.xml", xml).as_deref(), Some("securecrt"));
+        let p = parse("securecrt", xml);
+        assert_eq!(p.sessions.len(), 4, "{:?}", p.warnings);
+        assert!(p.warnings.is_empty(), "{:?}", p.warnings);
+        let s = &p.sessions[0];
+        assert_eq!((s.name.as_str(), s.folder.as_deref()), ("core<1>", Some("Sitio & Core/WAN")));
+        assert_eq!((s.host.as_deref(), s.port, s.username.as_deref()), (Some("192.0.2.1"), Some(2222), Some("netops")));
+        assert_eq!((p.sessions[1].session_type.clone(), p.sessions[1].port), (SessionType::Telnet, Some(23)));
+        assert_eq!((p.sessions[2].session_type.clone(), p.sessions[2].port), (SessionType::Raw, Some(2001)));
+        let c = &p.sessions[3];
+        assert_eq!((c.serial_port.as_deref(), c.baud_rate, c.stop_bits), (Some("COM3"), Some(115200), Some(2)));
+        assert_eq!((c.parity.as_deref(), c.flow_control.as_deref()), (Some("even"), Some("hardware")));
+    }
+
     #[test]
     fn mobaxterm_bookmarks() {
         let conf = "[Misc]\r\nx=1\r\n[Bookmarks]\r\nSubRep=\r\nImgNum=42\r\n\

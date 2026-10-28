@@ -733,11 +733,11 @@ fn tftp_delete(name: String, state: State<'_, AppState>) -> Result<(), String> {
 }
 
 #[tauri::command]
-fn device_run(conn: String, command: String, timeout_secs: u64, app: tauri::AppHandle) -> Result<String, String> {
+fn device_run(conn: String, command: String, timeout_secs: u64, answer: Option<bool>, app: tauri::AppHandle) -> Result<String, String> {
     if app.state::<AppState>().scripts.owner(&conn).is_some() {
         return Err(scripts::BUSY.into());
     }
-    filexfer::run(app, conn, command, timeout_secs)
+    filexfer::run(app, conn, command, timeout_secs, answer.unwrap_or(true))
 }
 
 #[tauri::command(async)]
@@ -771,7 +771,7 @@ fn app_version() -> &'static str {
 /// Guarda un texto (exportaciones de diagramas, tablas) en la ruta elegida por el usuario.
 #[tauri::command(async)]
 fn save_text(dest: String, content: String) -> Result<(), String> {
-    let ok_ext = ["svg", "csv", "md", "mmd", "txt", "json", "drawio"];
+    let ok_ext = ["svg", "csv", "md", "mmd", "txt", "json", "drawio", "xml"];
     let ext = std::path::Path::new(&dest)
         .extension()
         .and_then(|e| e.to_str())

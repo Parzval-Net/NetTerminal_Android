@@ -1,7 +1,7 @@
 import { memo, useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { invoke } from "@tauri-apps/api/core";
 import type { ITheme } from "@xterm/xterm";
-import { ArrowDownToLine, Check, FolderOpen, Lock, MoreHorizontal, Network, Pencil, Plus, Replace, Search, Send, SendHorizontal, ShieldCheck, Trash2, Workflow, X } from "lucide-react";
+import { ArrowDownToLine, Check, FolderOpen, Lock, MoreHorizontal, Network, Pencil, Plus, Replace, Search, Send, SendHorizontal, ShieldCheck, SquareTerminal, Trash2, Workflow, X } from "lucide-react";
 import { DiagramPreview } from "./DiagramPreview";
 import { NETWORK_TEMPLATE } from "../lib/mermaidBlocks";
 import { CodeEditor } from "./CodeEditor";
@@ -10,6 +10,7 @@ import { Compiled } from "../lib/highlight";
 import { fontStack } from "../lib/theme";
 import { isMac, modLabel } from "../lib/platform";
 import { PanelResize, panelClass } from "./PanelResize";
+import { openLab } from "../lib/cliLab";
 
 interface NoteInfo {
   name: string;
@@ -512,6 +513,18 @@ export const NotesPanel = memo(function NotesPanel(p: Props) {
                 onClick={() => {
                   edit(content + (content && !content.endsWith("\n\n") ? (content.endsWith("\n") ? "\n" : "\n\n") : "") + NETWORK_TEMPLATE);
                   toggleDiagrams(true);
+                  setMenuOpen(false);
+                }}
+              />
+              <MenuItem
+                icon={<SquareTerminal size={14} />}
+                label="Abrir en CLI Lab"
+                hint="Ejecuta la selección (o la nota completa) línea a línea en las sesiones del destino y muestra cada respuesta"
+                disabled={locked || !content.trim()}
+                onClick={() => {
+                  const ta = editorRef.current;
+                  const sel = ta && ta.selectionEnd > ta.selectionStart ? content.slice(ta.selectionStart, ta.selectionEnd) : content;
+                  openLab(sel);
                   setMenuOpen(false);
                 }}
               />

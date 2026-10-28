@@ -7,6 +7,7 @@ import {
   ChevronUp,
   ChevronsDownUp,
   Copy,
+  FileDown,
   FileUp,
   Folder,
   FolderOpen,
@@ -71,6 +72,8 @@ interface Props {
   onConfirm: (req: ConfirmRequest) => void;
   /** Abre la importación desde PuTTY, SecureCRT, MobaXterm, OpenSSH o CSV. */
   onImportFile?: () => void;
+  /** Abre "Exportar sesiones" con la carpeta indicada preseleccionada (sin carpeta: todas). */
+  onExportFile?: (folder?: string) => void;
   /** Conexión rápida sin guardar (SSH, Telnet, Serial). */
   onQuickConnect?: () => void;
 }
@@ -233,6 +236,7 @@ export const Sidebar = memo(function Sidebar(p: Props) {
       ["Nueva sesión aquí", <Plus size={13} />, () => p.onNew(node.path)],
       ["Nueva subcarpeta", <FolderPlus size={13} />, () => createFolder(node.path)],
       ["Renombrar", <Pencil size={13} />, () => setRenaming(node.path)],
+      ...(p.onExportFile ? [["Exportar sesiones…", <FileDown size={13} />, () => p.onExportFile?.(node.path), node.total === 0] as MenuItem] : []),
       ...moveItems({ kind: "folder", node }, parentOf(node.path)),
       ["Eliminar carpeta", <Trash2 size={13} />, () => deleteFolder(node.path)],
     ]);
@@ -616,6 +620,7 @@ export const Sidebar = memo(function Sidebar(p: Props) {
             ...(p.onImportFile
               ? [["Importar sesiones…", <FileUp size={13} />, p.onImportFile] as MenuItem]
               : []),
+            ...(p.onExportFile ? [["Exportar sesiones…", <FileDown size={13} />, () => p.onExportFile?.()] as MenuItem] : []),
           ])
         }
         {...dropProps("")}

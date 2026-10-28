@@ -964,9 +964,18 @@ if (new URLSearchParams(location.search).has("video")) {
     const s = connSessions.get(args.conn) ?? {};
     const job = `job-${nextId++}`;
     const prompt = s.highlight === "huawei" ? `<${s.name}>` : `${s.name}#`;
-    const output = `${prompt}${args.command}\r\n${respond(args.conn, s, args.command)}${prompt}`;
+    // CLI Lab: comandos inexistentes dan error de CLI; "reload" pregunta y, sin answer, se rechaza.
+    const bad = /^(sh(ow)? bogus|foo)/i.test(args.command.trim());
+    const ask = /^reload/i.test(args.command.trim());
+    const declined = ask && args.answer === false ? "Proceed with reload? [confirm]" : null;
+    const body = bad
+      ? "                ^\r\n% Invalid input detected at '^' marker.\r\n\r\n"
+      : ask
+        ? "Proceed with reload? [confirm]\r\n"
+        : respond(args.conn, s, args.command);
+    const output = `${prompt}${args.command}\r\n${body}${prompt}`;
     setTimeout(() => {
-      emit("tool-job", { job, kind: "result", text: "", data: { ok: true, output } });
+      emit("tool-job", { job, kind: "result", text: "", data: { ok: !bad && !declined, output, declined } });
       emit("tool-job", { job, kind: "done", text: "" });
     }, 500);
     return job;

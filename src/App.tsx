@@ -14,7 +14,7 @@ import { NotesPanel } from "./components/NotesPanel";
 import { CommandsPanel } from "./components/CommandsPanel";
 import { vendorFor } from "./lib/commands";
 import { DeviceInfo, detectDeviceInfo, deviceKey, promptHost, rememberDevice } from "./lib/lifecycle";
-import { CatalogEntry, Pack, PackCommand, Risk, buildCatalog, computeRisk, detectPlatform, riskLabel, validatePack } from "./lib/packs";
+import { CatalogEntry, Pack, PackCommand, Risk, buildCatalog, computeRisk, detectPlatform, orderPacks, riskLabel, validatePack } from "./lib/packs";
 import type { ScpRequest } from "./components/tools/FileManager";
 import { runOnDevice } from "./lib/deviceRun";
 
@@ -38,6 +38,7 @@ import { Settings, logOptions, useSettings } from "./lib/settings";
 import { useAlerts } from "./lib/alerts";
 import { BroadcastBar, BroadcastDialog } from "./components/BroadcastDialog";
 import { Resolved, getBroadcastRun, isBroadcastRunning, publishWorkspace, stopBroadcast, resolveTargets, runBroadcast, targetLabel, useBroadcastTarget, useWorkspace } from "./lib/broadcast";
+import { closeLab, openLab, useLabOpen } from "./lib/cliLab";
 import { SplitPanes } from "./components/SplitPanes";
 import { SplitLayout, SplitState, fillPanes, paneRect } from "./lib/split";
 import logo from "./assets/logo.svg";
@@ -63,6 +64,8 @@ const DIALOGS = {
   macro: () => import("./components/MacroModal").then((m) => m.MacroModal),
   approval: () => import("./components/ApprovalDialog").then((m) => m.ApprovalDialog),
   script: () => import("./components/ScriptLaunchDialog").then((m) => m.ScriptLaunchDialog),
+  exportSessions: () => import("./components/ExportSessionsDialog").then((m) => m.ExportSessionsDialog),
+  cliLab: () => import("./components/CliLab").then((m) => m.CliLab),
 };
 function lazyDialog<P extends object>(load: () => Promise<React.ComponentType<P>>) {
   // Sin React.lazy: Suspense retiene hasta 300 ms el contenido que reemplaza al fallback, y el
@@ -88,6 +91,8 @@ const CommandEditor = lazyDialog(DIALOGS.cmdEditor);
 const MacroModal = lazyDialog(DIALOGS.macro);
 const ApprovalDialog = lazyDialog(DIALOGS.approval);
 const ScriptLaunchDialog = lazyDialog(DIALOGS.script);
+const ExportSessionsDialog = lazyDialog(DIALOGS.exportSessions);
+const CliLab = lazyDialog(DIALOGS.cliLab);
 const LAZY_DIALOGS = [SessionModal, CommandPalette, QuickConnectDialog, PacksModal, CommandEditor, MacroModal, ApprovalDialog, ScriptLaunchDialog];
 
 const LOCAL: Session = { id: "local", name: "Terminal local", type: "local", created_at: "" };
@@ -176,6 +181,9 @@ function Workspace({
   const [paletteOpen, setPaletteOpen] = useState(false);
   const [quickOpen, setQuickOpen] = useState(false);
   const [importOpen, setImportOpen] = useState(false);
+  const labOpen = useLabOpen();
+  /** Exportar sesiones: undefined cerrado, "" todas, o la carpeta preseleccionada. */
+  const [exportFolder, setExportFolder] = useState<string | undefined>(undefined);
   const [sidebarOpen, setSidebarOpen] = useState(() => stored("sidebar", true));
   const controllers = useRef(new Map<string, TermController>());
 
@@ -712,7 +720,7 @@ function Workspace({
   }, []);
 
   const allPacks = useMemo(
-    () => [...builtinPacks, ...userPacks.filter((p) => !builtinPacks.some((b) => b.id === p.id))],
+    () => orderPacks(builtinPacks, userPacks),
     [builtinPacks, userPacks],
   );
   const catalog = useMemo(() => buildCatalog(allPacks, settings.disabledPacks), [allPacks, settings.disabledPacks]);
@@ -1186,6 +1194,12 @@ function Workspace({
     cancelBroadcast: () => setBroadcast(null),
     startBroadcast,
     openImport: () => setImportOpen(true),
+    openExport: (folder?: string) => setExportFolder(folder ?? ""),
+    labTargets: () => resolveTargets(bcTarget, tabs, (id) => states[id]?.status, activeId, visiblePanes),
+    labConn: (id: string) => {
+      const c = controllers.current.get(id);
+      return c?.isConnected() ? c.connId() : undefined;
+    },
     // Activa "algoritmos legacy" en la pestaña y, si es una sesión guardada, la deja guardada.
     /** Lectura pasiva de pantalla (al conectar o tras un show version): fija plataforma y resaltado. */
     screenHint: (tabId: string) => {
@@ -1265,6 +1279,7 @@ function Workspace({
           onSetExtraFolders={h.setExtraFolders}
           onConfirm={setConfirm}
           onImportFile={h.openImport}
+          onExportFile={h.openExport}
         />
       )}
 
@@ -1465,6 +1480,7 @@ function Workspace({
             sessions={sessions}
             onImportSessions={importSessions}
             onImportFile={h.openImport}
+            onExportFile={() => h.openExport()}
             initialSection={settingsSection}
             mcpStatus={mcpStatus}
             onChange={update}
@@ -1575,6 +1591,25 @@ function Workspace({
           }}
         />
       )}
+      {labOpen && (
+        <CliLab
+          key={labOpen.n}
+          initialText={labOpen.text}
+          scripts={settings.cliScripts}
+          onScripts={(cliScripts) => update({ cliScripts })}
+          vendor={settings.catalogVendor}
+          compiled={notesRules}
+          theme={preset.theme}
+          font={settings.fontFamily}
+          fontSize={Math.max(11, settings.fontSize - 1)}
+          resolve={h.labTargets}
+          connOf={h.labConn}
+          onClose={closeLab}
+        />
+      )}
+      {exportFolder !== undefined && (
+        <ExportSessionsDialog sessions={sessions} folder={exportFolder || undefined} onClose={() => setExportFolder(undefined)} />
+      )}
       {importOpen && (
         <Suspense fallback={null}>
           <ImportDialog folders={folders} sessions={sessions} onImport={importSessions} onClose={() => setImportOpen(false)} />
@@ -1585,8 +1620,18 @@ function Workspace({
           sessions={sessions}
           onClose={() => setPaletteOpen(false)}
           onOpen={openTab}
-          actions={
-            tabs.length
+          actions={[
+            {
+              label: "CLI Lab: script multilínea",
+              detail: "Ejecuta varios comandos en orden en una o varias sesiones, leyendo cada respuesta",
+              run: () => openLab(),
+            },
+            {
+              label: "Exportar sesiones",
+              detail: "Elige qué sesiones: XML compatible con SecureCRT o JSON",
+              run: () => setExportFolder(""),
+            },
+            ...(tabs.length
               ? [
                   {
                     label: "Cerrar todas las sesiones",
@@ -1595,8 +1640,8 @@ function Workspace({
                     run: () => requestCloseMany("all"),
                   },
                 ]
-              : []
-          }
+              : []),
+          ]}
         />
       )}
       {quickOpen && <QuickConnectDialog onClose={() => setQuickOpen(false)} onOpen={openTab} />}

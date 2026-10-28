@@ -465,6 +465,18 @@ export function validatePack(raw: unknown): Validation {
 
 // ---------- Catálogo combinado ----------
 
+/**
+ * Orden de los packs para el catálogo: primero "Mis comandos" (user-<fabricante>), luego los
+ * incluidos y al final los importados. Ante el mismo comando gana el primero, así que una
+ * actualización que agrega a los incluidos un comando que el usuario ya tenía no oculta su
+ * versión (descripción, riesgo, notas). Un importado con el id de uno incluido se ignora.
+ */
+export function orderPacks(builtin: Pack[], user: Pack[]): Pack[] {
+  const own = user.filter((p) => p.id.startsWith("user-"));
+  const imported = user.filter((p) => !p.id.startsWith("user-") && !builtin.some((b) => b.id === p.id));
+  return [...own, ...builtin, ...imported];
+}
+
 export function buildCatalog(packs: Pack[], disabled: string[]): CatalogVendor[] {
   const vendors = new Map<string, CatalogVendor>();
   // Comandos ya agregados por fabricante (evita buscar en la lista en cada comando).

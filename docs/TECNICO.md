@@ -15,6 +15,8 @@ Detalle técnico de NetTerminal: funciones completas, seguridad, formatos, API d
 - [Seguridad](#seguridad)
 - [Packs de comandos](#packs-de-comandos)
 - [Topología CDP / LLDP, ruteo y manual](#topología-cdp--lldp-ruteo-y-manual)
+- [CLI Lab](#cli-lab)
+- [API local para otras aplicaciones](#api-local-para-otras-aplicaciones)
 - [Diagramas en notas (Mermaid)](#diagramas-en-notas-mermaid)
 - [Ciclo de vida del equipo (EoL)](#ciclo-de-vida-del-equipo-eol)
 - [Scripts Python](#scripts-python)
@@ -70,6 +72,8 @@ Construido con [Tauri 2](https://tauri.app) (backend en Rust) y xterm.js. Usa el
 | Enviar a varias sesiones | Desde Notas, catálogo o botones: pestaña actual, pestañas elegidas, una carpeta o los paneles visibles. Confirma con la lista de equipos y el riesgo de cada línea (los cambios exigen escribir la cantidad de equipos), envía en secuencia y se puede detener. |
 | Alertas | Reglas por texto o expresión (globales o por carpeta) que avisan en pantalla, con sonido y marca en la pestaña. Máximo un aviso cada 10 s por regla y sesión; nunca envían comandos. Sin reglas no consumen nada. |
 | Respaldos | Respaldo de configuración (solo comandos de consulta, hasta 3 equipos a la vez) en `data/backups`, con secretos enmascarados, y comparación entre fechas o entre equipos. Entre fechas del mismo equipo marca "secreto cambiado" cuando cambia un valor enmascarado: guarda una huella HMAC-SHA256 por secreto con una llave aleatoria del equipo, nunca el secreto. |
+| CLI Lab | Editor de scripts multilínea (barra de estado › destino › "Abrir CLI Lab", paleta o menú de Notas › "Abrir en CLI Lab"), inspirado en el CLI Code Lab de FortiOS 8.0. Ejecuta línea a línea en el destino elegido leyendo cada respuesta, se detiene al primer error de CLI y muestra la salida por equipo. Ver [CLI Lab](#cli-lab). |
+| Exportar | Sesiones elegidas (por carpeta, filtro o una a una) a XML con el esquema de SecureCRT, que se abre en SecureCRT y se reimporta en NetTerminal, o a JSON en el portapapeles. Desde Ajustes › Sesiones, el menú de una carpeta o la paleta. Nunca incluye contraseñas ni comandos al conectar. |
 | Importar | Sesiones desde `~/.ssh/config`, PuTTY (.reg), SecureCRT (XML), MobaXterm (.mobaconf/.mxtsessions) y CSV (hasta 64 MB), con vista previa. Al reimportar, las sesiones que ya existen en la misma carpeta con el mismo nombre se marcan "Cambia" y se puede elegir sobrescribir sus datos de conexión (se conservan contraseña guardada, comandos al conectar, túneles y resaltado) u omitirlas. Nunca importa contraseñas, comandos al conectar, proxies ni túneles. |
 | Conexión rápida | Formulario SSH, Telnet, TCP crudo o Serial sin guardar la sesión, primera opción de la pantalla de inicio, rayo antes del "+" de nueva sesión o ⌘O / Ctrl+Shift+O (ícono de rayo en la pestaña). "Guardar como sesión…" en el menú de la pestaña y en la barra de estado. |
 | Historial | Destinos recientes en la conexión rápida (⌘K) y últimos comandos enviados a cada equipo desde Notas, catálogo o botones (nunca lo tecleado). |
@@ -258,7 +262,7 @@ El catálogo (⌘L) combina los packs incluidos (investigados con fuentes oficia
 
 - **Plataforma:** el botón "Detectar" ejecuta `show version` / `display version` / `get system status` en la sesión y ajusta la sintaxis (por ejemplo IOS-XE frente a NX-OS, FortiOS 6.4 frente a 7.x). Además, sin enviar nada al equipo, la app lee las últimas 150 líneas de la pantalla en tres momentos: al conectar (banner), unos segundos después de que el usuario ejecuta `show version`, `display version`, `get system status` o equivalentes, y al abrir el catálogo. No lee nada mientras se escribe. Si reconoce la plataforma, la guarda en la sesión y, si esta resalta "Según ajustes", la pestaña toma también el resaltado del fabricante. Pruebas: `node scripts/tests/detect.test.mjs`.
 - **Familias:** el selector agrupa equipos de red, la familia Fortinet (FortiGate, FortiSwitch, FortiAP y FortiExtender) y sistemas operativos. Con una plataforma elegida se ocultan las líneas de plataformas de cada comando; los cambios y lo que puede cortar servicio llevan además un borde de color.
-- **Mis comandos:** "+ Propio" agrega comandos a un pack personal por fabricante.
+- **Mis comandos:** "+ Propio" agrega comandos a un pack personal por fabricante. Los packs propios e importados viven en la carpeta de datos (`command-packs/`), fuera de la instalación: una actualización de la app no los toca. Si una versión nueva trae un comando con el mismo texto que uno propio, en el catálogo se muestra el propio (con su descripción y riesgo).
 - **Seguridad:** un pack es solo JSON y nunca se ejecuta al importarlo. La app recalcula el riesgo de cada comando y usa el mayor entre el declarado y el calculado.
 
 Formato mínimo:
@@ -349,6 +353,37 @@ Herramientas › Topología lee los vecinos del equipo conectado y dibuja el dia
 - **L2 desconocido**: con "Estado de puertos", cada equipo explorado con interfaces físicas activas sin vecino (ni su agregado con enlace) muestra un nodo virtual con la cantidad de puertos y, si se leyó la tabla MAC, cuántas MAC y de qué fabricantes. Ahí hay algo que no anuncia CDP/LLDP: un PC, una cámara, un AP o un switch no administrable. No se guarda en el diagrama ni se exporta; se apaga en Filtros.
 - **Alcance del descubrimiento** (panel): sin teléfonos IP ni access points, solo vecinos con IP de gestión dentro de las redes indicadas (CIDR IPv4) y profundidad máxima desde el primer equipo explorado. Se aplica al incorporar vecinos nuevos (los que ya están conservan su enlace) y el mensaje dice cuántos quedaron fuera y por qué. No cambia los comandos que se envían. Un vecino sin IP informada se agrega igual.
 - Check Point y WatchGuard no tienen descubrimiento: no hay comandos LLDP documentados y verificables para Gaia ni Fireware. Aparecen cuando otro equipo los reporta como vecinos.
+
+## CLI Lab
+
+Script de varios comandos para una o varias sesiones sin crear botones. La idea viene del [CLI Code Lab de FortiOS 8.0](https://docs.fortinet.com/document/fortigate/8.0.0/new-features/18007/fortiai-assistant-and-cli-code-lab): escribir el bloque completo, revisarlo y ejecutarlo viendo la respuesta de cada comando. En NetTerminal sirve para cualquier fabricante y no usa IA.
+
+- **Abrir**: barra de estado › selector de destino › "Abrir CLI Lab (script multilínea)…", la paleta (⌘K › "CLI Lab") o Notas › "…" › "Abrir en CLI Lab" (lleva la selección o la nota completa).
+- **Editor**: resaltado del fabricante de la pestaña activa y variables `{{nombre}}` con su campo debajo (las que parecen contraseñas se piden ocultas). Las líneas que empiezan con `!`, `#` o `//` son comentarios. "+ Guardar config" agrega el comando de guardado del fabricante (`write memory`, `save`, `commit`; FortiOS guarda al cerrar con `end`). Los scripts se guardan con nombre en Ajustes (`cliScripts`).
+- **Destino**: el mismo de la barra de estado (pestaña actual, pestañas elegidas, carpeta o paneles). Antes de ejecutar se confirma la lista de equipos y el riesgo de cada línea; cambios y comandos disruptivos exigen escribir la cantidad de equipos.
+- **Ejecución**: cada línea espera el prompt del equipo antes de seguir (responde `--More--`), con hasta 10 equipos a la vez (4 por defecto) y un tiempo máximo por comando. Se marca error ante `% Invalid input`, `% Incomplete command`, `Error: Unrecognized command`, `Command fail`/`command parse error` o `syntax error`; con "Detener el equipo al primer error" (por defecto) ese equipo no sigue y los demás sí. "Detener" corta todos.
+- **Preguntas del equipo**: por defecto no se confirma nada. Ante `[confirm]` se envía Ctrl+C y ante `(y/n)` o `[Y/N]` se responde `n`; la línea queda en error con la pregunta. Solo los comandos de guardado (`write memory`, `copy running-config startup-config`, `save`, `commit`) responden "sí" solos, o todas si se activa "Responder sí a las preguntas del equipo".
+- **Resultado**: estado por equipo (OK, error, detenido, omitido si se desconectó), la salida de cada comando con el que falló marcado, y "Copiar informe" con todo en texto plano. El resultado sigue disponible al cerrar la ventana.
+- Pruebas: `node scripts/tests/cliLab.test.mjs`.
+
+## API local para otras aplicaciones
+
+El servidor MCP (Ajustes › Agentes IA, apagado por defecto) es también la API para que otra aplicación ejecutora de comandos use las sesiones de NetTerminal. Es JSON-RPC 2.0 sobre HTTP en `http://127.0.0.1:<puerto>/mcp`, solo local, con `Authorization: Bearer <token>`.
+
+| Método `tools/call` | Uso |
+|---|---|
+| `list_sessions` | Sesiones guardadas (sin credenciales); `folder` filtra por carpeta |
+| `list_connections` | Pestañas conectadas con su `id` |
+| `read_output` | Salida reciente de una conexión (`connection_id`, `max_chars`) |
+| `send_command` | Ejecuta comandos en una conexión (`connection_id`, `command`, `wait_seconds` ≤ 120). Cada ejecución la aprueba el usuario en la app |
+| `open_session` | Abre una sesión guardada por nombre (requiere aprobación) |
+
+```bash
+curl -s http://127.0.0.1:<puerto>/mcp -H "Authorization: Bearer <token>" -H "Content-Type: application/json" \
+  -d '{"jsonrpc":"2.0","id":1,"method":"tools/call","params":{"name":"list_connections","arguments":{}}}'
+```
+
+La respuesta trae el resultado en `result.content[0].text`. Con "Solo lectura" no existen `send_command` ni `open_session`. La API no puede usar el envío a varias sesiones ni el CLI Lab: cada comando pasa por la aprobación del usuario. Ajustes › Agentes IA muestra el ejemplo con el puerto y el token reales.
 
 ## Diagramas en notas (Mermaid)
 

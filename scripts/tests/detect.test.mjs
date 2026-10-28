@@ -21,7 +21,7 @@ registerHooks({
   },
 });
 
-const { buildCatalog, validatePack, detectPlatform, appliesTo, commandFor } = await import("../../src/lib/packs.ts");
+const { buildCatalog, validatePack, detectPlatform, appliesTo, commandFor, orderPacks } = await import("../../src/lib/packs.ts");
 
 const dir = new URL("../../src/packs/", import.meta.url);
 const packs = readdirSync(dir)
@@ -77,5 +77,17 @@ assert.equal(commandFor(by("diagnose sys sdwan health-check"), "fos62"), "diagno
 assert.equal(appliesTo(by("diagnose sys sdwan service"), "fos62"), true);
 assert.equal(appliesTo(by("diagnose sys sdwan zone"), "fos62"), false);
 assert.equal(commandFor(by("diagnose vpn ike log filter clear"), "fos62"), "diagnose vpn ike log-filter clear");
+
+// "Mis comandos" sobreviven a una actualización que agrega el mismo comando a los incluidos:
+// gana la versión del usuario (su descripción y su riesgo), y un importado no pisa a un incluido.
+const builtinCisco = packs.find((p) => p.vendor === "cisco");
+const mine = { ...builtinCisco, id: "user-cisco", builtin: false, name: "Mis comandos (Cisco)", commands: [{ cmd: "show version", desc: "Mi versión con notas propias", risk: "read" }] };
+const fake = { ...builtinCisco, id: builtinCisco.id, builtin: false, name: "Importado con id de fábrica", commands: [{ cmd: "show clock", desc: "pisado", risk: "read" }] };
+const ordered = orderPacks(packs, [fake, mine]);
+assert.equal(ordered[0].id, "user-cisco");
+assert.ok(!ordered.includes(fake));
+const cisco = buildCatalog(ordered, []).find((v) => v.id === "cisco");
+assert.equal(cisco.commands.find((c) => c.cmd === "show version").desc, "Mi versión con notas propias");
+assert.notEqual(cisco.commands.find((c) => c.cmd === "show clock")?.desc, "pisado");
 
 console.log("detect: ok");
