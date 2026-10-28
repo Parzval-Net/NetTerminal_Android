@@ -553,7 +553,7 @@ export function SettingsModal({
             <button
               onClick={() => setConfirmReset(true)}
               title="Las reglas de resaltado personalizadas se conservan"
-              className="text-[12px] text-muted hover:text-danger"
+              className="px-2.5 h-7 rounded-md border border-line text-[12px] text-muted hover:text-danger hover:border-danger"
             >
               Restablecer valores
             </button>
@@ -892,7 +892,7 @@ function ThemeCard({
         </div>
       </div>
       <div className="flex items-center justify-between px-2.5 h-7 text-[12px]">
-        <span className="truncate">
+        <span className="truncate" title={hint ? `${preset.name} · ${hint}` : preset.name}>
           {preset.name}
           {hint && <span className="text-muted"> · {hint}</span>}
         </span>

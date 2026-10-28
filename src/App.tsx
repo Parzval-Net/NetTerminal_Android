@@ -906,6 +906,8 @@ function Workspace({
           return setModal({});
         case "quickConnect":
           return setQuickOpen(true);
+        case "cliLab":
+          return openLab();
         case "toggleSidebar":
           return setSidebarOpen((o) => !o);
         case "find":
@@ -1413,7 +1415,8 @@ function Workspace({
         )}
         </div>
 
-        {settings.showButtonBar && (
+        {/* En Herramientas no hay terminal a la que enviar: la barra solo ocuparía espacio. */}
+        {settings.showButtonBar && activeId !== "tools" && (
           <ButtonBar
             macros={settings.macros}
             connected={activeConnected || broadcastMode}
@@ -1612,6 +1615,7 @@ function Workspace({
             {
               label: "CLI Lab: script multilínea",
               detail: "Ejecuta varios comandos en orden en una o varias sesiones, leyendo cada respuesta",
+              shortcut: `${modLabel}I`,
               run: () => openLab(),
             },
             {

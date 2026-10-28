@@ -66,7 +66,17 @@ export const BroadcastTargetPicker = memo(function BroadcastTargetPicker() {
         }`}
       >
         {multi && <Radio size={12} />}
-        <span className="max-w-[140px] truncate">{multi ? `${shortLabel} (${count})` : "Pestaña actual"}</span>
+        <span className="max-w-[90px] @[52rem]:max-w-[140px] truncate">
+          {multi ? (
+            `${shortLabel} (${count})`
+          ) : (
+            <>
+              {/* Barra angosta: "Actual" deja lugar a las etiquetas de las herramientas. */}
+              <span className="@[52rem]:hidden">Actual</span>
+              <span className="hidden @[52rem]:inline">Pestaña actual</span>
+            </>
+          )}
+        </span>
         <ChevronDown size={12} />
       </button>
       {open && (

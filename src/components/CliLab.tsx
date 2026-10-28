@@ -14,6 +14,7 @@ import { runOnDeviceResult } from "../lib/deviceRun";
 import { isSecretVar } from "../lib/templateSecrets";
 import { useDragResize } from "../lib/useDragResize";
 import { fontStack } from "../lib/theme";
+import { isMac } from "../lib/platform";
 import { persist, stored } from "../lib/prefs";
 import { tabTitle } from "../types";
 import { plural } from "../lib/plural";
@@ -298,7 +299,7 @@ export function CliLab(p: Props) {
                 + Guardar config{saveCmd ? ` (${saveCmd})` : ""}
               </button>
               <span className="flex-1" />
-              <span>{`Ctrl/⌘+Enter ejecuta`}</span>
+              <span>{`${isMac ? "⌘" : "Ctrl+"}Enter ejecuta`}</span>
             </div>
             {vars.length > 0 && (
               <div className="shrink-0 px-3 pb-2 grid gap-2" style={{ gridTemplateColumns: "repeat(auto-fill, minmax(180px, 1fr))" }}>
@@ -405,6 +406,7 @@ export function CliLab(p: Props) {
                 <button
                   onClick={execute}
                   disabled={!lines.length || n === 0}
+                  title={!lines.length ? "Escribe al menos un comando" : n === 0 ? "Ninguna sesión conectada en el destino elegido" : undefined}
                   className="w-full flex items-center justify-center gap-1.5 h-9 rounded-md bg-accent text-accent-fg font-medium hover:opacity-90 disabled:opacity-40"
                 >
                   <Play size={13} /> Ejecutar en {plural(n, "equipo", "equipos")}

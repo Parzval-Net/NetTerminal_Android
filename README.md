@@ -82,6 +82,7 @@ Las capturas usan datos ficticios. Hay más en la [página del producto](https:/
 | Nueva sesión | ⌘N | Ctrl+Shift+N |
 | Catálogo de comandos | ⌘L | Ctrl+Shift+L |
 | Notas | ⌘J | Ctrl+Shift+J |
+| CLI Lab | ⌘I | Ctrl+Shift+I |
 | Herramientas | ⌘E | Ctrl+Shift+E |
 | Buscar en la salida | ⌘F | Ctrl+Shift+F |
 | Copiar / pegar | ⌘C / ⌘V | Ctrl+Shift+C / Ctrl+Shift+V |

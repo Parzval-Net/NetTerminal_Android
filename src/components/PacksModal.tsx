@@ -192,7 +192,8 @@ export function PacksModal({ packs, disabled, onToggle, onChanged, onClose }: Pr
                           <span className="truncate">{p.name}</span>
                         </div>
                         <div className="text-[11.5px] text-muted truncate">
-                          {p.vendorName} · {p.commands.length} comandos{p.version ? ` · v${p.version}` : ""}
+                          {p.name.startsWith(p.vendorName) ? "" : `${p.vendorName} · `}
+                          {p.commands.length} comandos{p.version ? ` · v${p.version}` : ""}
                           {p.author ? ` · ${p.author}` : ""}
                         </div>
                       </div>

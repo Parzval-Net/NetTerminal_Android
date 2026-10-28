@@ -701,12 +701,24 @@ export const NotesPanel = memo(function NotesPanel(p: Props) {
       )}
 
       <footer className="border-t border-line px-2 py-1.5 space-y-1">
-        <div className="flex items-center gap-1">
+        {/* En un panel angosto los botones bajan a una segunda fila en vez de partir su texto. */}
+        <div className="flex flex-wrap items-center gap-1">
           <FootBtn onClick={sendSelectionOrLine} disabled={!p.target || locked} title={`${isMac ? "⌘" : "Ctrl+"}Enter`}>
             <SendHorizontal size={13} /> Línea / selección
           </FootBtn>
           <FootBtn onClick={() => p.onSend(content)} disabled={!p.target || locked || !content.trim()} title={`${isMac ? "⌘⇧" : "Ctrl+Shift+"}Enter`}>
             <Send size={13} /> Todo
+          </FootBtn>
+          <FootBtn
+            onClick={() => {
+              const ta = editorRef.current;
+              if (ta && ta.selectionEnd > ta.selectionStart) openLab(content.slice(ta.selectionStart, ta.selectionEnd));
+              else openLab(content, current ?? undefined);
+            }}
+            disabled={locked || !content.trim()}
+            title="Ejecutar en el CLI Lab: línea a línea, leyendo cada respuesta y deteniéndose al primer error"
+          >
+            <SquareTerminal size={13} /> CLI Lab
           </FootBtn>
           <FootBtn onClick={capture} disabled={locked} title="Agregar a la nota el texto seleccionado en la terminal">
             <ArrowDownToLine size={13} /> Capturar
@@ -756,7 +768,7 @@ function FootBtn(props: React.ButtonHTMLAttributes<HTMLButtonElement>) {
   return (
     <button
       {...props}
-      className="flex items-center gap-1.5 px-2 h-7 rounded-md text-[12px] text-muted hover:text-fg hover:bg-hover disabled:opacity-40 disabled:hover:bg-transparent"
+      className="shrink-0 whitespace-nowrap flex items-center gap-1.5 px-2 h-7 rounded-md text-[12px] text-muted hover:text-fg hover:bg-hover disabled:opacity-40 disabled:hover:bg-transparent"
     />
   );
 }

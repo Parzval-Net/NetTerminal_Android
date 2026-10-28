@@ -25,6 +25,7 @@ export type AppAction =
   | "closeAll"
   | "newSession"
   | "quickConnect"
+  | "cliLab"
   | "toggleSidebar"
   | "find"
   | "nextTab"
@@ -82,6 +83,8 @@ export function shortcutFor(e: KeyboardEvent): AppAction | null {
       return "tools";
     case "l":
       return "commands";
+    case "i":
+      return "cliLab";
     case "f":
       return "find";
     default:

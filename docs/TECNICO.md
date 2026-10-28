@@ -108,6 +108,7 @@ Construido con [Tauri 2](https://tauri.app) (backend en Rust) y xterm.js. Usa el
 | --- | --- | --- |
 | Ajustes | ⌘, | Ctrl+, |
 | Notas | ⌘J | Ctrl+Shift+J |
+| CLI Lab | ⌘I | Ctrl+Shift+I |
 | Catálogo de comandos | ⌘L | Ctrl+Shift+L |
 | Herramientas | ⌘E | Ctrl+Shift+E |
 | Duplicar pestaña | ⌘D | Ctrl+Shift+D |

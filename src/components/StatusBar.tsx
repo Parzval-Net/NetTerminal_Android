@@ -27,6 +27,8 @@ import { isMac, modLabel } from "../lib/platform";
 /** Etiquetas de botones: con la barra angosta (ventana mínima o vista con barra lateral) solo
  *  queda el icono y el title; antes los últimos botones se salían de la ventana. */
 const LBL = "hidden @[52rem]:inline";
+/** Herramientas (Comandos, Notas, CLI Lab): su texto se mantiene hasta ventanas más angostas. */
+const TOOL_LBL = "hidden @[44rem]:inline";
 
 const statusText = { connecting: "Conectando", connected: "Conectado", closed: "Desconectado" };
 
@@ -82,11 +84,11 @@ export const StatusBar = memo(function StatusBar({
       )}
       <BarBtn onClick={onCommands} title={`Catálogo de comandos (${modLabel}L)`} className={commandsOpen ? "!text-accent" : ""}>
         <BookOpen size={12} />
-        <span className={LBL}>Comandos</span>
+        <span className={TOOL_LBL}>Comandos</span>
       </BarBtn>
       <BarBtn onClick={onNotes} title={`Notas (${modLabel}J)`} className={notesOpen ? "!text-accent" : ""}>
         <NotebookPen size={12} />
-        <span className={LBL}>Notas</span>
+        <span className={TOOL_LBL}>Notas</span>
       </BarBtn>
       <LabBtn />
       <BarBtn onClick={onSettings} title={`Ajustes (${isMac ? "⌘" : "Ctrl+"},)`}>
@@ -198,12 +200,14 @@ const LabBtn = memo(function LabBtn() {
           ? `CLI Lab ejecutando: ${done}/${run.items.length} equipos terminados`
           : run
             ? `CLI Lab: ${run.items.length - failed} de ${run.items.length} equipos OK${failed ? `, ${failed} con error` : ""}`
-            : "CLI Lab: script de varias líneas en el destino elegido, leyendo cada respuesta"
+            : `CLI Lab (${modLabel}I): script de varias líneas en el destino elegido, leyendo cada respuesta`
       }
       className={tone}
     >
       <SquareTerminal size={12} className={run?.running ? "animate-pulse" : ""} />
-      <span className={LBL}>CLI Lab{run?.running ? ` ${done}/${run.items.length}` : ""}</span>
+      <span className={TOOL_LBL}>CLI Lab</span>
+      {/* El avance se ve también cuando la barra solo muestra íconos. */}
+      {run?.running && <span className="tabular-nums">{done}/{run.items.length}</span>}
     </BarBtn>
   );
 });
