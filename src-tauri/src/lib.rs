@@ -892,7 +892,48 @@ fn data_dir(state: State<'_, AppState>) -> String {
 /// Los ajustes son de la UI: el backend solo los persiste como JSON opaco.
 #[tauri::command(async)]
 fn get_settings(state: State<'_, AppState>) -> serde_json::Value {
-    load_settings(&state.data_dir.join("settings.json"))
+    let settings = load_settings(&state.data_dir.join("settings.json"));
+    merge_topology(settings, load_settings(&state.data_dir.join(TOPOLOGY_FILE)))
+}
+
+/// La topología y sus snapshots viven en su propio archivo: pueden pesar varios MB y antes se
+/// reescribían con cada ajuste (un interruptor, el orden de la barra lateral).
+const TOPOLOGY_FILE: &str = "topology.json";
+const TOPOLOGY_KEYS: [&str; 2] = ["topology", "topoSnapshots"];
+
+/// Agrega a los ajustes lo guardado en topology.json (que manda) y marca `__topoStore` para que
+/// la app sepa que ya no tiene que migrarlo desde settings.json.
+fn merge_topology(settings: serde_json::Value, topo: serde_json::Value) -> serde_json::Value {
+    let serde_json::Value::Object(t) = topo else { return settings };
+    let mut out = match settings {
+        serde_json::Value::Object(o) => o,
+        _ => serde_json::Map::new(),
+    };
+    for (k, v) in t {
+        if TOPOLOGY_KEYS.contains(&k.as_str()) {
+            out.insert(k, v);
+        }
+    }
+    out.insert("__topoStore".into(), serde_json::Value::Bool(true));
+    serde_json::Value::Object(out)
+}
+
+/// Escribe JSON de forma atómica (temporal y rename) y con permisos restringidos. Legible con
+/// sangría si es chico; compacto si pasa de 512 KB (la mitad de bytes y de tiempo).
+fn write_json(path: &std::path::Path, value: &serde_json::Value) -> Result<(), String> {
+    let compact = serde_json::to_string(value).map_err(|e| e.to_string())?;
+    let json = if compact.len() < 512 * 1024 { serde_json::to_string_pretty(value).map_err(|e| e.to_string())? } else { compact };
+    let tmp = path.with_extension("json.tmp");
+    std::fs::write(&tmp, json).map_err(|e| e.to_string())?;
+    session_store::restrict(&tmp);
+    std::fs::rename(&tmp, path).map_err(|e| e.to_string())
+}
+
+#[tauri::command]
+fn save_topology(data: serde_json::Value, state: State<'_, AppState>) -> Result<(), String> {
+    let serde_json::Value::Object(o) = data else { return Err("topología inválida".into()) };
+    let kept: serde_json::Map<String, serde_json::Value> = o.into_iter().filter(|(k, _)| TOPOLOGY_KEYS.contains(&k.as_str())).collect();
+    write_json(&state.data_dir.join(TOPOLOGY_FILE), &serde_json::Value::Object(kept))
 }
 
 /// Lee settings.json. Null si no existe o no sirve; en ese caso la app usa los valores por
@@ -921,12 +962,7 @@ fn load_settings(path: &std::path::Path) -> serde_json::Value {
 
 #[tauri::command]
 fn save_settings(settings: serde_json::Value, state: State<'_, AppState>) -> Result<(), String> {
-    let path = state.data_dir.join("settings.json");
-    let tmp = path.with_extension("json.tmp");
-    let json = serde_json::to_string_pretty(&settings).map_err(|e| e.to_string())?;
-    std::fs::write(&tmp, json).map_err(|e| e.to_string())?;
-    session_store::restrict(&tmp);
-    std::fs::rename(&tmp, &path).map_err(|e| e.to_string())
+    write_json(&state.data_dir.join("settings.json"), &settings)
 }
 
 /// Menú nativo de macOS sin "Cerrar ventana" (⌘W), que la app usa para cerrar pestañas.
@@ -1075,7 +1111,7 @@ pub fn run() {
             }
             let data_dir = session_store::resolve_data_dir(os_dir);
             // Corrige permisos de archivos creados por versiones anteriores.
-            for f in ["settings.json", "sessions.json"] {
+            for f in ["settings.json", "sessions.json", TOPOLOGY_FILE] {
                 session_store::restrict(&data_dir.join(f));
             }
             app.manage(updates::Pending::default());
@@ -1114,6 +1150,7 @@ pub fn run() {
             data_dir,
             get_settings,
             save_settings,
+            save_topology,
             list_notes,
             read_note,
             save_note,
@@ -1276,6 +1313,29 @@ mod tests {
             .flatten()
             .filter(|e| e.file_name().to_string_lossy().starts_with(prefix))
             .count()
+    }
+
+    /// topology.json manda sobre settings.json y solo aporta sus dos claves; sin archivo (o dañado)
+    /// los ajustes quedan como estaban, sin la marca de migración.
+    #[test]
+    fn topology_store_merges_over_settings() {
+        use serde_json::json;
+        let s = json!({"fontSize": 14, "topology": {"nodes": [1]}});
+        let merged = merge_topology(s.clone(), json!({"topology": {"nodes": [2]}, "topoSnapshots": [], "otro": 1}));
+        assert_eq!(merged["topology"]["nodes"][0], 2);
+        assert_eq!(merged["fontSize"], 14);
+        assert!(merged.get("otro").is_none());
+        assert_eq!(merged["__topoStore"], true);
+        assert_eq!(merge_topology(s.clone(), serde_json::Value::Null), s);
+        assert_eq!(merge_topology(serde_json::Value::Null, json!({"topoSnapshots": []}))["__topoStore"], true);
+        let d = temp_dir("topojson");
+        let small = d.join("a.json");
+        write_json(&small, &json!({"a": 1})).unwrap();
+        assert!(std::fs::read_to_string(&small).unwrap().contains('\n'), "chico: con sangría");
+        let big = d.join("b.json");
+        write_json(&big, &json!({"x": "y".repeat(600 * 1024)})).unwrap();
+        assert!(!std::fs::read_to_string(&big).unwrap().contains('\n'), "grande: compacto");
+        std::fs::remove_dir_all(&d).unwrap();
     }
 
     /// Arranque con settings.json ausente, dañado, con bytes que no son UTF-8 o que no es un

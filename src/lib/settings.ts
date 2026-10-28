@@ -232,17 +232,42 @@ export function mergeSettings(loaded: unknown): Settings {
 }
 
 /** Carga los ajustes desde el backend y los guarda (con debounce) en cada cambio. */
+/** Claves que viven en topology.json: se guardan solo cuando cambian (pueden pesar varios MB). */
+type Heavy = Pick<Settings, "topology" | "topoSnapshots">;
+
 export function useSettings() {
   const [settings, setSettings] = useState<Settings | null>(null);
   const timer = useRef<number | undefined>(undefined);
+  /** Topología tal como quedó guardada (null: falta migrarla desde settings.json). */
+  const savedHeavy = useRef<Heavy | null>(null);
 
   useEffect(() => {
     invoke<unknown>("get_settings")
       .then((s) => {
         const raw = s && typeof s === "object" && !Array.isArray(s) ? (s as Record<string, unknown>) : null;
-        setSettings({ ...mergeSettings(s), ...migrateSuggest(raw) });
+        const merged = { ...mergeSettings(s), ...migrateSuggest(raw) };
+        savedHeavy.current = raw?.__topoStore === true ? { topology: merged.topology, topoSnapshots: merged.topoSnapshots } : null;
+        // Marca del backend, no es un ajuste: no vuelve a settings.json.
+        delete (merged as Record<string, unknown>).__topoStore;
+        setSettings(merged);
       })
       .catch(() => setSettings(defaultSettings));
+  }, []);
+
+  const save = useCallback(async (next: Settings) => {
+    const { topology, topoSnapshots, ...light } = next;
+    const prev = savedHeavy.current;
+    if (!prev || prev.topology !== topology || prev.topoSnapshots !== topoSnapshots) {
+      try {
+        await invoke("save_topology", { data: { topology, topoSnapshots } });
+        savedHeavy.current = { topology, topoSnapshots };
+      } catch (e) {
+        // Sin topology.json la topología sigue en settings.json, como antes: no se pierde.
+        console.error(e);
+        return invoke("save_settings", { settings: next }).catch(console.error);
+      }
+    }
+    return invoke("save_settings", { settings: light }).catch(console.error);
   }, []);
 
   const update = useCallback((patch: Partial<Settings> | ((s: Settings) => Partial<Settings>)) => {
@@ -250,12 +275,10 @@ export function useSettings() {
       const base = prev ?? defaultSettings;
       const next = { ...base, ...(typeof patch === "function" ? patch(base) : patch) };
       window.clearTimeout(timer.current);
-      timer.current = window.setTimeout(() => {
-        invoke("save_settings", { settings: next }).catch(console.error);
-      }, 300);
+      timer.current = window.setTimeout(() => void save(next), 300);
       return next;
     });
-  }, []);
+  }, [save]);
 
   return [settings, update] as const;
 }

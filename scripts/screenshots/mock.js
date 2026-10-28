@@ -493,7 +493,15 @@ const handlers = {
     return handler;
   },
   "plugin:event|unlisten": () => null,
-  list_sessions: () => sessions,
+  // &sessions=N: inventario grande (medición de la barra lateral), en 40 carpetas por sitio.
+  list_sessions: () => {
+    const n = Number(new URLSearchParams(location.search).get("sessions") || 0);
+    if (!n) return sessions;
+    return [
+      ...sessions,
+      ...Array.from({ length: n }, (_, i) => ({ id: `big${i}`, name: `sw-sitio${i % 40}-${i}`, type: "ssh", host: `10.${(i >> 8) & 255}.${i & 255}.1`, port: 22, username: "netops", folder: `Sitios/Sitio ${i % 40}`, created_at: "" })),
+    ];
+  },
   update_sessions: ({ sessions: changed }) => {
     for (const c of changed) {
       const i = sessions.findIndex((x) => x.id === c.id);
@@ -503,6 +511,7 @@ const handlers = {
   },
   get_settings: () => settings,
   save_settings: () => null,
+  save_topology: () => null,
   app_version: () => "0.9.13",
   update_check: () => ({ current: "0.9.13", latest: "0.9.13", newer: false, url: "", notes: "", published: "", supported: true, reason: null }),
   app_repo: () => "Parzval-Net/Net_Terminal",
@@ -961,6 +970,18 @@ if (new URLSearchParams(location.search).has("video")) {
   // Mensaje asíncrono (syslog con "logging synchronous"): corta la línea y la redibuja con lo tecleado.
   window.__ntMockAsync = () => {
     for (const id of channels.keys()) out(id, `\r\n*Oct 21 10:42:17: %LINK-3-UPDOWN: Interface GigabitEthernet1/0/3, changed state to down\r\n${promptOf(id)}${lineBuf.get(id) ?? ""}`);
+  };
+  // Medición: salida masiva (show running-config largo) a todas las pestañas, en bloques como un equipo real.
+  window.__ntMockFlood = (lines = 20000) => {
+    const row = (i) => `interface GigabitEthernet1/0/${i % 48} description UPLINK ${i} ip address 10.${i % 255}.1.1 255.255.255.0 shutdown\r\n`;
+    for (const id of channels.keys()) {
+      let chunk = "";
+      for (let i = 0; i < lines; i++) {
+        chunk += row(i);
+        if (chunk.length > 16384) (out(id, chunk), (chunk = ""));
+      }
+      out(id, chunk + promptOf(id));
+    }
   };
   // Pausa entre equipos al enviar a varias sesiones: se ve el avance y el botón Detener.
   localStorage.setItem("broadcastDelay", "3000");

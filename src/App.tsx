@@ -6,9 +6,7 @@ import { TabBar, type TabBarProps } from "./components/TabBar";
 import { VerticalTabs } from "./components/VerticalTabs";
 import { StatusBar } from "./components/StatusBar";
 import { TerminalView, TermController } from "./components/TerminalView";
-import { CredChange, SessionModal } from "./components/SessionModal";
-import { CommandPalette } from "./components/CommandPalette";
-import { QuickConnectDialog } from "./components/QuickConnectDialog";
+import type { CredChange } from "./components/SessionModal";
 import { ConfirmDialog } from "./components/ConfirmDialog";
 import { CloseManyMessage } from "./components/CloseManyMessage";
 import { CloseScope, summarizeClose, tabsToClose } from "./lib/closeAll";
@@ -19,17 +17,15 @@ import { DeviceInfo, detectDeviceInfo, deviceKey, promptHost, rememberDevice } f
 import { CatalogEntry, Pack, PackCommand, Risk, buildCatalog, computeRisk, detectPlatform, riskLabel, validatePack } from "./lib/packs";
 import type { ScpRequest } from "./components/tools/FileManager";
 import { runOnDevice } from "./lib/deviceRun";
-import { PacksModal } from "./components/PacksModal";
-import { CommandEditor } from "./components/CommandEditor";
+
 import { TemplateDialog, templateVars } from "./components/TemplateDialog";
 import { compile, effectiveRules, schemeForVendor } from "./lib/highlight";
 import { allFolders } from "./lib/folders";
 import { useMonitors } from "./lib/monitors";
 import { ButtonBar } from "./components/ButtonBar";
-import { MacroModal } from "./components/MacroModal";
-import { ApprovalDialog, ApprovalRequest } from "./components/ApprovalDialog";
+import type { ApprovalRequest } from "./components/ApprovalDialog";
 import { ScriptPrompts } from "./components/ScriptPrompts";
-import { ScriptLaunch, ScriptLaunchDialog } from "./components/ScriptLaunchDialog";
+import type { ScriptLaunch } from "./components/ScriptLaunchDialog";
 import type { Section } from "./components/SettingsModal";
 import type { Macro, UpdateInfo } from "./lib/settings";
 import { openUrl } from "@tauri-apps/plugin-opener";
@@ -53,6 +49,46 @@ import "./App.css";
 const ToolsView = lazy(() => import("./components/tools/ToolsView").then((m) => ({ default: m.ToolsView })));
 const SettingsModal = lazy(() => import("./components/SettingsModal").then((m) => ({ default: m.SettingsModal })));
 const ImportDialog = lazy(() => import("./components/ImportDialog").then((m) => ({ default: m.ImportDialog })));
+
+/**
+ * Diálogos que solo se montan al abrirse: fuera del arranque, en chunks propios que se precargan
+ * cuando la app queda libre (abrirlos después no espera la descarga).
+ */
+const DIALOGS = {
+  session: () => import("./components/SessionModal").then((m) => m.SessionModal),
+  palette: () => import("./components/CommandPalette").then((m) => m.CommandPalette),
+  quick: () => import("./components/QuickConnectDialog").then((m) => m.QuickConnectDialog),
+  packs: () => import("./components/PacksModal").then((m) => m.PacksModal),
+  cmdEditor: () => import("./components/CommandEditor").then((m) => m.CommandEditor),
+  macro: () => import("./components/MacroModal").then((m) => m.MacroModal),
+  approval: () => import("./components/ApprovalDialog").then((m) => m.ApprovalDialog),
+  script: () => import("./components/ScriptLaunchDialog").then((m) => m.ScriptLaunchDialog),
+};
+function lazyDialog<P extends object>(load: () => Promise<React.ComponentType<P>>) {
+  // Sin React.lazy: Suspense retiene hasta 300 ms el contenido que reemplaza al fallback, y el
+  // diálogo tardaba en aparecer aunque ya estuviera precargado.
+  let Comp: React.ComponentType<P> | null = null;
+  let pending: Promise<void> | null = null;
+  const preload = () => (pending ??= load().then((c) => void (Comp = c)));
+  function LazyDialog(props: P) {
+    const [, loaded] = useState(false);
+    useEffect(() => {
+      if (!Comp) preload().then(() => loaded(true), console.error);
+    }, []);
+    return Comp ? <Comp {...props} /> : null;
+  }
+  LazyDialog.preload = preload;
+  return LazyDialog;
+}
+const SessionModal = lazyDialog(DIALOGS.session);
+const CommandPalette = lazyDialog(DIALOGS.palette);
+const QuickConnectDialog = lazyDialog(DIALOGS.quick);
+const PacksModal = lazyDialog(DIALOGS.packs);
+const CommandEditor = lazyDialog(DIALOGS.cmdEditor);
+const MacroModal = lazyDialog(DIALOGS.macro);
+const ApprovalDialog = lazyDialog(DIALOGS.approval);
+const ScriptLaunchDialog = lazyDialog(DIALOGS.script);
+const LAZY_DIALOGS = [SessionModal, CommandPalette, QuickConnectDialog, PacksModal, CommandEditor, MacroModal, ApprovalDialog, ScriptLaunchDialog];
 
 const LOCAL: Session = { id: "local", name: "Terminal local", type: "local", created_at: "" };
 
@@ -659,10 +695,20 @@ function Workspace({
   }, []);
   useEffect(loadPacks, [loadPacks]);
 
-  // Los packs incluidos (~300 KB de JSON) van en un chunk aparte que se carga tras el primer render.
+  // Los packs incluidos (~900 KB) van en un chunk aparte que se carga cuando la app queda libre
+  // tras el primer render (a lo más 1,5 s después), para no competir con el arranque.
   const [builtinPacks, setBuiltinPacks] = useState<Pack[]>([]);
   useEffect(() => {
-    import("./lib/builtinPacks").then((m) => setBuiltinPacks(m.builtinPacks)).catch(console.error);
+    const load = () => {
+      import("./lib/builtinPacks").then((m) => setBuiltinPacks(m.builtinPacks)).catch(console.error);
+      for (const d of LAZY_DIALOGS) d.preload().catch(() => {});
+    };
+    if (typeof window.requestIdleCallback !== "function") {
+      const t = window.setTimeout(load, 200);
+      return () => window.clearTimeout(t);
+    }
+    const id = window.requestIdleCallback(load, { timeout: 1500 });
+    return () => window.cancelIdleCallback(id);
   }, []);
 
   const allPacks = useMemo(

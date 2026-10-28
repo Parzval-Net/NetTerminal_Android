@@ -83,6 +83,11 @@ type DropPos = "before" | "after" | "into";
 const DND_SESSION = "application/x-nt-session";
 const DND_FOLDER = "application/x-nt-folder";
 
+/** Desde cuántas filas visibles se dibuja solo la ventana a la vista. */
+const VIRTUAL_FROM = 200;
+/** Filas extra arriba y abajo de la ventana (scroll sin parpadeo). */
+const OVERSCAN = 12;
+
 function loadCollapsed(): Record<string, boolean> {
   try {
     return JSON.parse(localStorage.getItem("collapsedFolders") ?? "{}");
@@ -399,8 +404,9 @@ export const Sidebar = memo(function Sidebar(p: Props) {
     const isCollapsed = !q && collapsed[node.path];
     const isSel = selected?.kind === "folder" && selected.path === node.path;
     return (
-      <div key={node.path}>
         <div
+          key={`f:${node.path}`}
+          data-row
           draggable={renaming !== node.path}
           onDragStart={(e) => {
             e.dataTransfer.setData(DND_FOLDER, node.path);
@@ -454,11 +460,6 @@ export const Sidebar = memo(function Sidebar(p: Props) {
             <MoreHorizontal size={14} />
           </RowBtn>
         </div>
-        {!isCollapsed &&
-          orderedItems(node, p.order[node.path]).map((it) =>
-            it.kind === "folder" ? renderFolder(it.node, depth + 1) : renderSession(it.session, depth + 1),
-          )}
-      </div>
     );
   };
 
@@ -467,7 +468,8 @@ export const Sidebar = memo(function Sidebar(p: Props) {
     const status = p.live[s.id];
     return (
       <div
-        key={s.id}
+        key={`s:${s.id}`}
+        data-row
         draggable
         onDragStart={(e) => {
           e.dataTransfer.setData(DND_SESSION, s.id);
@@ -513,6 +515,60 @@ export const Sidebar = memo(function Sidebar(p: Props) {
     );
   };
 
+  // Árbol visible como lista plana (carpetas abiertas o filtradas): base del render por ventana.
+  const rows = useMemo(() => {
+    const out: { it: TreeItem; depth: number }[] = [];
+    const walk = (node: FolderNode, depth: number) => {
+      for (const it of orderedItems(node, p.order[node.path])) {
+        out.push({ it, depth });
+        if (it.kind === "folder" && (q || !collapsed[it.node.path])) walk(it.node, depth + 1);
+      }
+    };
+    for (const it of orderedItems(tree, p.order[""])) {
+      out.push({ it, depth: it.kind === "folder" ? 0 : -1 });
+      if (it.kind === "folder" && (q || !collapsed[it.node.path])) walk(it.node, 1);
+    }
+    return out;
+  }, [tree, p.order, collapsed, q]);
+
+  // Con inventarios grandes solo se dibujan las filas a la vista (todas miden lo mismo): con
+  // 2.000 sesiones abiertas el arranque dibujaba 6.000 íconos.
+  const navRef = useRef<HTMLElement>(null);
+  const [view, setView] = useState({ top: 0, height: 800 });
+  const [rowH, setRowH] = useState(28);
+  const virtual = rows.length > VIRTUAL_FROM;
+  useLayoutEffect(() => {
+    const el = navRef.current;
+    if (!el || !virtual) return;
+    const row = el.querySelector<HTMLElement>("[data-row]");
+    if (row?.offsetHeight) setRowH(row.offsetHeight);
+    const sync = () => setView({ top: el.scrollTop, height: el.clientHeight });
+    sync();
+    let raf = 0;
+    const onScroll = () => {
+      cancelAnimationFrame(raf);
+      raf = requestAnimationFrame(sync);
+    };
+    el.addEventListener("scroll", onScroll, { passive: true });
+    const ro = new ResizeObserver(sync);
+    ro.observe(el);
+    return () => {
+      el.removeEventListener("scroll", onScroll);
+      ro.disconnect();
+      cancelAnimationFrame(raf);
+    };
+  }, [virtual]);
+  // Al filtrar, los resultados se ven desde arriba.
+  useLayoutEffect(() => {
+    if (navRef.current) navRef.current.scrollTop = 0;
+    setView((v) => (v.top ? { ...v, top: 0 } : v));
+  }, [q]);
+  // Si la lista se achica (carpeta cerrada, filtro), la ventana no puede quedar más allá del final.
+  const top = Math.max(0, Math.min(view.top, rows.length * rowH - view.height));
+  const first = virtual ? Math.max(0, Math.floor(top / rowH) - OVERSCAN) : 0;
+  const last = virtual ? Math.min(rows.length, Math.ceil((top + view.height) / rowH) + OVERSCAN) : rows.length;
+  const renderRow = ({ it, depth }: { it: TreeItem; depth: number }) => (it.kind === "folder" ? renderFolder(it.node, depth) : renderSession(it.session, depth));
+
   const empty = tree.children.length === 0 && tree.sessions.length === 0;
   const target = selectedFolder(selected, sessions);
 
@@ -550,6 +606,7 @@ export const Sidebar = memo(function Sidebar(p: Props) {
       {notice && <p className="px-3 pb-1 text-[11.5px] text-danger">{notice}</p>}
 
       <nav
+        ref={navRef}
         className={`flex-1 overflow-y-auto px-1.5 pb-3 ${dropTarget === "" ? "bg-selected" : ""}`}
         onContextMenu={(e) =>
           openMenu(e, [
@@ -563,7 +620,9 @@ export const Sidebar = memo(function Sidebar(p: Props) {
         {...dropProps("")}
         onClick={(e) => e.target === e.currentTarget && setSelected(null)}
       >
-        {orderedItems(tree, p.order[""]).map((it) => (it.kind === "folder" ? renderFolder(it.node, 0) : renderSession(it.session, -1)))}
+        {virtual && <div style={{ height: first * rowH }} aria-hidden />}
+        {rows.slice(first, last).map(renderRow)}
+        {virtual && <div style={{ height: (rows.length - last) * rowH }} aria-hidden />}
 
         {empty && (
           <div className="px-3 py-8 text-center text-[12px] text-muted">
