@@ -225,7 +225,19 @@ export function shortPort(p: string): string {
  * Forma canónica de una interfaz para comparar entre fabricantes:
  * GE0/0/1 (Huawei) = GigabitEthernet0/0/1 (Cisco) = Gi0/0/1 -> "gi0/0/1".
  */
+/** Caché de canonPort: el mismo puerto se normaliza miles de veces por render (claves, revisiones). */
+const canonCache = new Map<string, string>();
+
 export function canonPort(p: string): string {
+  const hit = canonCache.get(p);
+  if (hit !== undefined) return hit;
+  const r = canonPortRaw(p);
+  if (canonCache.size > 20000) canonCache.clear();
+  canonCache.set(p, r);
+  return r;
+}
+
+function canonPortRaw(p: string): string {
   const s = p
     .trim()
     .toLowerCase()
@@ -1025,9 +1037,9 @@ export function layout(t: Topology): Topology {
 }
 
 /** Grupo (Port-channel, Eth-Trunk, ae) de un enlace, visto desde cualquiera de sus extremos. */
-export function linkGroup(t: Topology, l: TopoLink): string | undefined {
-  const a = t.nodes.find((n) => n.id === l.a);
-  const b = t.nodes.find((n) => n.id === l.b);
+export function linkGroup(t: Topology, l: TopoLink, byId?: Map<string, TopoNode>): string | undefined {
+  const a = byId ? byId.get(l.a) : t.nodes.find((n) => n.id === l.a);
+  const b = byId ? byId.get(l.b) : t.nodes.find((n) => n.id === l.b);
   return portOf(a, l.aPort)?.group ?? portOf(b, l.bPort)?.group;
 }
 
@@ -1309,7 +1321,9 @@ export function linkGeometry(t: Topology, links: TopoLink[], gap = 26) {
   const byPair = new Map<string, TopoLink[]>();
   for (const l of links) {
     const k = [l.a, l.b].sort().join("~");
-    byPair.set(k, [...(byPair.get(k) ?? []), l]);
+    const list = byPair.get(k);
+    if (list) list.push(l);
+    else byPair.set(k, [l]);
   }
   const pos = new Map(t.nodes.map((n) => [n.id, n]));
   return links.flatMap((l) => {

@@ -311,6 +311,8 @@ export function searchTopo(t: Topology, query: string, limit = 8): SearchHit[] {
 /** Interfaces lógicas o de gestión: no llevan un vecino físico. */
 const LOGICAL_PORT = /^(?:vl|vlanif|vlan-interface|lo|loopback|inloopback|tu|tunnel|po|nve|mgmt|null|nu|bdi|vbdif|meth|m-gigabitethernet|ae|irb|me|fxp|em|dialer|virtual|cpu|sup|ap|bvi|vi|bridge-aggregation)\d/;
 const PORT_UP = /^(?:connected|up\b)/i;
+/** Un solo comparador: localeCompare con opciones crea uno por llamada (lento con miles de puertos). */
+const NUMERIC = new Intl.Collator(undefined, { numeric: true });
 
 export interface UnknownL2 {
   /** Interfaces activas sin vecino, como las informa el equipo. */
@@ -349,7 +351,7 @@ export function unknownL2(t: Topology): Map<string, UnknownL2> {
         for (const e of mp.macs) if (e.vendor) vendors.add(e.vendor);
       }
     }
-    if (ports.length) res.set(n.id, { ports: ports.sort((x, y) => x.localeCompare(y, undefined, { numeric: true })), macs, vendors: [...vendors].slice(0, 6) });
+    if (ports.length) res.set(n.id, { ports: ports.sort(NUMERIC.compare), macs, vendors: [...vendors].slice(0, 6) });
   }
   return res;
 }

@@ -355,6 +355,19 @@ nodeOf("fw-perimetro").caps = "Router";
 topoChecks.links.find((l) => l.b === "core-sw02").seenBy = ["core-sw01"];
 topoChecks.nodes.push({ id: "sep001122334455", name: "SEP001122334455", ip: "192.0.2.150", platform: "Cisco IP Phone 8845", caps: "Host Phone", explored: false, x: 130, y: 560 });
 topoChecks.links.push({ a: "sw-acceso-01", aPort: "Gi1/0/5", b: "sep001122334455", bPort: "Port 1", proto: "CDP" });
+// Topología grande (medición de rendimiento): 400 equipos explorados en malla, con estado de puertos.
+function topoBig(n = 400) {
+  const nodes = [];
+  const links = [];
+  for (let i = 0; i < n; i++) {
+    const ports = {};
+    for (let p = 1; p <= 48; p++) ports[`gi1/0/${p}`] = { status: p % 3 ? "connected" : "notconnect", duplex: "a-full", speed: "a-1000", vlan: p < 3 ? "trunk" : "10" };
+    nodes.push({ id: `sw${i}`, name: `sw${i}`, ip: `10.1.${i >> 8}.${i & 255}`, platform: "cisco C9300-48P", explored: true, x: 200 + (i % 20) * 240, y: 80 + Math.floor(i / 20) * 170, ports });
+    if (i) links.push({ a: `sw${i - 1}`, aPort: "Gi1/0/1", b: `sw${i}`, bPort: "Gi1/0/2", proto: "CDP", seenBy: [`sw${i - 1}`, `sw${i}`] });
+    if (i >= 20) links.push({ a: `sw${i - 20}`, aPort: "Gi1/0/47", b: `sw${i}`, bPort: "Gi1/0/48", proto: "LLDP" });
+  }
+  return { nodes, links };
+}
 // ?scene=topology-*: diagrama y fuentes de cada demo (activadas o apagadas).
 const topoScene = new URLSearchParams(location.search).get("scene");
 const TOPO_SCENES = {
@@ -364,6 +377,7 @@ const TOPO_SCENES = {
   "topology-manual": [topoManual, { descriptions: true }],
   "topology-mac": [topoMac, { routing: true, descriptions: true, mac: true }],
   "topology-checks": [topoChecks, {}],
+  "topology-big": [topoBig(), {}],
 };
 if (TOPO_SCENES[topoScene]) [settings.topology, settings.topoSources] = TOPO_SCENES[topoScene];
 // Estado visual de Topología (panel y secciones) para cada captura, sin arrastrar el de la anterior:

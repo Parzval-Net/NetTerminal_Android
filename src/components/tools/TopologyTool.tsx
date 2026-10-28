@@ -1,4 +1,4 @@
-import { useEffect, useId, useMemo, useRef, useState } from "react";
+import { memo, useCallback, useEffect, useId, useMemo, useRef, useState } from "react";
 import { invoke } from "@tauri-apps/api/core";
 import { save } from "@tauri-apps/plugin-dialog";
 import { writeText } from "@tauri-apps/plugin-clipboard-manager";
@@ -164,6 +164,7 @@ import { modelFromPlatform } from "../../lib/lifecycle";
 import type { MenuItem } from "../tabMenu";
 
 import { plural } from "../../lib/plural";
+import type { LinkIssue, UnknownL2 } from "../../lib/topoInsights";
 type Menu = { x: number; y: number; items: MenuItem[] };
 
 const W = 170;
@@ -171,6 +172,8 @@ const H = 54;
 /** Nodo virtual "L2 desconocido" (puertos activos sin vecino). */
 const L2W = 128;
 const L2H = 38;
+/** Sobre esta cantidad de equipos con puertos sin vecino, el nodo L2 se dibuja solo para el seleccionado. */
+const MAX_L2_NODES = 120;
 /** Separación entre enlaces paralelos del mismo par de equipos. */
 const PARALLEL_GAP = 26;
 /** Máximo de interfaces que se consultan en detalle (Junos) para no saturar la sesión. */
@@ -323,6 +326,25 @@ function arrowHead(a: Pt, c: Pt, b: Pt, t: number, forward: boolean, off: number
 const scopeNote = (skipped: string[]) =>
   skipped.length ? `${skipped.length} fuera de alcance: ${skipped.slice(0, 3).join(", ")}${skipped.length > 3 ? "…" : ""}` : "";
 
+/** Mismo equipo salvo la posición (los objetos anidados se conservan al mover un nodo). */
+function samePayload(a: TopoNode, b: TopoNode): boolean {
+  if (a === b) return true;
+  for (const k in b) if (k !== "x" && k !== "y" && a[k as keyof TopoNode] !== b[k as keyof TopoNode]) return false;
+  for (const k in a) if (!(k in b)) return false;
+  return true;
+}
+
+/**
+ * Los nodos como datos: devuelve el arreglo anterior mientras solo cambien posiciones, para que
+ * lo que no depende de x/y no se recalcule en cada cuadro de un arrastre.
+ */
+function useNodeData(nodes: TopoNode[]): TopoNode[] {
+  const ref = useRef(nodes);
+  const prev = ref.current;
+  if (prev !== nodes && !(prev.length === nodes.length && prev.every((p, i) => samePayload(p, nodes[i])))) ref.current = nodes;
+  return ref.current;
+}
+
 function saveUi(ui: TopoUi) {
   try {
     localStorage.setItem(UI_KEY, JSON.stringify(ui));
@@ -349,6 +371,207 @@ function LegendLine({ dash }: { dash?: string }) {
     </svg>
   );
 }
+
+type Geo = ReturnType<typeof linkGeometry>[number];
+
+/** Línea de "puerto: estado" para el tooltip de un extremo. */
+const infoLine = (port: string, info: string) => (info ? `${port}: ${info}` : "");
+
+/**
+ * Un enlace del diagrama. Memorizado: al arrastrar un equipo solo se redibujan sus enlaces (los
+ * demás conservan la misma geometría y props).
+ */
+const LinkView = memo(function LinkView({
+  g,
+  aName,
+  bName,
+  aInfo,
+  bInfo,
+  state,
+  isRoute,
+  hot,
+  dim,
+  lt,
+  color: byUtil,
+  arrows,
+  animate,
+  grp,
+  issues,
+  onIssue,
+}: {
+  g: Geo;
+  aName: string;
+  bName: string;
+  aInfo: string;
+  bInfo: string;
+  state: "removed" | "added" | null;
+  isRoute: boolean;
+  hot: boolean;
+  dim: boolean;
+  lt: LinkTraffic | undefined;
+  color: boolean;
+  arrows: boolean;
+  animate: boolean;
+  grp: string | undefined;
+  issues: LinkIssue[] | undefined;
+  onIssue: (id: string) => void;
+}) {
+  const level = lt && byUtil ? utilLevel(lt.util) : undefined;
+  const color = state === "removed" ? "var(--danger)" : state === "added" ? "var(--ok)" : level ? UTIL_VAR[level] : hot ? "var(--accent)" : "var(--muted)";
+  const sev = worstSev(issues);
+  // Sin color por utilización, las flechas van en el tono neutro del texto.
+  const dirLevel = (bps: number | null) => (byUtil ? UTIL_VAR[lt?.speed && bps !== null ? utilLevel(bps / lt.speed) : "none"] : "var(--muted)");
+  const tip = [
+    `${aName} ${g.l.aPort || "?"} ↔ ${g.l.bPort || "?"} ${bName} (${protoLabel(g.l)})`,
+    lt &&
+      `Tráfico: ${aName} → ${bName} ${fmtBps(lt.ab)} · ${bName} → ${aName} ${fmtBps(lt.ba)}${lt.speed ? ` · enlace de ${fmtBps(lt.speed)}, ${lt.approx ? "≈" : ""}${Math.round((lt.util ?? 0) * 100)} %${lt.approx ? " (aproximada: velocidad desde el BW configurado)" : ""}` : " · velocidad desconocida"}`,
+    infoLine(g.l.aPort, aInfo),
+    infoLine(g.l.bPort, bInfo),
+    g.l.logical ? "Sesión lógica: no es un enlace físico" : "",
+    state === "removed" ? "Ya no aparece (respecto del snapshot)" : state === "added" ? "Nuevo (respecto del snapshot)" : "",
+    ...(issues ?? []).map((i) => `${i.sev === "crit" ? "✖" : "⚠"} ${ISSUE_LABEL[i.kind]}: ${i.text}`),
+  ]
+    .filter(Boolean)
+    .join("\n");
+  const showGroup = grp && g.pair.length > 1 && g.pair.indexOf(g.l) === 0;
+  const dash = state === "removed" ? "6 5" : linkDash(g.l);
+  const midLabel = showGroup || isRoutingProto(g.l.proto) || g.l.proto === "MAC/OUI";
+  return (
+    <g opacity={dim ? 0.25 : 1}>
+      <title>{tip}</title>
+      <path
+        d={g.d}
+        fill="none"
+        stroke={color}
+        strokeWidth={isRoute ? 3.5 : lt && byUtil ? 1.75 + 3 * Math.min(1, lt.util ?? 0) : hot || state ? 2.5 : g.l.logical ? 1.25 : 1.5}
+        strokeDasharray={dash}
+        strokeLinecap={dash ? "round" : undefined}
+      />
+      {lt && (
+        <>
+          {/* Un carril y una punta de flecha por sentido: A→B y B→A. */}
+          {animate && !!lt.ab && <path className="topo-flow" d={lanePath(g.a, g.c, g.b, 4)} fill="none" stroke={dirLevel(lt.ab)} strokeWidth={1.5} strokeLinecap="round" />}
+          {animate && !!lt.ba && <path className="topo-flow topo-flow-rev" d={lanePath(g.a, g.c, g.b, -4)} fill="none" stroke={dirLevel(lt.ba)} strokeWidth={1.5} strokeLinecap="round" />}
+          {arrows && (
+            <>
+              <polygon points={arrowHead(g.a, g.c, g.b, 0.4, true, 5)} fill={dirLevel(lt.ab)} stroke="var(--panel)" strokeWidth={0.75} />
+              <polygon points={arrowHead(g.a, g.c, g.b, 0.6, false, -5)} fill={dirLevel(lt.ba)} stroke="var(--panel)" strokeWidth={0.75} />
+            </>
+          )}
+        </>
+      )}
+      {/* Área de clic más ancha que la línea. */}
+      <path d={g.d} fill="none" stroke="transparent" strokeWidth={12} />
+      {(
+        [
+          [g.pa, g.l.aPort],
+          [g.pb, g.l.bPort],
+        ] as [Pt, string][]
+      )
+        .filter(([, label]) => label)
+        .map(([pt, label], j) => (
+          <text key={j} x={pt.x} y={pt.y} fontSize={11} textAnchor="middle" fill="var(--text)" stroke="var(--panel)" strokeWidth={4} paintOrder="stroke">
+            {label}
+          </text>
+        ))}
+      {showGroup ? (
+        <text x={g.mid.x} y={g.mid.y + 4} fontSize={11} fontWeight={600} textAnchor="middle" fill="var(--accent)" stroke="var(--panel)" strokeWidth={4} paintOrder="stroke">
+          {grp} ×{g.pair.length}
+        </text>
+      ) : (
+        (isRoutingProto(g.l.proto) || g.l.proto === "MAC/OUI") && (
+          <text x={g.mid.x} y={g.mid.y + 4} fontSize={10} fontWeight={600} textAnchor="middle" fill="var(--muted)" stroke="var(--panel)" strokeWidth={4} paintOrder="stroke">
+            {protoLabel(g.l)}
+          </text>
+        )
+      )}
+      {sev && (
+        <g style={{ cursor: "pointer" }} onClick={() => onIssue(g.l.a)}>
+          <circle cx={g.mid.x} cy={g.mid.y - (midLabel ? 17 : 0)} r={8.5} fill={sev === "crit" ? "var(--danger)" : "var(--warn)"} stroke="var(--panel)" strokeWidth={2} />
+          <text x={g.mid.x} y={g.mid.y - (midLabel ? 17 : 0) + 4} fontSize={12} fontWeight={700} textAnchor="middle" fill="#fff" pointerEvents="none">
+            !
+          </text>
+        </g>
+      )}
+    </g>
+  );
+});
+
+type L2Geo = { id: string; x: number; y: number; from: TopoNode; info: UnknownL2 };
+
+/** Nodo virtual "L2 desconocido": puertos activos sin vecino de un equipo explorado. */
+const L2View = memo(function L2View({ v, faded, onPick }: { v: L2Geo; faded: boolean; onPick: (id: string) => void }) {
+  const { ports, macs, vendors } = v.info;
+  return (
+    <g style={{ cursor: "pointer" }} opacity={faded ? 0.35 : 1} onClick={() => onPick(v.id)}>
+      <title>
+        {[
+          `${v.from.name}: ${plural(ports.length, "puerto activo", "puertos activos")} sin vecino CDP/LLDP`,
+          `${ports.slice(0, 24).join(", ")}${ports.length > 24 ? "…" : ""}`,
+          macs ? `${macs} MAC${vendors.length ? `: ${vendors.join(", ")}` : ""}` : "",
+          "Hay algo conectado que no anuncia CDP/LLDP (PC, AP, cámara, switch no administrable). Con la fuente MAC/OUI se ve qué es.",
+        ]
+          .filter(Boolean)
+          .join("\n")}
+      </title>
+      <line x1={v.from.x} y1={v.from.y} x2={v.x} y2={v.y} stroke="var(--muted)" strokeWidth={1.25} strokeDasharray="2 4" />
+      <rect x={v.x - L2W / 2} y={v.y - L2H / 2} width={L2W} height={L2H} rx={8} fill="var(--panel)" stroke="var(--field-border)" strokeDasharray="3 3" />
+      <text x={v.x} y={v.y - 2} fontSize={11.5} fontWeight={600} textAnchor="middle" fill="var(--text)">
+        L2 desconocido
+      </text>
+      <text x={v.x} y={v.y + 12} fontSize={10.5} textAnchor="middle" fill="var(--muted)">
+        {plural(ports.length, "puerto", "puertos")}
+        {macs ? ` · ${macs} MAC` : ""}
+      </text>
+    </g>
+  );
+});
+
+/** Un equipo del diagrama (memorizado: al arrastrar solo se redibuja el que se mueve). */
+const NodeView = memo(function NodeView({
+  n,
+  ghost,
+  isNew,
+  onRoute,
+  selected,
+  faded,
+  sub,
+  onDown,
+}: {
+  n: TopoNode;
+  ghost: boolean;
+  isNew: boolean;
+  onRoute: boolean;
+  selected: boolean;
+  faded: boolean;
+  sub: string;
+  onDown: (e: React.PointerEvent<SVGGElement>, n: TopoNode) => void;
+}) {
+  const tentative = n.manual || n.addrOnly;
+  return (
+    <g style={{ cursor: ghost ? "default" : "grab" }} opacity={faded ? 0.35 : 1} onPointerDown={(e) => !ghost && onDown(e, n)}>
+      {/* Fondo opaco: el relleno de los explorados es translúcido y dejaba ver los enlaces. */}
+      <rect x={n.x - W / 2} y={n.y - H / 2} width={W} height={H} rx={10} fill="var(--panel)" />
+      <rect
+        x={n.x - W / 2}
+        y={n.y - H / 2}
+        width={W}
+        height={H}
+        rx={10}
+        fill={n.explored ? "var(--selected)" : "var(--chrome)"}
+        stroke={ghost ? "var(--danger)" : isNew ? "var(--ok)" : selected || onRoute ? "var(--accent)" : n.explored ? "var(--accent)" : "var(--field-border)"}
+        strokeDasharray={ghost ? "5 4" : tentative ? "4 3" : undefined}
+        strokeWidth={selected || onRoute || ghost || isNew ? 2.5 : 1.5}
+      />
+      <text x={n.x} y={n.y - 4} fontSize={13} fontWeight={600} textAnchor="middle" fill="var(--text)">
+        {n.name.length > 22 ? `${n.name.slice(0, 21)}…` : n.name}
+      </text>
+      <text x={n.x} y={n.y + 14} fontSize={11} textAnchor="middle" fill="var(--muted)">
+        {sub}
+      </text>
+    </g>
+  );
+});
 
 export function TopologyTool({
   terminals,
@@ -415,10 +638,14 @@ export function TopologyTool({
   const [hops, setHops] = useState<Record<string, { name: string; ip: string }[]>>({});
   const [hopUser, setHopUser] = useState("");
   const drag = useRef<{ id: string; sx: number; sy: number; x: number; y: number } | null>(null);
+  const [dragPos, setDragPos] = useState<{ id: string; x: number; y: number } | null>(null);
   const [ui, setUi] = useState<TopoUi>(loadUi);
   // El descubrimiento tarda segundos: el alcance se evalúa contra el diagrama vigente al terminar.
   const topoRef = useRef(topo);
   topoRef.current = topo;
+  // Arrastrar un equipo solo cambia x/y: revisiones, sugerencias, conteos y búsqueda no se recalculan.
+  const dataNodes = useNodeData(topo.nodes);
+  const topoData = useMemo(() => ({ nodes: dataNodes, links: topo.links }), [dataNodes, topo.links]);
   const [filter, setFilter] = useState<TopoFilter>(NO_FILTER);
   const [query, setQuery] = useState("");
   const [searchOpen, setSearchOpen] = useState(false);
@@ -676,7 +903,9 @@ export function TopologyTool({
     setBusy(false);
   };
 
-  const node = (id: string) => topo.nodes.find((n) => n.id === id);
+  // Índice por id: buscar con find por cada enlace era O(enlaces × equipos) en cada render.
+  const topoById = useMemo(() => new Map(topo.nodes.map((n) => [n.id, n])), [topo.nodes]);
+  const node = (id: string) => topoById.get(id);
   const sel = selected ? node(selected) : undefined;
 
   // Comparación con un snapshot: los enlaces y equipos que ya no están se dibujan fantasma.
@@ -684,7 +913,14 @@ export function TopologyTool({
   /** Nombre del equipo en el diagrama o en el snapshot (los ids son nombres normalizados en minúscula). */
   const anyName = (id: string) => node(id)?.name ?? snapshot?.topo.nodes.find((n) => n.id === id)?.name ?? id;
   const diff = useMemo(() => (snapshot ? diffTopology(snapshot.topo, topo) : null), [snapshot, topo]);
+  // Arrastre: la posición vive aquí mientras se mueve y se guarda una vez al soltar (antes cada
+  // cuadro actualizaba los ajustes de toda la app).
+  const liveTopo = useMemo(
+    () => (dragPos ? { ...topo, nodes: topo.nodes.map((n) => (n.id === dragPos.id ? { ...n, x: dragPos.x, y: dragPos.y } : n)) } : topo),
+    [topo, dragPos],
+  );
   const view: Topology = useMemo(() => {
+    const topo = liveTopo;
     if (!diff || !snapshot) return topo;
     // Los equipos que ya no están usan la posición del snapshot; si quedan encima de uno
     // actual se corren a la derecha para que ambos se lean.
@@ -696,11 +932,11 @@ export function TopologyTool({
       return g;
     });
     return { nodes: [...topo.nodes, ...ghosts], links: [...topo.links, ...diff.removedLinks] };
-  }, [diff, snapshot, topo]);
+  }, [diff, snapshot, liveTopo]);
   // Filtros: solo cambian lo que se dibuja; el diagrama guardado, las rutas y las exportaciones siguen completos.
   const shown = useMemo(() => filterView(view, filter), [view, filter]);
   const filtering = filterActive(filter);
-  const checks = useMemo(() => linkChecks(topo), [topo]);
+  const checks = useMemo(() => linkChecks(topoData), [topoData]);
   const checkCount = useMemo(() => {
     let crit = 0;
     let warn = 0;
@@ -708,9 +944,14 @@ export function TopologyTool({
     return { crit, warn };
   }, [checks]);
   // Puertos activos sin vecino: un nodo virtual por equipo, del lado opuesto a sus vecinos.
-  const l2 = useMemo(() => (ui.l2 ? unknownL2(topo) : null), [ui.l2, topo]);
+  const l2 = useMemo(() => (ui.l2 ? unknownL2(topoData) : null), [ui.l2, topoData]);
+  const l2Cache = useRef(new Map<string, L2Geo>());
   const l2Nodes = useMemo(() => {
     if (!l2?.size) return [];
+    // Con muchos equipos se dibuja solo el del seleccionado: cientos de nodos virtuales tapan el mapa
+    // y duplican lo que el navegador tiene que pintar.
+    const only = l2.size > MAX_L2_NODES ? selected : null;
+    if (l2.size > MAX_L2_NODES && !only) return [];
     const pos = new Map(shown.nodes.map((n) => [n.id, n]));
     const pull = new Map<string, [number, number]>();
     const add = (id: string, o: TopoNode | undefined) => {
@@ -723,18 +964,27 @@ export function TopologyTool({
       if (l2.has(l.a)) add(l.a, pos.get(l.b));
       if (l2.has(l.b)) add(l.b, pos.get(l.a));
     }
-    const out: { id: string; x: number; y: number; from: TopoNode; ports: string[]; macs: number; vendors: string[] }[] = [];
+    const out: L2Geo[] = [];
+    const next = new Map<string, L2Geo>();
     for (const [id, info] of l2) {
+      if (only && id !== only) continue;
       const n = pos.get(id);
       if (!n) continue;
       const [dx, dy] = pull.get(id) ?? [0, 0];
       const len = Math.hypot(dx, dy);
       const [ux, uy] = len ? [-dx / len, -dy / len] : [0, 1];
-      out.push({ id, x: n.x + ux * 130, y: n.y + uy * 95, from: n, ...info });
+      const x = n.x + ux * 130;
+      const y = n.y + uy * 95;
+      // Mismo objeto si no se movió: su L2View no se redibuja.
+      const prev = l2Cache.current.get(id);
+      const v = prev && prev.x === x && prev.y === y && prev.from.x === n.x && prev.from.y === n.y && prev.info === info ? prev : { id, x, y, from: n, info };
+      next.set(id, v);
+      out.push(v);
     }
+    l2Cache.current = next;
     return out;
-  }, [l2, shown]);
-  const hits: SearchHit[] = useMemo(() => (searchOpen ? searchTopo(topo, query) : []), [topo, query, searchOpen]);
+  }, [l2, shown, selected]);
+  const hits: SearchHit[] = useMemo(() => (searchOpen ? searchTopo(topoData, query) : []), [topoData, query, searchOpen]);
   const added = useMemo(() => new Set(diff?.addedLinks.map(linkKey)), [diff]);
   const removed = useMemo(() => new Set(diff?.removedLinks.map(linkKey)), [diff]);
   const ghostIds = useMemo(() => new Set(diff?.removedNodes.map((n) => n.id)), [diff]);
@@ -747,7 +997,30 @@ export function TopologyTool({
   const routeKeys = useMemo(() => new Set(route?.links.map(linkKey)), [route]);
   const routeNodes = useMemo(() => new Set(route?.nodes), [route]);
 
-  const geometry = useMemo(() => linkGeometry(shown, shown.links, PARALLEL_GAP), [shown]);
+  // Geometría estable: un enlace cuyo trazo no cambió conserva su objeto y su LinkView no se redibuja.
+  const geoCache = useRef(new Map<TopoLink, Geo>());
+  const geometry = useMemo(() => {
+    const prev = geoCache.current;
+    const next = new Map<TopoLink, Geo>();
+    const out = linkGeometry(shown, shown.links, PARALLEL_GAP).map((g) => {
+      const p = prev.get(g.l);
+      const keep = p && p.d === g.d && p.pair.length === g.pair.length ? p : g;
+      next.set(g.l, keep);
+      return keep;
+    });
+    geoCache.current = next;
+    return out;
+  }, [shown]);
+  const shownById = useMemo(() => new Map(shown.nodes.map((n) => [n.id, n])), [shown.nodes]);
+  const onIssue = useCallback((id: string) => {
+    setSelected(id);
+    setUi((u) => ({ ...u, panel: true, sec: { ...u.sec, revisiones: true } }));
+  }, []);
+  const onNodeDown = useCallback((e: React.PointerEvent<SVGGElement>, n: TopoNode) => {
+    (e.currentTarget.ownerSVGElement as SVGSVGElement).setPointerCapture(e.pointerId);
+    drag.current = { id: n.id, sx: e.clientX, sy: e.clientY, x: n.x, y: n.y };
+    setSelected(n.id);
+  }, []);
 
   // Última tasa por enlace (se recalcula una vez por lectura, no por cuadro).
   const linkRates = useMemo(() => {
@@ -795,7 +1068,7 @@ export function TopologyTool({
   }, [geometry, linkRates, removed, route, routeKeys, ui.color]);
 
   // Sugerencias: se calculan del diagrama ya leído, sin comandos, y solo con su fuente activa.
-  const suggestions = useMemo(() => collectSuggestions(topo, sources, dismissed), [topo, sources, dismissed]);
+  const suggestions = useMemo(() => collectSuggestions(topoData, sources, dismissed), [topoData, sources, dismissed]);
   const suggestionSources = TOPO_SOURCES.filter((s) => SUGGESTERS[s.id] && sourceOn(sources, s.id));
   const emptyHints = [
     sourceOn(sources, "descriptions") &&
@@ -818,6 +1091,15 @@ export function TopologyTool({
     return { x, y, w: Math.max(...xs) - x + W / 2 + pad, h: Math.max(...ys) - y + H / 2 + pad };
   }, [shown.nodes, l2Nodes]);
 
+  /** Suelta el equipo: la posición final se guarda en el diagrama una sola vez. */
+  const endDrag = () => {
+    drag.current = null;
+    if (!dragPos) return;
+    const { id, x, y } = dragPos;
+    onTopo((t) => ({ ...t, nodes: t.nodes.map((n) => (n.id === id ? { ...n, x, y } : n)) }));
+    setDragPos(null);
+  };
+
   const onPointerMove = (e: React.PointerEvent<SVGSVGElement>) => {
     const d = drag.current;
     if (!d) return;
@@ -826,7 +1108,7 @@ export function TopologyTool({
     const scale = Math.max(box.w / svg.width, box.h / svg.height);
     const x = d.x + (e.clientX - d.sx) * scale;
     const y = d.y + (e.clientY - d.sy) * scale;
-    onTopo((t) => ({ ...t, nodes: t.nodes.map((n) => (n.id === d.id ? { ...n, x, y } : n)) }));
+    setDragPos({ id: d.id, x, y });
   };
 
   const exportFile = async (ext: "svg" | "csv" | "drawio", content: string) => {
@@ -1070,9 +1352,9 @@ export function TopologyTool({
     for (const k of items) m.set(k, (m.get(k) ?? 0) + 1);
     return new Map([...m].sort((a, b) => b[1] - a[1]));
   };
-  const roleCounts = useMemo(() => countBy<NodeRole>(topo.nodes.map((n) => nodeRole(n))), [topo.nodes]);
-  const vendorCounts = useMemo(() => countBy<NodeVendor>(topo.nodes.map((n) => nodeVendor(n))), [topo.nodes]);
-  const stateCounts = useMemo(() => countBy<NodeState>(topo.nodes.map(nodeState)), [topo.nodes]);
+  const roleCounts = useMemo(() => countBy<NodeRole>(dataNodes.map((n) => nodeRole(n))), [dataNodes]);
+  const vendorCounts = useMemo(() => countBy<NodeVendor>(dataNodes.map((n) => nodeVendor(n))), [dataNodes]);
+  const stateCounts = useMemo(() => countBy<NodeState>(dataNodes.map(nodeState)), [dataNodes]);
   const protoCounts = useMemo(() => countBy<string>(topo.links.map((l) => String(l.proto))), [topo.links]);
   const scopeErr = parseCidrs(ui.scope.cidrs).error;
   const setScope = (p: Partial<TopoScope>) => setUi((u) => ({ ...u, scope: { ...u.scope, ...p } }));
@@ -1364,176 +1646,55 @@ export function TopologyTool({
           viewBox={`${box.x} ${box.y} ${box.w} ${box.h}`}
           style={{ width: `${zoom * 100}%`, height: `${zoom * 100}%` }}
           onPointerMove={onPointerMove}
-          onPointerUp={() => (drag.current = null)}
-          onPointerLeave={() => (drag.current = null)}
+          onPointerUp={endDrag}
+          onPointerLeave={endDrag}
         >
-          {geometry.map((g, i) => {
+          {geometry.map((g) => {
             const k = linkKey(g.l);
             const isRoute = routeKeys.has(k);
             const state = removed.has(k) ? "removed" : added.has(k) ? "added" : null;
-            const hot = isRoute || selected === g.l.a || selected === g.l.b;
-            const lt = state ? undefined : linkRates.get(k);
-            const level = lt && ui.color ? utilLevel(lt.util) : undefined;
-            const color =
-              state === "removed" ? "var(--danger)" : state === "added" ? "var(--ok)" : level ? UTIL_VAR[level] : hot ? "var(--accent)" : "var(--muted)";
-            const dim = route && !isRoute;
-            const aName = node(g.l.a)?.name ?? g.l.a;
-            const bName = node(g.l.b)?.name ?? g.l.b;
-            // Sin color por utilización, las flechas van en el tono neutro del texto.
-            const issues = state === "removed" ? undefined : checks.get(k);
-            const sev = worstSev(issues);
-            const dirLevel = (bps: number | null) => (ui.color ? UTIL_VAR[lt?.speed && bps !== null ? utilLevel(bps / lt.speed) : "none"] : "var(--muted)");
-            const tip = [
-              `${aName} ${g.l.aPort || "?"} ↔ ${g.l.bPort || "?"} ${bName} (${protoLabel(g.l)})`,
-              lt &&
-                `Tráfico: ${aName} → ${bName} ${fmtBps(lt.ab)} · ${bName} → ${aName} ${fmtBps(lt.ba)}${lt.speed ? ` · enlace de ${fmtBps(lt.speed)}, ${lt.approx ? "≈" : ""}${Math.round((lt.util ?? 0) * 100)} %${lt.approx ? " (aproximada: velocidad desde el BW configurado)" : ""}` : " · velocidad desconocida"}`,
-              portLine(node(g.l.a), g.l.aPort) && `${g.l.aPort}: ${portLine(node(g.l.a), g.l.aPort)}`,
-              portLine(node(g.l.b), g.l.bPort) && `${g.l.bPort}: ${portLine(node(g.l.b), g.l.bPort)}`,
-              g.l.logical ? "Sesión lógica: no es un enlace físico" : "",
-              state === "removed" ? "Ya no aparece (respecto del snapshot)" : state === "added" ? "Nuevo (respecto del snapshot)" : "",
-              ...(issues ?? []).map((i) => `${i.sev === "crit" ? "✖" : "⚠"} ${ISSUE_LABEL[i.kind]}: ${i.text}`),
-            ]
-              .filter(Boolean)
-              .join("\n");
-            const grp = linkGroup(shown, g.l);
-            const showGroup = grp && g.pair.length > 1 && g.pair.indexOf(g.l) === 0;
-            const dash = state === "removed" ? "6 5" : linkDash(g.l);
+            const a = node(g.l.a);
+            const b = node(g.l.b);
             return (
-              <g key={i} opacity={dim ? 0.25 : 1}>
-                <title>{tip}</title>
-                <path
-                  d={g.d}
-                  fill="none"
-                  stroke={color}
-                  strokeWidth={isRoute ? 3.5 : lt && ui.color ? 1.75 + 3 * Math.min(1, lt.util ?? 0) : hot || state ? 2.5 : g.l.logical ? 1.25 : 1.5}
-                  strokeDasharray={dash}
-                  strokeLinecap={dash ? "round" : undefined}
-                />
-                {lt && (
-                  <>
-                    {/* Un carril y una punta de flecha por sentido: A→B y B→A. */}
-                    {animate && !!lt.ab && <path className="topo-flow" d={lanePath(g.a, g.c, g.b, 4)} fill="none" stroke={dirLevel(lt.ab)} strokeWidth={1.5} strokeLinecap="round" />}
-                    {animate && !!lt.ba && <path className="topo-flow topo-flow-rev" d={lanePath(g.a, g.c, g.b, -4)} fill="none" stroke={dirLevel(lt.ba)} strokeWidth={1.5} strokeLinecap="round" />}
-                    {ui.arrows && (
-                      <>
-                        <polygon points={arrowHead(g.a, g.c, g.b, 0.4, true, 5)} fill={dirLevel(lt.ab)} stroke="var(--panel)" strokeWidth={0.75} />
-                        <polygon points={arrowHead(g.a, g.c, g.b, 0.6, false, -5)} fill={dirLevel(lt.ba)} stroke="var(--panel)" strokeWidth={0.75} />
-                      </>
-                    )}
-                  </>
-                )}
-                {/* Área de clic más ancha que la línea. */}
-                <path d={g.d} fill="none" stroke="transparent" strokeWidth={12} />
-                {[
-                  [g.pa, g.l.aPort],
-                  [g.pb, g.l.bPort],
-                ]
-                  .filter(([, label]) => label)
-                  .map(([pt, label], j) => (
-                    <text
-                      key={j}
-                      x={(pt as Pt).x}
-                      y={(pt as Pt).y}
-                      fontSize={11}
-                      textAnchor="middle"
-                      fill="var(--text)"
-                      stroke="var(--panel)"
-                      strokeWidth={4}
-                      paintOrder="stroke"
-                    >
-                      {label as string}
-                    </text>
-                  ))}
-                {showGroup ? (
-                  <text x={g.mid.x} y={g.mid.y + 4} fontSize={11} fontWeight={600} textAnchor="middle" fill="var(--accent)" stroke="var(--panel)" strokeWidth={4} paintOrder="stroke">
-                    {grp} ×{g.pair.length}
-                  </text>
-                ) : (
-                  (isRoutingProto(g.l.proto) || g.l.proto === "MAC/OUI") && (
-                    <text x={g.mid.x} y={g.mid.y + 4} fontSize={10} fontWeight={600} textAnchor="middle" fill="var(--muted)" stroke="var(--panel)" strokeWidth={4} paintOrder="stroke">
-                      {protoLabel(g.l)}
-                    </text>
-                  )
-                )}
-                {sev && (
-                  <g
-                    style={{ cursor: "pointer" }}
-                    onClick={() => {
-                      setSelected(g.l.a);
-                      showChecks();
-                    }}
-                  >
-                    <circle cx={g.mid.x} cy={g.mid.y - (showGroup || isRoutingProto(g.l.proto) || g.l.proto === "MAC/OUI" ? 17 : 0)} r={8.5} fill={sev === "crit" ? "var(--danger)" : "var(--warn)"} stroke="var(--panel)" strokeWidth={2} />
-                    <text x={g.mid.x} y={g.mid.y - (showGroup || isRoutingProto(g.l.proto) || g.l.proto === "MAC/OUI" ? 17 : 0) + 4} fontSize={12} fontWeight={700} textAnchor="middle" fill="#fff" pointerEvents="none">
-                      !
-                    </text>
-                  </g>
-                )}
-              </g>
+              <LinkView
+                key={`${k}|${g.l.proto}`}
+                g={g}
+                aName={a?.name ?? anyName(g.l.a)}
+                bName={b?.name ?? anyName(g.l.b)}
+                aInfo={portLine(a, g.l.aPort)}
+                bInfo={portLine(b, g.l.bPort)}
+                state={state}
+                isRoute={isRoute}
+                hot={isRoute || selected === g.l.a || selected === g.l.b}
+                dim={!!route && !isRoute}
+                lt={state ? undefined : linkRates.get(k)}
+                color={ui.color}
+                arrows={ui.arrows}
+                animate={animate}
+                grp={linkGroup(shown, g.l, shownById)}
+                issues={state === "removed" ? undefined : checks.get(k)}
+                onIssue={onIssue}
+              />
             );
           })}
           {l2Nodes.map((v) => (
-            <g key={`l2:${v.id}`} style={{ cursor: "pointer" }} opacity={route && !routeNodes.has(v.id) ? 0.35 : 1} onClick={() => setSelected(v.id)}>
-              <title>
-                {[
-                  `${v.from.name}: ${plural(v.ports.length, "puerto activo", "puertos activos")} sin vecino CDP/LLDP`,
-                  `${v.ports.slice(0, 24).join(", ")}${v.ports.length > 24 ? "…" : ""}`,
-                  v.macs ? `${v.macs} MAC${v.vendors.length ? `: ${v.vendors.join(", ")}` : ""}` : "",
-                  "Hay algo conectado que no anuncia CDP/LLDP (PC, AP, cámara, switch no administrable). Con la fuente MAC/OUI se ve qué es.",
-                ]
-                  .filter(Boolean)
-                  .join("\n")}
-              </title>
-              <line x1={v.from.x} y1={v.from.y} x2={v.x} y2={v.y} stroke="var(--muted)" strokeWidth={1.25} strokeDasharray="2 4" />
-              <rect x={v.x - L2W / 2} y={v.y - L2H / 2} width={L2W} height={L2H} rx={8} fill="var(--panel)" stroke="var(--field-border)" strokeDasharray="3 3" />
-              <text x={v.x} y={v.y - 2} fontSize={11.5} fontWeight={600} textAnchor="middle" fill="var(--text)">
-                L2 desconocido
-              </text>
-              <text x={v.x} y={v.y + 12} fontSize={10.5} textAnchor="middle" fill="var(--muted)">
-                {plural(v.ports.length, "puerto", "puertos")}
-                {v.macs ? ` · ${v.macs} MAC` : ""}
-              </text>
-            </g>
+            <L2View key={`l2:${v.id}`} v={v} faded={!!route && !routeNodes.has(v.id)} onPick={setSelected} />
           ))}
           {shown.nodes.map((n) => {
             const ghost = ghostIds.has(n.id);
-            const isNew = newIds.has(n.id);
             const onRoute = routeNodes.has(n.id);
-            const tentative = n.manual || n.addrOnly;
             return (
-              <g
+              <NodeView
                 key={n.id}
-                style={{ cursor: ghost ? "default" : "grab" }}
-                opacity={route && !onRoute && !ghost ? 0.35 : 1}
-                onPointerDown={(e) => {
-                  if (ghost) return;
-                  (e.currentTarget.ownerSVGElement as SVGSVGElement).setPointerCapture(e.pointerId);
-                  drag.current = { id: n.id, sx: e.clientX, sy: e.clientY, x: n.x, y: n.y };
-                  setSelected(n.id);
-                }}
-              >
-                {/* Fondo opaco: el relleno de los explorados es translúcido y dejaba ver los enlaces. */}
-                <rect x={n.x - W / 2} y={n.y - H / 2} width={W} height={H} rx={10} fill="var(--panel)" />
-                <rect
-                  x={n.x - W / 2}
-                  y={n.y - H / 2}
-                  width={W}
-                  height={H}
-                  rx={10}
-                  fill={n.explored ? "var(--selected)" : "var(--chrome)"}
-                  stroke={
-                    ghost ? "var(--danger)" : isNew ? "var(--ok)" : selected === n.id || onRoute ? "var(--accent)" : n.explored ? "var(--accent)" : "var(--field-border)"
-                  }
-                  strokeDasharray={ghost ? "5 4" : tentative ? "4 3" : undefined}
-                  strokeWidth={selected === n.id || onRoute || ghost || isNew ? 2.5 : 1.5}
-                />
-                <text x={n.x} y={n.y - 4} fontSize={13} fontWeight={600} textAnchor="middle" fill="var(--text)">
-                  {n.name.length > 22 ? `${n.name.slice(0, 21)}…` : n.name}
-                </text>
-                <text x={n.x} y={n.y + 14} fontSize={11} textAnchor="middle" fill="var(--muted)">
-                  {nodeSub(n, ghost)}
-                </text>
-              </g>
+                n={n}
+                ghost={ghost}
+                isNew={newIds.has(n.id)}
+                onRoute={onRoute}
+                selected={selected === n.id}
+                faded={!!route && !onRoute && !ghost}
+                sub={nodeSub(n, ghost)}
+                onDown={onNodeDown}
+              />
             );
           })}
           {/* Las tasas van en una capa propia sobre los equipos: un enlace corto no las tapa. */}
@@ -1752,7 +1913,7 @@ export function TopologyTool({
                 <div>
                   <Toggle checked={ui.l2} onChange={(l2v) => setUi((u) => ({ ...u, l2: l2v }))} label="Puertos activos sin vecino" />
                   <p className="mt-0.5 pl-10 text-[11px] text-muted leading-snug">
-                    Dibuja un nodo "L2 desconocido" junto a cada equipo con interfaces activas sin vecino CDP/LLDP (requiere "Estado de puertos").
+                    Dibuja un nodo "L2 desconocido" junto a cada equipo con interfaces activas sin vecino CDP/LLDP (requiere "Estado de puertos"). Con más de {MAX_L2_NODES} equipos así, solo el del equipo seleccionado.
                   </p>
                 </div>
               </div>
