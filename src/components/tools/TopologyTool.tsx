@@ -586,6 +586,7 @@ export function TopologyTool({
   onSources,
   onOpenSession,
   onConfirm,
+  lifecycle = false,
 }: {
   terminals: TerminalRef[];
   sessions: Session[];
@@ -602,6 +603,8 @@ export function TopologyTool({
   onOpenSession: (s: Session) => void;
   /** Confirmación de la app (ConfirmDialog) para borrar o reemplazar el diagrama y los snapshots. */
   onConfirm: (req: ConfirmReq) => void;
+  /** Ciclo de vida activado en Ajustes: muestra EoL y versión en el detalle del equipo. */
+  lifecycle?: boolean;
 }) {
   const [connId, setConnId] = useState("");
   const term = terminals.find((t) => t.connId === connId);
@@ -2149,7 +2152,7 @@ export function TopologyTool({
                     {sel.platform.length > 120 ? `${sel.platform.slice(0, 119)}…` : sel.platform}
                   </p>
                 )}
-                {modelFromPlatform(sel.platform) && (
+                {lifecycle && modelFromPlatform(sel.platform) && (
                   <p className="text-[11.5px]">
                     <LifecycleChip model={modelFromPlatform(sel.platform)!} name={sel.name} />
                   </p>

@@ -390,6 +390,12 @@ export function SettingsModal({
                   <Switch checked={s.confirmClose} onChange={(v) => onChange({ confirmClose: v })} />
                 </Item>
                 <Item
+                  label="Ciclo de vida del equipo (EoL)"
+                  hint="Muestra en la barra de estado el modelo, la etapa de fin de vida (fin de venta, de software, de soporte) y si conviene actualizar el sistema operativo, leyendo el show version que ejecutes (no envía comandos). Bases oficiales de Cisco, Meraki, Fortinet, Juniper y HPE Aruba; se descargan recién al activarlo"
+                >
+                  <Switch checked={s.lifecycleInfo} onChange={(v) => onChange({ lifecycleInfo: v })} />
+                </Item>
+                <Item
                   label="Activar algoritmos legacy automáticamente"
                   hint="Si un equipo SSH exige ssh-rsa, SHA1 o CBC, reconecta una vez en modo compatible y lo deja guardado en la sesión. Usa algoritmos débiles: actívalo solo en redes de gestión confiables"
                 >

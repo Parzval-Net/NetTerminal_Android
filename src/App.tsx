@@ -616,6 +616,14 @@ function Workspace({
   /** Prompt con que se conectó cada pestaña: lo leído tras saltar a otro equipo no se guarda para su host. */
   const tabHome = useRef(new Map<string, string>());
 
+  // Al activar el ciclo de vida se lee lo que ya muestra la pestaña activa (sin esperar otro show version).
+  useEffect(() => {
+    if (!settings?.lifecycleInfo || !activeTab || activeTab.session.type === "local") return;
+    const text = controllers.current.get(activeTab.id)?.recentText(150);
+    if (text) noteDevice(activeTab, text);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [settings?.lifecycleInfo]);
+
   /** Sin enviar nada: modelo y versión de lo que muestra la pantalla, o lo recordado para el host. */
   const noteDevice = (tab: Tab, text: string) => {
     const here = promptHost(text);
@@ -1138,7 +1146,8 @@ function Workspace({
       const tab = tabs.find((t) => t.id === tabId);
       if (!tab || tab.session.type === "local" || tab.session.scp) return;
       const text = controllers.current.get(tabId)?.recentText(150);
-      if (text) noteDevice(tab, text);
+      // Ciclo de vida apagado (por defecto): no se lee nada más de la pantalla.
+      if (text && settings.lifecycleInfo) noteDevice(tab, text);
       if (tab.session.platform) return;
       const h = tab.session.highlight;
       const preferred = h && h !== "off" ? (catalog.some((v) => v.id === h) ? h : vendorFor(h)) : settings.catalogVendor;
@@ -1372,7 +1381,7 @@ function Workspace({
 
         <StatusBar
           tab={activeTab}
-          device={activeId ? tabDevice[activeId] : undefined}
+          device={settings.lifecycleInfo && activeId ? tabDevice[activeId] : undefined}
           state={activeId ? states[activeId] : undefined}
           onToggleLog={h.toggleLog}
           onBreak={h.sendBreak}

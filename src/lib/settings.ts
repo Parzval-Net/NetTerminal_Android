@@ -72,6 +72,8 @@ export interface Settings {
   extraFolders: string[];
   /** Orden manual de la lista de sesiones por carpeta (ver SidebarOrder en folders.ts). */
   sidebarOrder: Record<string, string[]>;
+  /** Ciclo de vida (EoL) y versión de sistema operativo del equipo en la barra de estado (opcional). */
+  lifecycleInfo: boolean;
   /** Modelo y versión vistos por destino (host), para el ciclo de vida en la barra de estado. */
   deviceInfo: DeviceInfoMap;
   confirmSend: boolean;
@@ -159,6 +161,7 @@ export const defaultSettings: Settings = {
   logTimestamps: false,
   extraFolders: [],
   sidebarOrder: {},
+  lifecycleInfo: false,
   deviceInfo: {},
   confirmSend: true,
   macros: [

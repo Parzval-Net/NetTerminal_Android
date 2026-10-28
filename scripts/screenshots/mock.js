@@ -194,6 +194,8 @@ settings.terminalTheme = new URLSearchParams(location.search).get("term") ?? "au
 // ?logsdir=1: carpeta de logs elegida por el usuario (modo portable, con su aviso).
 let logsDir = location.search.includes("logsdir=1") ? "/Volumes/USB/Logs-NOC" : "";
 if (logsDir) settings.logsDir = logsDir;
+// &lifecycle=1: ciclo de vida del equipo activado (opcional, apagado por defecto).
+if (location.search.includes("lifecycle=1")) settings.lifecycleInfo = true;
 const logsDirInfo = () => ({ path: logsDir || "~/NetTerminal/data/logs", default: "~/NetTerminal/data/logs", custom: !!logsDir, portable: !!logsDir });
 if (location.search.includes("collapsed=1")) localStorage.setItem("vtabsCollapsed", "true");
 const topology = {

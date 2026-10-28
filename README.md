@@ -37,7 +37,7 @@ Todos los archivos están en la [última versión publicada](https://github.com/
 - **Sesiones y conexión rápida:** organiza tus equipos en carpetas, impórtalos desde PuTTY, SecureCRT, MobaXterm, ssh_config o CSV, o conéctate al vuelo sin guardar nada.
 - **Catálogo de 2.776 comandos verificados** con fuente oficial para Cisco, Juniper, Fortinet (FortiGate, FortiSwitch, FortiAP y FortiExtender), Huawei, Aruba (AOS-CX, ArubaOS-Switch, ArubaOS 8, AOS 10 e Instant), Check Point, WatchGuard, Grandstream, Windows, macOS y Linux, con la sintaxis de tu plataforma y el nivel de riesgo de cada comando.
 - **Sugerencias de comandos** en color mientras escribes, también si abrevias (`sh ip int br`). Tab o → acepta y Esc descarta; sin sugerencia visible, Tab sigue siendo el autocompletado del equipo. Nunca envían Enter y se apagan en modo configuración.
-- **Ciclo de vida del equipo** en la barra de estado: modelo, versión y etapa EoL (fin de venta, de software y de soporte) según los boletines oficiales, sin enviar comandos.
+- **Ciclo de vida del equipo** (opcional) en la barra de estado: modelo, versión y etapa EoL (fin de venta, de software y de soporte) según los boletines oficiales, sin enviar comandos.
 - **Topología** de vecinos CDP/LLDP con estado de puertos, búsqueda y filtros, revisiones de enlaces (dúplex, VLAN nativa, Port-channel, CRC, asimetrías), ruta entre dos equipos, comparación antes y después de un cambio y exportación a draw.io.
 - **Transferencias** de firmware y configuraciones por TFTP, HTTP, FTP y SFTP, con verificación MD5.
 - **SNMP** v1, v2c y v3 de solo lectura, receptor de traps y generador de configuración para seis plataformas.

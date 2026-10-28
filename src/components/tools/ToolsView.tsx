@@ -105,6 +105,7 @@ export const ToolsView = memo(function ToolsView({ active, settings, update, mon
             visible={active && current === "topology"}
             onOpenSession={onOpenSession}
             onConfirm={onConfirm}
+            lifecycle={settings.lifecycleInfo}
           />
         );
       case "subnet":
