@@ -1003,6 +1003,7 @@ function Workspace({
     deleteSession: (s: Session) => deleteSession(s.id),
     updateSessions,
     setExtraFolders: (extraFolders: string[]) => update({ extraFolders }),
+    setSidebarOrder: (sidebarOrder: Record<string, string[]>) => update({ sidebarOrder }),
     requestClose,
     requestCloseMany,
     toggleSidebar: () => setSidebarOpen((o) => !o),
@@ -1165,6 +1166,8 @@ function Workspace({
         <Sidebar
           sessions={sessions}
           extraFolders={settings.extraFolders}
+          order={settings.sidebarOrder}
+          onSetOrder={h.setSidebarOrder}
           live={live}
           onOpen={openTab}
           onOpenMany={h.openMany}

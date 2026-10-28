@@ -69,6 +69,8 @@ export interface Settings {
   logTimestamps: boolean;
   /** Carpetas creadas a mano (pueden estar vacías). */
   extraFolders: string[];
+  /** Orden manual de la lista de sesiones por carpeta (ver SidebarOrder en folders.ts). */
+  sidebarOrder: Record<string, string[]>;
   confirmSend: boolean;
   macros: Macro[];
   showButtonBar: boolean;
@@ -153,6 +155,7 @@ export const defaultSettings: Settings = {
   sendLineDelay: 0,
   logTimestamps: false,
   extraFolders: [],
+  sidebarOrder: {},
   confirmSend: true,
   macros: [
     { id: "m1", label: "terminal length 0", kind: "send", text: "terminal length 0" },

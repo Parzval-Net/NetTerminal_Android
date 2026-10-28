@@ -1,6 +1,10 @@
 import { memo, useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 import {
+  ArrowDownToLine,
+  ArrowUpToLine,
+  ChevronDown,
   ChevronRight,
+  ChevronUp,
   ChevronsDownUp,
   Copy,
   FileUp,
@@ -20,7 +24,13 @@ import { SessionIcon } from "./SessionIcon";
 import { modLabel } from "../lib/platform";
 import {
   FolderNode,
+  SidebarOrder,
+  TreeItem,
   allFolders,
+  findFolder,
+  itemKey,
+  orderedItems,
+  placeKey,
   baseName,
   buildTree,
   freeName,
@@ -44,6 +54,9 @@ export interface ConfirmRequest {
 interface Props {
   sessions: Session[];
   extraFolders: string[];
+  /** Orden manual por carpeta: carpetas y sesiones intercaladas (p. ej. "Shell local" arriba). */
+  order: SidebarOrder;
+  onSetOrder: (order: SidebarOrder) => void;
   /** Estado de conexión por id de sesión guardada (si tiene pestañas abiertas). */
   live: Record<string, ConnStatus>;
   onOpen: (s: Session) => void;
@@ -65,6 +78,8 @@ type MenuItem = [string, React.ReactNode, () => void, boolean?];
 type Menu = { x: number; y: number; items: MenuItem[] };
 type Selected = { kind: "session"; id: string } | { kind: "folder"; path: string } | null;
 
+/** Dónde cae lo arrastrado sobre una fila: antes, después o dentro de una carpeta. */
+type DropPos = "before" | "after" | "into";
 const DND_SESSION = "application/x-nt-session";
 const DND_FOLDER = "application/x-nt-folder";
 
@@ -84,6 +99,9 @@ export const Sidebar = memo(function Sidebar(p: Props) {
   const [renaming, setRenaming] = useState<string | null>(null);
   const [menu, setMenu] = useState<Menu | null>(null);
   const [dropTarget, setDropTarget] = useState<string | null>(null);
+  /** Indicador de reordenamiento: fila (clave de árbol con su carpeta) y posición. */
+  const [dropHint, setDropHint] = useState<{ row: string; pos: DropPos } | null>(null);
+  const expandTimer = useRef<number | undefined>(undefined);
   const [notice, setNotice] = useState("");
   const closeMenu = useCallback(() => setMenu(null), []);
 
@@ -129,6 +147,13 @@ export const Sidebar = memo(function Sidebar(p: Props) {
     if (changed.length) p.onUpdateSessions(changed);
     p.onSetExtraFolders([...new Set(extraFolders.map((f) => rebase(normPath(f), from, to)))]);
     setCollapsed((c) => Object.fromEntries(Object.entries(c).map(([k, v]) => [rebase(k, from, to), v])));
+    // El orden manual sigue a la carpeta: sus subcarpetas cambian de ruta y, si solo se
+    // renombró, conserva su lugar entre sus hermanas.
+    const next: SidebarOrder = {};
+    for (const [k, v] of Object.entries(p.order)) next[rebase(k, from, to)] = v;
+    if (parentOf(from) === parentOf(to) && next[parentOf(from)])
+      next[parentOf(from)] = next[parentOf(from)].map((k) => (k === `f:${baseName(from)}` ? `f:${baseName(to)}` : k));
+    p.onSetOrder(next);
   };
 
   const commitRename = (path: string, raw: string) => {
@@ -202,6 +227,7 @@ export const Sidebar = memo(function Sidebar(p: Props) {
       ["Nueva sesión aquí", <Plus size={13} />, () => p.onNew(node.path)],
       ["Nueva subcarpeta", <FolderPlus size={13} />, () => createFolder(node.path)],
       ["Renombrar", <Pencil size={13} />, () => setRenaming(node.path)],
+      ...moveItems({ kind: "folder", node }, parentOf(node.path)),
       ["Eliminar carpeta", <Trash2 size={13} />, () => deleteFolder(node.path)],
     ]);
   };
@@ -212,8 +238,53 @@ export const Sidebar = memo(function Sidebar(p: Props) {
       ["Conectar", <Play size={13} />, () => p.onOpen(s)],
       ["Editar", <Pencil size={13} />, () => p.onEdit(s)],
       ["Duplicar", <Copy size={13} />, () => p.onDuplicate(s)],
+      ...moveItems({ kind: "session", session: s }, normPath(s.folder)),
       ["Eliminar", <Trash2 size={13} />, () => deleteSession(s)],
     ]);
+  };
+
+  // ---------- Orden manual ----------
+
+  /** Deja un elemento (sesión o carpeta) en `parent`, antes o después de `anchor`, o al inicio o al final. */
+  const placeItem = (moved: { sid?: string; fpath?: string }, parent: string, anchor: string | null, where: "before" | "after" | "start" | "end") => {
+    let key: string;
+    if (moved.sid) {
+      const s = sessions.find((x) => x.id === moved.sid);
+      if (!s) return;
+      if (normPath(s.folder) !== parent) p.onUpdateSessions([{ ...s, folder: parent || undefined }]);
+      key = `s:${s.id}`;
+    } else if (moved.fpath) {
+      if (isWithin(parent, moved.fpath)) return flash("No se puede mover una carpeta dentro de sí misma");
+      const dest = joinPath(parent, baseName(moved.fpath));
+      if (dest !== moved.fpath && folders.includes(dest)) return flash(`Ya existe la carpeta "${baseName(dest)}" ahí`);
+      if (parentOf(moved.fpath) !== parent) moveFolderTo(moved.fpath, dest);
+      key = `f:${baseName(moved.fpath)}`;
+    } else return;
+    const node = findFolder(buildTree(sessions, extraFolders), parent);
+    const current = node ? orderedItems(node, p.order[parent]).map(itemKey) : [];
+    p.onSetOrder({ ...p.order, [parent]: placeKey(current, key, anchor, where) });
+  };
+
+  /** Sube o baja un elemento un lugar entre sus hermanos (menú y teclado, sin arrastrar). */
+  const shiftItem = (it: TreeItem, parent: string, dir: -1 | 1) => {
+    const node = findFolder(buildTree(sessions, extraFolders), parent);
+    if (!node) return;
+    const list = orderedItems(node, p.order[parent]).map(itemKey);
+    const i = list.indexOf(itemKey(it));
+    const j = i + dir;
+    if (i < 0 || j < 0 || j >= list.length) return;
+    [list[i], list[j]] = [list[j], list[i]];
+    p.onSetOrder({ ...p.order, [parent]: list });
+  };
+
+  const moveItems = (it: TreeItem, parent: string): MenuItem[] => {
+    const moved = it.kind === "session" ? { sid: it.session.id } : { fpath: it.node.path };
+    return [
+      ["Mover al inicio", <ArrowUpToLine size={13} />, () => placeItem(moved, parent, null, "start"), !!q],
+      ["Subir", <ChevronUp size={13} />, () => shiftItem(it, parent, -1), !!q],
+      ["Bajar", <ChevronDown size={13} />, () => shiftItem(it, parent, 1), !!q],
+      ["Mover al final", <ArrowDownToLine size={13} />, () => placeItem(moved, parent, null, "end"), !!q],
+    ];
   };
 
   // ---------- Arrastrar y soltar ----------
@@ -248,6 +319,80 @@ export const Sidebar = memo(function Sidebar(p: Props) {
     onDrop: (e: React.DragEvent) => onDrop(e, target),
   });
 
+  /**
+   * Arrastre sobre una fila: en la mitad de arriba cae antes y en la de abajo después (en una
+   * carpeta, el centro es "dentro"). Mantener el arrastre sobre una carpeta cerrada la abre.
+   * Con un filtro activo solo se mueve dentro de carpetas: el orden visible está incompleto.
+   */
+  const rowDropProps = (it: TreeItem, parent: string) => {
+    const row = `${parent}|${itemKey(it)}`;
+    const posAt = (e: React.DragEvent): DropPos | null => {
+      const r = e.currentTarget.getBoundingClientRect();
+      const y = (e.clientY - r.top) / Math.max(1, r.height);
+      if (it.kind === "folder") {
+        if (q) return "into";
+        if (y < 0.3) return "before";
+        // Abierta, lo de abajo del encabezado ya es su contenido: el borde inferior es "dentro".
+        if (y > 0.7 && collapsed[it.node.path]) return "after";
+        return "into";
+      }
+      return q ? null : y < 0.5 ? "before" : "after";
+    };
+    return {
+      onDragOver: (e: React.DragEvent) => {
+        const t = e.dataTransfer.types;
+        if (!t.includes(DND_SESSION) && !t.includes(DND_FOLDER)) return;
+        const pos = posAt(e);
+        if (!pos) return;
+        e.preventDefault();
+        e.stopPropagation();
+        e.dataTransfer.dropEffect = "move";
+        setDropTarget(null);
+        setDropHint((h) => (h?.row === row && h.pos === pos ? h : { row, pos }));
+        if (pos === "into" && it.kind === "folder" && collapsed[it.node.path] && expandTimer.current === undefined) {
+          const path = it.node.path;
+          expandTimer.current = window.setTimeout(() => {
+            expandTimer.current = undefined;
+            setCollapsed((c) => ({ ...c, [path]: false }));
+          }, 600);
+        }
+      },
+      onDragLeave: () => {
+        setDropHint((h) => (h?.row === row ? null : h));
+        window.clearTimeout(expandTimer.current);
+        expandTimer.current = undefined;
+      },
+      onDrop: (e: React.DragEvent) => {
+        const pos = posAt(e);
+        window.clearTimeout(expandTimer.current);
+        expandTimer.current = undefined;
+        setDropHint(null);
+        if (!pos) return;
+        if (pos === "into" && it.kind === "folder") return onDrop(e, it.node.path);
+        e.preventDefault();
+        e.stopPropagation();
+        const sid = e.dataTransfer.getData(DND_SESSION) || undefined;
+        const fpath = e.dataTransfer.getData(DND_FOLDER) || undefined;
+        if ((sid && it.kind === "session" && it.session.id === sid) || (fpath && it.kind === "folder" && it.node.path === fpath)) return;
+        placeItem({ sid, fpath }, parent, itemKey(it), pos === "before" ? "before" : "after");
+      },
+    };
+  };
+  const hintClass = (it: TreeItem, parent: string) => {
+    if (dropHint?.row !== `${parent}|${itemKey(it)}`) return "";
+    return dropHint.pos === "before"
+      ? "shadow-[inset_0_2px_0_0_var(--accent)]"
+      : dropHint.pos === "after"
+        ? "shadow-[inset_0_-2px_0_0_var(--accent)]"
+        : "bg-selected ring-1 ring-[var(--accent)]";
+  };
+  const endDrag = () => {
+    setDropHint(null);
+    setDropTarget(null);
+    window.clearTimeout(expandTimer.current);
+    expandTimer.current = undefined;
+  };
+
   // ---------- Render ----------
 
   const renderFolder = (node: FolderNode, depth: number): React.ReactNode => {
@@ -261,7 +406,8 @@ export const Sidebar = memo(function Sidebar(p: Props) {
             e.dataTransfer.setData(DND_FOLDER, node.path);
             e.dataTransfer.effectAllowed = "move";
           }}
-          {...dropProps(node.path)}
+          onDragEnd={endDrag}
+          {...rowDropProps({ kind: "folder", node }, parentOf(node.path))}
           tabIndex={0}
           onClick={() => {
             setSelected({ kind: "folder", path: node.path });
@@ -274,11 +420,7 @@ export const Sidebar = memo(function Sidebar(p: Props) {
           }}
           style={{ paddingLeft: 6 + depth * 14 }}
           className={`group flex items-center gap-1.5 pr-1 h-7 rounded-md outline-none ${
-            dropTarget === node.path
-              ? "bg-selected ring-1 ring-[var(--accent)]"
-              : isSel
-                ? "bg-hover"
-                : "hover:bg-hover"
+            hintClass({ kind: "folder", node }, parentOf(node.path)) || (isSel ? "bg-hover" : "hover:bg-hover")
           }`}
         >
           <ChevronRight
@@ -312,12 +454,10 @@ export const Sidebar = memo(function Sidebar(p: Props) {
             <MoreHorizontal size={14} />
           </RowBtn>
         </div>
-        {!isCollapsed && (
-          <>
-            {node.children.map((c) => renderFolder(c, depth + 1))}
-            {node.sessions.map((s) => renderSession(s, depth + 1))}
-          </>
-        )}
+        {!isCollapsed &&
+          orderedItems(node, p.order[node.path]).map((it) =>
+            it.kind === "folder" ? renderFolder(it.node, depth + 1) : renderSession(it.session, depth + 1),
+          )}
       </div>
     );
   };
@@ -333,6 +473,8 @@ export const Sidebar = memo(function Sidebar(p: Props) {
           e.dataTransfer.setData(DND_SESSION, s.id);
           e.dataTransfer.effectAllowed = "move";
         }}
+        onDragEnd={endDrag}
+        {...rowDropProps({ kind: "session", session: s }, normPath(s.folder))}
         tabIndex={0}
         onClick={() => setSelected({ kind: "session", id: s.id })}
         onDoubleClick={() => p.onOpen(s)}
@@ -344,7 +486,7 @@ export const Sidebar = memo(function Sidebar(p: Props) {
         title={`${sessionTarget(s)}\nDoble clic para conectar · clic derecho para más opciones`}
         style={{ paddingLeft: 24 + depth * 14 }}
         className={`group flex items-center gap-2 pr-1 h-7 rounded-md outline-none ${
-          isSel ? "bg-selected" : "hover:bg-hover"
+          hintClass({ kind: "session", session: s }, normPath(s.folder)) || (isSel ? "bg-selected" : "hover:bg-hover")
         }`}
       >
         <SessionIcon type={s.type} size={14} />
@@ -421,8 +563,7 @@ export const Sidebar = memo(function Sidebar(p: Props) {
         {...dropProps("")}
         onClick={(e) => e.target === e.currentTarget && setSelected(null)}
       >
-        {tree.children.map((c) => renderFolder(c, 0))}
-        {tree.sessions.map((s) => renderSession(s, -1))}
+        {orderedItems(tree, p.order[""]).map((it) => (it.kind === "folder" ? renderFolder(it.node, 0) : renderSession(it.session, -1)))}
 
         {empty && (
           <div className="px-3 py-8 text-center text-[12px] text-muted">
