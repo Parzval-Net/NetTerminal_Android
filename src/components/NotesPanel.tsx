@@ -1,13 +1,13 @@
 import { memo, useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { invoke } from "@tauri-apps/api/core";
 import type { ITheme } from "@xterm/xterm";
-import { ArrowDownToLine, Check, FolderOpen, Lock, Pencil, Plus, Replace, Search, Send, SendHorizontal, ShieldCheck, Trash2, X } from "lucide-react";
+import { ArrowDownToLine, Check, FolderOpen, Lock, MoreHorizontal, Pencil, Plus, Replace, Search, Send, SendHorizontal, ShieldCheck, Trash2, X } from "lucide-react";
 import { CodeEditor } from "./CodeEditor";
 import { NoteSecurity, NoteUnlock } from "./NoteLock";
-import { BroadcastTargetPicker } from "./BroadcastTarget";
 import { Compiled } from "../lib/highlight";
 import { fontStack } from "../lib/theme";
 import { isMac, modLabel } from "../lib/platform";
+import { PanelResize, panelClass } from "./PanelResize";
 
 interface NoteInfo {
   name: string;
@@ -49,6 +49,8 @@ function occurrences(text: string, find: string, matchCase: boolean): number[] {
 interface Props {
   width: number;
   onResize: (w: number) => void;
+  /** Ventana angosta: el panel se superpone a la terminal. */
+  overlay?: boolean;
   onClose: () => void;
   compiled: Compiled[];
   theme: ITheme;
@@ -67,6 +69,19 @@ export const NotesPanel = memo(function NotesPanel(p: Props) {
   const [saved, setSaved] = useState(true);
   const [renaming, setRenaming] = useState<string | null>(null);
   const [confirmDelete, setConfirmDelete] = useState(false);
+  const [menuOpen, setMenuOpen] = useState(false);
+  const menuRef = useRef<HTMLDivElement>(null);
+  useEffect(() => {
+    if (!menuOpen) return setConfirmDelete(false);
+    const close = (e: MouseEvent) => !menuRef.current?.contains(e.target as Node) && setMenuOpen(false);
+    const esc = (e: KeyboardEvent) => e.key === "Escape" && setMenuOpen(false);
+    window.addEventListener("mousedown", close);
+    window.addEventListener("keydown", esc);
+    return () => {
+      window.removeEventListener("mousedown", close);
+      window.removeEventListener("keydown", esc);
+    };
+  }, [menuOpen]);
   const [notice, setNotice] = useState("");
   const editorRef = useRef<HTMLTextAreaElement>(null);
   // Búsqueda en todas las notas y buscar/reemplazar en la actual (cerradas por defecto).
@@ -380,24 +395,9 @@ export const NotesPanel = memo(function NotesPanel(p: Props) {
     flash("Selección agregada al final");
   };
 
-  const startDrag = (e: React.MouseEvent) => {
-    e.preventDefault();
-    const startX = e.clientX;
-    const startW = p.width;
-    const move = (ev: MouseEvent) => p.onResize(startW + (startX - ev.clientX));
-    const up = () => {
-      window.removeEventListener("mousemove", move);
-      window.removeEventListener("mouseup", up);
-      document.body.style.cursor = "";
-    };
-    document.body.style.cursor = "col-resize";
-    window.addEventListener("mousemove", move);
-    window.addEventListener("mouseup", up);
-  };
-
   return (
     <aside
-      className="relative shrink-0 flex flex-col border-l border-line bg-chrome"
+      className={panelClass(!!p.overlay)}
       style={{ width: p.width }}
       onKeyDownCapture={activity}
       onMouseDownCapture={activity}
@@ -405,10 +405,7 @@ export const NotesPanel = memo(function NotesPanel(p: Props) {
       onCopy={() => unlocked && flash("Copiado. Ojo: el portapapeles no está protegido")}
       onCut={() => unlocked && flash("Cortado. Ojo: el portapapeles no está protegido")}
     >
-      <div
-        onMouseDown={startDrag}
-        className="absolute -left-1 top-0 bottom-0 w-2 cursor-col-resize z-10 hover:bg-[var(--selected)]"
-      />
+      <PanelResize width={p.width} onResize={p.onResize} />
 
       <header className="flex items-center gap-1 h-9 px-2 border-b border-line">
         {renaming !== null ? (
@@ -438,6 +435,7 @@ export const NotesPanel = memo(function NotesPanel(p: Props) {
               ))}
             <select
               className="field !h-7 flex-1 min-w-0 !text-[12.5px]"
+              title={current ?? undefined}
               value={current ?? ""}
               onChange={(e) => open(e.target.value)}
             >
@@ -452,34 +450,37 @@ export const NotesPanel = memo(function NotesPanel(p: Props) {
         <HeadBtn title="Buscar en todas las notas" onClick={() => toggleTool("search")} className={tool === "search" ? "!text-accent" : ""}>
           <Search size={14} />
         </HeadBtn>
-        <HeadBtn title="Buscar y reemplazar en esta nota" onClick={() => toggleTool("replace")} className={tool === "replace" ? "!text-accent" : ""}>
-          <Replace size={14} />
-        </HeadBtn>
-        <HeadBtn
-          title={locked ? "Desbloquea la nota para cambiar su protección" : isProtected ? "Protección de la nota" : "Proteger con contraseña"}
-          onClick={() => !locked && toggleTool("secure")}
-          disabled={locked}
-          className={`${tool === "secure" ? "!text-accent" : ""} disabled:opacity-40`}
-        >
-          <ShieldCheck size={14} />
-        </HeadBtn>
         <HeadBtn title="Nueva nota" onClick={() => create()}>
           <Plus size={15} />
         </HeadBtn>
-        <HeadBtn title="Renombrar" onClick={() => current && setRenaming(current)}>
-          <Pencil size={13} />
-        </HeadBtn>
-        <HeadBtn
-          title={confirmDelete ? "Clic para confirmar" : "Eliminar nota"}
-          onClick={remove}
-          onMouseLeave={() => setConfirmDelete(false)}
-          className={confirmDelete ? "!text-danger bg-hover" : ""}
-        >
-          <Trash2 size={13} />
-        </HeadBtn>
-        <HeadBtn title="Abrir carpeta de notas" onClick={() => invoke("open_dir", { which: "notes" })}>
-          <FolderOpen size={14} />
-        </HeadBtn>
+        {/* Acciones menos frecuentes en un menú: el selector de nota conserva el ancho. */}
+        <div ref={menuRef} className="relative shrink-0">
+          <HeadBtn title="Más acciones de la nota" aria-haspopup="menu" aria-expanded={menuOpen} onClick={() => setMenuOpen((o) => !o)} className={menuOpen ? "!text-fg bg-hover" : ""}>
+            <MoreHorizontal size={15} />
+          </HeadBtn>
+          {menuOpen && (
+            <div role="menu" className="absolute right-0 top-full mt-1 z-40 w-60 bg-panel border border-line rounded-lg shadow-pop p-1 text-[12.5px]">
+              <MenuItem icon={<Replace size={14} />} label="Buscar y reemplazar" active={tool === "replace"} onClick={() => { toggleTool("replace"); setMenuOpen(false); }} />
+              <MenuItem
+                icon={<ShieldCheck size={14} />}
+                label={isProtected ? "Protección de la nota" : "Proteger con contraseña"}
+                hint={locked ? "Desbloquea la nota primero" : undefined}
+                disabled={locked}
+                active={tool === "secure"}
+                onClick={() => { toggleTool("secure"); setMenuOpen(false); }}
+              />
+              <MenuItem icon={<Pencil size={13} />} label="Renombrar" onClick={() => { if (current) setRenaming(current); setMenuOpen(false); }} />
+              <MenuItem icon={<FolderOpen size={14} />} label="Abrir carpeta de notas" onClick={() => { invoke("open_dir", { which: "notes" }); setMenuOpen(false); }} />
+              <div className="my-1 border-t border-line" />
+              <MenuItem
+                icon={<Trash2 size={13} />}
+                label={confirmDelete ? "Clic de nuevo para eliminar" : "Eliminar nota"}
+                danger
+                onClick={async () => { const was = confirmDelete; await remove(); if (was) setMenuOpen(false); }}
+              />
+            </div>
+          )}
+        </div>
         <HeadBtn title={`Cerrar (${modLabel}J)`} onClick={p.onClose}>
           <X size={15} />
         </HeadBtn>
@@ -631,8 +632,9 @@ export const NotesPanel = memo(function NotesPanel(p: Props) {
           </FootBtn>
         </div>
         <div className="flex items-center gap-2 text-[11px] text-muted h-6">
-          <span className="truncate flex-1 min-w-0">{notice || (p.target ? `Destino: ${p.target}` : "Sin sesión conectada")}</span>
-          <BroadcastTargetPicker />
+          <span className="truncate flex-1 min-w-0" title={notice || (p.target ? `Destino: ${p.target}` : "Sin sesión conectada")}>
+            {notice || (p.target ? `Destino: ${p.target}` : "Sin sesión conectada")}
+          </span>
           <span className="flex items-center gap-1 shrink-0">
             {locked ? <Lock size={11} /> : saved ? <Check size={11} /> : null}
             {locked ? "Bloqueada" : saved ? (unlocked ? "Cifrada" : "Guardado") : "Guardando…"}
@@ -649,6 +651,23 @@ function HeadBtn({ className = "", ...props }: React.ButtonHTMLAttributes<HTMLBu
       {...props}
       className={`w-7 h-7 shrink-0 grid place-items-center rounded-md text-muted hover:text-fg hover:bg-hover ${className}`}
     />
+  );
+}
+
+function MenuItem(p: { icon: React.ReactNode; label: string; hint?: string; onClick: () => void; disabled?: boolean; active?: boolean; danger?: boolean }) {
+  return (
+    <button
+      role="menuitem"
+      disabled={p.disabled}
+      title={p.hint ?? p.label}
+      onClick={p.onClick}
+      className={`w-full flex items-center gap-2 px-2 h-8 rounded-md text-left hover:bg-hover disabled:opacity-40 disabled:hover:bg-transparent ${
+        p.danger ? "text-danger" : p.active ? "text-accent" : ""
+      }`}
+    >
+      <span className="w-4 grid place-items-center shrink-0">{p.icon}</span>
+      {p.label}
+    </button>
   );
 }
 

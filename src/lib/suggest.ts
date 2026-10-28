@@ -327,6 +327,8 @@ export interface SuggestEntry {
   toks: string[];
   /** Posición en `key` donde empieza cada palabra. */
   starts: number[];
+  /** Dónde empieza el marcador en cada palabra (-1 si no tiene). */
+  ph: number[];
   /** Parte que se puede insertar: hasta el primer marcador, sin él. */
   insert: string;
   /** Hay un marcador después de `insert`. */
@@ -346,6 +348,8 @@ export interface SuggestEntry {
    * Un solo número para que comparar no agregue costo por tecla.
    */
   tie: number;
+  /** `tie` y `order` en un solo número (order es único por plataforma): una comparación. */
+  rank: number;
 }
 
 export interface SuggestIndex {
@@ -361,9 +365,12 @@ export interface SuggestIndex {
 
 /**
  * Fabricantes cuya CLI resuelve palabras abreviadas por prefijo único. Las shells de
- * sistemas operativos, Check Point y WatchGuard quedan fuera: ahí `sh` no es `show`.
+ * sistemas operativos, Check Point, WatchGuard y la shell de FortiAP quedan fuera: ahí `sh`
+ * no es `show`. FortiSwitchOS y FortiExtender usan la CLI de FortiOS; los switches GWN de
+ * Grandstream y Aruba (AOS-CX, ArubaOS-Switch, ArubaOS), una tipo Cisco. Ante la duda se
+ * marcan: así lo abreviado no puede ser un comando riesgoso.
  */
-export const ABBREV_VENDORS = new Set(["cisco", "huawei", "juniper", "fortinet"]);
+export const ABBREV_VENDORS = new Set(["cisco", "huawei", "juniper", "fortinet", "fortiswitch", "fortiextender", "grandstream", "aruba"]);
 
 /** {{variable}} de las plantillas o <marcador> de la documentación de los fabricantes. */
 const PLACEHOLDER = /\{\{[^}]*\}\}|<[A-Za-z][\w .:/-]*>/;
@@ -408,7 +415,25 @@ export function buildIndex(vendors: CatalogVendor[], platform: string): SuggestI
     const pipe = key.includes("|");
     const len = Math.min(part.placeholder ? part.insert.length : cmd.length, 0xfffff);
     const tie = toks.length * 0x200000 + len * 2 + (pipe ? 1 : 0);
-    entries.push({ cmd, key, toks, starts, ...part, risk, desc: c.desc, order, tpl: c.cmd, pos: 0, pipe, tie });
+    // Todas las entradas con la misma forma (mismos campos y orden): el recorrido por tecla
+    // queda monomórfico en V8.
+    entries.push({
+      cmd,
+      key,
+      toks,
+      starts,
+      ph: toks.map((t) => PLACEHOLDER.exec(t)?.index ?? -1),
+      insert: part.insert,
+      placeholder: part.placeholder,
+      risk,
+      desc: c.desc,
+      order,
+      tpl: c.cmd,
+      pos: 0,
+      pipe,
+      tie,
+      rank: tie * 0x10000 + order,
+    });
   });
   // El espacio es menor que cualquier carácter visible: ordenar por `key` ordena por palabras.
   entries.sort((a, b) => (a.key < b.key ? -1 : a.key > b.key ? 1 : a.order - b.order));
@@ -471,9 +496,12 @@ function endEqual(entries: SuggestEntry[], lo: number, hi: number, d: number, v:
 /**
  * Recorre los comandos donde cada palabra tecleada es prefijo de la palabra del comando
  * en la misma posición (o igual, si la CLI no abrevia). La última palabra puede estar a
- * medias. Cada rama cuesta O(log n) y solo se visitan las ramas que coinciden.
+ * medias. Cada rama cuesta O(log n) y solo se visitan las ramas que coinciden. Entrega
+ * rangos [a, b) con su marca de prefijo exacto: texto gris y lista recorren cada rango con un
+ * ciclo propio (con prefijos amplios como "show", cientos de comandos, una llamada por
+ * comando costaba más que la comparación misma).
  */
-function visit(idx: SuggestIndex, toks: string[], cb: (e: SuggestEntry, exact: boolean) => void) {
+function visitRanges(idx: SuggestIndex, toks: string[], cb: (a: number, b: number, exact: boolean) => void) {
   const { entries, abbrev } = idx;
   const m = toks.length - 1;
   const rec = (lo: number, hi: number, d: number, exact: boolean) => {
@@ -485,7 +513,7 @@ function visit(idx: SuggestIndex, toks: string[], cb: (e: SuggestEntry, exact: b
       b = endPrefix(entries, a, hi, d, t);
     }
     if (d === m) {
-      for (let i = a; i < b; i++) if (entries[i].toks.length > d) cb(entries[i], exact);
+      if (a < b) cb(a, b, exact);
       return;
     }
     if (!abbrev) {
@@ -521,11 +549,12 @@ export type Weights = ArrayLike<number> | null | undefined;
  */
 function better(a: SuggestEntry, ax: boolean, b: SuggestEntry, bx: boolean, w: Weights): boolean {
   if (ax !== bx) return ax;
-  const wa = w ? w[a.pos] : 0;
-  const wb = w ? w[b.pos] : 0;
-  if (wa !== wb) return wa > wb;
-  if (a.tie !== b.tie) return a.tie < b.tie;
-  return a.order < b.order || (a.order === b.order && a.cmd.length < b.cmd.length);
+  if (w) {
+    const wa = w[a.pos];
+    const wb = w[b.pos];
+    if (wa !== wb) return wa > wb;
+  }
+  return a.rank < b.rank || (a.rank === b.rank && a.cmd.length < b.cmd.length);
 }
 
 export interface LookupOptions {
@@ -537,17 +566,24 @@ export interface LookupOptions {
 export function lookup(idx: SuggestIndex, buf: string, limit: number, opts: LookupOptions | boolean = {}): SuggestEntry[] {
   const { readOnly = false, weights } = typeof opts === "boolean" ? { readOnly: opts } : opts;
   const toks = queryOf(buf).split(" ");
+  const d = toks.length - 1;
+  const lastLen = toks[d].length;
+  const entries = idx.entries;
   const out: SuggestEntry[] = [];
   const ex: boolean[] = [];
-  visit(idx, toks, (e, exact) => {
-    if ((readOnly && e.risk !== "read") || !fits(e, offsetFor(e, toks))) return;
-    // Inserción ordenada en una lista corta (sin ordenar el rango completo).
-    let j = out.length;
-    if (j === limit && !better(e, exact, out[j - 1], ex[j - 1], weights)) return;
-    if (j === limit) out.pop(), ex.pop(), j--;
-    while (j > 0 && better(e, exact, out[j - 1], ex[j - 1], weights)) j--;
-    out.splice(j, 0, e);
-    ex.splice(j, 0, exact);
+  visitRanges(idx, toks, (a, b, exact) => {
+    for (let i = a; i < b; i++) {
+      const e = entries[i];
+      if (e.toks.length <= d || (readOnly && e.risk !== "read")) continue;
+      if (e.placeholder && e.starts[d] + lastLen > e.insert.length) continue;
+      // Inserción ordenada en una lista corta (sin ordenar el rango completo).
+      let j = out.length;
+      if (j === limit && !better(e, exact, out[j - 1], ex[j - 1], weights)) continue;
+      if (j === limit) out.pop(), ex.pop(), j--;
+      while (j > 0 && better(e, exact, out[j - 1], ex[j - 1], weights)) j--;
+      out.splice(j, 0, e);
+      ex.splice(j, 0, exact);
+    }
   });
   return out;
 }
@@ -574,13 +610,28 @@ export function ghostFor(idx: SuggestIndex, buf: string, weights?: Weights): Gho
   // la sugerencia haría creer que Enter ejecuta la consulta.
   if (riskyAsTyped(idx, buf)) return null;
   const toks = q.split(" ");
+  const d = toks.length - 1;
+  const lastLen = toks[d].length;
+  const entries = idx.entries;
   let best: SuggestEntry | null = null;
   let bestExact = false;
-  visit(idx, toks, (e, exact) => {
-    if (e.risk !== "read") return;
-    const off = offsetFor(e, toks);
-    if (off >= e.cmd.length || !fits(e, off)) return;
-    if (!best || better(e, exact, best, bestExact, weights)) (best = e), (bestExact = exact);
+  // Mismo criterio que better(), en línea: prefijo exacto, uso y luego `rank`.
+  let bestW = 0;
+  let bestRank = Infinity;
+  visitRanges(idx, toks, (a, b, exact) => {
+    if (best && bestExact && !exact) return;
+    for (let i = a; i < b; i++) {
+      const e = entries[i];
+      if (e.risk !== "read" || e.toks.length <= d) continue;
+      const we = weights ? weights[e.pos] : 0;
+      if (best && exact === bestExact && (we < bestW || (we === bestW && e.rank >= bestRank))) continue;
+      const off = e.starts[d] + lastLen;
+      if (off >= e.cmd.length || (e.placeholder && off > e.insert.length)) continue;
+      best = e;
+      bestExact = exact;
+      bestW = we;
+      bestRank = e.rank;
+    }
   });
   if (!best) return null;
   const c = completionFor(best, buf)!;
@@ -660,13 +711,15 @@ const lineToks = (buf: string) => {
  */
 function lineScore(e: SuggestEntry, toks: string[], abbrev: boolean): number {
   if (e.toks.length !== toks.length) return -1;
+  // Se evalúa en cada tecla contra todos los comandos con riesgo: sin regex por palabra.
+  const phs = e.ph;
   let score = 0;
   for (let i = 0; i < toks.length; i++) {
     const et = e.toks[i];
-    const ph = PLACEHOLDER.exec(et);
+    const ph = phs[i];
     if (et === toks[i]) score += 2;
-    else if (ph) {
-      if (!(toks[i].length > ph.index && toks[i].startsWith(et.slice(0, ph.index)))) return -1;
+    else if (ph >= 0) {
+      if (!(toks[i].length > ph && toks[i].startsWith(et.slice(0, ph)))) return -1;
     } else if (abbrev && et.startsWith(toks[i])) score += 1;
     else return -1;
   }

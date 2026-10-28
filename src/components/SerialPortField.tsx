@@ -42,13 +42,14 @@ export function SerialPortField({
           required
           autoFocus={autoFocus}
           value={value}
+          title={ports.find((p) => p.port_name === value)?.port_type ?? value}
           onChange={(e) => (e.target.value === MANUAL ? setManual(true) : onChange(e.target.value))}
         >
           {!value && <option value="">Elige un puerto</option>}
           {value && !detected && <option value={value}>{value} · no detectado</option>}
           {ports.map((p) => (
             <option key={p.port_name} value={p.port_name}>
-              {p.port_name} · {p.port_type}
+              {p.port_name} ({p.port_type})
             </option>
           ))}
           <option value={MANUAL}>Escribir otro…</option>

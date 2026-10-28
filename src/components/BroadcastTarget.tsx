@@ -128,7 +128,7 @@ export function TargetOptions() {
                 }
               />
               <span className="truncate flex-1">{t.title}</span>
-              {t.status !== "connected" && <span className="text-[10.5px] text-muted">desconectada</span>}
+              {t.status !== "connected" && <span className="text-[11px] text-muted">desconectada</span>}
             </label>
           ))}
         </div>

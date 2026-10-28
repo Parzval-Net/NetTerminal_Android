@@ -21,7 +21,7 @@ import { runOnDevice } from "./lib/deviceRun";
 import { PacksModal } from "./components/PacksModal";
 import { CommandEditor } from "./components/CommandEditor";
 import { TemplateDialog, templateVars } from "./components/TemplateDialog";
-import { compile, effectiveRules } from "./lib/highlight";
+import { compile, effectiveRules, schemeForVendor } from "./lib/highlight";
 import { allFolders } from "./lib/folders";
 import { useMonitors } from "./lib/monitors";
 import { ButtonBar } from "./components/ButtonBar";
@@ -159,7 +159,23 @@ function Workspace({
       if (next) setNotesOpenRaw(false);
       return next;
     });
-  const [notesWidth, setNotesWidth] = useState(() => stored("notesWidth", 380));
+  const [notesWidth, setNotesWidth] = useState(() =>
+    stored("notesWidth", Math.round(Math.max(300, Math.min(380, window.innerWidth * 0.3)))),
+  );
+  // Ancho del área de terminal + panel: si el panel dejaría la terminal bajo MIN_TERM px, se
+  // superpone (salidas de show ... brief se parten en anchos menores).
+  const MIN_TERM = 560;
+  const [rowWidth, setRowWidth] = useState(0);
+  const rowRef = useRef<HTMLDivElement | null>(null);
+  useEffect(() => {
+    const el = rowRef.current;
+    if (!el) return;
+    const ro = new ResizeObserver(([e]) => setRowWidth(e.contentRect.width));
+    ro.observe(el);
+    return () => ro.disconnect();
+  }, []);
+  const panelOverlay = rowWidth > 0 && rowWidth - notesWidth < MIN_TERM;
+  const panelWidth = panelOverlay ? Math.min(notesWidth, Math.max(260, rowWidth - 48)) : notesWidth;
   useEffect(() => persist("notesOpen", notesOpen), [notesOpen]);
   useEffect(() => persist("notesWidth", notesWidth), [notesWidth]);
 
@@ -620,11 +636,15 @@ function Workspace({
   );
   const catalog = useMemo(() => buildCatalog(allPacks, settings.disabledPacks), [allPacks, settings.disabledPacks]);
 
-  /** Guarda la plataforma en la pestaña y, si es una sesión guardada, también en ella. */
-  const setTabPlatform = (tabId: string, platform: string | null) => {
+  /**
+   * Fija la plataforma de la pestaña (y de la sesión guardada). Con `vendor`, si la sesión
+   * resalta "Según ajustes", la pestaña toma el resaltado de ese fabricante (no se guarda).
+   */
+  const setTabPlatform = (tabId: string, platform: string | null, vendor?: string) => {
     const tab = tabs.find((t) => t.id === tabId);
     if (!tab) return;
-    const session = { ...tab.session, platform: platform ?? undefined };
+    const highlight = tab.session.highlight ?? (vendor ? schemeForVendor(vendor) : undefined);
+    const session = { ...tab.session, platform: platform ?? undefined, highlight };
     setTabs((ts) => ts.map((t) => (t.id === tabId ? { ...t, session } : t)));
     if (sessions.some((x) => x.id === session.id)) updateSessions([{ ...sessions.find((x) => x.id === session.id)!, platform: session.platform }]);
   };
@@ -638,7 +658,7 @@ function Workspace({
       const output = await runOnDevice(ctrl.connId(), vendor.detectCommand, 30);
       const found = detectPlatform(vendor, output);
       if (found) {
-        setTabPlatform(activeTab.id, found.id);
+        setTabPlatform(activeTab.id, found.id, vendor.id);
         toast(`Plataforma detectada: ${found.label}`);
       } else {
         // Puede ser otro fabricante: se prueba con los demás.
@@ -646,7 +666,7 @@ function Workspace({
           const p = detectPlatform(other, output);
           if (p) {
             update({ catalogVendor: other.id });
-            setTabPlatform(activeTab.id, p.id);
+            setTabPlatform(activeTab.id, p.id, other.id);
             toast(`Plataforma detectada: ${other.name} ${p.label}`);
             return;
           }
@@ -660,6 +680,23 @@ function Workspace({
     } finally {
       setDetecting(false);
     }
+  };
+
+  /**
+   * Sin enviar nada al equipo: busca en lo que ya muestra la pantalla (un show version,
+   * display version o get system status previo) la plataforma de algún fabricante.
+   */
+  const detectFromScreen = (tabId: string, preferred?: string) => {
+    // Las últimas 150 líneas bastan para un show version reciente y caben en los 20.000
+    // caracteres que revisa detectPlatform.
+    const text = controllers.current.get(tabId)?.recentText(150);
+    if (!text) return null;
+    const order = [...catalog].sort((a, b) => Number(b.id === preferred) - Number(a.id === preferred));
+    for (const v of order) {
+      const p = detectPlatform(v, text);
+      if (p) return { vendor: v, platform: p };
+    }
+    return null;
   };
 
   /** Agrega, edita o borra un comando en "Mis comandos" del fabricante. */
@@ -695,8 +732,17 @@ function Workspace({
   const toggleCommands = () => {
     if (!commandsOpen && activeTab?.session.type === "local" && !activeTab.session.scp)
       update({ catalogVendor: localOsVendor() });
-    else if (!commandsOpen && activeTab?.session.highlight && activeTab.session.highlight !== "default")
-      update({ catalogVendor: vendorFor(activeTab.session.highlight) });
+    else if (!commandsOpen && activeTab) {
+      const h = activeTab.session.highlight;
+      // Aruba, Grandstream y Check Point tienen catálogo con el mismo id que su resaltado.
+      const byHighlight = h && h !== "default" && h !== "off" ? (catalog.some((v) => v.id === h) ? h : vendorFor(h)) : undefined;
+      const found = !activeTab.session.platform ? detectFromScreen(activeTab.id, byHighlight ?? settings.catalogVendor) : null;
+      if (found) {
+        update({ catalogVendor: found.vendor.id });
+        setTabPlatform(activeTab.id, found.platform.id, found.vendor.id);
+        toast(`Plataforma reconocida en pantalla: ${found.vendor.name} ${found.platform.label}`);
+      } else if (byHighlight) update({ catalogVendor: byHighlight });
+    }
     setCommandsOpen((o) => !o);
   };
 
@@ -1059,6 +1105,18 @@ function Workspace({
     startBroadcast,
     openImport: () => setImportOpen(true),
     // Activa "algoritmos legacy" en la pestaña y, si es una sesión guardada, la deja guardada.
+    /** Lectura pasiva de pantalla (al conectar o tras un show version): fija plataforma y resaltado. */
+    screenHint: (tabId: string) => {
+      const tab = tabs.find((t) => t.id === tabId);
+      if (!tab || tab.session.platform || tab.session.type === "local") return;
+      const h = tab.session.highlight;
+      const preferred = h && h !== "off" ? (catalog.some((v) => v.id === h) ? h : vendorFor(h)) : settings.catalogVendor;
+      const found = detectFromScreen(tabId, preferred);
+      if (!found) return;
+      setTabPlatform(tabId, found.platform.id, found.vendor.id);
+      if (tabId === activeId) update({ catalogVendor: found.vendor.id });
+      toast(`${tab.title ?? tab.session.name}: ${found.vendor.name} ${found.platform.label}`);
+    },
     enableLegacy: (tabId: string) => {
       const tab = tabs.find((t) => t.id === tabId);
       if (!tab) return;
@@ -1174,7 +1232,7 @@ function Workspace({
         <BroadcastBar />
         <TabBar {...tabBarProps} />
 
-        <div className="flex-1 min-h-0 flex">
+        <div ref={rowRef} className="relative flex-1 min-h-0 flex">
         {settings.tabLayout === "vertical" && <VerticalTabs {...tabBarProps} />}
         <div className="relative flex-1 min-w-0">
           {tabs.map((t) => {
@@ -1195,6 +1253,7 @@ function Workspace({
               logPath={states[t.id]?.logPath ?? null}
               onActivity={markActivity}
               onEnableLegacy={h.enableLegacy}
+              onScreenHint={h.screenHint}
               register={register}
               catalog={catalog}
             />
@@ -1225,7 +1284,9 @@ function Workspace({
         </div>
         {commandsOpen && (
           <CommandsPanel
-            width={notesWidth}
+            width={panelWidth}
+            overlay={panelOverlay}
+            onResize={h.resizeNotes}
             catalog={catalog}
             vendor={settings.catalogVendor}
             onVendor={h.setVendor}
@@ -1246,7 +1307,8 @@ function Workspace({
         )}
         {notesOpen && (
           <NotesPanel
-            width={notesWidth}
+            width={panelWidth}
+            overlay={panelOverlay}
             onResize={h.resizeNotes}
             onClose={h.closeNotes}
             compiled={notesRules}

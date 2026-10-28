@@ -73,9 +73,16 @@ export interface TermController {
   reset: () => void;
   /** Copia todo el historial al portapapeles; devuelve las líneas copiadas. */
   copyAll: () => Promise<number>;
+  /** Últimas líneas del historial como texto (para detectar la plataforma sin enviar nada). */
+  recentText: (lines: number) => string;
 }
 
 const NEWLINE = { cr: "\r", lf: "\n", crlf: "\r\n" } as const;
+/**
+ * Comandos que muestran modelo y versión (abreviados o no): show version, display version,
+ * get system status/version, show sysinfo/info, fap-get-status. Tras uno, se lee la pantalla.
+ */
+const VERSION_CMD = /(?:^|[#>\]$%:]\s*)(?:sh\w* +ver\w*|dis\w* +ver\w*|get +sys\w* +(?:stat|ver)\w*|show +(?:sysinfo|info)|fap-get-status)\b/i;
 const MAX_RECONNECTS = 30;
 /** Espera creciente (5, 10, 20, 40, 60 s…) para no gatillar bloqueos de cuenta en TACACS/RADIUS. */
 const reconnectSecs = (attempt: number) => Math.min(60, 5 * 2 ** Math.max(0, attempt - 1));
@@ -101,6 +108,11 @@ interface Props {
   onActivity: (id: string) => void;
   /** Activa "algoritmos legacy" en la sesión (y la guarda) tras un error de negociación SSH. */
   onEnableLegacy?: (id: string) => void;
+  /**
+   * La pantalla puede mostrar la versión del equipo (al conectar o tras un show version del
+   * usuario): App la busca ahí sin enviar nada al equipo.
+   */
+  onScreenHint?: (id: string) => void;
   register: (id: string, ctrl: TermController | null) => void;
   /** Catálogo de comandos: fuente de las sugerencias. */
   catalog?: CatalogVendor[];
@@ -142,7 +154,9 @@ const NOOP = () => {};
 
 const dim = (s: string) => `\x1b[2m${s}\x1b[0m`;
 
-export const TerminalView = memo(function TerminalView({ id, session, active, visible = active, rect, onFocusPane, settings, theme, onStatus, onLog, logPath, onActivity, onEnableLegacy, register, catalog }: Props) {
+export const TerminalView = memo(function TerminalView({ id, session, active, visible = active, rect, onFocusPane, settings, theme, onStatus, onLog, logPath, onActivity, onEnableLegacy, onScreenHint, register, catalog }: Props) {
+  const screenHintRef = useRef(onScreenHint);
+  screenHintRef.current = onScreenHint;
   // "Visible" decide WebGL y el aviso de actividad; "active" (foco) decide el teclado.
   const activeRef = useRef(visible);
   activeRef.current = visible;
@@ -241,6 +255,12 @@ export const TerminalView = memo(function TerminalView({ id, session, active, vi
       onStatus(id, s);
     };
 
+    let screenTimer: number | undefined;
+    /** Pide a App una lectura de pantalla tras `ms` (un solo temporizador pendiente). */
+    const screenSoon = (ms: number) => {
+      window.clearTimeout(screenTimer);
+      screenTimer = window.setTimeout(() => !disposed && screenHintRef.current?.(id), ms);
+    };
     let disposed = false;
     let attempt = 0;
     // Reconexión automática: se cancela con Esc o al desconectar a mano.
@@ -413,6 +433,8 @@ export const TerminalView = memo(function TerminalView({ id, session, active, vi
           setStatus("connected");
           retries = 0;
           runOnConnect(connId);
+          // Banner y prompt inicial: una sola lectura de pantalla, fuera del camino de las teclas.
+          screenSoon(2500);
           // Un log activado a mano (o el automático) continúa en su archivo tras reconectar.
           const resume = logPathRef.current;
           if (resume || settingsRef.current.autoLog) {
@@ -802,6 +824,12 @@ export const TerminalView = memo(function TerminalView({ id, session, active, vi
         return;
       }
       if (statusRef.current !== "connected") return;
+      if (data === "\r" && screenHintRef.current) {
+        // Solo al presionar Enter y solo si la línea es un comando de versión: costo cero por tecla.
+        const buf = term.buffer.active;
+        const line = buf.getLine(buf.baseY + buf.cursorY)?.translateToString(true) ?? "";
+        if (VERSION_CMD.test(line)) screenSoon(2000);
+      }
       if (tracking()) {
         if (data === "\r") {
           hideHint();
@@ -951,6 +979,12 @@ export const TerminalView = memo(function TerminalView({ id, session, active, vi
       disconnect,
       clearScrollback: () => term.clear(),
       reset: () => term.reset(),
+      recentText: (n) => {
+        const buf = term.buffer.active;
+        const out: string[] = [];
+        for (let i = Math.max(0, buf.length - n); i < buf.length; i++) out.push(buf.getLine(i)?.translateToString(true) ?? "");
+        return out.join("\n");
+      },
       copyAll: async () => {
         const buf = term.buffer.active;
         const lines: string[] = [];
@@ -968,6 +1002,7 @@ export const TerminalView = memo(function TerminalView({ id, session, active, vi
       // Pestaña de transferencia cerrada antes de que el proceso terminara: el gestor no verifica.
       if (sessionRef.current.scp && statusRef.current !== "closed") notifyScpExit(sessionRef.current.id, null, true);
       disposed = true;
+      window.clearTimeout(screenTimer);
       unlockResolve.current?.(false);
       releaseChannels();
       cancelRetry();
@@ -1221,14 +1256,14 @@ function SuggestPopup({ list, listId, fontFamily, onPick }: { list: SuggestList;
                 {matchSpans(it, list.q).map((p, j) => (p.hit ? <span key={j} className="font-semibold">{p.text}</span> : p.text))}
               </span>
               {it.risk !== "read" && (
-                <span className="ml-auto shrink-0 rounded px-1.5 text-[10.5px] font-medium bg-danger text-danger-fg">{riskLabel[it.risk]}</span>
+                <span className="ml-auto shrink-0 rounded px-1.5 text-[11px] font-medium bg-danger text-danger-fg">{riskLabel[it.risk]}</span>
               )}
             </div>
             <div className="text-[11px] text-muted truncate">{it.desc}</div>
           </li>
         ))}
       </ul>
-      <div className="px-2.5 py-1 border-t border-line text-[10.5px] text-muted">↑↓ elegir · Enter escribe sin ejecutar · Esc cerrar</div>
+      <div className="px-2.5 py-1 border-t border-line text-[11px] text-muted">↑↓ elegir · Enter escribe sin ejecutar · Esc cerrar</div>
     </div>
   );
 }

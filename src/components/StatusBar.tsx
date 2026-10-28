@@ -2,6 +2,7 @@ import { memo } from "react";
 import { ArrowLeftRight, BookOpen, KeyRound, Bot, Circle, CircleDot, NotebookPen, RotateCcw, Search, Settings, Unplug, Zap } from "lucide-react";
 import { Tab, TabState, historyKey, sessionTarget, tunnelLabel } from "../types";
 import { HistoryMenu } from "./HistoryMenu";
+import { BroadcastTargetPicker } from "./BroadcastTarget";
 import { QuickBolt, typeLabel } from "./SessionIcon";
 import { statusColor } from "./TabBar";
 import { isMac, modLabel } from "../lib/platform";
@@ -74,7 +75,7 @@ export const StatusBar = memo(function StatusBar({
   );
   if (!tab || !state)
     return (
-      <div className="@container h-6 shrink-0 flex items-center justify-end px-3 bg-chrome border-t border-line text-[11.5px] text-muted">
+      <div className="@container h-7 shrink-0 flex items-center justify-end px-3 bg-chrome border-t border-line text-[11.5px] text-muted">
         {gear}
       </div>
     );
@@ -84,7 +85,7 @@ export const StatusBar = memo(function StatusBar({
   const connected = state.status === "connected";
 
   return (
-    <div className="@container h-6 shrink-0 flex items-center gap-3 px-3 bg-chrome border-t border-line text-[11.5px] text-muted">
+    <div className="@container h-7 shrink-0 flex items-center gap-3 px-3 bg-chrome border-t border-line text-[11.5px] text-muted">
       <span className="flex items-center gap-1.5 shrink-0 whitespace-nowrap">
         <span className="w-1.5 h-1.5 rounded-full" style={{ background: statusColor[state.status] }} />
         {statusText[state.status]}
@@ -118,6 +119,9 @@ export const StatusBar = memo(function StatusBar({
       )}
 
       <div className="ml-auto shrink-0 flex items-center gap-0.5">
+        {/* Destino único de Notas, catálogo, botones y scripts: siempre a la vista. */}
+        <BroadcastTargetPicker />
+        <span className="w-px h-3.5 mx-1 bg-line" />
         <BarBtn
           onClick={onToggleLog}
           disabled={!connected && !logging}
@@ -161,7 +165,7 @@ function BarBtn(props: React.ButtonHTMLAttributes<HTMLButtonElement>) {
   return (
     <button
       {...props}
-      className={`shrink-0 whitespace-nowrap flex items-center gap-1 h-5 px-1.5 rounded hover:bg-hover hover:text-fg disabled:opacity-40 disabled:hover:bg-transparent ${props.className ?? ""}`}
+      className={`shrink-0 whitespace-nowrap flex items-center justify-center gap-1 h-6 min-w-6 px-1.5 rounded hover:bg-hover hover:text-fg disabled:opacity-40 disabled:hover:bg-transparent ${props.className ?? ""}`}
     />
   );
 }

@@ -252,12 +252,15 @@ export function ImportDialog({ folders, sessions, onImport, onClose }: Props) {
               )}
               <div className="rounded-lg border border-line overflow-hidden">
                 <div className="flex items-center gap-2 px-3 h-8 bg-chrome border-b border-line text-[11.5px] text-muted">
-                  <input
-                    type="checkbox"
-                    className="accent-[var(--accent)]"
-                    checked={all}
-                    onChange={() => setSelected(all ? new Set() : new Set(preview.sessions.map((_, i) => i)))}
-                  />
+                  <label className="p-1 -m-1 grid place-items-center">
+                    <input
+                      type="checkbox"
+                      className="accent-[var(--accent)]"
+                      checked={all}
+                      aria-label="Seleccionar todas"
+                      onChange={() => setSelected(all ? new Set() : new Set(preview.sessions.map((_, i) => i)))}
+                    />
+                  </label>
                   <span className="flex-1 truncate">
                     {NAMES[preview.format] ?? preview.format} · {plural(preview.sessions.length, "sesión", "sesiones")} · {file}
                   </span>
@@ -275,7 +278,7 @@ export function ImportDialog({ folders, sessions, onImport, onClose }: Props) {
                         </span>
                         <span className="w-[24%] truncate text-muted text-[11.5px]">{s.folder ?? ""}</span>
                         <StatusBadge status={plan[i]?.status} changes={plan[i]?.changes ?? []} overwrite={overwrite} />
-                        <span className="w-12 text-right text-[10.5px] text-muted uppercase">{typeLabel[s.type]}</span>
+                        <span className="w-12 text-right text-[11px] text-muted uppercase">{typeLabel[s.type]}</span>
                       </label>
                     </li>
                   ))}
@@ -336,15 +339,15 @@ const FIELD_LABEL: Record<string, string> = {
 
 /** Estado de cada fila: nueva, ya existe igual, o cambia (y si se sobrescribirá). */
 function StatusBadge({ status, changes, overwrite }: { status?: string; changes: string[]; overwrite: boolean }) {
-  if (status === "same") return <span className="w-16 text-right text-[10.5px] text-muted">Ya existe</span>;
+  if (status === "same") return <span className="w-16 text-right text-[11px] text-muted">Ya existe</span>;
   if (status === "update")
     return (
       <span
-        className={`w-16 text-right text-[10.5px] ${overwrite ? "text-warn font-medium" : "text-muted line-through"}`}
+        className={`w-16 text-right text-[11px] ${overwrite ? "text-warn font-medium" : "text-muted line-through"}`}
         title={`Cambia: ${changes.map((c) => FIELD_LABEL[c] ?? c).join(", ")}`}
       >
         Cambia
       </span>
     );
-  return <span className="w-16 text-right text-[10.5px] text-accent">Nueva</span>;
+  return <span className="w-16 text-right text-[11px] text-accent">Nueva</span>;
 }

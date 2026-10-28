@@ -206,14 +206,16 @@ export default function BackupTool({ terminals }: { terminals: TerminalRef[] }) 
                 const j = jobs[t.connId];
                 return (
                   <div key={t.connId} className="flex items-center gap-3 px-3 h-10 text-[12.5px]">
-                    <input
-                      type="checkbox"
-                      className="accent-[var(--accent)]"
-                      checked={selected.has(t.connId)}
-                      disabled={running}
-                      onChange={(e) => toggle(t.connId, e.target.checked)}
-                      aria-label={`Respaldar ${t.name}`}
-                    />
+                    <label className="p-1 -m-1 grid place-items-center">
+                      <input
+                        type="checkbox"
+                        className="accent-[var(--accent)]"
+                        checked={selected.has(t.connId)}
+                        disabled={running}
+                        onChange={(e) => toggle(t.connId, e.target.checked)}
+                        aria-label={`Respaldar ${t.name}`}
+                      />
+                    </label>
                     <span className="w-44 truncate font-medium" title={t.name}>
                       {t.session.name}
                     </span>

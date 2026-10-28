@@ -70,7 +70,7 @@ function Row({ r, a, b }: { r: DiffRow; a: string[]; b: string[] }) {
       <td className="whitespace-pre-wrap break-all pr-3">
         {r.kind === 2 ? b[r.b] : a[r.a]}
         {r.secret && r.kind === 2 && (
-          <span className="ml-3 rounded border border-[var(--warn)] px-1 font-sans text-[10.5px] text-warn" title="El valor enmascarado cambió entre los dos respaldos (se compara su huella, nunca el secreto)">
+          <span className="ml-3 rounded border border-[var(--warn)] px-1 font-sans text-[11px] text-warn" title="El valor enmascarado cambió entre los dos respaldos (se compara su huella, nunca el secreto)">
             secreto cambiado
           </span>
         )}

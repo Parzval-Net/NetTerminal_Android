@@ -33,3 +33,7 @@ sessions.json
 # Herramientas locales del asistente (worktrees)
 .claude/
 /videos/
+
+# Caché de Python
+__pycache__/
+*.pyc

@@ -158,7 +158,7 @@ export const TabBar = memo(function TabBar(props: TabBarProps) {
             <Wrench size={13} />
             Herramientas
             {alerts > 0 && (
-              <span className="px-1.5 rounded-full bg-danger text-danger-fg text-[10.5px] font-semibold" title={`${alerts} sondas caídas`}>
+              <span className="px-1.5 rounded-full bg-danger text-danger-fg text-[11px] font-semibold" title={`${alerts} sondas caídas`}>
                 ✕ {alerts}
               </span>
             )}
@@ -226,11 +226,11 @@ export const TabBar = memo(function TabBar(props: TabBarProps) {
                 <span className={`truncate flex-1 ${t.title ? "italic" : ""}`}>{tabTitle(t)}</span>
               )}
               {alerted?.has(t.id) && !active ? (
-                <span className="text-[10px] font-semibold text-danger shrink-0" title="Alerta por palabra clave">
+                <span className="text-[11px] font-semibold text-danger shrink-0" title="Alerta por palabra clave">
                   ▲
                 </span>
               ) : activity.has(t.id) && !active && (
-                <span className="text-[10px] font-semibold text-accent shrink-0" title="Salida nueva">
+                <span className="text-[11px] font-semibold text-accent shrink-0" title="Salida nueva">
                   ●
                 </span>
               )}

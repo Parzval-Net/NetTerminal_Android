@@ -40,7 +40,7 @@ export const SplitPanes = memo(function SplitPanes({ split, tabs, states, active
             >
               {tab && <span className="w-1.5 h-1.5 rounded-full shrink-0" style={{ background: statusColor[states[tab.id]?.status ?? "connecting"] }} />}
               <select
-                className="bg-transparent text-[12px] min-w-0 max-w-[60%] outline-none cursor-pointer"
+                className="h-6 bg-transparent text-[12px] min-w-0 max-w-[60%] outline-none cursor-pointer"
                 value={id ?? ""}
                 onChange={(e) => onPick(i, e.target.value || null)}
                 aria-label={`Pestaña del panel ${i + 1}`}
@@ -56,7 +56,7 @@ export const SplitPanes = memo(function SplitPanes({ split, tabs, states, active
               <span className="flex-1" />
               {id && (
                 <button
-                  className="w-5 h-5 grid place-items-center rounded text-muted hover:text-fg hover:bg-hover"
+                  className="w-6 h-6 grid place-items-center rounded text-muted hover:text-fg hover:bg-hover"
                   title="Quitar del panel (la pestaña sigue abierta)"
                   onMouseDown={(e) => e.stopPropagation()}
                   onClick={() => onPick(i, null)}
