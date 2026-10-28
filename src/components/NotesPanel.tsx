@@ -487,6 +487,7 @@ export const NotesPanel = memo(function NotesPanel(p: Props) {
             </select>
           </>
         )}
+        <span className="hidden @[19rem]:contents">
         <HeadBtn
           title={diagrams ? "Ocultar diagramas" : "Ver diagramas Mermaid de la nota (bloques ```mermaid)"}
           aria-pressed={diagrams}
@@ -498,16 +499,32 @@ export const NotesPanel = memo(function NotesPanel(p: Props) {
         <HeadBtn title="Buscar en todas las notas" onClick={() => toggleTool("search")} className={tool === "search" ? "!text-accent" : ""}>
           <Search size={14} />
         </HeadBtn>
+        </span>
         <HeadBtn title="Nueva nota" onClick={() => create()}>
-          <Plus size={15} />
+          <Plus size={14} />
         </HeadBtn>
         {/* Acciones menos frecuentes en un menú: el selector de nota conserva el ancho. */}
         <div ref={menuRef} className="relative shrink-0">
           <HeadBtn title="Más acciones de la nota" aria-haspopup="menu" aria-expanded={menuOpen} onClick={() => setMenuOpen((o) => !o)} className={menuOpen ? "!text-fg bg-hover" : ""}>
-            <MoreHorizontal size={15} />
+            <MoreHorizontal size={14} />
           </HeadBtn>
           {menuOpen && (
             <div role="menu" className="absolute right-0 top-full mt-1 z-40 w-60 bg-panel border border-line rounded-lg shadow-pop p-1 text-[12.5px]">
+              {/* Panel angosto: diagramas y búsqueda pasan del encabezado a este menú. */}
+              <MenuItem
+                className={NARROW_ONLY}
+                icon={<Search size={14} />}
+                label="Buscar en todas las notas"
+                active={tool === "search"}
+                onClick={() => { toggleTool("search"); setMenuOpen(false); }}
+              />
+              <MenuItem
+                className={NARROW_ONLY}
+                icon={<Workflow size={14} />}
+                label={diagrams ? "Ocultar diagramas" : "Ver diagramas Mermaid"}
+                active={diagrams}
+                onClick={() => { toggleDiagrams(!diagrams); setMenuOpen(false); }}
+              />
               <MenuItem icon={<Replace size={14} />} label="Buscar y reemplazar" active={tool === "replace"} onClick={() => { toggleTool("replace"); setMenuOpen(false); }} />
               <MenuItem
                 icon={<ShieldCheck size={14} />}
@@ -689,7 +706,10 @@ export const NotesPanel = memo(function NotesPanel(p: Props) {
         {/* En un panel angosto los botones bajan a una segunda fila en vez de partir su texto. */}
         <div className="flex flex-wrap items-center gap-1">
           <FootBtn onClick={sendSelectionOrLine} disabled={!p.target || locked} title={`${isMac ? "⌘" : "Ctrl+"}Enter`}>
-            <SendHorizontal size={13} /> Línea / selección
+            <SendHorizontal size={13} />
+            {/* Panel angosto: texto corto para que los botones quepan en una fila. */}
+            <span className="@[20rem]:hidden">Línea</span>
+            <span className="hidden @[20rem]:inline">Línea / selección</span>
           </FootBtn>
           <FootBtn onClick={() => p.onSend(content)} disabled={!p.target || locked || !content.trim()} title={`${isMac ? "⌘⇧" : "Ctrl+Shift+"}Enter`}>
             <Send size={13} /> Todo
@@ -712,6 +732,9 @@ export const NotesPanel = memo(function NotesPanel(p: Props) {
   );
 });
 
+/** Solo en el menú "…" cuando el panel es angosto (los botones del encabezado se ocultan). */
+const NARROW_ONLY = "@[19rem]:hidden";
+
 function HeadBtn({ className = "", ...props }: React.ButtonHTMLAttributes<HTMLButtonElement>) {
   return (
     <button
@@ -721,7 +744,7 @@ function HeadBtn({ className = "", ...props }: React.ButtonHTMLAttributes<HTMLBu
   );
 }
 
-function MenuItem(p: { icon: React.ReactNode; label: string; hint?: string; onClick: () => void; disabled?: boolean; active?: boolean; danger?: boolean }) {
+function MenuItem(p: { icon: React.ReactNode; label: string; hint?: string; onClick: () => void; disabled?: boolean; active?: boolean; danger?: boolean; className?: string }) {
   return (
     <button
       role="menuitem"
@@ -730,7 +753,7 @@ function MenuItem(p: { icon: React.ReactNode; label: string; hint?: string; onCl
       onClick={p.onClick}
       className={`w-full flex items-center gap-2 px-2 h-8 rounded-md text-left hover:bg-hover disabled:opacity-40 disabled:hover:bg-transparent ${
         p.danger ? "text-danger" : p.active ? "text-accent" : ""
-      }`}
+      } ${p.className ?? ""}`}
     >
       <span className="w-4 grid place-items-center shrink-0">{p.icon}</span>
       {p.label}
