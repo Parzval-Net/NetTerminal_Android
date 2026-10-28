@@ -239,10 +239,12 @@ const UI_DEFAULT: TopoUi = {
 function loadUi(): TopoUi {
   try {
     const v = JSON.parse(localStorage.getItem(UI_KEY) ?? "null") as Partial<TopoUi> | null;
-    if (!v || typeof v !== "object") return UI_DEFAULT;
+    // Ventana angosta: el panel lateral se abre encima del diagrama y lo tapa; parte cerrado.
+    const roomy = typeof window === "undefined" || window.innerWidth >= 1100;
+    if (!v || typeof v !== "object") return { ...UI_DEFAULT, panel: roomy };
     const sec = v.sec && typeof v.sec === "object" ? v.sec : {};
     return {
-      panel: v.panel !== false,
+      panel: v.panel !== false && roomy,
       sec: { ...UI_DEFAULT.sec, ...sec },
       mode: v.mode === "snmp" ? "snmp" : "cli",
       snmpProfile: typeof v.snmpProfile === "string" ? v.snmpProfile.slice(0, 64) : "",

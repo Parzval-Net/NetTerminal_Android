@@ -189,7 +189,7 @@ export function CliLab(p: Props) {
     <div className="fixed inset-0 z-50 grid place-items-center bg-black/25 p-4" onMouseDown={p.onClose}>
       <div
         {...win.box}
-        className="w-[960px] h-[640px] bg-panel border border-line rounded-xl shadow-pop resize overflow-hidden flex flex-col min-w-[620px] min-h-[420px] max-w-[98vw] max-h-[96vh]"
+        className="@container w-[960px] h-[640px] bg-panel border border-line rounded-xl shadow-pop resize overflow-hidden flex flex-col min-w-[min(620px,calc(100vw-2rem))] min-h-[min(420px,calc(100vh-2rem))] max-w-[98vw] max-h-[96vh]"
         onMouseDown={(e) => e.stopPropagation()}
         role="dialog"
         aria-label="CLI Lab"
@@ -365,7 +365,9 @@ export function CliLab(p: Props) {
             )}
           </section>
 
-          <aside className="w-72 shrink-0 border-l border-line flex flex-col overflow-y-auto">
+          <aside className="w-64 @[52rem]:w-72 shrink-0 border-l border-line flex flex-col min-h-0">
+            {/* Opciones con scroll propio: el botón Ejecutar/Detener queda siempre visible abajo. */}
+            <div className="flex-1 min-h-0 overflow-y-auto">
             <div className="p-2">
               <h3 className="px-2 pb-1 text-[11.5px] font-medium text-muted">Destino ({targetLabel(target, ws)} · {plural(n, "conectada", "conectadas")})</h3>
               <TargetOptions />
@@ -391,7 +393,8 @@ export function CliLab(p: Props) {
                 <input type="number" min={5} max={600} className="field !h-7 !w-16" value={opts.timeout} onChange={(e) => setOpts((o) => ({ ...o, timeout: Number(e.target.value) || 30 }))} />
               </label>
             </div>
-            <div className="mt-auto p-3 border-t border-line space-y-2">
+            </div>
+            <div className="shrink-0 p-3 border-t border-line space-y-2">
               {msg && <p className="text-[11.5px] text-warn">{msg}</p>}
               {running ? (
                 <button onClick={stopLab} className="w-full flex items-center justify-center gap-1.5 h-9 rounded-md bg-danger text-danger-fg font-medium hover:opacity-90">

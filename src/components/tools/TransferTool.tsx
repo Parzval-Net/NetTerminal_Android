@@ -153,7 +153,7 @@ export function TransferTool({
       </div>
       {error && <p className="text-[12px] text-danger">{error}</p>}
 
-      <div className="grid gap-4 [grid-template-columns:repeat(auto-fit,minmax(340px,1fr))]">
+      <div className="grid gap-4 [grid-template-columns:repeat(auto-fit,minmax(min(340px,100%),1fr))]">
         <Section title="Servidor TFTP" right={<StatusPill state={tftpOn ? "running" : "stopped"} label={tftpOn ? `Activo · UDP ${s.tftpPort}` : "Detenido"} />}>
           <div className="flex items-end gap-3 mb-3">
             <Label text="Puerto" className="w-24">
@@ -196,7 +196,7 @@ export function TransferTool({
         </Section>
       </div>
 
-      <div className="grid gap-4 [grid-template-columns:repeat(auto-fit,minmax(340px,1fr))]">
+      <div className="grid gap-4 [grid-template-columns:repeat(auto-fit,minmax(min(340px,100%),1fr))]">
         <FtpServerSection settings={s} running={running} onChange={onChange} refreshRunning={refreshRunning} ip={ip} file={file} />
         <SftpSection terminals={terminals} onScp={onScp} />
       </div>

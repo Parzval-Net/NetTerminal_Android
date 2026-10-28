@@ -463,7 +463,7 @@ export function FileManager({ terminals, settings: s, refreshRunning, onConfirm,
 
   return (
     <div className="space-y-3">
-      <div className="grid gap-3 [grid-template-columns:2fr_1.6fr_1fr_1.3fr_0.9fr]">
+      <div className="grid gap-3 grid-cols-2 @[48rem]:[grid-template-columns:2fr_1.6fr_1fr_1.3fr_0.9fr]">
         <Label text="Equipo (sesión conectada)">
           <select className="field" value={connId} onChange={(e) => setConnId(e.target.value)}>
             {terminals.length === 0 && <option value="">Sin sesiones conectadas</option>}

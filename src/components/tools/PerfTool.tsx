@@ -88,7 +88,7 @@ function SpeedTest({ history, onResult, onHistory }: SpeedProps) {
         </div>
       )}
       {job.error && <p className="mb-2 text-[12px] text-danger">{job.error}</p>}
-      <div className="grid grid-cols-4 gap-2">
+      <div className="grid grid-cols-2 @[32rem]:grid-cols-4 gap-2">
         <StatTile label="Bajada" value={mbps(r?.download_mbps)} />
         <StatTile label="Subida" value={mbps(r?.upload_mbps)} />
         <StatTile label="Latencia" value={r ? `${r.latency_ms.toFixed(1)} ms` : "—"} />
@@ -292,7 +292,7 @@ function Iperf() {
             });
           }}
         >
-          <div className="grid grid-cols-[1fr_90px_90px_80px] gap-2">
+          <div className="grid grid-cols-2 @[36rem]:grid-cols-[1fr_90px_90px_80px] gap-2">
             <Label text="Servidor iperf3">
               <input className="field" value={host} placeholder="10.0.0.2" onChange={(e) => setHost(e.target.value)} />
             </Label>
@@ -330,7 +330,7 @@ function Iperf() {
         {client.error && <p className="mt-2 text-[12px] text-danger">{client.error}</p>}
         {r && (
           <div className="mt-3 space-y-3">
-            <div className="grid grid-cols-4 gap-2">
+            <div className="grid grid-cols-2 @[32rem]:grid-cols-4 gap-2">
               <StatTile label="Enviado" value={mbps(r.sent_mbps)} />
               <StatTile label="Recibido" value={mbps(r.received_mbps)} />
               {r.protocol === "UDP" ? (

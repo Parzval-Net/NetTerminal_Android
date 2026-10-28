@@ -108,10 +108,11 @@ export const StatusBar = memo(function StatusBar({
   const connected = state.status === "connected";
 
   return (
-    <div className="@container h-7 shrink-0 flex items-center gap-3 px-3 bg-chrome border-t border-line text-[11.5px] text-muted">
-      <span className="flex items-center gap-1.5 shrink-0 whitespace-nowrap">
+    <div className="@container h-7 shrink-0 flex items-center gap-2 @[40rem]:gap-3 px-3 bg-chrome border-t border-line text-[11.5px] text-muted">
+      <span className="flex items-center gap-1.5 shrink-0 whitespace-nowrap" title={statusText[state.status]}>
         <span className="w-1.5 h-1.5 rounded-full" style={{ background: statusColor[state.status] }} />
-        {statusText[state.status]}
+        {/* Barra muy angosta: queda el punto de color (el estado va en el tooltip). */}
+        <span className="hidden @[34rem]:inline">{statusText[state.status]}</span>
       </span>
       <span className="font-medium text-fg/80">{typeLabel[session.type]}</span>
       <span className="truncate min-w-0">{sessionTarget(session)}</span>

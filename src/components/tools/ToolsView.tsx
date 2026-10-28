@@ -150,28 +150,30 @@ export const ToolsView = memo(function ToolsView({ active, settings, update, mon
   };
 
   return (
-    <div className="absolute inset-0 flex bg-bg" style={{ visibility: active ? "visible" : "hidden" }}>
-      <nav className="w-44 shrink-0 border-r border-line bg-chrome p-2 space-y-0.5">
+    <div className="@container absolute inset-0 flex bg-bg" style={{ visibility: active ? "visible" : "hidden" }}>
+      {/* Ventana angosta: el menú queda solo con íconos para no quitarle espacio a la herramienta. */}
+      <nav className="w-11 @[44rem]:w-44 shrink-0 border-r border-line bg-chrome p-1.5 @[44rem]:p-2 space-y-0.5">
         {enabled.map(({ id, label, Icon }) => (
           <button
             key={id}
             onClick={() => go(id)}
-            className={`w-full flex items-center gap-2 px-2 h-8 rounded-md text-left ${
+            title={label}
+            className={`relative w-full flex items-center gap-2 px-2 h-8 rounded-md text-left ${
               current === id ? "bg-selected text-fg" : "text-muted hover:text-fg hover:bg-hover"
             }`}
           >
-            <Icon size={15} />
-            {label}
+            <Icon size={15} className="shrink-0" />
+            <span className="hidden @[44rem]:inline truncate">{label}</span>
             {(id === "transfer" && (running.includes("tftp") || running.includes("http") || running.includes("ftp"))) ||
             (id === "snmp" && running.includes("snmptrap")) ||
             (id === "syslog" && running.includes("syslog")) ? (
-              <span className="ml-auto w-1.5 h-1.5 rounded-full bg-ok" title="Servidor activo" />
+              <span className="absolute right-1 top-1 @[44rem]:static @[44rem]:ml-auto w-1.5 h-1.5 rounded-full bg-ok" title="Servidor activo" />
             ) : null}
           </button>
         ))}
         {enabled.length === 0 && <p className="p-2 text-[12px] text-muted">Activa módulos en Ajustes › Módulos.</p>}
       </nav>
-      <div className="flex-1 min-w-0 overflow-y-auto">
+      <div className="@container flex-1 min-w-0 overflow-y-auto">
         {/* Topología ocupa todo el ancho y alto disponibles; el resto mantiene el ancho de lectura. */}
         <div className={current === "topology" ? "h-full p-4" : "max-w-[1200px] mx-auto p-5"}>
           {enabled

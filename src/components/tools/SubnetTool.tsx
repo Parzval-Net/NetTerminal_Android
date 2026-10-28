@@ -50,7 +50,7 @@ export function SubnetTool() {
             <tbody>
               {rows.map(([k, v]) => (
                 <tr key={k} className="border-t border-line first:border-0">
-                  <td className="py-1.5 pr-4 text-muted w-48">{k}</td>
+                  <td className="py-1.5 pr-4 text-muted whitespace-nowrap w-28 @[36rem]:w-48">{k}</td>
                   <td>
                     <CopyText text={v} />
                   </td>
