@@ -174,6 +174,8 @@ export function CliLab(p: Props) {
               autoFocus
               className="field !h-7 !w-48 !text-[12px]"
               aria-label="Nombre del script"
+              placeholder="Nombre del script"
+              title="Enter guarda · Esc cancela"
               value={naming}
               onChange={(e) => setNaming(e.target.value)}
               onKeyDown={(e) => {
@@ -335,15 +337,14 @@ export function CliLab(p: Props) {
                   <span className="block text-[11px] text-muted">Apagado: se responde que no y se marca error.</span>
                 </span>
               </label>
-              <div className="flex items-center gap-3">
-                <label className="flex items-center gap-1.5">
-                  Equipos a la vez
-                  <input type="number" min={1} max={10} className="field !h-7 !w-14" value={opts.parallel} onChange={(e) => setOpts((o) => ({ ...o, parallel: Math.max(1, Math.min(10, Number(e.target.value) || 1)) }))} />
-                </label>
-                <label className="flex items-center gap-1.5" title="Tiempo máximo de respuesta por comando">
-                  <input type="number" min={5} max={600} className="field !h-7 !w-16" value={opts.timeout} onChange={(e) => setOpts((o) => ({ ...o, timeout: Number(e.target.value) || 30 }))} />s
-                </label>
-              </div>
+              <label className="flex items-center justify-between gap-2">
+                Equipos a la vez
+                <input type="number" min={1} max={10} className="field !h-7 !w-16" value={opts.parallel} onChange={(e) => setOpts((o) => ({ ...o, parallel: Math.max(1, Math.min(10, Number(e.target.value) || 1)) }))} />
+              </label>
+              <label className="flex items-center justify-between gap-2" title="Si el equipo no vuelve al prompt en este plazo, la línea queda en error">
+                Espera máx. por comando (s)
+                <input type="number" min={5} max={600} className="field !h-7 !w-16" value={opts.timeout} onChange={(e) => setOpts((o) => ({ ...o, timeout: Number(e.target.value) || 30 }))} />
+              </label>
             </div>
             <div className="mt-auto p-3 border-t border-line space-y-2">
               {msg && <p className="text-[11.5px] text-warn">{msg}</p>}
