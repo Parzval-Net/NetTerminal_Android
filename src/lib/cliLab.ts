@@ -5,6 +5,9 @@
  */
 import { useSyncExternalStore } from "react";
 import type { DeviceResult } from "./deviceRun";
+import { commandError } from "./cliText";
+import { pool } from "./backup";
+import { store } from "./store";
 
 export interface LabTarget {
   tabId: string;
@@ -65,34 +68,8 @@ export function scriptLines(text: string): string[] {
     .filter((l) => l.trim() && !/^\s*(!|#|\/\/)/.test(l));
 }
 
-/** Mensajes de error de CLI conocidos (Cisco/Arista, Huawei/H3C, FortiOS, Junos). */
-const CLI_ERROR =
-  /^\s*(%\s*(invalid|incomplete|ambiguous|unknown|unrecognized|bad|error)[^\n]*|error:[^\n]*|command fail[^\n]*|command parse error[^\n]*|unknown action[^\n]*|syntax error[^\n]*|invalid input[^\n]*|\^?\s*unrecognized command[^\n]*|% ?wrong parameter[^\n]*)$/im;
-
-/** Primera línea de error de la respuesta (sin el eco del comando), o null. */
-export function cliError(output: string, cmd: string): string | null {
-  const lines = output.replace(/\r/g, "").split("\n");
-  const echo = lines.findIndex((l) => l.includes(cmd.trim()));
-  const body = lines.slice(echo >= 0 ? echo + 1 : 0).join("\n");
-  const m = body.match(CLI_ERROR);
-  return m ? m[0].trim().slice(0, 200) : null;
-}
-
-function store<T>(initial: T) {
-  let value = initial;
-  const subs = new Set<() => void>();
-  return {
-    get: () => value,
-    set: (v: T) => {
-      value = v;
-      subs.forEach((f) => f());
-    },
-    subscribe: (f: () => void) => {
-      subs.add(f);
-      return () => void subs.delete(f);
-    },
-  };
-}
+/** Error de CLI en la respuesta a `cmd` (sin mirar su eco), o null. */
+export const cliError = commandError;
 
 const runStore = store<LabRun | null>(null);
 /** Ventana abierta (con el texto inicial, ej. desde Notas) o null. */
@@ -168,16 +145,16 @@ export async function runLab(targets: LabTarget[], lines: string[], opts: LabOpt
     item.status = item.steps.some((s) => !s.ok) ? "error" : "ok";
   };
 
-  let next = 0;
-  const worker = async () => {
-    while (next < items.length) {
-      const item = items[next++];
-      if (stopFlag) item.status = "stopped";
-      else await one(item);
+  await pool(
+    items,
+    Math.max(1, opts.parallel),
+    async (item) => {
+      await one(item);
       schedule();
-    }
-  };
-  await Promise.all(Array.from({ length: Math.max(1, Math.min(opts.parallel, items.length)) }, worker));
+    },
+    () => stopFlag,
+  );
+  for (const item of items) if (item.status === "pending") item.status = "stopped";
   publish(false);
   return runStore.get()!;
 }

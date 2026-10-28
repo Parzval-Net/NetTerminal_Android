@@ -8,6 +8,7 @@ import { useSyncExternalStore } from "react";
 import type { ConnStatus, Session, Tab } from "../types";
 import { tabTitle } from "../types";
 import { isWithin, normPath } from "./folders";
+import { store } from "./store";
 
 export type TargetMode = "current" | "tabs" | "folder" | "panes";
 
@@ -41,24 +42,6 @@ export interface BroadcastRun {
   items: RunItem[];
   running: boolean;
   lines: number;
-}
-
-function store<T>(initial: T) {
-  let value = initial;
-  const subs = new Set<() => void>();
-  return {
-    get: () => value,
-    set: (v: T) => {
-      value = v;
-      subs.forEach((f) => f());
-    },
-    subscribe: (f: () => void) => {
-      subs.add(f);
-      return () => {
-        subs.delete(f);
-      };
-    },
-  };
 }
 
 const DEFAULT_TARGET: BroadcastTarget = { mode: "current", tabIds: [], folder: "" };

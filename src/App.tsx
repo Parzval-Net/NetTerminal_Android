@@ -39,6 +39,7 @@ import { useAlerts } from "./lib/alerts";
 import { BroadcastBar, BroadcastDialog } from "./components/BroadcastDialog";
 import { Resolved, getBroadcastRun, isBroadcastRunning, publishWorkspace, stopBroadcast, resolveTargets, runBroadcast, targetLabel, useBroadcastTarget, useWorkspace } from "./lib/broadcast";
 import { closeLab, openLab, useLabOpen } from "./lib/cliLab";
+import { persist, stored } from "./lib/prefs";
 import { SplitPanes } from "./components/SplitPanes";
 import { SplitLayout, SplitState, fillPanes, paneRect } from "./lib/split";
 import logo from "./assets/logo.svg";
@@ -109,23 +110,6 @@ function useHandlers<T extends Record<string, (...args: never[]) => unknown>>(ha
     for (const k of Object.keys(ref.current)) out[k] = (...args: never[]) => ref.current[k](...args);
     return out as T;
   }, []);
-}
-
-function stored<T>(key: string, fallback: T): T {
-  try {
-    const v = localStorage.getItem(key);
-    return v === null ? fallback : (JSON.parse(v) as T);
-  } catch {
-    return fallback;
-  }
-}
-
-function persist(key: string, value: unknown) {
-  try {
-    localStorage.setItem(key, JSON.stringify(value));
-  } catch {
-    /* sin almacenamiento local: se usa el valor por defecto */
-  }
 }
 
 let tabSeq = 0;

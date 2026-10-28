@@ -4,6 +4,7 @@
  * que el usuario ya ejecutó. La base (src/lib/lifecycleData.json, generada con
  * scripts/lifecycle/generar-lifecycle.mjs) se carga aparte, recién cuando hay un modelo que buscar.
  */
+import { promptName } from "./cliText";
 
 /** [fin de venta, fin de software, último día de soporte, anuncio, reemplazo, boletín, fuente] */
 type Row = [string, string, string, string, number, number, number];
@@ -189,14 +190,7 @@ export function detectDeviceInfo(text: string): DeviceInfo {
  * FGT #). Sirve para no atribuir a la sesión un show version hecho tras saltar a otro equipo.
  */
 export function promptHost(text: string): string | undefined {
-  const lines = text.trimEnd().split(/\r?\n/);
-  const last = (lines[lines.length - 1] ?? "").slice(0, 120).trim();
-  const m =
-    last.match(/^<([\w.-]+)>$/) ||
-    last.match(/^\[~?\*?([\w.-]+)(?:[^\]\w.-][^\]]*)?\]$/) ||
-    last.match(/^[\w.-]+@([\w.-]+)[>#%]$/) ||
-    last.match(/^([\w.-]+)(?:\s?\([^)]*\))?\s?[#>$]$/);
-  return m?.[1].toLowerCase();
+  return promptName(text.slice(-400))?.toLowerCase();
 }
 
 /** Modelo desde la plataforma que anuncia CDP/LLDP ("cisco WS-C2960X-48FPD-L", "Meraki MS225-48LP"). */

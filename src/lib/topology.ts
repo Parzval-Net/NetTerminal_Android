@@ -2,6 +2,7 @@
  * Topología desde CDP/LLDP y vecinos de ruteo (OSPF, EIGRP, BGP): comandos por fabricante,
  * lectura de salidas, grafo, elementos manuales y sugerencias desde descripciones y tablas MAC.
  */
+import { cliErrorLine, promptName } from "./cliText";
 
 /** Origen de un enlace. */
 export type LinkProto = "CDP" | "LLDP" | "OSPF" | "EIGRP" | "BGP" | "manual" | "descripción" | "MAC/OUI";
@@ -170,9 +171,7 @@ export const junosDetailCommand = (iface: string): string | null => (isSafeIface
  * deshabilitado (IOS responde "% CDP is not enabled", "% LLDP is not enabled", "% BGP not active").
  */
 export function isCliError(out: string): boolean {
-  return /% ?Invalid (input|command)|% ?Unrecognized command|% ?Incomplete command|Error: ?Unrecognized command|Error: ?Wrong parameter|syntax error|unknown command|Unknown action|Command fail|Invalid command|^\s*% ?(CDP|LLDP) is not enabled|^\s*% ?BGP not active/im.test(
-    out,
-  );
+  return cliErrorLine(out) !== null || /^\s*% ?(CDP|LLDP) is not enabled|^\s*% ?BGP not active/im.test(out);
 }
 
 const IP_RE = String.raw`\d{1,3}(?:\.\d{1,3}){3}`;
@@ -312,17 +311,7 @@ export function hopCommand(vendor: TopoVendor, platform: string | undefined, pro
 }
 
 /** Hostname desde el prompt al final de la salida (Router#, <SW>, user@host>, FGT #). */
-export function promptName(output: string): string | null {
-  const last = output.trimEnd().split("\n").pop() ?? "";
-  const m =
-    last.match(/^<([\w.\-]+)>\s*$/) ||
-    // Tras el nombre, un separador explícito: "[\w.-]+[^\]]*" era cuadrático en una línea larga.
-    last.match(/^\[~?\*?([\w.\-]+)(?:[^\]\w.\-][^\]]*)?\]\s*$/) ||
-    last.match(/^[\w.\-]+@([\w.\-]+)[>#%]\s*$/) ||
-    last.match(/^([\w.\-]+)(?:\s\([^)]*\))?\s?[#$]\s*$/) ||
-    last.match(/^([\w.\-]+)(?:\([^)]*\))?[#>]\s*$/);
-  return m ? m[1] : null;
-}
+export { promptName };
 
 function field(block: string, re: RegExp): string | undefined {
   return block.match(re)?.[1]?.trim() || undefined;

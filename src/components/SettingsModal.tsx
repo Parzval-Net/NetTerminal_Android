@@ -12,7 +12,7 @@ import { HighlightSettings } from "./HighlightSettings";
 import { AlertSettings } from "./AlertSettings";
 import { CredentialSettings } from "./CredentialSettings";
 import { allFolders } from "../lib/folders";
-import { readText, writeText } from "@tauri-apps/plugin-clipboard-manager";
+import { readText } from "@tauri-apps/plugin-clipboard-manager";
 import { Settings, UpdateInfo, defaultSettings } from "../lib/settings";
 import { Session } from "../types";
 import { TermPreset, fontStack, presets } from "../lib/theme";
@@ -30,7 +30,7 @@ interface Props {
   onImportSessions: (list: Session[]) => Promise<number>;
   /** Importación desde archivos de otros clientes. */
   onImportFile?: () => void;
-  onExportFile?: () => void;
+  onExportFile: () => void;
   initialSection?: Section;
   mcpStatus: string;
   onChange: (patch: Partial<Settings>) => void;
@@ -142,14 +142,6 @@ export function SettingsModal({
   const flash = (msg: string) => {
     setNotice(msg);
     window.setTimeout(() => setNotice(""), 3500);
-  };
-
-  const exportSessions = async () => {
-    const list = sessions
-      .filter((x) => x.type !== "local")
-      .map(({ id: _id, created_at: _c, save_password: _pw, ...rest }) => rest);
-    await writeText(JSON.stringify(list, null, 2));
-    flash(`${plural(list.length, "sesión copiada", "sesiones copiadas")} al portapapeles (nunca incluye contraseñas)`);
   };
 
   const importSessions = async () => {
@@ -537,7 +529,7 @@ export function SettingsModal({
                       </button>
                     )}
                     <button
-                      onClick={onExportFile ?? exportSessions}
+                      onClick={onExportFile}
                       title="Elige qué sesiones: XML (compatible con SecureCRT) o JSON"
                       className="px-3 h-7 rounded-md border border-line hover:bg-hover"
                     >

@@ -13,6 +13,7 @@ import { runOnDeviceResult } from "../lib/deviceRun";
 import { isSecretVar } from "../lib/templateSecrets";
 import { useDragResize } from "../lib/useDragResize";
 import { fontStack } from "../lib/theme";
+import { persist, stored } from "../lib/prefs";
 import { tabTitle } from "../types";
 import { plural } from "../lib/plural";
 
@@ -36,18 +37,10 @@ interface Props {
 }
 
 const DRAFT = "cliLabDraft";
+const LAB_DEFAULTS = { stopOnError: true, answer: false, parallel: 4, timeout: 30 };
 const OPTS = "cliLabOptions";
 const statusText = { pending: "En cola", running: "Ejecutando", ok: "OK", error: "Error", stopped: "Detenido", skipped: "Omitido" } as const;
 const statusColor = { pending: "text-muted", running: "text-accent", ok: "text-ok", error: "text-danger", stopped: "text-warn", skipped: "text-muted" } as const;
-
-function stored<T>(key: string, fallback: T): T {
-  try {
-    const v = localStorage.getItem(key);
-    return v === null ? fallback : { ...fallback, ...JSON.parse(v) };
-  } catch {
-    return fallback;
-  }
-}
 
 /**
  * CLI Lab: script de varias líneas que se ejecuta en las sesiones del destino elegido, línea a
@@ -55,9 +48,9 @@ function stored<T>(key: string, fallback: T): T {
  * del equipo salvo que se pida (o sea un comando de guardado).
  */
 export function CliLab(p: Props) {
-  const [text, setText] = useState(() => p.initialText ?? stored(DRAFT, { text: "" }).text);
+  const [text, setText] = useState(() => p.initialText ?? stored(DRAFT, { text: "" }).text ?? "");
   const [scriptId, setScriptId] = useState<string>("");
-  const [opts, setOpts] = useState(() => stored(OPTS, { stopOnError: true, answer: false, parallel: 4, timeout: 30 }));
+  const [opts, setOpts] = useState(() => ({ ...LAB_DEFAULTS, ...stored(OPTS, LAB_DEFAULTS) }));
   const [values, setValues] = useState<Record<string, string>>({});
   const [confirm, setConfirm] = useState<{ text: string; shown: string; resolved: Resolved } | null>(null);
   const [view, setView] = useState<string | null>(null);
@@ -69,20 +62,8 @@ export function CliLab(p: Props) {
   const ws = useWorkspace();
   const win = useDragResize<HTMLDivElement>("cliLabWindow");
 
-  useEffect(() => {
-    try {
-      localStorage.setItem(DRAFT, JSON.stringify({ text }));
-    } catch {
-      /* sin almacenamiento */
-    }
-  }, [text]);
-  useEffect(() => {
-    try {
-      localStorage.setItem(OPTS, JSON.stringify(opts));
-    } catch {
-      /* sin almacenamiento */
-    }
-  }, [opts]);
+  useEffect(() => persist(DRAFT, { text }), [text]);
+  useEffect(() => persist(OPTS, opts), [opts]);
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => e.key === "Escape" && !confirm && naming === null && p.onClose();
     window.addEventListener("keydown", onKey);

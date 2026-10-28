@@ -1,3 +1,4 @@
+import { persist, stored } from "../lib/prefs";
 import { memo, useCallback, useEffect, useRef, useState } from "react";
 import { PanelLeftClose, PanelLeftOpen, PanelTop, Plus, Wrench, X } from "lucide-react";
 import { tabTitle } from "../types";
@@ -13,23 +14,6 @@ const MAX_W = 420;
 const DEFAULT_W = 220;
 const RAIL_W = 44;
 
-function load<T>(key: string, fallback: T): T {
-  try {
-    const v = localStorage.getItem(key);
-    return v === null ? fallback : (JSON.parse(v) as T);
-  } catch {
-    return fallback;
-  }
-}
-
-function save(key: string, value: unknown) {
-  try {
-    localStorage.setItem(key, JSON.stringify(value));
-  } catch {
-    /* sin almacenamiento: no se recuerda */
-  }
-}
-
 const clamp = (w: number) => Math.max(MIN_W, Math.min(MAX_W, Math.round(w)));
 
 /**
@@ -40,14 +24,14 @@ const clamp = (w: number) => Math.max(MIN_W, Math.min(MAX_W, Math.round(w)));
 export const VerticalTabs = memo(function VerticalTabs(props: TabBarProps) {
   const { tabs, states, activeId, onSelect, onClose, onNew, toolsOpen, alerts, onRename, activity, alerted, onTabLayout } = props;
   const drag = useTabDrag("data-id", "y", props.onReorder);
-  const [width, setWidth] = useState(() => clamp(load("vtabsWidth", DEFAULT_W)));
-  const [collapsed, setCollapsed] = useState(() => load("vtabsCollapsed", false));
+  const [width, setWidth] = useState(() => clamp(stored("vtabsWidth", DEFAULT_W)));
+  const [collapsed, setCollapsed] = useState(() => stored("vtabsCollapsed", false));
   const [editing, setEditing] = useState<string | null>(null);
   const [menu, setMenu] = useState<{ x: number; y: number; items: MenuItem[] } | null>(null);
   const closeMenu = useCallback(() => setMenu(null), []);
   const listRef = useRef<HTMLDivElement>(null);
 
-  useEffect(() => save("vtabsCollapsed", collapsed), [collapsed]);
+  useEffect(() => persist("vtabsCollapsed", collapsed), [collapsed]);
 
   const commit = (id: string, value: string) => {
     setEditing(null);
@@ -81,7 +65,7 @@ export const VerticalTabs = memo(function VerticalTabs(props: TabBarProps) {
       el.removeEventListener("pointerup", up);
       el.removeEventListener("pointercancel", up);
       document.body.style.cursor = "";
-      save("vtabsWidth", last);
+      persist("vtabsWidth", last);
     };
     el.addEventListener("pointermove", move);
     el.addEventListener("pointerup", up);
@@ -338,7 +322,7 @@ export const VerticalTabs = memo(function VerticalTabs(props: TabBarProps) {
           onPointerDown={startResize}
           onDoubleClick={() => {
             setWidth(DEFAULT_W);
-            save("vtabsWidth", DEFAULT_W);
+            persist("vtabsWidth", DEFAULT_W);
           }}
           title="Arrastra para cambiar el ancho · doble clic: restaurar"
           className="absolute -right-1 top-0 bottom-0 w-2 cursor-col-resize z-10 hover:bg-[var(--selected)]"

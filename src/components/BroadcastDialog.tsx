@@ -3,6 +3,7 @@ import { Radio, Square, X } from "lucide-react";
 import { Risk, computeRisk, riskLabel } from "../lib/packs";
 import { Resolved, clearBroadcast, stopBroadcast, useBroadcastRun } from "../lib/broadcast";
 import { tabTitle } from "../types";
+import { openLab } from "../lib/cliLab";
 
 const RANK: Record<Risk, number> = { read: 0, change: 1, disruptive: 2 };
 const riskColor: Record<Risk, string> = { read: "text-muted", change: "text-warn", disruptive: "text-danger" };
@@ -137,6 +138,18 @@ export function BroadcastDialog({ text, resolved, declared, delayMs, verb, onCan
           </div>
         </div>
         <footer className="flex justify-end gap-2 px-5 py-4">
+          {!verb && lines.length > 1 && (
+            <button
+              onClick={() => {
+                onCancel();
+                openLab(text);
+              }}
+              title="Ejecuta línea a línea leyendo cada respuesta y se detiene al primer error"
+              className="mr-auto px-3 h-8 rounded-md text-accent hover:bg-hover"
+            >
+              Ejecutar con verificación (CLI Lab)
+            </button>
+          )}
           <button onClick={onCancel} className="px-3.5 h-8 rounded-md border border-line hover:bg-hover">
             Cancelar
           </button>

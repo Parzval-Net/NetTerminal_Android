@@ -2,7 +2,22 @@
 // `node scripts/tests/lifecycle.test.mjs` (Node 22.15+ con tipos TS).
 import assert from "node:assert/strict";
 import { readFileSync } from "node:fs";
+import { registerHooks } from "node:module";
 import { fastEnough } from "./timing.mjs";
+
+// lifecycle.ts importa módulos sin extensión (como lo resuelve Vite): se completa con .ts.
+registerHooks({
+  resolve(specifier, context, next) {
+    if (/^\.\.?\//.test(specifier) && !/\.[cm]?[jt]s$/.test(specifier) && context.parentURL?.endsWith(".ts")) {
+      try {
+        return next(`${specifier}.ts`, context);
+      } catch {
+        /* sigue con la resolución normal */
+      }
+    }
+    return next(specifier, context);
+  },
+});
 
 const L = await import("../../src/lib/lifecycle.ts");
 const db = JSON.parse(readFileSync(new URL("../../src/lib/lifecycleData.json", import.meta.url), "utf8"));

@@ -31,11 +31,19 @@ fn patterns() -> &'static Patterns {
     static P: OnceLock<Patterns> = OnceLock::new();
     P.get_or_init(|| Patterns {
         more: Regex::new(r"(?i)(--\s*more\s*--|-{2,}\s*more\s*-{2,}|\(more\)|press any key)\s*$").unwrap(),
-        // Prompt de Cisco/Arista (Router#), Huawei (<SW> / [SW]), Juniper (user@host>)
-        // y FortiOS ("fw01 #", "fw01 (global) #")
-        prompt: Regex::new(
-            r"(?m)^[\w.\-@()/:~]*[\w)\]>][#>$%]\s*$|^[<\[][\w.\-~/:]+[>\]]\s*$|^[\w.\-]+(?: \([\w\-.]+\))? [#$]\s*$",
-        )
+        // Los mismos prompts que src/lib/cliText.ts (lista común en scripts/tests/fixtures/prompts.json):
+        // Huawei/H3C <SW>, [~SW], [*SW-GE1/0/1]; MikroTik [admin@MikroTik] >; shell RHEL
+        // [user@host ~]$; Junos, PAN-OS y shells user@host>, user@host:~$; Cisco/Arista/Aruba
+        // Router#, Router(config-if)#, IOS-XR RP/0/RSP0/CPU0:asr9k#; FortiOS fw01 #, con VDOM
+        // fw01 (root) (interface) #.
+        prompt: Regex::new(concat!(
+            r"(?m)^<[\w.\-]+>\s*$",
+            r"|^\[[\w.\-]+@[\w.\-]+\](?: /[\w/\-]*)? ?>\s*$",
+            r"|^\[[\w.\-]+@[\w.\-]+(?: [^\]\n]*)?\][#$]\s*$",
+            r"|^\[[~*]{0,2}[\w.\-]+(?:[^\]\w.\-\n][^\]\n]*)?\]\s*$",
+            r"|^[\w.\-]+@[\w.\-]+(?::\S*)?[>#%$]\s*$",
+            r"|^(?:[\w/]+:)?[\w.\-]+(?: ?\([^()\n]*\)){0,3} ?[#>$%]\s*$",
+        ))
         .unwrap(),
         // "Destination filename [ios.bin]?", "[confirm]", "Address or name of remote host []?"
         confirm: Regex::new(r"(?i)(\[confirm\]|\[[^\]\n]*\]\s*\?)\s*$").unwrap(),
@@ -235,6 +243,16 @@ mod tests {
             assert!(p.prompt.is_match(prompt), "{prompt}");
         }
         assert!(!p.prompt.is_match("Accessing tftp://10.0.0.5/ios.bin..."));
+        // Lista común con src/lib/cliText.ts.
+        let fx: serde_json::Value = serde_json::from_str(include_str!("../../scripts/tests/fixtures/prompts.json")).unwrap();
+        for pair in fx["prompts"].as_array().unwrap() {
+            let line = pair[0].as_str().unwrap();
+            assert!(p.prompt.is_match(line), "debería ser prompt: {line:?}");
+        }
+        for line in fx["not_prompts"].as_array().unwrap() {
+            let line = line.as_str().unwrap();
+            assert!(!p.prompt.is_match(line), "no es prompt: {line:?}");
+        }
         assert!(p.error.is_match("%Error opening tftp://10.0.0.5/x.bin (Timed out)"));
         assert!(!p.error.is_match("[OK - 33591768 bytes]"));
     }
