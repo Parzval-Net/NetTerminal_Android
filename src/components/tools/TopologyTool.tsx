@@ -541,6 +541,7 @@ const NodeView = memo(function NodeView({
   faded,
   sub,
   onDown,
+  onMenu,
 }: {
   n: TopoNode;
   ghost: boolean;
@@ -550,10 +551,16 @@ const NodeView = memo(function NodeView({
   faded: boolean;
   sub: string;
   onDown: (e: React.PointerEvent<SVGGElement>, n: TopoNode) => void;
+  onMenu: (e: React.MouseEvent<SVGGElement>, n: TopoNode) => void;
 }) {
   const tentative = n.manual || n.addrOnly;
   return (
-    <g style={{ cursor: ghost ? "default" : "grab" }} opacity={faded ? 0.35 : 1} onPointerDown={(e) => !ghost && onDown(e, n)}>
+    <g style={{ cursor: ghost ? "default" : "grab" }} opacity={faded ? 0.35 : 1} onPointerDown={(e) => !ghost && e.button === 0 && onDown(e, n)}
+      onContextMenu={(e) => {
+        e.preventDefault();
+        if (!ghost) onMenu(e, n);
+      }}
+    >
       {/* Fondo opaco: el relleno de los explorados es translúcido y dejaba ver los enlaces. */}
       <rect x={n.x - W / 2} y={n.y - H / 2} width={W} height={H} rx={10} fill="var(--panel)" />
       <rect
@@ -1023,6 +1030,30 @@ export function TopologyTool({
     setSelected(id);
     setUi((u) => ({ ...u, panel: true, sec: { ...u.sec, revisiones: true } }));
   }, []);
+  /** Copia al portapapeles y lo confirma en el mensaje de la herramienta. */
+  const copyText = (text: string, what: string) =>
+    writeText(text)
+      .then(() => setMsg(`${what} copiada: ${text.length > 80 ? `${text.slice(0, 79)}…` : text}`))
+      .catch((e) => setMsg(`No se pudo copiar: ${String(e)}`));
+  const [nodeMenu, setNodeMenu] = useState<Menu | null>(null);
+  // Menú del equipo (clic derecho): la función cambia con el diagrama; NodeView recibe una estable.
+  const nodeMenuRef = useRef<(e: React.MouseEvent<SVGGElement>, n: TopoNode) => void>(() => {});
+  nodeMenuRef.current = (e, n) => {
+    setSelected(n.id);
+    const addrs = knownAddrs(n);
+    setNodeMenu({
+      x: e.clientX,
+      y: e.clientY,
+      items: [
+        [n.ip ? `Copiar IP (${n.ip})` : "Copiar IP (sin IP de gestión)", <Copy size={13} />, () => n.ip && copyText(n.ip, "IP"), !n.ip],
+        ["Copiar nombre", <Copy size={13} />, () => copyText(n.name, "Nombre")],
+        ["Copiar nombre e IP", <Copy size={13} />, () => copyText(n.ip ? `${n.name} ${n.ip}` : n.name, "Nombre e IP"), !n.ip],
+        ...(addrs.length > 1 ? [[`Copiar sus ${addrs.length} direcciones`, <Copy size={13} />, () => copyText(addrs.join("\n"), "Direcciones")] as MenuItem] : []),
+        ["Ver su vecindario", <ListFilter size={13} />, () => setFilter((f) => ({ ...f, hops: f.hops || 2, focus: n.id }))],
+      ],
+    });
+  };
+  const onNodeMenu = useCallback((e: React.MouseEvent<SVGGElement>, n: TopoNode) => nodeMenuRef.current(e, n), []);
   const onNodeDown = useCallback((e: React.PointerEvent<SVGGElement>, n: TopoNode) => {
     (e.currentTarget.ownerSVGElement as SVGSVGElement).setPointerCapture(e.pointerId);
     drag.current = { id: n.id, sx: e.clientX, sy: e.clientY, x: n.x, y: n.y };
@@ -1420,6 +1451,24 @@ export function TopologyTool({
     };
   }, [zoomAt]);
 
+  // Ctrl/⌘+C con un equipo seleccionado en el mapa copia su IP, salvo que haya texto
+  // seleccionado o el foco esté en un campo (ahí manda la copia normal).
+  const selIp = selected ? topoById.get(selected)?.ip : undefined;
+  useEffect(() => {
+    if (!visible || !selIp) return;
+    const onKey = (e: KeyboardEvent) => {
+      if (!(e.ctrlKey || e.metaKey) || e.shiftKey || e.altKey || e.key.toLowerCase() !== "c") return;
+      const a = document.activeElement as HTMLElement | null;
+      if (a && (a.isContentEditable || /^(INPUT|TEXTAREA|SELECT)$/.test(a.tagName))) return;
+      if (window.getSelection()?.toString()) return;
+      e.preventDefault();
+      void copyText(selIp, "IP");
+    };
+    window.addEventListener("keydown", onKey);
+    return () => window.removeEventListener("keydown", onKey);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [visible, selIp]);
+
   const pickHit = (h: SearchHit) => {
     focusOn(h.id);
     setSearchOpen(false);
@@ -1665,6 +1714,7 @@ export function TopologyTool({
             <Download size={14} /> <span className="@max-[860px]:sr-only">Exportar</span> <ChevronDown size={12} aria-hidden />
           </Btn>
           {exportMenu && <ContextMenu menu={exportMenu} onClose={() => setExportMenu(null)} />}
+          {nodeMenu && <ContextMenu menu={nodeMenu} onClose={() => setNodeMenu(null)} />}
           <div className="ml-auto flex items-center gap-1">
             <Btn
               kind={trafficOn ? "default" : "ghost"}
@@ -1798,6 +1848,7 @@ export function TopologyTool({
                 faded={!!route && !onRoute && !ghost}
                 sub={nodeSub(n, ghost)}
                 onDown={onNodeDown}
+                onMenu={onNodeMenu}
               />
             );
           })}
@@ -1826,6 +1877,11 @@ export function TopologyTool({
           {!ui.panel && sel && (
             <div className="absolute top-2 left-2 flex items-center gap-2 max-w-[calc(100%-1rem)] rounded-lg border border-line bg-panel shadow-pop pl-3 pr-1 py-1 text-[12px]">
               <span className="font-medium truncate">{sel.name}</span>
+              {sel.ip && (
+                <Btn kind="ghost" className="!h-6 !px-2 !text-[11.5px]" title={`Copiar IP (${sel.ip})`} aria-label={`Copiar IP ${sel.ip}`} onClick={() => copyText(sel.ip!, "IP")}>
+                  <Copy size={12} /> <span className="font-mono">{sel.ip}</span>
+                </Btn>
+              )}
               <Btn kind="ghost" className="!h-6 !px-2 !text-[11.5px] !text-accent" onClick={() => setUi((u) => ({ ...u, panel: true, sec: { ...u.sec, detalle: true } }))}>
                 Ver detalle
               </Btn>
@@ -2405,8 +2461,8 @@ export function TopologyTool({
                   </div>
                 )}
                 {sel.ip && (
-                  <Btn className="w-full" onClick={() => writeText(sel.ip!)}>
-                    Copiar IP
+                  <Btn className="w-full" title={`Copia ${sel.ip} (también ${isMac ? "⌘" : "Ctrl"}+C con el equipo seleccionado en el mapa, o clic derecho sobre él)`} onClick={() => copyText(sel.ip!, "IP")}>
+                    <Copy size={13} /> Copiar IP
                   </Btn>
                 )}
               </div>
