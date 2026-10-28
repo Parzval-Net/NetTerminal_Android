@@ -965,10 +965,14 @@ if (new URLSearchParams(location.search).has("video")) {
     const job = `job-${nextId++}`;
     const prompt = s.highlight === "huawei" ? `<${s.name}>` : `${s.name}#`;
     // CLI Lab: comandos inexistentes dan error de CLI; "reload" pregunta y, sin answer, se rechaza.
-    const bad = /^(sh(ow)? bogus|foo)/i.test(args.command.trim());
+    // Un Huawei no entiende la sintaxis de Cisco: el CLI Lab marca error y detiene ese equipo.
+    const huaweiBad = s.highlight === "huawei" && /^(conf(igure)? t|interface |description |show )/i.test(args.command.trim());
+    const bad = huaweiBad || /^(sh(ow)? bogus|foo)/i.test(args.command.trim());
     const ask = /^reload/i.test(args.command.trim());
     const declined = ask && args.answer === false ? "Proceed with reload? [confirm]" : null;
-    const body = bad
+    const body = huaweiBad
+      ? "                ^\r\nError: Unrecognized command found at '^' position.\r\n"
+      : bad
       ? "                ^\r\n% Invalid input detected at '^' marker.\r\n\r\n"
       : ask
         ? "Proceed with reload? [confirm]\r\n"

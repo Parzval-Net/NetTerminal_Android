@@ -358,6 +358,14 @@ Herramientas › Topología lee los vecinos del equipo conectado y dibuja el dia
 
 Script de varios comandos para una o varias sesiones sin crear botones. La idea viene del [CLI Code Lab de FortiOS 8.0](https://docs.fortinet.com/document/fortigate/8.0.0/new-features/18007/fortiai-assistant-and-cli-code-lab): escribir el bloque completo, revisarlo y ejecutarlo viendo la respuesta de cada comando. En NetTerminal sirve para cualquier fabricante y no usa IA.
 
+| 1. Destino y acceso | 2. Script con variables |
+|---|---|
+| ![Abrir CLI Lab](screenshots/cli-lab-1-abrir.png) | ![Editor](screenshots/cli-lab-2-editor.png) |
+| **3. Confirmación con riesgo por línea** | **4. En ejecución (Detener siempre visible)** |
+| ![Confirmar](screenshots/cli-lab-3-confirmar.png) | ![Ejecutando](screenshots/cli-lab-4-ejecutando.png) |
+| **5. Error: un Huawei no entiende la sintaxis Cisco y se detiene** | **6. Respuesta de cada comando en un equipo OK** |
+| ![Error](screenshots/cli-lab-5-error.png) | ![Resultado](screenshots/cli-lab-6-resultado.png) |
+
 - **Abrir**: barra de estado › selector de destino › "Abrir CLI Lab (script multilínea)…", la paleta (⌘K › "CLI Lab") o Notas › "…" › "Abrir en CLI Lab" (lleva la selección o la nota completa).
 - **Editor**: resaltado del fabricante de la pestaña activa y variables `{{nombre}}` con su campo debajo (las que parecen contraseñas se piden ocultas). Las líneas que empiezan con `!`, `#` o `//` son comentarios. "+ Guardar config" agrega el comando de guardado del fabricante (`write memory`, `save`, `commit`; FortiOS guarda al cerrar con `end`). Los scripts se guardan con nombre en Ajustes (`cliScripts`).
 - **Desde el envío a varias sesiones**: la confirmación de un envío de varias líneas ofrece "Ejecutar con verificación (CLI Lab)", que lleva el mismo texto al CLI Lab.

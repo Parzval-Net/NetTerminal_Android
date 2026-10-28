@@ -260,6 +260,57 @@ export function CliLab(p: Props) {
                 ))}
               </div>
             )}
+            {run && (
+              <section className="shrink-0 h-[48%] min-h-[150px] border-t border-line flex min-w-0">
+                <div className="w-56 shrink-0 border-r border-line flex flex-col">
+                  <div className="flex items-center gap-2 px-3 h-8 text-[11.5px] border-b border-line">
+                    <span className="font-medium">{running ? "Ejecutando…" : "Resultado"}</span>
+                    <span className="text-muted">
+                      {run.items.filter((i) => i.status === "ok").length}/{run.items.length} OK
+                    </span>
+                    <span className="flex-1" />
+                    <button title="Copiar informe" className="text-muted hover:text-fg" onClick={() => writeText(labReport(run)).then(() => setMsg("Informe copiado"))}>
+                      <Copy size={13} />
+                    </button>
+                    {!running && (
+                      <button title="Cerrar resultado" className="text-muted hover:text-fg" onClick={clearLab}>
+                        <X size={13} />
+                      </button>
+                    )}
+                  </div>
+                  <ul className="flex-1 overflow-y-auto text-[12px]">
+                    {run.items.map((i) => (
+                      <li key={i.tabId}>
+                        <button onClick={() => setView(i.tabId)} className={`w-full flex items-center gap-2 px-3 h-7 text-left hover:bg-hover ${shown?.tabId === i.tabId ? "bg-selected" : ""}`}>
+                          <StatusIcon item={i} />
+                          <span className="truncate flex-1">{i.name}</span>
+                          <span className={`text-[11px] tabular-nums ${statusColor[i.status]}`}>
+                            {i.status === "running" ? `${i.steps.length}/${run.lines}` : statusText[i.status]}
+                          </span>
+                        </button>
+                      </li>
+                    ))}
+                  </ul>
+                </div>
+                <div className="flex-1 min-w-0 overflow-auto font-mono text-[11.5px] p-2">
+                  {!shown && <p className="font-sans text-[12px] text-muted p-2">Elige un equipo para ver la respuesta de cada comando.</p>}
+                  {shown && shown.reason && <p className="font-sans text-[12px] text-danger px-1 pb-1">{shown.reason}</p>}
+                  {shown?.steps.map((s, k) => (
+                    <div
+                      key={k}
+                      ref={!s.ok && shown.steps.findIndex((x) => !x.ok) === k ? failRef : undefined}
+                      className={`mb-1.5 rounded border-l-2 pl-2 ${s.ok ? "border-line" : "border-danger"}`}
+                    >
+                      <div className={`font-semibold ${s.ok ? "" : "text-danger"}`}>
+                        {k + 1}. {s.cmd}
+                      </div>
+                      {s.note && <div className="font-sans text-danger">{s.note}</div>}
+                      <pre className="whitespace-pre-wrap text-muted">{s.output.replace(/\r/g, "").trim()}</pre>
+                    </div>
+                  ))}
+                </div>
+              </section>
+            )}
           </section>
 
           <aside className="w-72 shrink-0 border-l border-line flex flex-col overflow-y-auto">
@@ -308,57 +359,6 @@ export function CliLab(p: Props) {
           </aside>
         </div>
 
-        {run && (
-          <section className="shrink-0 h-[38%] min-h-[150px] border-t border-line flex min-w-0">
-            <div className="w-72 shrink-0 border-r border-line flex flex-col">
-              <div className="flex items-center gap-2 px-3 h-8 text-[11.5px] border-b border-line">
-                <span className="font-medium">{running ? "Ejecutando…" : "Resultado"}</span>
-                <span className="text-muted">
-                  {run.items.filter((i) => i.status === "ok").length}/{run.items.length} OK
-                </span>
-                <span className="flex-1" />
-                <button title="Copiar informe" className="text-muted hover:text-fg" onClick={() => writeText(labReport(run)).then(() => setMsg("Informe copiado"))}>
-                  <Copy size={13} />
-                </button>
-                {!running && (
-                  <button title="Cerrar resultado" className="text-muted hover:text-fg" onClick={clearLab}>
-                    <X size={13} />
-                  </button>
-                )}
-              </div>
-              <ul className="flex-1 overflow-y-auto text-[12px]">
-                {run.items.map((i) => (
-                  <li key={i.tabId}>
-                    <button onClick={() => setView(i.tabId)} className={`w-full flex items-center gap-2 px-3 h-7 text-left hover:bg-hover ${shown?.tabId === i.tabId ? "bg-selected" : ""}`}>
-                      <StatusIcon item={i} />
-                      <span className="truncate flex-1">{i.name}</span>
-                      <span className={`text-[11px] tabular-nums ${statusColor[i.status]}`}>
-                        {i.status === "running" ? `${i.steps.length}/${run.lines}` : statusText[i.status]}
-                      </span>
-                    </button>
-                  </li>
-                ))}
-              </ul>
-            </div>
-            <div className="flex-1 min-w-0 overflow-auto font-mono text-[11.5px] p-2">
-              {!shown && <p className="font-sans text-[12px] text-muted p-2">Elige un equipo para ver la respuesta de cada comando.</p>}
-              {shown && shown.reason && <p className="font-sans text-[12px] text-danger px-1 pb-1">{shown.reason}</p>}
-              {shown?.steps.map((s, k) => (
-                <div
-                  key={k}
-                  ref={!s.ok && shown.steps.findIndex((x) => !x.ok) === k ? failRef : undefined}
-                  className={`mb-1.5 rounded border-l-2 pl-2 ${s.ok ? "border-line" : "border-danger"}`}
-                >
-                  <div className={`font-semibold ${s.ok ? "" : "text-danger"}`}>
-                    {k + 1}. {s.cmd}
-                  </div>
-                  {s.note && <div className="font-sans text-danger">{s.note}</div>}
-                  <pre className="whitespace-pre-wrap text-muted">{s.output.replace(/\r/g, "").trim()}</pre>
-                </div>
-              ))}
-            </div>
-          </section>
-        )}
       </div>
       {confirm && (
         <BroadcastDialog
