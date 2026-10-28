@@ -15,6 +15,7 @@ Detalle técnico de NetTerminal: funciones completas, seguridad, formatos, API d
 - [Seguridad](#seguridad)
 - [Packs de comandos](#packs-de-comandos)
 - [Topología CDP / LLDP, ruteo y manual](#topología-cdp--lldp-ruteo-y-manual)
+- [Diagramas en notas (Mermaid)](#diagramas-en-notas-mermaid)
 - [Ciclo de vida del equipo (EoL)](#ciclo-de-vida-del-equipo-eol)
 - [Scripts Python](#scripts-python)
 - [Crear un plugin](#crear-un-plugin)
@@ -348,6 +349,13 @@ Herramientas › Topología lee los vecinos del equipo conectado y dibuja el dia
 - **L2 desconocido**: con "Estado de puertos", cada equipo explorado con interfaces físicas activas sin vecino (ni su agregado con enlace) muestra un nodo virtual con la cantidad de puertos y, si se leyó la tabla MAC, cuántas MAC y de qué fabricantes. Ahí hay algo que no anuncia CDP/LLDP: un PC, una cámara, un AP o un switch no administrable. No se guarda en el diagrama ni se exporta; se apaga en Filtros.
 - **Alcance del descubrimiento** (panel): sin teléfonos IP ni access points, solo vecinos con IP de gestión dentro de las redes indicadas (CIDR IPv4) y profundidad máxima desde el primer equipo explorado. Se aplica al incorporar vecinos nuevos (los que ya están conservan su enlace) y el mensaje dice cuántos quedaron fuera y por qué. No cambia los comandos que se envían. Un vecino sin IP informada se agrega igual.
 - Check Point y WatchGuard no tienen descubrimiento: no hay comandos LLDP documentados y verificables para Gaia ni Fireware. Aparecen cuando otro equipo los reporta como vecinos.
+
+## Diagramas en notas (Mermaid)
+
+En el panel de Notas, el botón de diagramas abre debajo del editor la vista de los bloques ```` ```mermaid ```` de la nota (o de la nota completa si empieza como un diagrama: `flowchart`, `sequenceDiagram`, `gantt`, `stateDiagram`, `mindmap`, etc.). Se redibuja al dejar de escribir y cada diagrama se copia o guarda como SVG; un error de sintaxis se muestra en su lugar sin afectar a los demás. "Insertar diagrama de red" en el menú de la nota agrega un ejemplo, y lo que copia Topología › Exportar › "Copiar como Mermaid" se pega tal cual.
+
+- **Rendimiento**: Mermaid 11.17.2 va en módulos aparte que se descargan la primera vez que se abre la vista (unos 0,8 s); el arranque no cambia. Hasta 12 diagramas por nota y 20.000 caracteres por diagrama.
+- **Seguridad**: modo `strict` (sin clics con scripts) y etiquetas como texto SVG, nunca HTML (`htmlLabels: false`), dentro de la misma CSP de la app (`script-src 'self'`, sin `eval`). Una nota compartida no puede ejecutar código ni insertar imágenes o enlaces en el diagrama. Las notas protegidas solo muestran diagramas mientras están desbloqueadas.
 
 ## Ciclo de vida del equipo (EoL)
 

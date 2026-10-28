@@ -1,7 +1,9 @@
 import { memo, useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { invoke } from "@tauri-apps/api/core";
 import type { ITheme } from "@xterm/xterm";
-import { ArrowDownToLine, Check, FolderOpen, Lock, MoreHorizontal, Pencil, Plus, Replace, Search, Send, SendHorizontal, ShieldCheck, Trash2, X } from "lucide-react";
+import { ArrowDownToLine, Check, FolderOpen, Lock, MoreHorizontal, Network, Pencil, Plus, Replace, Search, Send, SendHorizontal, ShieldCheck, Trash2, Workflow, X } from "lucide-react";
+import { DiagramPreview } from "./DiagramPreview";
+import { NETWORK_TEMPLATE } from "../lib/mermaidBlocks";
 import { CodeEditor } from "./CodeEditor";
 import { NoteSecurity, NoteUnlock } from "./NoteLock";
 import { Compiled } from "../lib/highlight";
@@ -25,6 +27,16 @@ interface NoteMatch {
 }
 
 const AUTO_LOCK_KEY = "notesAutoLockMin";
+/** Vista de diagramas abierta (comodidad de este equipo). */
+const PREVIEW_KEY = "notesDiagrams";
+
+/** Tema oscuro según el fondo de la terminal (para el estilo de los diagramas). */
+function darkBackground(bg: string | undefined): boolean {
+  const m = bg?.match(/^#?([0-9a-f]{2})([0-9a-f]{2})([0-9a-f]{2})/i);
+  if (!m) return false;
+  const [r, g, b] = m.slice(1).map((h) => parseInt(h, 16) / 255);
+  return 0.2126 * r + 0.7152 * g + 0.0722 * b < 0.5;
+}
 function storedAutoLock(): number {
   try {
     const v = Number(localStorage.getItem(AUTO_LOCK_KEY));
@@ -83,6 +95,21 @@ export const NotesPanel = memo(function NotesPanel(p: Props) {
     };
   }, [menuOpen]);
   const [notice, setNotice] = useState("");
+  const [diagrams, setDiagrams] = useState(() => {
+    try {
+      return localStorage.getItem(PREVIEW_KEY) === "1";
+    } catch {
+      return false;
+    }
+  });
+  const toggleDiagrams = (v: boolean) => {
+    setDiagrams(v);
+    try {
+      localStorage.setItem(PREVIEW_KEY, v ? "1" : "0");
+    } catch {
+      /* solo comodidad */
+    }
+  };
   const editorRef = useRef<HTMLTextAreaElement>(null);
   // Búsqueda en todas las notas y buscar/reemplazar en la actual (cerradas por defecto).
   const [tool, setTool] = useState<"search" | "replace" | "secure" | null>(null);
@@ -447,6 +474,14 @@ export const NotesPanel = memo(function NotesPanel(p: Props) {
             </select>
           </>
         )}
+        <HeadBtn
+          title={diagrams ? "Ocultar diagramas" : "Ver diagramas Mermaid de la nota (bloques ```mermaid)"}
+          aria-pressed={diagrams}
+          onClick={() => toggleDiagrams(!diagrams)}
+          className={diagrams ? "!text-accent" : ""}
+        >
+          <Workflow size={14} />
+        </HeadBtn>
         <HeadBtn title="Buscar en todas las notas" onClick={() => toggleTool("search")} className={tool === "search" ? "!text-accent" : ""}>
           <Search size={14} />
         </HeadBtn>
@@ -468,6 +503,17 @@ export const NotesPanel = memo(function NotesPanel(p: Props) {
                 disabled={locked}
                 active={tool === "secure"}
                 onClick={() => { toggleTool("secure"); setMenuOpen(false); }}
+              />
+              <MenuItem
+                icon={<Network size={14} />}
+                label="Insertar diagrama de red"
+                hint="Agrega al final de la nota un diagrama Mermaid de ejemplo y abre la vista de diagramas"
+                disabled={locked || !current}
+                onClick={() => {
+                  edit(content + (content && !content.endsWith("\n\n") ? (content.endsWith("\n") ? "\n" : "\n\n") : "") + NETWORK_TEMPLATE);
+                  toggleDiagrams(true);
+                  setMenuOpen(false);
+                }}
               />
               <MenuItem icon={<Pencil size={13} />} label="Renombrar" onClick={() => { if (current) setRenaming(current); setMenuOpen(false); }} />
               <MenuItem icon={<FolderOpen size={14} />} label="Abrir carpeta de notas" onClick={() => { invoke("open_dir", { which: "notes" }); setMenuOpen(false); }} />
@@ -596,6 +642,7 @@ export const NotesPanel = memo(function NotesPanel(p: Props) {
       {locked && current ? (
         <NoteUnlock key={current} name={current} onUnlock={unlock} />
       ) : (
+        <div className="flex-1 min-h-0 flex flex-col">
         <CodeEditor
           ref={editorRef}
           value={content}
@@ -617,6 +664,12 @@ export const NotesPanel = memo(function NotesPanel(p: Props) {
             }
           }}
         />
+        {diagrams && (
+          <section aria-label="Diagramas de la nota" className="h-1/2 min-h-[120px] overflow-auto border-t border-line bg-bg">
+            <DiagramPreview text={content} dark={darkBackground(p.theme.background)} name={current ?? "nota"} onNotice={flash} />
+          </section>
+        )}
+        </div>
       )}
 
       <footer className="border-t border-line px-2 py-1.5 space-y-1">
