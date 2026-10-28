@@ -1368,4 +1368,82 @@ assert.deepEqual(T.parseDismissed(null), {});
 assert.deepEqual(T.parseDismissed([1, 2]), {});
 }
 
+// ---------- Tráfico: nombres de puerto de CDP/LLDP contra show interfaces ----------
+{
+  const R = await import("../../src/lib/topoTraffic.ts");
+  // Un mismo puerto aparece con nombre completo (show interfaces), corto (LLDP, CDP detail en
+  // algunos equipos) o de tres letras con espacio (show cdp neighbors). Si no se unifican, el
+  // enlace no encuentra sus contadores y queda sin tráfico, color ni animación.
+  const same = [
+    ["Gig 1/0/1", "GigabitEthernet1/0/1"], ["Gi1/0/1", "GigabitEthernet1/0/1"],
+    ["Ten 1/1/1", "TenGigabitEthernet1/1/1"], ["Te1/1/1", "TenGigabitEthernet1/1/1"],
+    ["Fas 0/1", "FastEthernet0/1"], ["For 1/1/1", "FortyGigabitEthernet1/1/1"], ["Hun 1/0/49", "HundredGigE1/0/49"],
+    ["Tw1/0/1", "TwoGigabitEthernet1/0/1"], ["Two 1/0/1", "TwoGigabitEthernet1/0/1"], ["Fi1/0/1", "FiveGigabitEthernet1/0/1"],
+    ["Twe 1/0/1", "TwentyFiveGigE1/0/1"], ["App1/0/1", "AppGigabitEthernet1/0/1"], ["Vl10", "Vlan10"],
+    ["Eth 1/1", "Ethernet1/1"], ["Po1", "Port-channel1"], ["GE0/0/1", "GigabitEthernet0/0/1"], ["XGE0/0/1", "XGigabitEthernet0/0/1"],
+  ];
+  for (const [a, b] of same) assert.equal(T.canonPort(a), T.canonPort(b), `${a} = ${b}`);
+  // Distintos siguen distintos (Huawei Vlanif, Eth-Trunk; Junos ge-).
+  assert.notEqual(T.canonPort("Vlanif10"), T.canonPort("Vlan10"));
+  assert.equal(T.canonPort("Eth-Trunk1"), T.canonPort("Port-channel1"));
+  assert.equal(T.canonPort("ge-0/0/1"), "ge-0/0/1");
+
+  // Comando por plataforma detectada, luego por resaltado; sin ninguno, Cisco y después Huawei.
+  assert.deepEqual(R.trafficCommands("vrp8", undefined), ["display interface"]);
+  assert.deepEqual(R.trafficCommands("yunshan", "cisco"), ["display interface"], "la plataforma manda sobre el resaltado");
+  assert.deepEqual(R.trafficCommands("nxos", undefined), ["show interfaces", "show interface"]);
+  assert.deepEqual(R.trafficCommands(undefined, "juniper"), ["show interfaces extensive"]);
+  assert.deepEqual(R.trafficCommands(undefined, undefined), ["show interfaces", "show interface", "display interface"]);
+  assert.deepEqual(R.trafficCommands("fos72", undefined), [], "FortiOS sin comando de contadores verificado");
+  for (const c of R.trafficCommands(undefined, undefined)) assert.equal(computeRisk(c), "read", c);
+
+  // De punta a punta: enlace con el nombre de "show cdp neighbors" y dos lecturas de show interfaces.
+  const show = (inB, outB) =>
+    [
+      "GigabitEthernet1/0/1 is up, line protocol is up (connected)",
+      "  Full-duplex, 1000Mb/s, media type is 10/100/1000BaseTX",
+      `     1000 packets input, ${inB} bytes, 0 no buffer`,
+      `     2000 packets output, ${outB} bytes, 0 underruns`,
+    ].join("\n");
+  const link = { a: "core", aPort: "Gig 1/0/1", b: "dist", bPort: "Gig 1/0/48" };
+  const sample = (out, ts) => {
+    const c = R.parseCliCounters(out).get(T.canonPort(link.aPort));
+    assert.ok(c, "el puerto del enlace aparece en los contadores");
+    return { inOctets: c.inOctets, outOctets: c.outOctets, bits: 64, speed: c.speed, ts };
+  };
+  const rate = R.portRate(sample(show(1_000_000, 2_000_000), 0), sample(show(16_000_000, 4_000_000), 15_000));
+  const lt = R.linkTraffic(link, new Map([["core", new Map([[T.canonPort(link.aPort), rate]])]]));
+  assert.deepEqual(lt, { ab: (2_000_000 * 8) / 15, ba: (15_000_000 * 8) / 15, speed: 1e9, util: 0.008, ts: 15_000 });
+}
+
+// ---------- Salto dentro de la misma pestaña (vecino que solo se alcanza desde el equipo) ----------
+{
+  const prompts = [["core-sw01#", "cisco"], ["core-sw01>", "cisco"], ["Router(config)#", "cisco"], ["<HUAWEI>", "huawei"], ["[~CE6800]", "huawei"], ["admin@mx01>", "juniper"], ["FGT-60F #", "fortinet"], ["FGT (global) #", "fortinet"], ["user@laptop:~$", null]];
+  for (const [p, want] of prompts) assert.equal(T.vendorFromPrompt(`salida\n${p}`), want, p);
+  const hops = [
+    [["cisco", "iosxe", "ssh", "admin", "10.1.1.2"], "ssh -l admin 10.1.1.2"],
+    [["cisco", "nxos", "ssh", "admin", "10.1.1.2"], "ssh admin@10.1.1.2"],
+    [["cisco", "ios", "telnet", "", "10.1.1.2"], "telnet 10.1.1.2"],
+    [["huawei", "vrp8", "ssh", "", "10.1.1.2"], "stelnet 10.1.1.2"],
+    [["juniper", undefined, "ssh", "netops", "2001:db8::2"], "ssh netops@2001:db8::2"],
+    [["fortinet", "fos72", "ssh", "admin", "10.1.1.2"], "execute ssh admin@10.1.1.2"],
+    [["fortinet", "fos72", "telnet", "", "10.1.1.2"], "execute telnet 10.1.1.2"],
+  ];
+  for (const [args, want] of hops) {
+    assert.equal(T.hopCommand(...args), want, JSON.stringify(args));
+    // Abre una sesión hacia el vecino: no cambia configuración.
+    assert.equal(computeRisk(want), "read", want);
+  }
+  // La IP y el usuario vienen de datos del equipo o de un campo: nada de opciones ni comandos extra.
+  for (const args of [
+    ["cisco", "ios", "ssh", "-oProxyCommand=x", "10.1.1.2"],
+    ["cisco", "ios", "ssh", "a b", "10.1.1.2"],
+    ["cisco", "ios", "ssh", "", "10.1.1.2"],
+    ["cisco", "ios", "ssh", "admin", "10.1.1.2; reload"],
+    ["cisco", "ios", "ssh", "admin", "core-sw02"],
+    ["huawei", "vrp8", "telnet", "", "10.1.1.2\nreboot"],
+  ])
+    assert.equal(T.hopCommand(...args), null, JSON.stringify(args));
+}
+
 console.log("topology: ok");

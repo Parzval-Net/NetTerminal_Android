@@ -3,6 +3,7 @@ import { invoke } from "@tauri-apps/api/core";
 import type { HlRule } from "./highlight";
 import { type AlertRule, exampleAlerts } from "./alerts";
 import type { MonitorTarget } from "./monitors";
+import type { DeviceInfoMap } from "./lifecycle";
 import type { TopoSnapshot, TopoSources, Topology } from "./topology";
 import type { SnmpProfile } from "./snmp";
 import { type GhostColor, type GhostStyle, type ListKey, SUGGEST_DEFAULT, migrateSuggest } from "./suggest";
@@ -69,6 +70,12 @@ export interface Settings {
   logTimestamps: boolean;
   /** Carpetas creadas a mano (pueden estar vacías). */
   extraFolders: string[];
+  /** Orden manual de la lista de sesiones por carpeta (ver SidebarOrder en folders.ts). */
+  sidebarOrder: Record<string, string[]>;
+  /** Ciclo de vida (EoL) y versión de sistema operativo del equipo en la barra de estado (opcional). */
+  lifecycleInfo: boolean;
+  /** Modelo y versión vistos por destino (host), para el ciclo de vida en la barra de estado. */
+  deviceInfo: DeviceInfoMap;
   confirmSend: boolean;
   macros: Macro[];
   showButtonBar: boolean;
@@ -153,6 +160,9 @@ export const defaultSettings: Settings = {
   sendLineDelay: 0,
   logTimestamps: false,
   extraFolders: [],
+  sidebarOrder: {},
+  lifecycleInfo: false,
+  deviceInfo: {},
   confirmSend: true,
   macros: [
     { id: "m1", label: "terminal length 0", kind: "send", text: "terminal length 0" },
@@ -218,21 +228,78 @@ export function mergeSettings(loaded: unknown): Settings {
     const d = defaults[k];
     if (d === undefined || (v !== null && typeof v === typeof d && Array.isArray(v) === Array.isArray(d))) out[k] = v;
   }
+  // topology.json y los equipos recordados se pueden compartir o editar: forma mínima para que un
+  // archivo mal formado no deje la vista en blanco.
+  out.topology = cleanTopology(out.topology) ?? defaultSettings.topology;
+  out.topoSnapshots = Array.isArray(out.topoSnapshots)
+    ? (out.topoSnapshots as unknown[]).flatMap((x) => {
+        const s = isObj(x) ? x : null;
+        const topo = s && cleanTopology(s.topo);
+        return s && topo && typeof s.id === "string" && typeof s.name === "string" ? [{ ...s, topo, ts: Number(s.ts) || 0 }] : [];
+      })
+    : [];
+  out.deviceInfo = Object.fromEntries(
+    Object.entries(isObj(out.deviceInfo) ? out.deviceInfo : {}).filter(([, v]) => isObj(v) && (v.model === undefined || typeof v.model === "string") && (v.version === undefined || typeof v.version === "string")),
+  );
+
   return out as unknown as Settings;
 }
 
+const isObj = (v: unknown): v is Record<string, unknown> => !!v && typeof v === "object" && !Array.isArray(v);
+
+/** Topología con equipos y enlaces de forma válida (los que no la tienen se descartan); null si no es una topología. */
+function cleanTopology(v: unknown): Settings["topology"] | null {
+  if (!isObj(v) || !Array.isArray(v.nodes) || !Array.isArray(v.links)) return null;
+  const nodes = v.nodes.filter(
+    (n): n is Settings["topology"]["nodes"][number] =>
+      isObj(n) && typeof n.id === "string" && typeof n.name === "string" && Number.isFinite(n.x) && Number.isFinite(n.y),
+  );
+  const links = v.links.filter(
+    (l): l is Settings["topology"]["links"][number] =>
+      isObj(l) && typeof l.a === "string" && typeof l.b === "string" && typeof l.aPort === "string" && typeof l.bPort === "string" && typeof l.proto === "string",
+  );
+  return { nodes, links };
+}
+
 /** Carga los ajustes desde el backend y los guarda (con debounce) en cada cambio. */
+/** Claves que viven en topology.json: se guardan solo cuando cambian (pueden pesar varios MB). */
+type Heavy = Pick<Settings, "topology" | "topoSnapshots">;
+
 export function useSettings() {
   const [settings, setSettings] = useState<Settings | null>(null);
   const timer = useRef<number | undefined>(undefined);
+  /** Topología tal como quedó guardada (null: falta migrarla desde settings.json). */
+  const savedHeavy = useRef<Heavy | null>(null);
 
   useEffect(() => {
     invoke<unknown>("get_settings")
       .then((s) => {
         const raw = s && typeof s === "object" && !Array.isArray(s) ? (s as Record<string, unknown>) : null;
-        setSettings({ ...mergeSettings(s), ...migrateSuggest(raw) });
+        const merged = { ...mergeSettings(s), ...migrateSuggest(raw) };
+        savedHeavy.current = raw?.__topoStore === true ? { topology: merged.topology, topoSnapshots: merged.topoSnapshots } : null;
+        // Marca del backend, no es un ajuste: no vuelve a settings.json.
+        delete (merged as Record<string, unknown>).__topoStore;
+        setSettings(merged);
       })
       .catch(() => setSettings(defaultSettings));
+  }, []);
+
+  const save = useCallback(async (next: Settings) => {
+    const { topology, topoSnapshots, ...light } = next;
+    const prev = savedHeavy.current;
+    if (!prev || prev.topology !== topology || prev.topoSnapshots !== topoSnapshots) {
+      try {
+        await invoke("save_topology", { data: { topology, topoSnapshots } });
+        savedHeavy.current = { topology, topoSnapshots };
+      } catch (e) {
+        console.error(e);
+        // Sobre el tope no se copia a settings.json (lo haría igual de grande): se guarda el resto.
+        if (String(e).includes("64 MB")) return invoke("save_settings", { settings: light }).catch(console.error);
+        // Sin topology.json la topología sigue en settings.json, como antes: no se pierde.
+        return invoke("save_settings", { settings: next }).catch(console.error);
+      }
+    }
+    return invoke("save_settings", { settings: light }).catch(console.error);
   }, []);
 
   const update = useCallback((patch: Partial<Settings> | ((s: Settings) => Partial<Settings>)) => {
@@ -240,12 +307,10 @@ export function useSettings() {
       const base = prev ?? defaultSettings;
       const next = { ...base, ...(typeof patch === "function" ? patch(base) : patch) };
       window.clearTimeout(timer.current);
-      timer.current = window.setTimeout(() => {
-        invoke("save_settings", { settings: next }).catch(console.error);
-      }, 300);
+      timer.current = window.setTimeout(() => void save(next), 300);
       return next;
     });
-  }, []);
+  }, [save]);
 
   return [settings, update] as const;
 }

@@ -1,5 +1,22 @@
-import { memo } from "react";
-import { ArrowLeftRight, BookOpen, KeyRound, Bot, Circle, CircleDot, NotebookPen, RotateCcw, Search, Settings, Unplug, Zap } from "lucide-react";
+import { memo, useEffect, useState } from "react";
+import { ArrowLeftRight, BookOpen, KeyRound, Bot, Circle, CircleDot, NotebookPen, RotateCcw, Search, Settings, ShieldAlert, ShieldCheck, SquareTerminal, Unplug, Zap } from "lucide-react";
+import { openLab, useLabRun } from "../lib/cliLab";
+import {
+  DeviceInfo,
+  LIFE_LABEL,
+  LifeLevel,
+  Lifecycle,
+  OsEntry,
+  behind,
+  findLifecycle,
+  findOs,
+  lifeDetail,
+  lifeLevel,
+  loadLifecycle,
+  loadOs,
+  osDetail,
+  osTarget,
+} from "../lib/lifecycle";
 import { Tab, TabState, historyKey, sessionTarget, tunnelLabel } from "../types";
 import { HistoryMenu } from "./HistoryMenu";
 import { BroadcastTargetPicker } from "./BroadcastTarget";
@@ -10,6 +27,8 @@ import { isMac, modLabel } from "../lib/platform";
 /** Etiquetas de botones: con la barra angosta (ventana mínima o vista con barra lateral) solo
  *  queda el icono y el title; antes los últimos botones se salían de la ventana. */
 const LBL = "hidden @[52rem]:inline";
+/** Herramientas (Comandos, Notas, CLI Lab): su texto se mantiene hasta ventanas más angostas. */
+const TOOL_LBL = "hidden @[44rem]:inline";
 
 const statusText = { connecting: "Conectando", connected: "Conectado", closed: "Desconectado" };
 
@@ -32,6 +51,8 @@ interface Props {
   onResend?: (cmd: string) => void;
   /** Guarda la conexión rápida de la pestaña como sesión. */
   onSaveAs?: () => void;
+  /** Modelo y versión leídos de la pantalla (show version): ciclo de vida del equipo. */
+  device?: DeviceInfo;
 }
 
 export const StatusBar = memo(function StatusBar({
@@ -51,6 +72,7 @@ export const StatusBar = memo(function StatusBar({
   onAi,
   onResend,
   onSaveAs,
+  device,
 }: Props) {
   const gear = (
     <>
@@ -62,12 +84,13 @@ export const StatusBar = memo(function StatusBar({
       )}
       <BarBtn onClick={onCommands} title={`Catálogo de comandos (${modLabel}L)`} className={commandsOpen ? "!text-accent" : ""}>
         <BookOpen size={12} />
-        <span className={LBL}>Comandos</span>
+        <span className={TOOL_LBL}>Comandos</span>
       </BarBtn>
       <BarBtn onClick={onNotes} title={`Notas (${modLabel}J)`} className={notesOpen ? "!text-accent" : ""}>
         <NotebookPen size={12} />
-        <span className={LBL}>Notas</span>
+        <span className={TOOL_LBL}>Notas</span>
       </BarBtn>
+      <LabBtn />
       <BarBtn onClick={onSettings} title={`Ajustes (${isMac ? "⌘" : "Ctrl+"},)`}>
         <Settings size={12} />
       </BarBtn>
@@ -85,10 +108,11 @@ export const StatusBar = memo(function StatusBar({
   const connected = state.status === "connected";
 
   return (
-    <div className="@container h-7 shrink-0 flex items-center gap-3 px-3 bg-chrome border-t border-line text-[11.5px] text-muted">
-      <span className="flex items-center gap-1.5 shrink-0 whitespace-nowrap">
+    <div className="@container h-7 shrink-0 flex items-center gap-2 @[40rem]:gap-3 px-3 bg-chrome border-t border-line text-[11.5px] text-muted">
+      <span className="flex items-center gap-1.5 shrink-0 whitespace-nowrap" title={statusText[state.status]}>
         <span className="w-1.5 h-1.5 rounded-full" style={{ background: statusColor[state.status] }} />
-        {statusText[state.status]}
+        {/* Barra muy angosta: queda el punto de color (el estado va en el tooltip). */}
+        <span className="hidden @[34rem]:inline">{statusText[state.status]}</span>
       </span>
       <span className="font-medium text-fg/80">{typeLabel[session.type]}</span>
       <span className="truncate min-w-0">{sessionTarget(session)}</span>
@@ -117,6 +141,8 @@ export const StatusBar = memo(function StatusBar({
           <KeyRound size={11} />
         </span>
       )}
+
+      {device?.model && <LifecycleChip model={device.model} version={device.version} name={device.name} />}
 
       <div className="ml-auto shrink-0 flex items-center gap-0.5">
         {/* Destino único de Notas, catálogo, botones y scripts: siempre a la vista. */}
@@ -161,11 +187,89 @@ export const StatusBar = memo(function StatusBar({
   );
 });
 
+/** CLI Lab: abre el editor de scripts; mientras ejecuta muestra el avance y reabre el resultado. */
+const LabBtn = memo(function LabBtn() {
+  const run = useLabRun();
+  const done = run ? run.items.filter((i) => i.status !== "pending" && i.status !== "running").length : 0;
+  const failed = run ? run.items.filter((i) => i.status === "error").length : 0;
+  const tone = run?.running ? "!text-warn" : failed ? "!text-danger" : run ? "!text-ok" : "";
+  return (
+    <BarBtn
+      onClick={() => openLab()}
+      title={
+        run?.running
+          ? `CLI Lab ejecutando: ${done}/${run.items.length} equipos terminados`
+          : run
+            ? `CLI Lab: ${run.items.length - failed} de ${run.items.length} equipos OK${failed ? `, ${failed} con error` : ""}`
+            : `CLI Lab (${modLabel}I): script de varias líneas en el destino elegido, leyendo cada respuesta`
+      }
+      className={tone}
+    >
+      <SquareTerminal size={12} className={run?.running ? "animate-pulse" : ""} />
+      <span className={TOOL_LBL}>CLI Lab</span>
+      {/* El avance se ve también cuando la barra solo muestra íconos. */}
+      {run?.running && <span className="tabular-nums">{done}/{run.items.length}</span>}
+    </BarBtn>
+  );
+});
+
 function BarBtn(props: React.ButtonHTMLAttributes<HTMLButtonElement>) {
   return (
     <button
       {...props}
       className={`shrink-0 whitespace-nowrap flex items-center justify-center gap-1 h-6 min-w-6 px-1.5 rounded hover:bg-hover hover:text-fg disabled:opacity-40 disabled:hover:bg-transparent ${props.className ?? ""}`}
     />
+  );
+}
+
+const LIFE_CLASS: Record<LifeLevel, string> = {
+  ldos: "text-danger",
+  eosw: "text-danger",
+  eos: "text-warn",
+  announced: "text-warn",
+  none: "text-fg/80",
+  unknown: "text-warn",
+};
+
+/**
+ * Modelo y etapa del ciclo de vida (fin de venta, de software, de soporte). La base se descarga
+ * recién aquí, la primera vez que una pestaña muestra un modelo.
+ */
+export function LifecycleChip({ model, version, name }: { model: string; version?: string; name?: string }) {
+  const [life, setLife] = useState<{ model: string; l: Lifecycle | null; os: OsEntry | null } | null>(null);
+  useEffect(() => {
+    let live = true;
+    Promise.all([loadLifecycle(), loadOs()])
+      .then(([db, os]) => live && setLife({ model, l: findLifecycle(db, model), os: findOs(os.db, os.res, model) }))
+      .catch(() => live && setLife(null));
+    return () => {
+      live = false;
+    };
+  }, [model]);
+  if (!life || life.model !== model) return null;
+  const level = lifeLevel(life.l, new Date().toISOString().slice(0, 10));
+  const late = behind(life.os, version);
+  const bad = level !== "none" || late === true;
+  const tip = [
+    name && `Equipo: ${name}`,
+    lifeDetail(model, life.l, version),
+    ...osDetail(life.os, version),
+    "Se actualiza con cada show version (o equivalente) que ejecutes.",
+  ]
+    .filter(Boolean)
+    .join("\n");
+  return (
+    <span
+      className={`flex items-center gap-1 min-w-0 shrink ${level === "none" && late ? "text-warn" : LIFE_CLASS[level]}`}
+      title={tip}
+      aria-label={`${model}: ${LIFE_LABEL[level]}${late ? `, actualizable a ${osTarget(life.os!)}` : ""}`}
+    >
+      {bad ? <ShieldAlert size={11} className="shrink-0" /> : <ShieldCheck size={11} className="shrink-0" />}
+      <span className="truncate">
+        <span className="font-medium">{model}</span>
+        {version && <span className="hidden @[60rem]:inline text-muted"> · {version}</span>} · {LIFE_LABEL[level]}
+        {late && <span className="hidden @[52rem]:inline"> · actualizar a {osTarget(life.os!)}</span>}
+      </span>
+    </span>
   );
 }

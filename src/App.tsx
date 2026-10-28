@@ -6,29 +6,26 @@ import { TabBar, type TabBarProps } from "./components/TabBar";
 import { VerticalTabs } from "./components/VerticalTabs";
 import { StatusBar } from "./components/StatusBar";
 import { TerminalView, TermController } from "./components/TerminalView";
-import { CredChange, SessionModal } from "./components/SessionModal";
-import { CommandPalette } from "./components/CommandPalette";
-import { QuickConnectDialog } from "./components/QuickConnectDialog";
+import type { CredChange } from "./components/SessionModal";
 import { ConfirmDialog } from "./components/ConfirmDialog";
 import { CloseManyMessage } from "./components/CloseManyMessage";
 import { CloseScope, summarizeClose, tabsToClose } from "./lib/closeAll";
 import { NotesPanel } from "./components/NotesPanel";
 import { CommandsPanel } from "./components/CommandsPanel";
 import { vendorFor } from "./lib/commands";
-import { CatalogEntry, Pack, PackCommand, Risk, buildCatalog, computeRisk, detectPlatform, riskLabel, validatePack } from "./lib/packs";
+import { DeviceInfo, detectDeviceInfo, deviceKey, promptHost, rememberDevice } from "./lib/lifecycle";
+import { CatalogEntry, Pack, PackCommand, Risk, buildCatalog, computeRisk, detectPlatform, orderPacks, riskLabel, validatePack } from "./lib/packs";
 import type { ScpRequest } from "./components/tools/FileManager";
 import { runOnDevice } from "./lib/deviceRun";
-import { PacksModal } from "./components/PacksModal";
-import { CommandEditor } from "./components/CommandEditor";
+
 import { TemplateDialog, templateVars } from "./components/TemplateDialog";
 import { compile, effectiveRules, schemeForVendor } from "./lib/highlight";
 import { allFolders } from "./lib/folders";
 import { useMonitors } from "./lib/monitors";
 import { ButtonBar } from "./components/ButtonBar";
-import { MacroModal } from "./components/MacroModal";
-import { ApprovalDialog, ApprovalRequest } from "./components/ApprovalDialog";
+import type { ApprovalRequest } from "./components/ApprovalDialog";
 import { ScriptPrompts } from "./components/ScriptPrompts";
-import { ScriptLaunch, ScriptLaunchDialog } from "./components/ScriptLaunchDialog";
+import type { ScriptLaunch } from "./components/ScriptLaunchDialog";
 import type { Section } from "./components/SettingsModal";
 import type { Macro, UpdateInfo } from "./lib/settings";
 import { openUrl } from "@tauri-apps/plugin-opener";
@@ -41,6 +38,8 @@ import { Settings, logOptions, useSettings } from "./lib/settings";
 import { useAlerts } from "./lib/alerts";
 import { BroadcastBar, BroadcastDialog } from "./components/BroadcastDialog";
 import { Resolved, getBroadcastRun, isBroadcastRunning, publishWorkspace, stopBroadcast, resolveTargets, runBroadcast, targetLabel, useBroadcastTarget, useWorkspace } from "./lib/broadcast";
+import { closeLab, isLabRunning, labOwns, openLab, useLabOpen } from "./lib/cliLab";
+import { persist, stored } from "./lib/prefs";
 import { SplitPanes } from "./components/SplitPanes";
 import { SplitLayout, SplitState, fillPanes, paneRect } from "./lib/split";
 import logo from "./assets/logo.svg";
@@ -52,6 +51,50 @@ import "./App.css";
 const ToolsView = lazy(() => import("./components/tools/ToolsView").then((m) => ({ default: m.ToolsView })));
 const SettingsModal = lazy(() => import("./components/SettingsModal").then((m) => ({ default: m.SettingsModal })));
 const ImportDialog = lazy(() => import("./components/ImportDialog").then((m) => ({ default: m.ImportDialog })));
+
+/**
+ * Diálogos que solo se montan al abrirse: fuera del arranque, en chunks propios que se precargan
+ * cuando la app queda libre (abrirlos después no espera la descarga).
+ */
+const DIALOGS = {
+  session: () => import("./components/SessionModal").then((m) => m.SessionModal),
+  palette: () => import("./components/CommandPalette").then((m) => m.CommandPalette),
+  quick: () => import("./components/QuickConnectDialog").then((m) => m.QuickConnectDialog),
+  packs: () => import("./components/PacksModal").then((m) => m.PacksModal),
+  cmdEditor: () => import("./components/CommandEditor").then((m) => m.CommandEditor),
+  macro: () => import("./components/MacroModal").then((m) => m.MacroModal),
+  approval: () => import("./components/ApprovalDialog").then((m) => m.ApprovalDialog),
+  script: () => import("./components/ScriptLaunchDialog").then((m) => m.ScriptLaunchDialog),
+  exportSessions: () => import("./components/ExportSessionsDialog").then((m) => m.ExportSessionsDialog),
+  cliLab: () => import("./components/CliLab").then((m) => m.CliLab),
+};
+function lazyDialog<P extends object>(load: () => Promise<React.ComponentType<P>>) {
+  // Sin React.lazy: Suspense retiene hasta 300 ms el contenido que reemplaza al fallback, y el
+  // diálogo tardaba en aparecer aunque ya estuviera precargado.
+  let Comp: React.ComponentType<P> | null = null;
+  let pending: Promise<void> | null = null;
+  const preload = () => (pending ??= load().then((c) => void (Comp = c)));
+  function LazyDialog(props: P) {
+    const [, loaded] = useState(false);
+    useEffect(() => {
+      if (!Comp) preload().then(() => loaded(true), console.error);
+    }, []);
+    return Comp ? <Comp {...props} /> : null;
+  }
+  LazyDialog.preload = preload;
+  return LazyDialog;
+}
+const SessionModal = lazyDialog(DIALOGS.session);
+const CommandPalette = lazyDialog(DIALOGS.palette);
+const QuickConnectDialog = lazyDialog(DIALOGS.quick);
+const PacksModal = lazyDialog(DIALOGS.packs);
+const CommandEditor = lazyDialog(DIALOGS.cmdEditor);
+const MacroModal = lazyDialog(DIALOGS.macro);
+const ApprovalDialog = lazyDialog(DIALOGS.approval);
+const ScriptLaunchDialog = lazyDialog(DIALOGS.script);
+const ExportSessionsDialog = lazyDialog(DIALOGS.exportSessions);
+const CliLab = lazyDialog(DIALOGS.cliLab);
+const LAZY_DIALOGS = [SessionModal, CommandPalette, QuickConnectDialog, PacksModal, CommandEditor, MacroModal, ApprovalDialog, ScriptLaunchDialog];
 
 const LOCAL: Session = { id: "local", name: "Terminal local", type: "local", created_at: "" };
 
@@ -67,23 +110,6 @@ function useHandlers<T extends Record<string, (...args: never[]) => unknown>>(ha
     for (const k of Object.keys(ref.current)) out[k] = (...args: never[]) => ref.current[k](...args);
     return out as T;
   }, []);
-}
-
-function stored<T>(key: string, fallback: T): T {
-  try {
-    const v = localStorage.getItem(key);
-    return v === null ? fallback : (JSON.parse(v) as T);
-  } catch {
-    return fallback;
-  }
-}
-
-function persist(key: string, value: unknown) {
-  try {
-    localStorage.setItem(key, JSON.stringify(value));
-  } catch {
-    /* sin almacenamiento local: se usa el valor por defecto */
-  }
 }
 
 let tabSeq = 0;
@@ -139,6 +165,9 @@ function Workspace({
   const [paletteOpen, setPaletteOpen] = useState(false);
   const [quickOpen, setQuickOpen] = useState(false);
   const [importOpen, setImportOpen] = useState(false);
+  const labOpen = useLabOpen();
+  /** Exportar sesiones: undefined cerrado, "" todas, o la carpeta preseleccionada. */
+  const [exportFolder, setExportFolder] = useState<string | undefined>(undefined);
   const [sidebarOpen, setSidebarOpen] = useState(() => stored("sidebar", true));
   const controllers = useRef(new Map<string, TermController>());
 
@@ -544,11 +573,13 @@ function Workspace({
   const sendTarget = broadcastMode ? targetLabel(bcTarget, workspace) : activeConnected ? tabTitle(activeTab!) : null;
   const openBroadcast = (text: string, declared?: Risk) => {
     if (isBroadcastRunning()) return toast("Hay un envío a varias sesiones en curso", "error");
+    if (isLabRunning()) return toast("El CLI Lab está ejecutando un script: espera a que termine o usa Detener", "error");
     const resolved = resolveTargets(bcTarget, tabs, (id) => states[id]?.status, activeId, visiblePanes);
     setBroadcast({ text, resolved, declared });
   };
   const startBroadcast = (deviceDelayMs: number) => {
     if (!broadcast) return;
+    if (isLabRunning()) return toast("El CLI Lab está ejecutando un script: espera a que termine o usa Detener", "error");
     setBcDelay(deviceDelayMs);
     const { text, resolved } = broadcast;
     setBroadcast(null);
@@ -610,6 +641,40 @@ function Workspace({
   const [packsOpen, setPacksOpen] = useState(false);
   const [cmdEdit, setCmdEdit] = useState<{ vendor: string; initial?: PackCommand } | null>(null);
   const [detecting, setDetecting] = useState(false);
+  /** Modelo y versión vistos en cada pestaña (barra de estado: ciclo de vida). */
+  const [tabDevice, setTabDevice] = useState<Record<string, DeviceInfo>>({});
+  /** Prompt con que se conectó cada pestaña: lo leído tras saltar a otro equipo no se guarda para su host. */
+  const tabHome = useRef(new Map<string, string>());
+
+  // Al activar el ciclo de vida se lee lo que ya muestra la pestaña activa (sin esperar otro show version).
+  useEffect(() => {
+    if (!settings?.lifecycleInfo || !activeTab || activeTab.session.type === "local") return;
+    const text = controllers.current.get(activeTab.id)?.recentText(150);
+    if (text) noteDevice(activeTab, text);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [settings?.lifecycleInfo]);
+
+  /** Sin enviar nada: modelo y versión de lo que muestra la pantalla, o lo recordado para el host. */
+  const noteDevice = (tab: Tab, text: string) => {
+    const here = promptHost(text);
+    let home = tabHome.current.get(tab.id);
+    if (!home && here) tabHome.current.set(tab.id, (home = here));
+    const key = deviceKey(tab.session);
+    const info = detectDeviceInfo(text);
+    if (info.model || info.version) {
+      setTabDevice((m) => {
+        const prev = m[tab.id];
+        return { ...m, [tab.id]: prev && prev.name === here ? { ...prev, ...info } : { ...info, name: here } };
+      });
+      if (key && here && here === home) {
+        const next = rememberDevice(settings.deviceInfo, key, { ...info, name: here });
+        if (next !== settings.deviceInfo) update({ deviceInfo: next });
+      }
+    } else if (key && !tabDevice[tab.id]) {
+      const saved = settings.deviceInfo[key];
+      if (saved?.model && (!saved.name || !here || saved.name === here)) setTabDevice((m) => ({ ...m, [tab.id]: saved }));
+    }
+  };
 
   const loadPacks = useCallback(() => {
     invoke<unknown[]>("cmdpacks_list")
@@ -624,14 +689,24 @@ function Workspace({
   }, []);
   useEffect(loadPacks, [loadPacks]);
 
-  // Los packs incluidos (~300 KB de JSON) van en un chunk aparte que se carga tras el primer render.
+  // Los packs incluidos (~900 KB) van en un chunk aparte que se carga cuando la app queda libre
+  // tras el primer render (a lo más 1,5 s después), para no competir con el arranque.
   const [builtinPacks, setBuiltinPacks] = useState<Pack[]>([]);
   useEffect(() => {
-    import("./lib/builtinPacks").then((m) => setBuiltinPacks(m.builtinPacks)).catch(console.error);
+    const load = () => {
+      import("./lib/builtinPacks").then((m) => setBuiltinPacks(m.builtinPacks)).catch(console.error);
+      for (const d of LAZY_DIALOGS) d.preload().catch(() => {});
+    };
+    if (typeof window.requestIdleCallback !== "function") {
+      const t = window.setTimeout(load, 200);
+      return () => window.clearTimeout(t);
+    }
+    const id = window.requestIdleCallback(load, { timeout: 1500 });
+    return () => window.cancelIdleCallback(id);
   }, []);
 
   const allPacks = useMemo(
-    () => [...builtinPacks, ...userPacks.filter((p) => !builtinPacks.some((b) => b.id === p.id))],
+    () => orderPacks(builtinPacks, userPacks),
     [builtinPacks, userPacks],
   );
   const catalog = useMemo(() => buildCatalog(allPacks, settings.disabledPacks), [allPacks, settings.disabledPacks]);
@@ -757,6 +832,7 @@ function Workspace({
   const sendResolved = (text: string, checked = false) => {
     const ctrl = activeCtrl();
     if (!ctrl || !activeTab || !ctrl.isConnected()) return;
+    if (labOwns(activeTab.id)) return toast("El CLI Lab está ejecutando en esta pestaña: espera a que termine o usa Detener", "error");
     // Cada línea se ejecuta con Enter, también la última.
     const trimmed = text.replace(/\s+$/, "");
     if (!trimmed) return;
@@ -829,6 +905,8 @@ function Workspace({
           return setModal({});
         case "quickConnect":
           return setQuickOpen(true);
+        case "cliLab":
+          return openLab();
         case "toggleSidebar":
           return setSidebarOpen((o) => !o);
         case "find":
@@ -1003,6 +1081,7 @@ function Workspace({
     deleteSession: (s: Session) => deleteSession(s.id),
     updateSessions,
     setExtraFolders: (extraFolders: string[]) => update({ extraFolders }),
+    setSidebarOrder: (sidebarOrder: Record<string, string[]>) => update({ sidebarOrder }),
     requestClose,
     requestCloseMany,
     toggleSidebar: () => setSidebarOpen((o) => !o),
@@ -1104,11 +1183,21 @@ function Workspace({
     cancelBroadcast: () => setBroadcast(null),
     startBroadcast,
     openImport: () => setImportOpen(true),
+    openExport: (folder?: string) => setExportFolder(folder ?? ""),
+    labTargets: () => resolveTargets(bcTarget, tabs, (id) => states[id]?.status, activeId, visiblePanes),
+    labConn: (id: string) => {
+      const c = controllers.current.get(id);
+      return c?.isConnected() ? c.connId() : undefined;
+    },
     // Activa "algoritmos legacy" en la pestaña y, si es una sesión guardada, la deja guardada.
     /** Lectura pasiva de pantalla (al conectar o tras un show version): fija plataforma y resaltado. */
     screenHint: (tabId: string) => {
       const tab = tabs.find((t) => t.id === tabId);
-      if (!tab || tab.session.platform || tab.session.type === "local") return;
+      if (!tab || tab.session.type === "local" || tab.session.scp) return;
+      const text = controllers.current.get(tabId)?.recentText(150);
+      // Ciclo de vida apagado (por defecto): no se lee nada más de la pantalla.
+      if (text && settings.lifecycleInfo) noteDevice(tab, text);
+      if (tab.session.platform) return;
       const h = tab.session.highlight;
       const preferred = h && h !== "off" ? (catalog.some((v) => v.id === h) ? h : vendorFor(h)) : settings.catalogVendor;
       const found = detectFromScreen(tabId, preferred);
@@ -1165,6 +1254,8 @@ function Workspace({
         <Sidebar
           sessions={sessions}
           extraFolders={settings.extraFolders}
+          order={settings.sidebarOrder}
+          onSetOrder={h.setSidebarOrder}
           live={live}
           onOpen={openTab}
           onOpenMany={h.openMany}
@@ -1177,6 +1268,7 @@ function Workspace({
           onSetExtraFolders={h.setExtraFolders}
           onConfirm={setConfirm}
           onImportFile={h.openImport}
+          onExportFile={h.openExport}
         />
       )}
 
@@ -1322,7 +1414,8 @@ function Workspace({
         )}
         </div>
 
-        {settings.showButtonBar && (
+        {/* En Herramientas no hay terminal a la que enviar: la barra solo ocuparía espacio. */}
+        {settings.showButtonBar && activeId !== "tools" && (
           <ButtonBar
             macros={settings.macros}
             connected={activeConnected || broadcastMode}
@@ -1339,6 +1432,7 @@ function Workspace({
 
         <StatusBar
           tab={activeTab}
+          device={settings.lifecycleInfo && activeId ? tabDevice[activeId] : undefined}
           state={activeId ? states[activeId] : undefined}
           onToggleLog={h.toggleLog}
           onBreak={h.sendBreak}
@@ -1376,6 +1470,7 @@ function Workspace({
             sessions={sessions}
             onImportSessions={importSessions}
             onImportFile={h.openImport}
+            onExportFile={() => h.openExport()}
             initialSection={settingsSection}
             mcpStatus={mcpStatus}
             onChange={update}
@@ -1486,6 +1581,22 @@ function Workspace({
           }}
         />
       )}
+      {labOpen && (
+        <CliLab
+          key={labOpen.n}
+          vendor={settings.catalogVendor}
+          compiled={notesRules}
+          theme={preset.theme}
+          font={settings.fontFamily}
+          fontSize={Math.max(11, settings.fontSize - 1)}
+          resolve={h.labTargets}
+          connOf={h.labConn}
+          onClose={closeLab}
+        />
+      )}
+      {exportFolder !== undefined && (
+        <ExportSessionsDialog sessions={sessions} folder={exportFolder || undefined} onClose={() => setExportFolder(undefined)} />
+      )}
       {importOpen && (
         <Suspense fallback={null}>
           <ImportDialog folders={folders} sessions={sessions} onImport={importSessions} onClose={() => setImportOpen(false)} />
@@ -1496,8 +1607,19 @@ function Workspace({
           sessions={sessions}
           onClose={() => setPaletteOpen(false)}
           onOpen={openTab}
-          actions={
-            tabs.length
+          actions={[
+            {
+              label: "CLI Lab: script multilínea",
+              detail: "Ejecuta varios comandos en orden en una o varias sesiones, leyendo cada respuesta",
+              shortcut: `${modLabel}I`,
+              run: () => openLab(),
+            },
+            {
+              label: "Exportar sesiones",
+              detail: "Elige qué sesiones: XML compatible con SecureCRT o JSON",
+              run: () => setExportFolder(""),
+            },
+            ...(tabs.length
               ? [
                   {
                     label: "Cerrar todas las sesiones",
@@ -1506,8 +1628,8 @@ function Workspace({
                     run: () => requestCloseMany("all"),
                   },
                 ]
-              : []
-          }
+              : []),
+          ]}
         />
       )}
       {quickOpen && <QuickConnectDialog onClose={() => setQuickOpen(false)} onOpen={openTab} />}

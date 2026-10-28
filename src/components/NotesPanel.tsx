@@ -1,7 +1,9 @@
 import { memo, useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { invoke } from "@tauri-apps/api/core";
 import type { ITheme } from "@xterm/xterm";
-import { ArrowDownToLine, Check, FolderOpen, Lock, MoreHorizontal, Pencil, Plus, Replace, Search, Send, SendHorizontal, ShieldCheck, Trash2, X } from "lucide-react";
+import { ArrowDownToLine, Check, FolderOpen, Lock, MoreHorizontal, Network, Pencil, Plus, Replace, Search, Send, SendHorizontal, ShieldCheck, Trash2, Workflow, X } from "lucide-react";
+import { DiagramPreview } from "./DiagramPreview";
+import { NETWORK_TEMPLATE } from "../lib/mermaidBlocks";
 import { CodeEditor } from "./CodeEditor";
 import { NoteSecurity, NoteUnlock } from "./NoteLock";
 import { Compiled } from "../lib/highlight";
@@ -25,6 +27,16 @@ interface NoteMatch {
 }
 
 const AUTO_LOCK_KEY = "notesAutoLockMin";
+/** Vista de diagramas abierta (comodidad de este equipo). */
+const PREVIEW_KEY = "notesDiagrams";
+
+/** Tema oscuro según el fondo de la terminal (para el estilo de los diagramas). */
+function darkBackground(bg: string | undefined): boolean {
+  const m = bg?.match(/^#?([0-9a-f]{2})([0-9a-f]{2})([0-9a-f]{2})/i);
+  if (!m) return false;
+  const [r, g, b] = m.slice(1).map((h) => parseInt(h, 16) / 255);
+  return 0.2126 * r + 0.7152 * g + 0.0722 * b < 0.5;
+}
 function storedAutoLock(): number {
   try {
     const v = Number(localStorage.getItem(AUTO_LOCK_KEY));
@@ -83,6 +95,21 @@ export const NotesPanel = memo(function NotesPanel(p: Props) {
     };
   }, [menuOpen]);
   const [notice, setNotice] = useState("");
+  const [diagrams, setDiagrams] = useState(() => {
+    try {
+      return localStorage.getItem(PREVIEW_KEY) === "1";
+    } catch {
+      return false;
+    }
+  });
+  const toggleDiagrams = (v: boolean) => {
+    setDiagrams(v);
+    try {
+      localStorage.setItem(PREVIEW_KEY, v ? "1" : "0");
+    } catch {
+      /* solo comodidad */
+    }
+  };
   const editorRef = useRef<HTMLTextAreaElement>(null);
   // Búsqueda en todas las notas y buscar/reemplazar en la actual (cerradas por defecto).
   const [tool, setTool] = useState<"search" | "replace" | "secure" | null>(null);
@@ -203,6 +230,19 @@ export const NotesPanel = memo(function NotesPanel(p: Props) {
     };
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
+
+  // El CLI Lab guardó una nota: aparece en la lista y, si es la abierta y no hay cambios sin
+  // guardar aquí, se recarga (si no, el autoguardado de Notas pisaría lo guardado en el Lab).
+  useEffect(() => {
+    const onSaved = (e: Event) => {
+      const name = (e as CustomEvent<{ name: string }>).detail?.name;
+      refresh();
+      if (name && name === current && !isProtected && !pendingSave.current)
+        invoke<string>("read_note", { name }).then(setContent, () => {});
+    };
+    window.addEventListener("nt-note-saved", onSaved);
+    return () => window.removeEventListener("nt-note-saved", onSaved);
+  }, [current, isProtected, refresh]);
 
   useEffect(() => {
     if (tool !== "search" || query.trim().length < 2) return setResults(null);
@@ -447,19 +487,44 @@ export const NotesPanel = memo(function NotesPanel(p: Props) {
             </select>
           </>
         )}
+        <span className="hidden @[19rem]:contents">
+        <HeadBtn
+          title={diagrams ? "Ocultar diagramas" : "Ver diagramas Mermaid de la nota (bloques ```mermaid)"}
+          aria-pressed={diagrams}
+          onClick={() => toggleDiagrams(!diagrams)}
+          className={diagrams ? "!text-accent" : ""}
+        >
+          <Workflow size={14} />
+        </HeadBtn>
         <HeadBtn title="Buscar en todas las notas" onClick={() => toggleTool("search")} className={tool === "search" ? "!text-accent" : ""}>
           <Search size={14} />
         </HeadBtn>
+        </span>
         <HeadBtn title="Nueva nota" onClick={() => create()}>
-          <Plus size={15} />
+          <Plus size={14} />
         </HeadBtn>
         {/* Acciones menos frecuentes en un menú: el selector de nota conserva el ancho. */}
         <div ref={menuRef} className="relative shrink-0">
           <HeadBtn title="Más acciones de la nota" aria-haspopup="menu" aria-expanded={menuOpen} onClick={() => setMenuOpen((o) => !o)} className={menuOpen ? "!text-fg bg-hover" : ""}>
-            <MoreHorizontal size={15} />
+            <MoreHorizontal size={14} />
           </HeadBtn>
           {menuOpen && (
             <div role="menu" className="absolute right-0 top-full mt-1 z-40 w-60 bg-panel border border-line rounded-lg shadow-pop p-1 text-[12.5px]">
+              {/* Panel angosto: diagramas y búsqueda pasan del encabezado a este menú. */}
+              <MenuItem
+                className={NARROW_ONLY}
+                icon={<Search size={14} />}
+                label="Buscar en todas las notas"
+                active={tool === "search"}
+                onClick={() => { toggleTool("search"); setMenuOpen(false); }}
+              />
+              <MenuItem
+                className={NARROW_ONLY}
+                icon={<Workflow size={14} />}
+                label={diagrams ? "Ocultar diagramas" : "Ver diagramas Mermaid"}
+                active={diagrams}
+                onClick={() => { toggleDiagrams(!diagrams); setMenuOpen(false); }}
+              />
               <MenuItem icon={<Replace size={14} />} label="Buscar y reemplazar" active={tool === "replace"} onClick={() => { toggleTool("replace"); setMenuOpen(false); }} />
               <MenuItem
                 icon={<ShieldCheck size={14} />}
@@ -468,6 +533,17 @@ export const NotesPanel = memo(function NotesPanel(p: Props) {
                 disabled={locked}
                 active={tool === "secure"}
                 onClick={() => { toggleTool("secure"); setMenuOpen(false); }}
+              />
+              <MenuItem
+                icon={<Network size={14} />}
+                label="Insertar diagrama de red"
+                hint="Agrega al final de la nota un diagrama Mermaid de ejemplo y abre la vista de diagramas"
+                disabled={locked || !current}
+                onClick={() => {
+                  edit(content + (content && !content.endsWith("\n\n") ? (content.endsWith("\n") ? "\n" : "\n\n") : "") + NETWORK_TEMPLATE);
+                  toggleDiagrams(true);
+                  setMenuOpen(false);
+                }}
               />
               <MenuItem icon={<Pencil size={13} />} label="Renombrar" onClick={() => { if (current) setRenaming(current); setMenuOpen(false); }} />
               <MenuItem icon={<FolderOpen size={14} />} label="Abrir carpeta de notas" onClick={() => { invoke("open_dir", { which: "notes" }); setMenuOpen(false); }} />
@@ -596,6 +672,7 @@ export const NotesPanel = memo(function NotesPanel(p: Props) {
       {locked && current ? (
         <NoteUnlock key={current} name={current} onUnlock={unlock} />
       ) : (
+        <div className="flex-1 min-h-0 flex flex-col">
         <CodeEditor
           ref={editorRef}
           value={content}
@@ -617,12 +694,22 @@ export const NotesPanel = memo(function NotesPanel(p: Props) {
             }
           }}
         />
+        {diagrams && (
+          <section aria-label="Diagramas de la nota" className="h-1/2 min-h-[120px] overflow-auto border-t border-line bg-bg">
+            <DiagramPreview text={content} dark={darkBackground(p.theme.background)} name={current ?? "nota"} onNotice={flash} />
+          </section>
+        )}
+        </div>
       )}
 
       <footer className="border-t border-line px-2 py-1.5 space-y-1">
-        <div className="flex items-center gap-1">
+        {/* En un panel angosto los botones bajan a una segunda fila en vez de partir su texto. */}
+        <div className="flex flex-wrap items-center gap-1">
           <FootBtn onClick={sendSelectionOrLine} disabled={!p.target || locked} title={`${isMac ? "⌘" : "Ctrl+"}Enter`}>
-            <SendHorizontal size={13} /> Línea / selección
+            <SendHorizontal size={13} />
+            {/* Panel angosto: texto corto para que los botones quepan en una fila. */}
+            <span className="@[20rem]:hidden">Línea</span>
+            <span className="hidden @[20rem]:inline">Línea / selección</span>
           </FootBtn>
           <FootBtn onClick={() => p.onSend(content)} disabled={!p.target || locked || !content.trim()} title={`${isMac ? "⌘⇧" : "Ctrl+Shift+"}Enter`}>
             <Send size={13} /> Todo
@@ -645,6 +732,9 @@ export const NotesPanel = memo(function NotesPanel(p: Props) {
   );
 });
 
+/** Solo en el menú "…" cuando el panel es angosto (los botones del encabezado se ocultan). */
+const NARROW_ONLY = "@[19rem]:hidden";
+
 function HeadBtn({ className = "", ...props }: React.ButtonHTMLAttributes<HTMLButtonElement>) {
   return (
     <button
@@ -654,7 +744,7 @@ function HeadBtn({ className = "", ...props }: React.ButtonHTMLAttributes<HTMLBu
   );
 }
 
-function MenuItem(p: { icon: React.ReactNode; label: string; hint?: string; onClick: () => void; disabled?: boolean; active?: boolean; danger?: boolean }) {
+function MenuItem(p: { icon: React.ReactNode; label: string; hint?: string; onClick: () => void; disabled?: boolean; active?: boolean; danger?: boolean; className?: string }) {
   return (
     <button
       role="menuitem"
@@ -663,7 +753,7 @@ function MenuItem(p: { icon: React.ReactNode; label: string; hint?: string; onCl
       onClick={p.onClick}
       className={`w-full flex items-center gap-2 px-2 h-8 rounded-md text-left hover:bg-hover disabled:opacity-40 disabled:hover:bg-transparent ${
         p.danger ? "text-danger" : p.active ? "text-accent" : ""
-      }`}
+      } ${p.className ?? ""}`}
     >
       <span className="w-4 grid place-items-center shrink-0">{p.icon}</span>
       {p.label}
@@ -675,7 +765,7 @@ function FootBtn(props: React.ButtonHTMLAttributes<HTMLButtonElement>) {
   return (
     <button
       {...props}
-      className="flex items-center gap-1.5 px-2 h-7 rounded-md text-[12px] text-muted hover:text-fg hover:bg-hover disabled:opacity-40 disabled:hover:bg-transparent"
+      className="shrink-0 whitespace-nowrap flex items-center gap-1.5 px-2 h-7 rounded-md text-[12px] text-muted hover:text-fg hover:bg-hover disabled:opacity-40 disabled:hover:bg-transparent"
     />
   );
 }

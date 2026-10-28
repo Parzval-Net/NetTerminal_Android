@@ -84,3 +84,63 @@ export function freeName(existing: string[], parent: string, base = "Nueva carpe
   for (let i = 2; existing.includes(joinPath(parent, name)); i++) name = `${base} ${i}`;
   return joinPath(parent, name);
 }
+
+// ---------- Orden manual de la lista de sesiones ----------
+
+/** Carpeta o sesión dentro de una carpeta, en el orden en que se muestran. */
+export type TreeItem = { kind: "folder"; node: FolderNode } | { kind: "session"; session: Session };
+
+/**
+ * Orden manual por carpeta (ruta → claves). Clave "f:<nombre>" para una subcarpeta y
+ * "s:<id>" para una sesión: así carpetas y sesiones se pueden intercalar (por ejemplo,
+ * "Shell local" arriba de todo).
+ */
+export type SidebarOrder = Record<string, string[]>;
+
+export const itemKey = (it: TreeItem) => (it.kind === "folder" ? `f:${it.node.name}` : `s:${it.session.id}`);
+
+/**
+ * Elementos de una carpeta: primero los que tienen orden manual, en ese orden; después el
+ * resto como siempre (carpetas y luego sesiones, alfabético). Claves de elementos que ya no
+ * existen se ignoran.
+ */
+/** Valor propio de un mapa por ruta de carpeta: una carpeta "constructor" no lee Object.prototype. */
+export const own = <T,>(map: Record<string, T> | undefined, key: string): T | undefined => (map && Object.hasOwn(map, key) ? map[key] : undefined);
+
+export function orderedItems(node: FolderNode, order?: string[]): TreeItem[] {
+  const items: TreeItem[] = [
+    ...node.children.map((n): TreeItem => ({ kind: "folder", node: n })),
+    ...node.sessions.map((s): TreeItem => ({ kind: "session", session: s })),
+  ];
+  // El orden viene de ajustes que se pueden editar o compartir: solo se usa si es una lista de textos.
+  if (!Array.isArray(order) || !order.length) return items;
+  const pos = new Map(order.filter((k): k is string => typeof k === "string").map((k, i) => [k, i]));
+  return items
+    .map((it, i) => ({ it, i, p: pos.get(itemKey(it)) ?? Number.POSITIVE_INFINITY }))
+    .sort((a, b) => a.p - b.p || a.i - b.i)
+    .map((x) => x.it);
+}
+
+/**
+ * Nuevo orden de una carpeta al dejar `key` antes o después de `anchor`, o al inicio o al final.
+ * `keys` es el orden visible actual; `key` puede no estar (viene de otra carpeta).
+ */
+export function placeKey(keys: string[], key: string, anchor: string | null, where: "before" | "after" | "start" | "end"): string[] {
+  const rest = keys.filter((k) => k !== key);
+  if (where === "start") return [key, ...rest];
+  if (where === "end" || anchor === null) return [...rest, key];
+  const i = rest.indexOf(anchor);
+  if (i < 0) return [...rest, key];
+  rest.splice(where === "before" ? i : i + 1, 0, key);
+  return rest;
+}
+
+/** Carpeta del árbol por ruta. */
+export function findFolder(root: FolderNode, path: string): FolderNode | undefined {
+  if (root.path === path) return root;
+  for (const c of root.children) {
+    const f = path === c.path || path.startsWith(`${c.path}/`) ? findFolder(c, path) : undefined;
+    if (f) return f;
+  }
+  return undefined;
+}

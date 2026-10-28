@@ -194,6 +194,8 @@ settings.terminalTheme = new URLSearchParams(location.search).get("term") ?? "au
 // ?logsdir=1: carpeta de logs elegida por el usuario (modo portable, con su aviso).
 let logsDir = location.search.includes("logsdir=1") ? "/Volumes/USB/Logs-NOC" : "";
 if (logsDir) settings.logsDir = logsDir;
+// &lifecycle=1: ciclo de vida del equipo activado (opcional, apagado por defecto).
+if (location.search.includes("lifecycle=1")) settings.lifecycleInfo = true;
 const logsDirInfo = () => ({ path: logsDir || "~/NetTerminal/data/logs", default: "~/NetTerminal/data/logs", custom: !!logsDir, portable: !!logsDir });
 if (location.search.includes("collapsed=1")) localStorage.setItem("vtabsCollapsed", "true");
 const topology = {
@@ -327,6 +329,47 @@ const topoMac = {
   ],
   links: [...topoSources.links, { a: "dist-sw01", aPort: "Gi1/0/30", b: "mac-00e0.fc12.3456", bPort: "", proto: "MAC/OUI" }],
 };
+// Revisiones de enlaces: dúplex y VLAN nativa distintos, miembro fuera del Po, CRC, asimetría y
+// puertos activos sin vecino (L2 desconocido).
+const topoChecks = {
+  nodes: topology.nodes.map((n) => ({ ...n })),
+  links: topology.links.map((l) => ({ ...l, seenBy: [l.a, ...(topology.nodes.find((x) => x.id === l.b)?.explored ? [l.b] : [])] })),
+};
+const nodeOf = (id) => topoChecks.nodes.find((n) => n.id === id);
+nodeOf("core-sw01").ports = {
+  "gi1/0/1": { status: "connected", speed: "a-1000", duplex: "a-full", vlan: "trunk", desc: "UPLINK dist-sw01", group: "Po1", lag: "P", native: "1" },
+  "gi1/0/2": { status: "connected", speed: "a-1000", duplex: "a-full", vlan: "trunk", desc: "UPLINK dist-sw01", group: "Po1", lag: "s" },
+  "te1/1/1": { status: "connected", speed: "10G", duplex: "full", vlan: "trunk", desc: "ISL core-sw02", crc: "1843" },
+  "gi1/0/10": { status: "connected", speed: "a-1000", duplex: "a-full", vlan: "trunk" },
+  "gi1/0/20": { status: "connected", speed: "a-100", duplex: "a-full", vlan: "30", desc: "camara acceso" },
+  "gi1/0/21": { status: "connected", speed: "a-1000", duplex: "a-full", vlan: "30" },
+};
+nodeOf("dist-sw01").ports = {
+  "gi1/0/48": { status: "connected", speed: "a-1000", duplex: "a-full", vlan: "trunk", native: "99", group: "Po1", lag: "P" },
+  "gi1/0/47": { status: "connected", speed: "a-1000", duplex: "a-full", vlan: "trunk", group: "Po1", lag: "P" },
+  "gi1/0/1": { status: "connected", speed: "a-100", duplex: "a-half", vlan: "trunk" },
+  "gi1/0/2": { status: "connected", speed: "a-1000", duplex: "a-full", vlan: "10" },
+};
+nodeOf("sw-acceso-01").ports = { "gi1/0/24": { duplex: "full" } };
+nodeOf("sw-acceso-02").ports = { "gi1/0/24": { vlan: "trunk" } };
+nodeOf("fw-perimetro").caps = "Router";
+// core-sw02 no informa a core-sw01: asimetría.
+topoChecks.links.find((l) => l.b === "core-sw02").seenBy = ["core-sw01"];
+topoChecks.nodes.push({ id: "sep001122334455", name: "SEP001122334455", ip: "192.0.2.150", platform: "Cisco IP Phone 8845", caps: "Host Phone", explored: false, x: 130, y: 560 });
+topoChecks.links.push({ a: "sw-acceso-01", aPort: "Gi1/0/5", b: "sep001122334455", bPort: "Port 1", proto: "CDP" });
+// Topología grande (medición de rendimiento): 400 equipos explorados en malla, con estado de puertos.
+function topoBig(n = 400) {
+  const nodes = [];
+  const links = [];
+  for (let i = 0; i < n; i++) {
+    const ports = {};
+    for (let p = 1; p <= 48; p++) ports[`gi1/0/${p}`] = { status: p % 3 ? "connected" : "notconnect", duplex: "a-full", speed: "a-1000", vlan: p < 3 ? "trunk" : "10" };
+    nodes.push({ id: `sw${i}`, name: `sw${i}`, ip: `10.1.${i >> 8}.${i & 255}`, platform: "cisco C9300-48P", explored: true, x: 200 + (i % 20) * 240, y: 80 + Math.floor(i / 20) * 170, ports });
+    if (i) links.push({ a: `sw${i - 1}`, aPort: "Gi1/0/1", b: `sw${i}`, bPort: "Gi1/0/2", proto: "CDP", seenBy: [`sw${i - 1}`, `sw${i}`] });
+    if (i >= 20) links.push({ a: `sw${i - 20}`, aPort: "Gi1/0/47", b: `sw${i}`, bPort: "Gi1/0/48", proto: "LLDP" });
+  }
+  return { nodes, links };
+}
 // ?scene=topology-*: diagrama y fuentes de cada demo (activadas o apagadas).
 const topoScene = new URLSearchParams(location.search).get("scene");
 const TOPO_SCENES = {
@@ -335,6 +378,8 @@ const TOPO_SCENES = {
   "topology-ospf": [topoOspf, { routing: true }],
   "topology-manual": [topoManual, { descriptions: true }],
   "topology-mac": [topoMac, { routing: true, descriptions: true, mac: true }],
+  "topology-checks": [topoChecks, {}],
+  "topology-big": [topoBig(), {}],
 };
 if (TOPO_SCENES[topoScene]) [settings.topology, settings.topoSources] = TOPO_SCENES[topoScene];
 // Estado visual de Topología (panel y secciones) para cada captura, sin arrastrar el de la anterior:
@@ -448,7 +493,15 @@ const handlers = {
     return handler;
   },
   "plugin:event|unlisten": () => null,
-  list_sessions: () => sessions,
+  // &sessions=N: inventario grande (medición de la barra lateral), en 40 carpetas por sitio.
+  list_sessions: () => {
+    const n = Number(new URLSearchParams(location.search).get("sessions") || 0);
+    if (!n) return sessions;
+    return [
+      ...sessions,
+      ...Array.from({ length: n }, (_, i) => ({ id: `big${i}`, name: `sw-sitio${i % 40}-${i}`, type: "ssh", host: `10.${(i >> 8) & 255}.${i & 255}.1`, port: 22, username: "netops", folder: `Sitios/Sitio ${i % 40}`, created_at: "" })),
+    ];
+  },
   update_sessions: ({ sessions: changed }) => {
     for (const c of changed) {
       const i = sessions.findIndex((x) => x.id === c.id);
@@ -458,6 +511,7 @@ const handlers = {
   },
   get_settings: () => settings,
   save_settings: () => null,
+  save_topology: () => null,
   app_version: () => "0.9.13",
   update_check: () => ({ current: "0.9.13", latest: "0.9.13", newer: false, url: "", notes: "", published: "", supported: true, reason: null }),
   app_repo: () => "Parzval-Net/Net_Terminal",
@@ -585,7 +639,11 @@ const handlers = {
   monitor_start: ({ cfg }) => startMonitor(cfg),
   monitor_stop: ({ id }) => (clearInterval(monitorTimers.get(id)), monitorTimers.delete(id), null),
   list_serial_ports: () => [{ port_name: "/dev/tty.usbserial-0001", port_type: "USB" }],
-  tool_iperf_version: () => "iperf 3.17",
+  // &iperf=0: iperf3 fuera del PATH; solo aparece al elegir un archivo llamado iperf3(.exe).
+  tool_iperf_version: ({ custom } = {}) =>
+    location.search.includes("iperf=0") && !/iperf3(\.exe)?$/i.test(custom ?? "")
+      ? null
+      : { version: "iperf 3.17.1 (cJSON 1.7.15)", path: custom || "/opt/homebrew/bin/iperf3" },
   data_dir: () => "~/NetTerminal/data",
   logs_dir_get: () => logsDirInfo(),
   logs_dir_set: ({ path }) => ((logsDir = path ?? ""), logsDirInfo()),
@@ -881,7 +939,11 @@ if (new URLSearchParams(location.search).has("video")) {
       else if (/^dis(play)? clock/.test(c)) body = "2026-10-21 10:42:17\nWednesday";
       else if (/^dis(play)? int(erface)? br/.test(c)) body = HUAWEI.split("\n").slice(3, 15).join("\n");
     } else if (/^sh(ow)? clock/.test(c)) body = "*10:42:17.385 UTC Wed Oct 21 2026";
-    else if (/^sh(ow)? ver/.test(c)) body = `Cisco IOS XE Software, Version 17.12.04\nCisco IOS Software [Dublin], Catalyst L3 Switch Software (CAT9K_IOSXE)\n${s.name} uptime is 47 weeks, 17 hours, 30 minutes`;
+    else if (/^sh(ow)? ver/.test(c)) {
+      // Un router antiguo (ISR 4331, con fin de vida) y switches Catalyst 9500 (sin anuncio EoL).
+      const pid = /router|^rt-|^mx-borde/.test(s.name ?? "") ? "ISR4331/K9" : "C9500-24Y4C";
+      body = `Cisco IOS XE Software, Version 17.12.04\nCisco IOS Software [Dublin], Catalyst L3 Switch Software (CAT9K_IOSXE)\n${s.name} uptime is 47 weeks, 17 hours, 30 minutes\ncisco ${pid} (1RU) processor with 1795999K/6147K bytes of memory.\nModel Number                       : ${pid}`;
+    }
     else if (/^sh(ow)? ip int(erface)? br/.test(c)) body = IPBRIEF;
     else if (/^sh(ow)? (cdp|lldp) nei/.test(c)) body = "Device ID        Local Intrfce     Holdtme    Capability  Platform  Port ID\ncore-sw02        Ten 1/1/1         142             R S I  C9500-24Y Ten 1/1/1\ndist-sw01        Gig 1/0/1         131             R S I  C9300-48P Gig 1/0/48";
     else if (/^sh(ow)? int(erfaces?)? status/.test(c)) body = "Port      Name               Status       Vlan       Duplex  Speed Type\nGi1/0/1   UPLINK dist-sw01   connected    trunk      a-full a-1000 10/100/1000BaseTX\nGi1/0/3                      notconnect   10           auto   auto 10/100/1000BaseTX\nGi1/0/7   CAMARA PISO 2      connected    30         a-full a-1000 10/100/1000BaseTX";
@@ -902,9 +964,22 @@ if (new URLSearchParams(location.search).has("video")) {
     const s = connSessions.get(args.conn) ?? {};
     const job = `job-${nextId++}`;
     const prompt = s.highlight === "huawei" ? `<${s.name}>` : `${s.name}#`;
-    const output = `${prompt}${args.command}\r\n${respond(args.conn, s, args.command)}${prompt}`;
+    // CLI Lab: comandos inexistentes dan error de CLI; "reload" pregunta y, sin answer, se rechaza.
+    // Un Huawei no entiende la sintaxis de Cisco: el CLI Lab marca error y detiene ese equipo.
+    const huaweiBad = s.highlight === "huawei" && /^(conf(igure)? t|interface |description |show )/i.test(args.command.trim());
+    const bad = huaweiBad || /^(sh(ow)? bogus|foo)/i.test(args.command.trim());
+    const ask = /^reload/i.test(args.command.trim());
+    const declined = ask && args.answer === false ? "Proceed with reload? [confirm]" : null;
+    const body = huaweiBad
+      ? "                ^\r\nError: Unrecognized command found at '^' position.\r\n"
+      : bad
+      ? "                ^\r\n% Invalid input detected at '^' marker.\r\n\r\n"
+      : ask
+        ? "Proceed with reload? [confirm]\r\n"
+        : respond(args.conn, s, args.command);
+    const output = `${prompt}${args.command}\r\n${body}${prompt}`;
     setTimeout(() => {
-      emit("tool-job", { job, kind: "result", text: "", data: { ok: true, output } });
+      emit("tool-job", { job, kind: "result", text: "", data: { ok: !bad && !declined, output, declined } });
       emit("tool-job", { job, kind: "done", text: "" });
     }, 500);
     return job;
@@ -912,6 +987,18 @@ if (new URLSearchParams(location.search).has("video")) {
   // Mensaje asíncrono (syslog con "logging synchronous"): corta la línea y la redibuja con lo tecleado.
   window.__ntMockAsync = () => {
     for (const id of channels.keys()) out(id, `\r\n*Oct 21 10:42:17: %LINK-3-UPDOWN: Interface GigabitEthernet1/0/3, changed state to down\r\n${promptOf(id)}${lineBuf.get(id) ?? ""}`);
+  };
+  // Medición: salida masiva (show running-config largo) a todas las pestañas, en bloques como un equipo real.
+  window.__ntMockFlood = (lines = 20000) => {
+    const row = (i) => `interface GigabitEthernet1/0/${i % 48} description UPLINK ${i} ip address 10.${i % 255}.1.1 255.255.255.0 shutdown\r\n`;
+    for (const id of channels.keys()) {
+      let chunk = "";
+      for (let i = 0; i < lines; i++) {
+        chunk += row(i);
+        if (chunk.length > 16384) (out(id, chunk), (chunk = ""));
+      }
+      out(id, chunk + promptOf(id));
+    }
   };
   // Pausa entre equipos al enviar a varias sesiones: se ve el avance y el botón Detener.
   localStorage.setItem("broadcastDelay", "3000");

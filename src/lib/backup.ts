@@ -2,6 +2,7 @@
  * Respaldo de configuración: comando de solo lectura por fabricante y limpieza de la
  * salida (eco, paginación, prompt final) antes de guardarla.
  */
+import { cliErrorLine } from "./cliText";
 import type { Session } from "../types";
 import { computeRisk } from "./packs";
 
@@ -53,8 +54,6 @@ const ANSI = /\x1b\[[0-9;?]*[ -/]*[@-~]|\x1b[()][A-Z0-9]|\x1b[=>]/g;
 /** Marcas de paginación que quedan en la salida (Cisco, Huawei, Juniper, FortiOS). */
 const MORE = /[ ]*(--\s*more\s*--|-{2,}\s*more\s*-{2,}|---\(more[^)]*\)---)/gi;
 const PROMPT = /^\S{1,80}?\s?[>#$\]]\s*$/;
-/** Respuestas que indican que el comando no existe o falló. */
-const FAILED = /^\s*(%\s*(invalid|unknown|incomplete|ambiguous)|error:|unknown command|syntax error|command fail)/im;
 
 /** Aplica retrocesos (\b) como lo haría la terminal: al paginar, el equipo borra "--More--". */
 function applyBackspaces(line: string): string {
@@ -100,7 +99,8 @@ export function cleanConfig(raw: string, cmd: string): string {
 export function configProblem(clean: string): string | null {
   if (!clean.trim()) return "El equipo no devolvió configuración";
   const head = clean.split("\n").slice(0, 5).join("\n");
-  if (FAILED.test(head)) return head.split("\n").find((l) => FAILED.test(l))?.trim() ?? "Comando rechazado";
+  const failed = cliErrorLine(head);
+  if (failed) return failed;
   if (clean.split("\n").length < 3) return "Salida demasiado corta para ser una configuración";
   return null;
 }

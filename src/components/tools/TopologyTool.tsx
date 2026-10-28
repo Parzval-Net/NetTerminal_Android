@@ -1,4 +1,4 @@
-import { useEffect, useId, useMemo, useRef, useState } from "react";
+import { memo, useCallback, useEffect, useId, useLayoutEffect, useMemo, useRef, useState } from "react";
 import { invoke } from "@tauri-apps/api/core";
 import { save } from "@tauri-apps/plugin-dialog";
 import { writeText } from "@tauri-apps/plugin-clipboard-manager";
@@ -19,9 +19,12 @@ import {
   PanelRightClose,
   Pencil,
   Plus,
+  ListFilter,
   Radar,
   Route,
+  Search,
   Trash2,
+  TriangleAlert,
   X,
   ZoomIn,
   ZoomOut,
@@ -68,6 +71,7 @@ import {
   dismissedSet,
   fmtBps,
   followedTerminal,
+  hopCommand,
   isCliError,
   isIpv4,
   isIpv6,
@@ -94,6 +98,7 @@ import {
   pathToText,
   portOf,
   promptName,
+  vendorFromPrompt,
   protoLabel,
   shortestPath,
   sourceOn,
@@ -122,6 +127,31 @@ import {
   snmpDiscoveryPlan,
 } from "../../lib/topoSnmp";
 import { linkTraffic } from "../../lib/topoTraffic";
+import {
+  ISSUE_LABEL,
+  NO_FILTER,
+  NO_SCOPE,
+  NodeRole,
+  NodeState,
+  NodeVendor,
+  ROLE_LABEL,
+  STATE_LABEL,
+  SearchHit,
+  TopoFilter,
+  TopoScope,
+  VENDOR_LABEL,
+  filterActive,
+  filterView,
+  linkChecks,
+  nodeRole,
+  nodeState,
+  nodeVendor,
+  parseCidrs,
+  scopeNeighbors,
+  searchTopo,
+  unknownL2,
+  worstSev,
+} from "../../lib/topoInsights";
 import { SnmpProfile, targetParams } from "../../lib/snmp";
 import { TRAFFIC_INTERVALS, TrafficInterval, useTopoTraffic } from "./useTopoTraffic";
 import { vendorFor } from "../../lib/commands";
@@ -129,13 +159,25 @@ import type { Session } from "../../types";
 import type { TerminalRef } from "./FileManager";
 import { Btn, Collapsible, CountBadge, Label, Toggle } from "./ui";
 import { ContextMenu } from "../Sidebar";
+import { LifecycleChip } from "../StatusBar";
+import { isMac } from "../../lib/platform";
+import { modelFromPlatform } from "../../lib/lifecycle";
 import type { MenuItem } from "../tabMenu";
 
 import { plural } from "../../lib/plural";
+import type { LinkIssue, UnknownL2 } from "../../lib/topoInsights";
 type Menu = { x: number; y: number; items: MenuItem[] };
 
 const W = 170;
 const H = 54;
+/** Nodo virtual "L2 desconocido" (puertos activos sin vecino). */
+const L2W = 128;
+const L2H = 38;
+/** Sobre esta cantidad de equipos con puertos sin vecino, el nodo L2 se dibuja solo para el seleccionado. */
+const MAX_L2_NODES = 120;
+/** Límites del zoom del mapa (botones, pellizco y Ctrl/⌘ + rueda). */
+const ZOOM_MIN = 0.4;
+const ZOOM_MAX = 4;
 /** Separación entre enlaces paralelos del mismo par de equipos. */
 const PARALLEL_GAP = 26;
 /** Máximo de interfaces que se consultan en detalle (Junos) para no saturar la sesión. */
@@ -154,7 +196,7 @@ type ManualForm =
   | { kind: "link"; edit?: TopoLink; a: string; aPort: string; b: string; bPort: string };
 
 /** Secciones del panel lateral. */
-type PanelSection = "fuentes" | "trafico" | "sugerencias" | "detalle" | "ruta" | "manual" | "snapshots" | "leyenda";
+type PanelSection = "fuentes" | "alcance" | "filtros" | "revisiones" | "trafico" | "sugerencias" | "detalle" | "ruta" | "manual" | "snapshots" | "leyenda";
 type DiscoveryMode = "cli" | "snmp";
 /**
  * Estado visual de la herramienta (panel, secciones, modo de descubrimiento, intervalo y animación
@@ -174,6 +216,10 @@ interface TopoUi {
   rates: boolean;
   /** Color y grosor del enlace según su utilización (verde, amarillo, rojo). */
   color: boolean;
+  /** Puertos activos sin vecino dibujados como "L2 desconocido" junto a su equipo. */
+  l2: boolean;
+  /** Alcance del descubrimiento: qué vecinos nuevos se incorporan. */
+  scope: TopoScope;
 }
 const UI_KEY = "topoUi";
 const UI_DEFAULT: TopoUi = {
@@ -186,15 +232,19 @@ const UI_DEFAULT: TopoUi = {
   arrows: true,
   rates: true,
   color: true,
+  l2: true,
+  scope: NO_SCOPE,
 };
 
 function loadUi(): TopoUi {
   try {
     const v = JSON.parse(localStorage.getItem(UI_KEY) ?? "null") as Partial<TopoUi> | null;
-    if (!v || typeof v !== "object") return UI_DEFAULT;
+    // Ventana angosta: el panel lateral se abre encima del diagrama y lo tapa; parte cerrado.
+    const roomy = typeof window === "undefined" || window.innerWidth >= 1100;
+    if (!v || typeof v !== "object") return { ...UI_DEFAULT, panel: roomy };
     const sec = v.sec && typeof v.sec === "object" ? v.sec : {};
     return {
-      panel: v.panel !== false,
+      panel: v.panel !== false && roomy,
       sec: { ...UI_DEFAULT.sec, ...sec },
       mode: v.mode === "snmp" ? "snmp" : "cli",
       snmpProfile: typeof v.snmpProfile === "string" ? v.snmpProfile.slice(0, 64) : "",
@@ -203,6 +253,12 @@ function loadUi(): TopoUi {
       arrows: v.arrows !== false,
       rates: v.rates !== false,
       color: v.color !== false,
+      l2: v.l2 !== false,
+      scope: {
+        skipEndpoints: v.scope?.skipEndpoints === true,
+        cidrs: typeof v.scope?.cidrs === "string" ? v.scope.cidrs.slice(0, 500) : "",
+        maxDepth: Number.isInteger(v.scope?.maxDepth) && v.scope!.maxDepth > 0 && v.scope!.maxDepth <= 20 ? v.scope!.maxDepth : 0,
+      },
     };
   } catch {
     return UI_DEFAULT;
@@ -272,6 +328,29 @@ function arrowHead(a: Pt, c: Pt, b: Pt, t: number, forward: boolean, off: number
   return pts.map((p) => p.map((v) => v.toFixed(1)).join(",")).join(" ");
 }
 
+/** Resumen de los vecinos que quedaron fuera del alcance (los primeros tres, con su motivo). */
+const scopeNote = (skipped: string[]) =>
+  skipped.length ? `${skipped.length} fuera de alcance: ${skipped.slice(0, 3).join(", ")}${skipped.length > 3 ? "…" : ""}` : "";
+
+/** Mismo equipo salvo la posición (los objetos anidados se conservan al mover un nodo). */
+function samePayload(a: TopoNode, b: TopoNode): boolean {
+  if (a === b) return true;
+  for (const k in b) if (k !== "x" && k !== "y" && a[k as keyof TopoNode] !== b[k as keyof TopoNode]) return false;
+  for (const k in a) if (!(k in b)) return false;
+  return true;
+}
+
+/**
+ * Los nodos como datos: devuelve el arreglo anterior mientras solo cambien posiciones, para que
+ * lo que no depende de x/y no se recalcule en cada cuadro de un arrastre.
+ */
+function useNodeData(nodes: TopoNode[]): TopoNode[] {
+  const ref = useRef(nodes);
+  const prev = ref.current;
+  if (prev !== nodes && !(prev.length === nodes.length && prev.every((p, i) => samePayload(p, nodes[i])))) ref.current = nodes;
+  return ref.current;
+}
+
 function saveUi(ui: TopoUi) {
   try {
     localStorage.setItem(UI_KEY, JSON.stringify(ui));
@@ -299,6 +378,214 @@ function LegendLine({ dash }: { dash?: string }) {
   );
 }
 
+type Geo = ReturnType<typeof linkGeometry>[number];
+
+/** Línea de "puerto: estado" para el tooltip de un extremo. */
+const infoLine = (port: string, info: string) => (info ? `${port}: ${info}` : "");
+
+/**
+ * Un enlace del diagrama. Memorizado: al arrastrar un equipo solo se redibujan sus enlaces (los
+ * demás conservan la misma geometría y props).
+ */
+const LinkView = memo(function LinkView({
+  g,
+  aName,
+  bName,
+  aInfo,
+  bInfo,
+  state,
+  isRoute,
+  hot,
+  dim,
+  lt,
+  color: byUtil,
+  arrows,
+  animate,
+  grp,
+  issues,
+  onIssue,
+}: {
+  g: Geo;
+  aName: string;
+  bName: string;
+  aInfo: string;
+  bInfo: string;
+  state: "removed" | "added" | null;
+  isRoute: boolean;
+  hot: boolean;
+  dim: boolean;
+  lt: LinkTraffic | undefined;
+  color: boolean;
+  arrows: boolean;
+  animate: boolean;
+  grp: string | undefined;
+  issues: LinkIssue[] | undefined;
+  onIssue: (id: string) => void;
+}) {
+  const level = lt && byUtil ? utilLevel(lt.util) : undefined;
+  const color = state === "removed" ? "var(--danger)" : state === "added" ? "var(--ok)" : level ? UTIL_VAR[level] : hot ? "var(--accent)" : "var(--muted)";
+  const sev = worstSev(issues);
+  // Sin color por utilización, las flechas van en el tono neutro del texto.
+  const dirLevel = (bps: number | null) => (byUtil ? UTIL_VAR[lt?.speed && bps !== null ? utilLevel(bps / lt.speed) : "none"] : "var(--muted)");
+  const tip = [
+    `${aName} ${g.l.aPort || "?"} ↔ ${g.l.bPort || "?"} ${bName} (${protoLabel(g.l)})`,
+    lt &&
+      `Tráfico: ${aName} → ${bName} ${fmtBps(lt.ab)} · ${bName} → ${aName} ${fmtBps(lt.ba)}${lt.speed ? ` · enlace de ${fmtBps(lt.speed)}, ${lt.approx ? "≈" : ""}${Math.round((lt.util ?? 0) * 100)} %${lt.approx ? " (aproximada: velocidad desde el BW configurado)" : ""}` : " · velocidad desconocida"}`,
+    infoLine(g.l.aPort, aInfo),
+    infoLine(g.l.bPort, bInfo),
+    g.l.logical ? "Sesión lógica: no es un enlace físico" : "",
+    state === "removed" ? "Ya no aparece (respecto del snapshot)" : state === "added" ? "Nuevo (respecto del snapshot)" : "",
+    ...(issues ?? []).map((i) => `${i.sev === "crit" ? "✖" : "⚠"} ${ISSUE_LABEL[i.kind]}: ${i.text}`),
+  ]
+    .filter(Boolean)
+    .join("\n");
+  const showGroup = grp && g.pair.length > 1 && g.pair.indexOf(g.l) === 0;
+  const dash = state === "removed" ? "6 5" : linkDash(g.l);
+  const midLabel = showGroup || isRoutingProto(g.l.proto) || g.l.proto === "MAC/OUI";
+  return (
+    <g opacity={dim ? 0.25 : 1}>
+      <title>{tip}</title>
+      <path
+        d={g.d}
+        fill="none"
+        stroke={color}
+        strokeWidth={isRoute ? 3.5 : lt && byUtil ? 1.75 + 3 * Math.min(1, lt.util ?? 0) : hot || state ? 2.5 : g.l.logical ? 1.25 : 1.5}
+        strokeDasharray={dash}
+        strokeLinecap={dash ? "round" : undefined}
+      />
+      {lt && (
+        <>
+          {/* Un carril y una punta de flecha por sentido: A→B y B→A. */}
+          {animate && !!lt.ab && <path className="topo-flow" d={lanePath(g.a, g.c, g.b, 4)} fill="none" stroke={dirLevel(lt.ab)} strokeWidth={1.5} strokeLinecap="round" />}
+          {animate && !!lt.ba && <path className="topo-flow topo-flow-rev" d={lanePath(g.a, g.c, g.b, -4)} fill="none" stroke={dirLevel(lt.ba)} strokeWidth={1.5} strokeLinecap="round" />}
+          {arrows && (
+            <>
+              <polygon points={arrowHead(g.a, g.c, g.b, 0.4, true, 5)} fill={dirLevel(lt.ab)} stroke="var(--panel)" strokeWidth={0.75} />
+              <polygon points={arrowHead(g.a, g.c, g.b, 0.6, false, -5)} fill={dirLevel(lt.ba)} stroke="var(--panel)" strokeWidth={0.75} />
+            </>
+          )}
+        </>
+      )}
+      {/* Área de clic más ancha que la línea. */}
+      <path d={g.d} fill="none" stroke="transparent" strokeWidth={12} />
+      {(
+        [
+          [g.pa, g.l.aPort],
+          [g.pb, g.l.bPort],
+        ] as [Pt, string][]
+      )
+        .filter(([, label]) => label)
+        .map(([pt, label], j) => (
+          <text key={j} x={pt.x} y={pt.y} fontSize={11} textAnchor="middle" fill="var(--text)" stroke="var(--panel)" strokeWidth={4} paintOrder="stroke">
+            {label}
+          </text>
+        ))}
+      {showGroup ? (
+        <text x={g.mid.x} y={g.mid.y + 4} fontSize={11} fontWeight={600} textAnchor="middle" fill="var(--accent)" stroke="var(--panel)" strokeWidth={4} paintOrder="stroke">
+          {grp} ×{g.pair.length}
+        </text>
+      ) : (
+        (isRoutingProto(g.l.proto) || g.l.proto === "MAC/OUI") && (
+          <text x={g.mid.x} y={g.mid.y + 4} fontSize={10} fontWeight={600} textAnchor="middle" fill="var(--muted)" stroke="var(--panel)" strokeWidth={4} paintOrder="stroke">
+            {protoLabel(g.l)}
+          </text>
+        )
+      )}
+      {sev && (
+        <g style={{ cursor: "pointer" }} onClick={() => onIssue(g.l.a)}>
+          <circle cx={g.mid.x} cy={g.mid.y - (midLabel ? 17 : 0)} r={8.5} fill={sev === "crit" ? "var(--danger)" : "var(--warn)"} stroke="var(--panel)" strokeWidth={2} />
+          <text x={g.mid.x} y={g.mid.y - (midLabel ? 17 : 0) + 4} fontSize={12} fontWeight={700} textAnchor="middle" fill="#fff" pointerEvents="none">
+            !
+          </text>
+        </g>
+      )}
+    </g>
+  );
+});
+
+type L2Geo = { id: string; x: number; y: number; from: TopoNode; info: UnknownL2 };
+
+/** Nodo virtual "L2 desconocido": puertos activos sin vecino de un equipo explorado. */
+const L2View = memo(function L2View({ v, faded, onPick }: { v: L2Geo; faded: boolean; onPick: (id: string) => void }) {
+  const { ports, macs, vendors } = v.info;
+  return (
+    <g style={{ cursor: "pointer" }} opacity={faded ? 0.35 : 1} onClick={() => onPick(v.id)}>
+      <title>
+        {[
+          `${v.from.name}: ${plural(ports.length, "puerto activo", "puertos activos")} sin vecino CDP/LLDP`,
+          `${ports.slice(0, 24).join(", ")}${ports.length > 24 ? "…" : ""}`,
+          macs ? `${macs} MAC${vendors.length ? `: ${vendors.join(", ")}` : ""}` : "",
+          "Hay algo conectado que no anuncia CDP/LLDP (PC, AP, cámara, switch no administrable). Con la fuente MAC/OUI se ve qué es.",
+        ]
+          .filter(Boolean)
+          .join("\n")}
+      </title>
+      <line x1={v.from.x} y1={v.from.y} x2={v.x} y2={v.y} stroke="var(--muted)" strokeWidth={1.25} strokeDasharray="2 4" />
+      <rect x={v.x - L2W / 2} y={v.y - L2H / 2} width={L2W} height={L2H} rx={8} fill="var(--panel)" stroke="var(--field-border)" strokeDasharray="3 3" />
+      <text x={v.x} y={v.y - 2} fontSize={11.5} fontWeight={600} textAnchor="middle" fill="var(--text)">
+        L2 desconocido
+      </text>
+      <text x={v.x} y={v.y + 12} fontSize={10.5} textAnchor="middle" fill="var(--muted)">
+        {plural(ports.length, "puerto", "puertos")}
+        {macs ? ` · ${macs} MAC` : ""}
+      </text>
+    </g>
+  );
+});
+
+/** Un equipo del diagrama (memorizado: al arrastrar solo se redibuja el que se mueve). */
+const NodeView = memo(function NodeView({
+  n,
+  ghost,
+  isNew,
+  onRoute,
+  selected,
+  faded,
+  sub,
+  onDown,
+  onMenu,
+}: {
+  n: TopoNode;
+  ghost: boolean;
+  isNew: boolean;
+  onRoute: boolean;
+  selected: boolean;
+  faded: boolean;
+  sub: string;
+  onDown: (e: React.PointerEvent<SVGGElement>, n: TopoNode) => void;
+  onMenu: (e: React.MouseEvent<SVGGElement>, n: TopoNode) => void;
+}) {
+  const tentative = n.manual || n.addrOnly;
+  return (
+    <g style={{ cursor: ghost ? "default" : "grab" }} opacity={faded ? 0.35 : 1} onPointerDown={(e) => !ghost && e.button === 0 && onDown(e, n)}
+      onContextMenu={(e) => {
+        e.preventDefault();
+        if (!ghost) onMenu(e, n);
+      }}
+    >
+      {/* Fondo opaco: el relleno de los explorados es translúcido y dejaba ver los enlaces. */}
+      <rect x={n.x - W / 2} y={n.y - H / 2} width={W} height={H} rx={10} fill="var(--panel)" />
+      <rect
+        x={n.x - W / 2}
+        y={n.y - H / 2}
+        width={W}
+        height={H}
+        rx={10}
+        fill={n.explored ? "var(--selected)" : "var(--chrome)"}
+        stroke={ghost ? "var(--danger)" : isNew ? "var(--ok)" : selected || onRoute ? "var(--accent)" : n.explored ? "var(--accent)" : "var(--field-border)"}
+        strokeDasharray={ghost ? "5 4" : tentative ? "4 3" : undefined}
+        strokeWidth={selected || onRoute || ghost || isNew ? 2.5 : 1.5}
+      />
+      <text x={n.x} y={n.y - 4} fontSize={13} fontWeight={600} textAnchor="middle" fill="var(--text)">
+        {n.name.length > 22 ? `${n.name.slice(0, 21)}…` : n.name}
+      </text>
+      <text x={n.x} y={n.y + 14} fontSize={11} textAnchor="middle" fill="var(--muted)">
+        {sub}
+      </text>
+    </g>
+  );
+});
+
 export function TopologyTool({
   terminals,
   sessions,
@@ -312,6 +599,7 @@ export function TopologyTool({
   onSources,
   onOpenSession,
   onConfirm,
+  lifecycle = false,
 }: {
   terminals: TerminalRef[];
   sessions: Session[];
@@ -328,6 +616,8 @@ export function TopologyTool({
   onOpenSession: (s: Session) => void;
   /** Confirmación de la app (ConfirmDialog) para borrar o reemplazar el diagrama y los snapshots. */
   onConfirm: (req: ConfirmReq) => void;
+  /** Ciclo de vida activado en Ajustes: muestra EoL y versión en el detalle del equipo. */
+  lifecycle?: boolean;
 }) {
   const [connId, setConnId] = useState("");
   const term = terminals.find((t) => t.connId === connId);
@@ -357,8 +647,25 @@ export function TopologyTool({
       return next;
     });
   const [pendingFollow, setPendingFollow] = useState<PendingFollow | null>(null);
+  /**
+   * Saltos hechos dentro de cada pestaña (ssh/telnet desde la consola del equipo), para vecinos
+   * que solo se alcanzan desde el equipo inicial y no desde el PC. Pila por conexión.
+   */
+  const [hops, setHops] = useState<Record<string, { name: string; ip: string }[]>>({});
+  const [hopUser, setHopUser] = useState("");
   const drag = useRef<{ id: string; sx: number; sy: number; x: number; y: number } | null>(null);
+  const [dragPos, setDragPos] = useState<{ id: string; x: number; y: number } | null>(null);
   const [ui, setUi] = useState<TopoUi>(loadUi);
+  // El descubrimiento tarda segundos: el alcance se evalúa contra el diagrama vigente al terminar.
+  const topoRef = useRef(topo);
+  topoRef.current = topo;
+  // Arrastrar un equipo solo cambia x/y: revisiones, sugerencias, conteos y búsqueda no se recalculan.
+  const dataNodes = useNodeData(topo.nodes);
+  const topoData = useMemo(() => ({ nodes: dataNodes, links: topo.links }), [dataNodes, topo.links]);
+  const [filter, setFilter] = useState<TopoFilter>(NO_FILTER);
+  const [query, setQuery] = useState("");
+  const [searchOpen, setSearchOpen] = useState(false);
+  const [focusReq, setFocusReq] = useState<string | null>(null);
   const scroller = useRef<HTMLDivElement>(null);
   const suggestionsRef = useRef<HTMLDivElement>(null);
   const manualRef = useRef<HTMLDivElement>(null);
@@ -375,6 +682,12 @@ export function TopologyTool({
   const profiles = useMemo(() => snmpProfiles.filter((p) => p.version !== "1" && p.host.trim()), [snmpProfiles]);
   const profile = profiles.find((p) => p.id === ui.snmpProfile) ?? profiles[0];
 
+  // Equipos alcanzados saltando en una pestaña: el tráfico por consola se lee por esa pestaña.
+  const hopVia = useMemo(() => {
+    const m: Record<string, string> = {};
+    for (const [conn, list] of Object.entries(hops)) for (const h of list) m[nodeId(h.name)] = conn;
+    return m;
+  }, [hops]);
   // Tráfico en enlaces: apagado al abrir; la lectura por consola también (envía comandos).
   const [trafficOn, setTrafficOn] = useState(false);
   const [trafficCli, setTrafficCli] = useState(false);
@@ -385,6 +698,7 @@ export function TopologyTool({
     terminals,
     opts: { on: trafficOn, cli: trafficCli, interval: ui.interval },
     visible,
+    via: hopVia,
   });
 
   // Migra el diagrama de versiones anteriores (antes vivía en el navegador, fuera de la carpeta de datos).
@@ -429,13 +743,26 @@ export function TopologyTool({
   const routingOn = sourceOn(sources, "routing");
   const macOn = sourceOn(sources, "mac");
 
-  const discover = async () => {
+  const selectedVendor = vendor;
+  const discover = async (forced?: TopoVendor): Promise<void> => {
     if (!term) return;
+    const vendor = forced ?? selectedVendor;
     setBusy(true);
     setMsg("");
     try {
       const outputs: string[] = [];
-      for (const cmd of NEIGHBOR_COMMANDS[vendor]) outputs.push(await run(cmd));
+      for (const cmd of NEIGHBOR_COMMANDS[vendor]) {
+        const out = await run(cmd);
+        // Tras un salto el equipo puede ser de otra marca: su prompt lo dice y se repite con su sintaxis.
+        if (!forced && !outputs.length) {
+          const seen = vendorFromPrompt(out);
+          if (seen && seen !== vendor) {
+            setVendor(seen);
+            return await discover(seen);
+          }
+        }
+        outputs.push(out);
+      }
       // "% CDP is not enabled", "% LLDP is not enabled" o comando inexistente en todos.
       const l2Off = outputs.every(isCliError);
       let neighbors = parseNeighbors(vendor, outputs);
@@ -486,12 +813,21 @@ export function TopologyTool({
       }
       const last = [...outputs].reverse().find((o) => o.trim()) ?? "";
       const name = promptName(last) ?? term.name;
-      onTopo((t) => mergeNeighbors(t, { name, ip: term.host, ports, addrs, macs }, [...neighbors, ...routing]));
+      // Dentro de un salto la IP es la del vecino al que se saltó, no la de la sesión del PC.
+      const chain = hops[term.connId] ?? [];
+      const at = chain.findIndex((h) => nodeId(h.name) === nodeId(name));
+      // La pila se ajusta a lo que dice el prompt (un "exit" tecleado a mano también cuenta).
+      if (at >= 0 && at < chain.length - 1) setHops((h) => ({ ...h, [term.connId]: chain.slice(0, at + 1) }));
+      if (at < 0 && chain.length && nodeId(name) === nodeId(term.name)) setHops((h) => ({ ...h, [term.connId]: [] }));
+      const ip = at >= 0 ? chain[at].ip : chain.length && nodeId(name) !== nodeId(term.name) ? undefined : term.host;
+      const sc = scopeNeighbors(topoRef.current, name, [...neighbors, ...routing], ui.scope);
+      onTopo((t) => mergeNeighbors(t, { name, ip, ports, addrs, macs }, sc.kept));
       setSelected(nodeId(name));
       const parts = [
         `${plural(neighbors.length, "vecino", "vecinos")} CDP/LLDP`,
         routingOn && ROUTING_COMMANDS[vendor].length ? `${routing.length} de ruteo` : "",
         macs ? `${Object.keys(macs).length} puertos con MAC` : "",
+        scopeNote(sc.skipped),
       ].filter(Boolean);
       const l2Hint =
         vendor === "fortinet"
@@ -562,13 +898,15 @@ export function TopologyTool({
       }
       const host = p.host.trim();
       const name = d.name ?? (p.name.trim() || host);
-      onTopo((t) => mergeNeighbors(t, { name, ip: isIpv4(host) || isIpv6(host) ? host : undefined, ports: d.ports, addrs: d.addrs, macs }, [...d.neighbors, ...d.routing]));
+      const sc = scopeNeighbors(topoRef.current, name, [...d.neighbors, ...d.routing], ui.scope);
+      onTopo((t) => mergeNeighbors(t, { name, ip: isIpv4(host) || isIpv6(host) ? host : undefined, ports: d.ports, addrs: d.addrs, macs }, sc.kept));
       setSelected(nodeId(name));
       traffic.prime(nodeId(name), p.id, d.ifIndex);
       const parts = [
         `${plural(d.neighbors.length, "vecino", "vecinos")} CDP/LLDP`,
         routingOn ? `${d.routing.length} de ruteo` : "",
         macs ? `${Object.keys(macs).length} puertos con MAC` : "",
+        scopeNote(sc.skipped),
       ].filter(Boolean);
       const l2 = d.l2Empty
         ? "LLDP y CDP vacíos por SNMP: el protocolo está apagado en el equipo (o su agente no publica LLDP-MIB, LLDP-V2-MIB ni CISCO-CDP-MIB)."
@@ -581,7 +919,9 @@ export function TopologyTool({
     setBusy(false);
   };
 
-  const node = (id: string) => topo.nodes.find((n) => n.id === id);
+  // Índice por id: buscar con find por cada enlace era O(enlaces × equipos) en cada render.
+  const topoById = useMemo(() => new Map(topo.nodes.map((n) => [n.id, n])), [topo.nodes]);
+  const node = (id: string) => topoById.get(id);
   const sel = selected ? node(selected) : undefined;
 
   // Comparación con un snapshot: los enlaces y equipos que ya no están se dibujan fantasma.
@@ -589,7 +929,14 @@ export function TopologyTool({
   /** Nombre del equipo en el diagrama o en el snapshot (los ids son nombres normalizados en minúscula). */
   const anyName = (id: string) => node(id)?.name ?? snapshot?.topo.nodes.find((n) => n.id === id)?.name ?? id;
   const diff = useMemo(() => (snapshot ? diffTopology(snapshot.topo, topo) : null), [snapshot, topo]);
+  // Arrastre: la posición vive aquí mientras se mueve y se guarda una vez al soltar (antes cada
+  // cuadro actualizaba los ajustes de toda la app).
+  const liveTopo = useMemo(
+    () => (dragPos ? { ...topo, nodes: topo.nodes.map((n) => (n.id === dragPos.id ? { ...n, x: dragPos.x, y: dragPos.y } : n)) } : topo),
+    [topo, dragPos],
+  );
   const view: Topology = useMemo(() => {
+    const topo = liveTopo;
     if (!diff || !snapshot) return topo;
     // Los equipos que ya no están usan la posición del snapshot; si quedan encima de uno
     // actual se corren a la derecha para que ambos se lean.
@@ -601,7 +948,59 @@ export function TopologyTool({
       return g;
     });
     return { nodes: [...topo.nodes, ...ghosts], links: [...topo.links, ...diff.removedLinks] };
-  }, [diff, snapshot, topo]);
+  }, [diff, snapshot, liveTopo]);
+  // Filtros: solo cambian lo que se dibuja; el diagrama guardado, las rutas y las exportaciones siguen completos.
+  const shown = useMemo(() => filterView(view, filter), [view, filter]);
+  const filtering = filterActive(filter);
+  const checks = useMemo(() => linkChecks(topoData), [topoData]);
+  const checkCount = useMemo(() => {
+    let crit = 0;
+    let warn = 0;
+    for (const list of checks.values()) for (const i of list) i.sev === "crit" ? crit++ : warn++;
+    return { crit, warn };
+  }, [checks]);
+  // Puertos activos sin vecino: un nodo virtual por equipo, del lado opuesto a sus vecinos.
+  const l2 = useMemo(() => (ui.l2 ? unknownL2(topoData) : null), [ui.l2, topoData]);
+  const l2Cache = useRef(new Map<string, L2Geo>());
+  const l2Nodes = useMemo(() => {
+    if (!l2?.size) return [];
+    // Con muchos equipos se dibuja solo el del seleccionado: cientos de nodos virtuales tapan el mapa
+    // y duplican lo que el navegador tiene que pintar.
+    const only = l2.size > MAX_L2_NODES ? selected : null;
+    if (l2.size > MAX_L2_NODES && !only) return [];
+    const pos = new Map(shown.nodes.map((n) => [n.id, n]));
+    const pull = new Map<string, [number, number]>();
+    const add = (id: string, o: TopoNode | undefined) => {
+      const n = pos.get(id);
+      if (!n || !o) return;
+      const [x, y] = pull.get(id) ?? [0, 0];
+      pull.set(id, [x + o.x - n.x, y + o.y - n.y]);
+    };
+    for (const l of shown.links) {
+      if (l2.has(l.a)) add(l.a, pos.get(l.b));
+      if (l2.has(l.b)) add(l.b, pos.get(l.a));
+    }
+    const out: L2Geo[] = [];
+    const next = new Map<string, L2Geo>();
+    for (const [id, info] of l2) {
+      if (only && id !== only) continue;
+      const n = pos.get(id);
+      if (!n) continue;
+      const [dx, dy] = pull.get(id) ?? [0, 0];
+      const len = Math.hypot(dx, dy);
+      const [ux, uy] = len ? [-dx / len, -dy / len] : [0, 1];
+      const x = n.x + ux * 130;
+      const y = n.y + uy * 95;
+      // Mismo objeto si no se movió: su L2View no se redibuja.
+      const prev = l2Cache.current.get(id);
+      const v = prev && prev.x === x && prev.y === y && prev.from.x === n.x && prev.from.y === n.y && prev.info === info ? prev : { id, x, y, from: n, info };
+      next.set(id, v);
+      out.push(v);
+    }
+    l2Cache.current = next;
+    return out;
+  }, [l2, shown, selected]);
+  const hits: SearchHit[] = useMemo(() => (searchOpen ? searchTopo(topoData, query) : []), [topoData, query, searchOpen]);
   const added = useMemo(() => new Set(diff?.addedLinks.map(linkKey)), [diff]);
   const removed = useMemo(() => new Set(diff?.removedLinks.map(linkKey)), [diff]);
   const ghostIds = useMemo(() => new Set(diff?.removedNodes.map((n) => n.id)), [diff]);
@@ -614,7 +1013,54 @@ export function TopologyTool({
   const routeKeys = useMemo(() => new Set(route?.links.map(linkKey)), [route]);
   const routeNodes = useMemo(() => new Set(route?.nodes), [route]);
 
-  const geometry = useMemo(() => linkGeometry(view, view.links, PARALLEL_GAP), [view]);
+  // Geometría estable: un enlace cuyo trazo no cambió conserva su objeto y su LinkView no se redibuja.
+  const geoCache = useRef(new Map<TopoLink, Geo>());
+  const geometry = useMemo(() => {
+    const prev = geoCache.current;
+    const next = new Map<TopoLink, Geo>();
+    const out = linkGeometry(shown, shown.links, PARALLEL_GAP).map((g) => {
+      const p = prev.get(g.l);
+      const keep = p && p.d === g.d && p.pair.length === g.pair.length ? p : g;
+      next.set(g.l, keep);
+      return keep;
+    });
+    geoCache.current = next;
+    return out;
+  }, [shown]);
+  const shownById = useMemo(() => new Map(shown.nodes.map((n) => [n.id, n])), [shown.nodes]);
+  const onIssue = useCallback((id: string) => {
+    setSelected(id);
+    setUi((u) => ({ ...u, panel: true, sec: { ...u.sec, revisiones: true } }));
+  }, []);
+  /** Copia al portapapeles y lo confirma en el mensaje de la herramienta. */
+  const copyText = (text: string, what: string) =>
+    writeText(text)
+      .then(() => setMsg(`${what} copiada: ${text.length > 80 ? `${text.slice(0, 79)}…` : text}`))
+      .catch((e) => setMsg(`No se pudo copiar: ${String(e)}`));
+  const [nodeMenu, setNodeMenu] = useState<Menu | null>(null);
+  // Menú del equipo (clic derecho): la función cambia con el diagrama; NodeView recibe una estable.
+  const nodeMenuRef = useRef<(e: React.MouseEvent<SVGGElement>, n: TopoNode) => void>(() => {});
+  nodeMenuRef.current = (e, n) => {
+    setSelected(n.id);
+    const addrs = knownAddrs(n);
+    setNodeMenu({
+      x: e.clientX,
+      y: e.clientY,
+      items: [
+        [n.ip ? `Copiar IP (${n.ip})` : "Copiar IP (sin IP de gestión)", <Copy size={13} />, () => n.ip && copyText(n.ip, "IP"), !n.ip],
+        ["Copiar nombre", <Copy size={13} />, () => copyText(n.name, "Nombre")],
+        ["Copiar nombre e IP", <Copy size={13} />, () => copyText(n.ip ? `${n.name} ${n.ip}` : n.name, "Nombre e IP"), !n.ip],
+        ...(addrs.length > 1 ? [[`Copiar sus ${addrs.length} direcciones`, <Copy size={13} />, () => copyText(addrs.join("\n"), "Direcciones")] as MenuItem] : []),
+        ["Ver su vecindario", <ListFilter size={13} />, () => setFilter((f) => ({ ...f, hops: f.hops || 2, focus: n.id }))],
+      ],
+    });
+  };
+  const onNodeMenu = useCallback((e: React.MouseEvent<SVGGElement>, n: TopoNode) => nodeMenuRef.current(e, n), []);
+  const onNodeDown = useCallback((e: React.PointerEvent<SVGGElement>, n: TopoNode) => {
+    (e.currentTarget.ownerSVGElement as SVGSVGElement).setPointerCapture(e.pointerId);
+    drag.current = { id: n.id, sx: e.clientX, sy: e.clientY, x: n.x, y: n.y };
+    setSelected(n.id);
+  }, []);
 
   // Última tasa por enlace (se recalcula una vez por lectura, no por cuadro).
   const linkRates = useMemo(() => {
@@ -662,7 +1108,7 @@ export function TopologyTool({
   }, [geometry, linkRates, removed, route, routeKeys, ui.color]);
 
   // Sugerencias: se calculan del diagrama ya leído, sin comandos, y solo con su fuente activa.
-  const suggestions = useMemo(() => collectSuggestions(topo, sources, dismissed), [topo, sources, dismissed]);
+  const suggestions = useMemo(() => collectSuggestions(topoData, sources, dismissed), [topoData, sources, dismissed]);
   const suggestionSources = TOPO_SOURCES.filter((s) => SUGGESTERS[s.id] && sourceOn(sources, s.id));
   const emptyHints = [
     sourceOn(sources, "descriptions") &&
@@ -676,14 +1122,26 @@ export function TopologyTool({
   ].filter((x): x is string => !!x);
 
   const box = useMemo(() => {
-    if (!view.nodes.length) return { x: 0, y: 0, w: 800, h: 400 };
-    const xs = view.nodes.map((n) => n.x);
-    const ys = view.nodes.map((n) => n.y);
+    if (!shown.nodes.length) return { x: 0, y: 0, w: 800, h: 400 };
+    // En mapas grandes el nodo L2 es solo el del seleccionado: no cuenta para el encuadre, que si
+    // no cambiaría (y se redibujaría todo el mapa) con cada selección.
+    const l2Box = l2 && l2.size > MAX_L2_NODES ? [] : l2Nodes;
+    const xs = [...shown.nodes.map((n) => n.x), ...l2Box.map((n) => n.x)];
+    const ys = [...shown.nodes.map((n) => n.y), ...l2Box.map((n) => n.y)];
     const pad = 30;
     const x = Math.min(...xs) - W / 2 - pad;
     const y = Math.min(...ys) - H / 2 - pad;
     return { x, y, w: Math.max(...xs) - x + W / 2 + pad, h: Math.max(...ys) - y + H / 2 + pad };
-  }, [view.nodes]);
+  }, [shown.nodes, l2Nodes, l2]);
+
+  /** Suelta el equipo: la posición final se guarda en el diagrama una sola vez. */
+  const endDrag = () => {
+    drag.current = null;
+    if (!dragPos) return;
+    const { id, x, y } = dragPos;
+    onTopo((t) => ({ ...t, nodes: t.nodes.map((n) => (n.id === id ? { ...n, x, y } : n)) }));
+    setDragPos(null);
+  };
 
   const onPointerMove = (e: React.PointerEvent<SVGSVGElement>) => {
     const d = drag.current;
@@ -693,7 +1151,7 @@ export function TopologyTool({
     const scale = Math.max(box.w / svg.width, box.h / svg.height);
     const x = d.x + (e.clientX - d.sx) * scale;
     const y = d.y + (e.clientY - d.sy) * scale;
-    onTopo((t) => ({ ...t, nodes: t.nodes.map((n) => (n.id === d.id ? { ...n, x, y } : n)) }));
+    setDragPos({ id: d.id, x, y });
   };
 
   const exportFile = async (ext: "svg" | "csv" | "drawio", content: string) => {
@@ -701,6 +1159,30 @@ export function TopologyTool({
     const dest = await save({ defaultPath: `topologia.${ext}`, filters: [{ name, extensions: [ext] }] });
     if (!dest) return;
     await invoke("save_text", { dest, content }).then(() => setMsg(`Guardado: ${dest}`)).catch((e) => setMsg(String(e)));
+  };
+
+  /**
+   * draw.io con los íconos de red de su biblioteca Cisco, zonas por carpeta de la sesión guardada
+   * y, con el ciclo de vida activo, la etapa EoL bajo cada equipo.
+   */
+  const exportDrawioIcons = async () => {
+    const [{ toDrawioIcons }, life] = await Promise.all([
+      import("../../lib/topoDrawio"),
+      lifecycle ? import("../../lib/lifecycle").then(async (L) => ({ L, db: await L.loadLifecycle() })) : null,
+    ]);
+    const zones = new Map<string, string>();
+    const notes = new Map<string, string>();
+    const today = new Date().toISOString().slice(0, 10);
+    for (const n of topo.nodes) {
+      const folder = savedFor(n)?.folder?.trim();
+      if (folder) zones.set(n.id, folder);
+      const model = life && modelFromPlatform(n.platform);
+      if (life && model) {
+        const level = life.L.lifeLevel(life.L.findLifecycle(life.db, model), today);
+        if (level !== "none") notes.set(n.id, life.L.LIFE_LABEL[level]);
+      }
+    }
+    await exportFile("drawio", toDrawioIcons(topo, { zones, notes, l2: ui.l2 }));
   };
 
   /** Sesión guardada que corresponde al equipo (misma IP o mismo nombre). */
@@ -741,6 +1223,31 @@ export function TopologyTool({
       created_at: new Date().toISOString(),
     });
     setMsg(`Abriendo ${proto.toUpperCase()} a ${n.name}: autentícate en su pestaña. Al conectar queda elegida aquí; vuelve y pulsa "Descubrir vecinos".`);
+  };
+
+  const hopRoute = term ? (hops[term.connId] ?? []) : [];
+  const here = hopRoute.length ? hopRoute[hopRoute.length - 1].name : term?.name;
+
+  /** Salta al vecino desde la consola del equipo actual, en la misma pestaña. */
+  const hopTo = (n: TopoNode) => {
+    if (!term || !n.ip) return;
+    const user = (hopUser || term.session.username || "").trim();
+    const cmd = hopCommand(vendor, term.session.platform, proto, user, n.ip);
+    if (!cmd) {
+      setMsg(isIpv4(n.ip) || isIpv6(n.ip) ? "Escribe un usuario válido para el salto (sin espacios)." : `IP de gestión no válida: ${n.ip.slice(0, 64)}`);
+      return;
+    }
+    invoke("write", { id: term.connId, data: `${cmd}\r` }).catch((e) => setMsg(String(e)));
+    setHops((h) => ({ ...h, [term.connId]: [...(h[term.connId] ?? []), { name: n.name, ip: n.ip! }] }));
+    setMsg(`Enviado "${cmd}" en la pestaña de ${term.name}: autentícate ahí. Cuando veas el prompt de ${n.name}, vuelve y pulsa "Descubrir vecinos".`);
+  };
+
+  /** Vuelve al equipo anterior de la ruta (exit en la misma pestaña). */
+  const hopBack = () => {
+    if (!term || !hopRoute.length) return;
+    invoke("write", { id: term.connId, data: "exit\r" }).catch((e) => setMsg(String(e)));
+    setHops((h) => ({ ...h, [term.connId]: hopRoute.slice(0, -1) }));
+    setMsg(`Enviado "exit": vuelves a ${hopRoute.length > 1 ? hopRoute[hopRoute.length - 2].name : term.name}.`);
   };
 
   const saveSnapshot = () => {
@@ -855,10 +1362,177 @@ export function TopologyTool({
     scroller.current?.scrollTo({ left: 0, top: 0 });
   };
 
+  /** Selecciona un equipo, acerca y lo centra en la vista (si un filtro lo oculta, se quitan los filtros). */
+  const focusOn = (id: string) => {
+    if (!shown.nodes.some((n) => n.id === id)) setFilter(NO_FILTER);
+    setSelected(id);
+    setZoom((z) => Math.max(z, 1.6));
+    setFocusReq(id);
+  };
+  // Se centra después del render con el zoom nuevo (el SVG ya tiene su tamaño final).
+  useEffect(() => {
+    if (!focusReq) return;
+    setFocusReq(null);
+    const el = scroller.current;
+    const n = shown.nodes.find((x) => x.id === focusReq);
+    if (!el || !n) return;
+    const w = el.clientWidth * zoom;
+    const h = el.clientHeight * zoom;
+    const k = Math.min(w / box.w, h / box.h);
+    const left = (w - box.w * k) / 2 + (n.x - box.x) * k - el.clientWidth / 2;
+    const top = (h - box.h * k) / 2 + (n.y - box.y) * k - el.clientHeight / 2;
+    el.scrollTo({ left, top, behavior: reducedMotion ? "auto" : "smooth" });
+  }, [focusReq, shown, zoom, box, reducedMotion]);
+
+  // Zoom con pellizco (touchpad) o Ctrl/⌘ + rueda, hacia el punto bajo el puntero.
+  const zoomRef = useRef(zoom);
+  zoomRef.current = zoom;
+  const zoomAnchor = useRef<{ cx: number; cy: number; sx: number; sy: number; from: number } | null>(null);
+  const zoomAt = useCallback((next: number, cx: number, cy: number) => {
+    const el = scroller.current;
+    const from = zoomRef.current;
+    const to = Math.min(ZOOM_MAX, Math.max(ZOOM_MIN, next));
+    if (!el || Math.abs(to - from) < 0.001) return;
+    // Varios eventos antes de redibujar (lo normal en un touchpad): el ancla parte del último zoom dibujado.
+    const pending = zoomAnchor.current;
+    zoomAnchor.current = pending ? { ...pending, cx, cy } : { cx, cy, sx: el.scrollLeft, sy: el.scrollTop, from };
+    zoomRef.current = to;
+    setZoom(to);
+  }, []);
+  // El dibujo crece en proporción al zoom: se corre el scroll para que el punto bajo el puntero no se mueva.
+  useLayoutEffect(() => {
+    const a = zoomAnchor.current;
+    const el = scroller.current;
+    if (!a || !el) return;
+    zoomAnchor.current = null;
+    const f = zoom / a.from;
+    el.scrollLeft = (a.sx + a.cx) * f - a.cx;
+    el.scrollTop = (a.sy + a.cy) * f - a.cy;
+  }, [zoom]);
+  useEffect(() => {
+    const el = scroller.current;
+    if (!el) return;
+    const local = (x: number, y: number) => {
+      const r = el.getBoundingClientRect();
+      return [x - r.left, y - r.top] as const;
+    };
+    // Windows, Linux y Chromium: el pellizco llega como rueda con ctrlKey (igual que Ctrl + rueda).
+    let gesturing = false;
+    const onWheel = (e: WheelEvent) => {
+      if (!e.ctrlKey && !e.metaKey) return; // dos dedos sin pellizco: desplazamiento normal
+      e.preventDefault();
+      if (gesturing) return;
+      const d = Math.max(-50, Math.min(50, e.deltaMode === 1 ? e.deltaY * 16 : e.deltaY));
+      const [cx, cy] = local(e.clientX, e.clientY);
+      zoomAt(zoomRef.current * Math.exp(-d * 0.01), cx, cy);
+    };
+    // macOS (WebKit): el pellizco llega como gesto con su escala.
+    let base = 1;
+    type Gesture = Event & { scale: number; clientX: number; clientY: number };
+    const onGestureStart = (e: Event) => {
+      e.preventDefault();
+      gesturing = true;
+      base = zoomRef.current;
+    };
+    const onGestureChange = (e: Event) => {
+      e.preventDefault();
+      const g = e as Gesture;
+      const [cx, cy] = local(g.clientX, g.clientY);
+      zoomAt(base * g.scale, cx, cy);
+    };
+    const onGestureEnd = (e: Event) => {
+      e.preventDefault();
+      gesturing = false;
+    };
+    el.addEventListener("wheel", onWheel, { passive: false });
+    el.addEventListener("gesturestart", onGestureStart);
+    el.addEventListener("gesturechange", onGestureChange);
+    el.addEventListener("gestureend", onGestureEnd);
+    return () => {
+      el.removeEventListener("wheel", onWheel);
+      el.removeEventListener("gesturestart", onGestureStart);
+      el.removeEventListener("gesturechange", onGestureChange);
+      el.removeEventListener("gestureend", onGestureEnd);
+    };
+  }, [zoomAt]);
+
+  // Ctrl/⌘+C con un equipo seleccionado en el mapa copia su IP, salvo que haya texto
+  // seleccionado o el foco esté en un campo (ahí manda la copia normal).
+  const selIp = selected ? topoById.get(selected)?.ip : undefined;
+  useEffect(() => {
+    if (!visible || !selIp) return;
+    const onKey = (e: KeyboardEvent) => {
+      if (!(e.ctrlKey || e.metaKey) || e.shiftKey || e.altKey || e.key.toLowerCase() !== "c") return;
+      const a = document.activeElement as HTMLElement | null;
+      if (a && (a.isContentEditable || /^(INPUT|TEXTAREA|SELECT)$/.test(a.tagName))) return;
+      if (window.getSelection()?.toString()) return;
+      e.preventDefault();
+      void copyText(selIp, "IP");
+    };
+    window.addEventListener("keydown", onKey);
+    return () => window.removeEventListener("keydown", onKey);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [visible, selIp]);
+
+  const pickHit = (h: SearchHit) => {
+    focusOn(h.id);
+    setSearchOpen(false);
+    setMsg(`${node(h.id)?.name ?? h.id}: ${h.what}${h.detail ? ` ${h.detail}` : ""}`);
+  };
+
+  /** Chips de un criterio de filtro: solo los valores presentes en el diagrama, con su cantidad. */
+  const chipGroup = <K extends string>(label: string, field: "roles" | "vendors" | "protos" | "states", counts: Map<K, number>, names: (k: K) => string) =>
+    counts.size > 0 && (
+      <div>
+        <p className="mb-1 text-[11.5px] font-medium text-muted">{label}</p>
+        <div className="flex flex-wrap gap-1">
+          {[...counts].map(([k, c]) => {
+            const list = filter[field] as string[];
+            const on = list.includes(k);
+            return (
+              <button
+                key={k}
+                type="button"
+                aria-pressed={on}
+                onClick={() => setFilter((f) => ({ ...f, [field]: on ? list.filter((x) => x !== k) : [...list, k] }))}
+                className={`h-7 px-2 rounded-md border text-[11.5px] ${on ? "border-[var(--accent)] text-accent bg-[var(--selected)]" : "border-line hover:bg-hover"}`}
+              >
+                {names(k)} <span className="text-muted">{c}</span>
+              </button>
+            );
+          })}
+        </div>
+      </div>
+    );
+  const countBy = <K extends string>(items: K[]) => {
+    const m = new Map<K, number>();
+    for (const k of items) m.set(k, (m.get(k) ?? 0) + 1);
+    return new Map([...m].sort((a, b) => b[1] - a[1]));
+  };
+  const roleCounts = useMemo(() => countBy<NodeRole>(dataNodes.map((n) => nodeRole(n))), [dataNodes]);
+  const vendorCounts = useMemo(() => countBy<NodeVendor>(dataNodes.map((n) => nodeVendor(n))), [dataNodes]);
+  const stateCounts = useMemo(() => countBy<NodeState>(dataNodes.map(nodeState)), [dataNodes]);
+  const protoCounts = useMemo(() => countBy<string>(topo.links.map((l) => String(l.proto))), [topo.links]);
+  const scopeErr = parseCidrs(ui.scope.cidrs).error;
+  const setScope = (p: Partial<TopoScope>) => setUi((u) => ({ ...u, scope: { ...u.scope, ...p } }));
+  const scopeSummary =
+    [ui.scope.skipEndpoints && "sin teléfonos ni AP", ui.scope.cidrs.trim() && !scopeErr && ui.scope.cidrs.trim(), ui.scope.maxDepth && `hasta ${ui.scope.maxDepth} saltos`]
+      .filter(Boolean)
+      .join(" · ") || "Sin restricciones";
+  const issueList = useMemo(() => {
+    const byKey = new Map(topo.links.map((l) => [linkKey(l), l]));
+    return [...checks]
+      .flatMap(([k, list]) => (byKey.has(k) ? list.map((i) => ({ k, ...i, l: byKey.get(k)! })) : []))
+      .sort((x, y) => Number(y.sev === "crit") - Number(x.sev === "crit"));
+  }, [checks, topo.links]);
+  const showChecks = () => {
+    setUi((u) => ({ ...u, panel: true, sec: { ...u.sec, revisiones: true } }));
+  };
+
   // Leyenda solo con lo que hay en la vista y solo si hay algo más que CDP/LLDP.
-  const legendKinds = LINK_LEGEND.filter(([, s]) => linkDash(s) && view.links.some((l) => linkDash(l) === linkDash(s)));
-  const hasPhysical = view.links.some((l) => !linkDash(l));
-  const hasTentative = view.nodes.some((n) => n.manual || n.addrOnly);
+  const legendKinds = LINK_LEGEND.filter(([, s]) => linkDash(s) && shown.links.some((l) => linkDash(l) === linkDash(s)));
+  const hasPhysical = shown.links.some((l) => !linkDash(l));
+  const hasTentative = shown.nodes.some((n) => n.manual || n.addrOnly);
   const hasTraffic = linkRates.size > 0;
   const showLegend = legendKinds.length > 0 || hasTentative || hasTraffic;
 
@@ -932,7 +1606,7 @@ export function TopologyTool({
             Estado de puertos
           </label>
           {mode === "cli" ? (
-            <Btn kind="primary" disabled={!term || busy} onClick={discover} title={hint}>
+            <Btn kind="primary" disabled={!term || busy} onClick={() => void discover()} title={hint}>
               <Radar size={14} className={busy ? "animate-pulse" : ""} /> {busy ? "Leyendo…" : "Descubrir vecinos"}
             </Btn>
           ) : (
@@ -941,16 +1615,25 @@ export function TopologyTool({
             </Btn>
           )}
         </div>
+        {mode === "cli" && term && hopRoute.length > 0 && (
+          <div className="mt-1.5 flex flex-wrap items-center gap-2 text-[11.5px]">
+            <span className="text-muted">Ruta en la pestaña de {term.name}:</span>
+            <span className="font-medium">{[term.name, ...hopRoute.map((h) => h.name)].join(" → ")}</span>
+            <Btn className="!h-6 !px-2 !text-[11.5px]" disabled={busy} onClick={hopBack} title='Envía "exit" en la pestaña: vuelve al equipo anterior'>
+              Volver a {hopRoute.length > 1 ? hopRoute[hopRoute.length - 2].name : term.name}
+            </Btn>
+          </div>
+        )}
         {mode === "snmp" && (
           <p className="mt-1.5 text-[11.5px] text-muted">
             Solo lectura con el perfil y sus secretos de la bóveda; tope de 10.000 filas y 20 s por tabla. Si LLDP y CDP vuelven vacíos por SNMP, el protocolo está apagado en el equipo.
           </p>
         )}
         <div className="flex flex-wrap items-center gap-1 mt-2.5 @max-[860px]:[&_button]:px-2" role="toolbar" aria-label="Diagrama">
-          <Btn kind="ghost" title="Acercar" onClick={() => setZoom((z) => Math.min(2.5, z + 0.2))}>
+          <Btn kind="ghost" title={`Acercar (o pellizca en el touchpad, o ${isMac ? "⌘" : "Ctrl"} + rueda sobre el mapa)`} onClick={() => setZoom((z) => Math.min(ZOOM_MAX, z + 0.2))}>
             <ZoomIn size={14} />
           </Btn>
-          <Btn kind="ghost" title="Alejar" onClick={() => setZoom((z) => Math.max(0.4, z - 0.2))}>
+          <Btn kind="ghost" title={`Alejar (o pellizca en el touchpad, o ${isMac ? "⌘" : "Ctrl"} + rueda sobre el mapa)`} onClick={() => setZoom((z) => Math.max(ZOOM_MIN, z - 0.2))}>
             <ZoomOut size={14} />
           </Btn>
           <Btn kind="ghost" title="Ajustar a la vista" aria-label="Ajustar a la vista" onClick={fit}>
@@ -959,6 +1642,54 @@ export function TopologyTool({
           <Btn kind="ghost" title="Reordenar automáticamente" onClick={() => onTopo((t) => layout({ ...t, nodes: t.nodes.map((n) => ({ ...n, x: 0, y: 0 })) }))}>
             <Network size={14} />
           </Btn>
+          <div className="relative">
+            <Search size={13} className="absolute left-2 top-1/2 -translate-y-1/2 text-muted pointer-events-none" aria-hidden />
+            <input
+              type="search"
+              className="field !h-8 !pl-7 !w-64 @max-[860px]:!w-48 !text-[12px]"
+              placeholder="Buscar (nombre, IP, MAC, puerto)"
+              title="Busca por nombre, IP, MAC, interfaz o descripción; Enter va al primero"
+              aria-label="Buscar en el diagrama"
+              disabled={!topo.nodes.length}
+              value={query}
+              onChange={(e) => {
+                setQuery(e.target.value);
+                setSearchOpen(true);
+              }}
+              onFocus={() => setSearchOpen(true)}
+              onBlur={() => setTimeout(() => setSearchOpen(false), 150)}
+              onKeyDown={(e) => {
+                if (e.key === "Enter" && hits[0]) pickHit(hits[0]);
+                if (e.key === "Escape") setSearchOpen(false);
+              }}
+            />
+            {searchOpen && query.trim().length >= 2 && (
+              <ul className="absolute z-20 left-0 top-full mt-1 w-72 max-h-72 overflow-y-auto rounded-lg border border-line bg-panel shadow-pop py-1 text-[12px]" role="listbox">
+                {hits.length ? (
+                  hits.map((h, i) => (
+                    <li key={`${h.id}${i}`}>
+                      <button
+                        type="button"
+                        role="option"
+                        aria-selected={i === 0}
+                        onMouseDown={(e) => e.preventDefault()}
+                        onClick={() => pickHit(h)}
+                        className="w-full text-left px-3 py-1.5 hover:bg-hover"
+                      >
+                        <span className="font-medium">{node(h.id)?.name ?? h.id}</span>
+                        <span className="block text-[11px] text-muted truncate">
+                          {h.what}
+                          {h.detail ? `: ${h.detail}` : ""}
+                        </span>
+                      </button>
+                    </li>
+                  ))
+                ) : (
+                  <li className="px-3 py-1.5 text-muted">Sin resultados</li>
+                )}
+              </ul>
+            )}
+          </div>
           <span className="w-px h-5 bg-[var(--border)] mx-1 @max-[860px]:hidden" aria-hidden />
           <Btn
             kind="ghost"
@@ -973,7 +1704,8 @@ export function TopologyTool({
                 y: r.bottom + 4,
                 items: [
                   ["Imagen SVG", <Download size={13} />, () => exportFile("svg", toSvg(topo, W, H, linkRates))],
-                  ["draw.io (editable)", <Download size={13} />, () => exportFile("drawio", toDrawio(topo, W, H))],
+                  ["draw.io con íconos de red", <Download size={13} />, () => void exportDrawioIcons()],
+                  ["draw.io simple (cajas)", <Download size={13} />, () => exportFile("drawio", toDrawio(topo, W, H))],
                   ["CSV de enlaces y puertos", <Download size={13} />, () => exportFile("csv", toCsv(topo, linkRates)), !topo.links.length],
                   [
                     "Copiar como Mermaid",
@@ -987,6 +1719,7 @@ export function TopologyTool({
             <Download size={14} /> <span className="@max-[860px]:sr-only">Exportar</span> <ChevronDown size={12} aria-hidden />
           </Btn>
           {exportMenu && <ContextMenu menu={exportMenu} onClose={() => setExportMenu(null)} />}
+          {nodeMenu && <ContextMenu menu={nodeMenu} onClose={() => setNodeMenu(null)} />}
           <div className="ml-auto flex items-center gap-1">
             <Btn
               kind={trafficOn ? "default" : "ghost"}
@@ -997,6 +1730,17 @@ export function TopologyTool({
             >
               <Activity size={14} aria-hidden /> <span className="@max-[860px]:sr-only">Tráfico</span>
             </Btn>
+            {filtering && (
+              <Btn title="Hay filtros activos: el diagrama muestra una parte" onClick={() => setUi((u) => ({ ...u, panel: true, sec: { ...u.sec, filtros: true } }))}>
+                <ListFilter size={14} className="text-accent" aria-hidden /> <span className="@max-[860px]:sr-only">{shown.nodes.length} de {view.nodes.length}</span>
+              </Btn>
+            )}
+            {issueList.length > 0 && (
+              <Btn title="Ver las revisiones de enlaces en el panel" aria-label={`Ver ${issueList.length} revisiones de enlaces`} onClick={showChecks}>
+                <TriangleAlert size={14} className={checkCount.crit ? "text-danger" : "text-warn"} aria-hidden /> <span className="@max-[860px]:sr-only">Revisiones</span>{" "}
+                <CountBadge n={issueList.length} />
+              </Btn>
+            )}
             {suggestions.length > 0 && (
               <Btn
                 title="Ver sugerencias en el panel"
@@ -1049,141 +1793,68 @@ export function TopologyTool({
         <div className="h-full grid place-items-center text-[12.5px] text-muted p-6 text-center">
           Conecta una sesión con un equipo y pulsa "Descubrir vecinos", o agrega equipos y enlaces a mano.
         </div>
+      ) : !shown.nodes.length ? (
+        <div className="h-full grid place-items-center text-[12.5px] text-muted p-6 text-center">
+          <div className="space-y-2">
+            <p>Ningún equipo coincide con los filtros.</p>
+            <Btn onClick={() => setFilter(NO_FILTER)}>Quitar filtros</Btn>
+          </div>
+        </div>
       ) : (
         <svg
           viewBox={`${box.x} ${box.y} ${box.w} ${box.h}`}
           style={{ width: `${zoom * 100}%`, height: `${zoom * 100}%` }}
           onPointerMove={onPointerMove}
-          onPointerUp={() => (drag.current = null)}
-          onPointerLeave={() => (drag.current = null)}
+          onPointerUp={endDrag}
+          onPointerLeave={endDrag}
         >
-          {geometry.map((g, i) => {
+          {geometry.map((g) => {
             const k = linkKey(g.l);
             const isRoute = routeKeys.has(k);
             const state = removed.has(k) ? "removed" : added.has(k) ? "added" : null;
-            const hot = isRoute || selected === g.l.a || selected === g.l.b;
-            const lt = state ? undefined : linkRates.get(k);
-            const level = lt && ui.color ? utilLevel(lt.util) : undefined;
-            const color =
-              state === "removed" ? "var(--danger)" : state === "added" ? "var(--ok)" : level ? UTIL_VAR[level] : hot ? "var(--accent)" : "var(--muted)";
-            const dim = route && !isRoute;
-            const aName = node(g.l.a)?.name ?? g.l.a;
-            const bName = node(g.l.b)?.name ?? g.l.b;
-            // Sin color por utilización, las flechas van en el tono neutro del texto.
-            const dirLevel = (bps: number | null) => (ui.color ? UTIL_VAR[lt?.speed && bps !== null ? utilLevel(bps / lt.speed) : "none"] : "var(--muted)");
-            const tip = [
-              `${aName} ${g.l.aPort || "?"} ↔ ${g.l.bPort || "?"} ${bName} (${protoLabel(g.l)})`,
-              lt &&
-                `Tráfico: ${aName} → ${bName} ${fmtBps(lt.ab)} · ${bName} → ${aName} ${fmtBps(lt.ba)}${lt.speed ? ` · enlace de ${fmtBps(lt.speed)}, ${lt.approx ? "≈" : ""}${Math.round((lt.util ?? 0) * 100)} %${lt.approx ? " (aproximada: velocidad desde el BW configurado)" : ""}` : " · velocidad desconocida"}`,
-              portLine(node(g.l.a), g.l.aPort) && `${g.l.aPort}: ${portLine(node(g.l.a), g.l.aPort)}`,
-              portLine(node(g.l.b), g.l.bPort) && `${g.l.bPort}: ${portLine(node(g.l.b), g.l.bPort)}`,
-              g.l.logical ? "Sesión lógica: no es un enlace físico" : "",
-              state === "removed" ? "Ya no aparece (respecto del snapshot)" : state === "added" ? "Nuevo (respecto del snapshot)" : "",
-            ]
-              .filter(Boolean)
-              .join("\n");
-            const grp = linkGroup(view, g.l);
-            const showGroup = grp && g.pair.length > 1 && g.pair.indexOf(g.l) === 0;
-            const dash = state === "removed" ? "6 5" : linkDash(g.l);
+            const a = node(g.l.a);
+            const b = node(g.l.b);
             return (
-              <g key={i} opacity={dim ? 0.25 : 1}>
-                <title>{tip}</title>
-                <path
-                  d={g.d}
-                  fill="none"
-                  stroke={color}
-                  strokeWidth={isRoute ? 3.5 : lt && ui.color ? 1.75 + 3 * Math.min(1, lt.util ?? 0) : hot || state ? 2.5 : g.l.logical ? 1.25 : 1.5}
-                  strokeDasharray={dash}
-                  strokeLinecap={dash ? "round" : undefined}
-                />
-                {lt && (
-                  <>
-                    {/* Un carril y una punta de flecha por sentido: A→B y B→A. */}
-                    {animate && !!lt.ab && <path className="topo-flow" d={lanePath(g.a, g.c, g.b, 4)} fill="none" stroke={dirLevel(lt.ab)} strokeWidth={1.5} strokeLinecap="round" />}
-                    {animate && !!lt.ba && <path className="topo-flow topo-flow-rev" d={lanePath(g.a, g.c, g.b, -4)} fill="none" stroke={dirLevel(lt.ba)} strokeWidth={1.5} strokeLinecap="round" />}
-                    {ui.arrows && (
-                      <>
-                        <polygon points={arrowHead(g.a, g.c, g.b, 0.4, true, 5)} fill={dirLevel(lt.ab)} stroke="var(--panel)" strokeWidth={0.75} />
-                        <polygon points={arrowHead(g.a, g.c, g.b, 0.6, false, -5)} fill={dirLevel(lt.ba)} stroke="var(--panel)" strokeWidth={0.75} />
-                      </>
-                    )}
-                  </>
-                )}
-                {/* Área de clic más ancha que la línea. */}
-                <path d={g.d} fill="none" stroke="transparent" strokeWidth={12} />
-                {[
-                  [g.pa, g.l.aPort],
-                  [g.pb, g.l.bPort],
-                ]
-                  .filter(([, label]) => label)
-                  .map(([pt, label], j) => (
-                    <text
-                      key={j}
-                      x={(pt as Pt).x}
-                      y={(pt as Pt).y}
-                      fontSize={11}
-                      textAnchor="middle"
-                      fill="var(--text)"
-                      stroke="var(--panel)"
-                      strokeWidth={4}
-                      paintOrder="stroke"
-                    >
-                      {label as string}
-                    </text>
-                  ))}
-                {showGroup ? (
-                  <text x={g.mid.x} y={g.mid.y + 4} fontSize={11} fontWeight={600} textAnchor="middle" fill="var(--accent)" stroke="var(--panel)" strokeWidth={4} paintOrder="stroke">
-                    {grp} ×{g.pair.length}
-                  </text>
-                ) : (
-                  (isRoutingProto(g.l.proto) || g.l.proto === "MAC/OUI") && (
-                    <text x={g.mid.x} y={g.mid.y + 4} fontSize={10} fontWeight={600} textAnchor="middle" fill="var(--muted)" stroke="var(--panel)" strokeWidth={4} paintOrder="stroke">
-                      {protoLabel(g.l)}
-                    </text>
-                  )
-                )}
-              </g>
+              <LinkView
+                key={`${k}|${g.l.proto}`}
+                g={g}
+                aName={a?.name ?? anyName(g.l.a)}
+                bName={b?.name ?? anyName(g.l.b)}
+                aInfo={portLine(a, g.l.aPort)}
+                bInfo={portLine(b, g.l.bPort)}
+                state={state}
+                isRoute={isRoute}
+                hot={isRoute || selected === g.l.a || selected === g.l.b}
+                dim={!!route && !isRoute}
+                lt={state ? undefined : linkRates.get(k)}
+                color={ui.color}
+                arrows={ui.arrows}
+                animate={animate}
+                grp={linkGroup(shown, g.l, shownById)}
+                issues={state === "removed" ? undefined : checks.get(k)}
+                onIssue={onIssue}
+              />
             );
           })}
-          {view.nodes.map((n) => {
+          {l2Nodes.map((v) => (
+            <L2View key={`l2:${v.id}`} v={v} faded={!!route && !routeNodes.has(v.id)} onPick={setSelected} />
+          ))}
+          {shown.nodes.map((n) => {
             const ghost = ghostIds.has(n.id);
-            const isNew = newIds.has(n.id);
             const onRoute = routeNodes.has(n.id);
-            const tentative = n.manual || n.addrOnly;
             return (
-              <g
+              <NodeView
                 key={n.id}
-                style={{ cursor: ghost ? "default" : "grab" }}
-                opacity={route && !onRoute && !ghost ? 0.35 : 1}
-                onPointerDown={(e) => {
-                  if (ghost) return;
-                  (e.currentTarget.ownerSVGElement as SVGSVGElement).setPointerCapture(e.pointerId);
-                  drag.current = { id: n.id, sx: e.clientX, sy: e.clientY, x: n.x, y: n.y };
-                  setSelected(n.id);
-                }}
-              >
-                {/* Fondo opaco: el relleno de los explorados es translúcido y dejaba ver los enlaces. */}
-                <rect x={n.x - W / 2} y={n.y - H / 2} width={W} height={H} rx={10} fill="var(--panel)" />
-                <rect
-                  x={n.x - W / 2}
-                  y={n.y - H / 2}
-                  width={W}
-                  height={H}
-                  rx={10}
-                  fill={n.explored ? "var(--selected)" : "var(--chrome)"}
-                  stroke={
-                    ghost ? "var(--danger)" : isNew ? "var(--ok)" : selected === n.id || onRoute ? "var(--accent)" : n.explored ? "var(--accent)" : "var(--field-border)"
-                  }
-                  strokeDasharray={ghost ? "5 4" : tentative ? "4 3" : undefined}
-                  strokeWidth={selected === n.id || onRoute || ghost || isNew ? 2.5 : 1.5}
-                />
-                <text x={n.x} y={n.y - 4} fontSize={13} fontWeight={600} textAnchor="middle" fill="var(--text)">
-                  {n.name.length > 22 ? `${n.name.slice(0, 21)}…` : n.name}
-                </text>
-                <text x={n.x} y={n.y + 14} fontSize={11} textAnchor="middle" fill="var(--muted)">
-                  {nodeSub(n, ghost)}
-                </text>
-              </g>
+                n={n}
+                ghost={ghost}
+                isNew={newIds.has(n.id)}
+                onRoute={onRoute}
+                selected={selected === n.id}
+                faded={!!route && !onRoute && !ghost}
+                sub={nodeSub(n, ghost)}
+                onDown={onNodeDown}
+                onMenu={onNodeMenu}
+              />
             );
           })}
           {/* Las tasas van en una capa propia sobre los equipos: un enlace corto no las tapa. */}
@@ -1211,6 +1882,11 @@ export function TopologyTool({
           {!ui.panel && sel && (
             <div className="absolute top-2 left-2 flex items-center gap-2 max-w-[calc(100%-1rem)] rounded-lg border border-line bg-panel shadow-pop pl-3 pr-1 py-1 text-[12px]">
               <span className="font-medium truncate">{sel.name}</span>
+              {sel.ip && (
+                <Btn kind="ghost" className="!h-6 !px-2 !text-[11.5px]" title={`Copiar IP (${sel.ip})`} aria-label={`Copiar IP ${sel.ip}`} onClick={() => copyText(sel.ip!, "IP")}>
+                  <Copy size={12} /> <span className="font-mono">{sel.ip}</span>
+                </Btn>
+              )}
               <Btn kind="ghost" className="!h-6 !px-2 !text-[11.5px] !text-accent" onClick={() => setUi((u) => ({ ...u, panel: true, sec: { ...u.sec, detalle: true } }))}>
                 Ver detalle
               </Btn>
@@ -1310,6 +1986,143 @@ export function TopologyTool({
         </div>
             </Collapsible>
 
+            <Collapsible title="Alcance del descubrimiento" summary={scopeSummary} open={isOpen("alcance")} onToggle={(v) => setOpen("alcance", v)}>
+              <div className="space-y-2.5 text-[12px]">
+                <p className="text-[11px] text-muted leading-snug">
+                  Qué vecinos nuevos se agregan al descubrir. Los que ya están en el diagrama conservan su enlace. No cambia los comandos que se envían.
+                </p>
+                <div>
+                  <Toggle checked={ui.scope.skipEndpoints} onChange={(skipEndpoints) => setScope({ skipEndpoints })} label="Sin teléfonos IP ni access points" />
+                  <p className="mt-0.5 pl-10 text-[11px] text-muted leading-snug">Según la plataforma y las capacidades que anuncian por CDP/LLDP.</p>
+                </div>
+                <Label text="Solo estas redes (CIDR, separadas por coma)">
+                  <input
+                    className="field font-mono !text-[12px]"
+                    placeholder="10.0.0.0/8, 192.168.10.0/24"
+                    maxLength={500}
+                    aria-invalid={!!scopeErr}
+                    value={ui.scope.cidrs}
+                    onChange={(e) => setScope({ cidrs: e.target.value })}
+                  />
+                </Label>
+                {scopeErr ? (
+                  <p className="text-[11.5px] text-danger">{scopeErr}. Mientras tanto no se filtra por red.</p>
+                ) : (
+                  <p className="text-[11px] text-muted leading-snug">Un vecino sin IP de gestión informada se agrega igual.</p>
+                )}
+                <label className="flex items-center gap-2">
+                  <span className="text-muted">Profundidad máxima</span>
+                  <select className="field !h-7 !w-36 !text-[12px]" value={ui.scope.maxDepth} onChange={(e) => setScope({ maxDepth: Number(e.target.value) })}>
+                    <option value={0}>Sin límite</option>
+                    {[1, 2, 3, 4, 5, 6, 8, 10].map((d) => (
+                      <option key={d} value={d}>
+                        {plural(d, "salto", "saltos")}
+                      </option>
+                    ))}
+                  </select>
+                </label>
+              </div>
+            </Collapsible>
+
+            <Collapsible
+              title="Filtros"
+              summary={filtering ? `Mostrando ${shown.nodes.length} de ${view.nodes.length} equipos` : "Todo a la vista"}
+              open={isOpen("filtros")}
+              onToggle={(v) => setOpen("filtros", v)}
+              right={
+                filtering && (
+                  <Btn kind="ghost" className="!px-1.5 !text-[11.5px]" title="Quitar todos los filtros" onClick={() => setFilter(NO_FILTER)}>
+                    <X size={13} /> Quitar
+                  </Btn>
+                )
+              }
+            >
+              <div className="space-y-2.5 text-[12px]">
+                {chipGroup("Rol (estimado por plataforma y capacidades)", "roles", roleCounts, (k) => ROLE_LABEL[k])}
+                {chipGroup("Fabricante", "vendors", vendorCounts, (k) => VENDOR_LABEL[k])}
+                {chipGroup("Origen del enlace", "protos", protoCounts, (k) => (k === "manual" ? "Manual" : k))}
+                {chipGroup("Estado", "states", stateCounts, (k) => STATE_LABEL[k])}
+                <div className="flex flex-wrap items-center gap-2">
+                  <span className="text-muted">Solo a</span>
+                  <select
+                    className="field !h-7 !w-28 !text-[12px]"
+                    aria-label="Saltos desde el equipo foco"
+                    value={filter.hops}
+                    onChange={(e) => {
+                      const hops = Number(e.target.value);
+                      setFilter((f) => ({ ...f, hops, focus: hops ? (f.focus ?? selected ?? nodesByName[0]?.id) : f.focus }));
+                    }}
+                  >
+                    <option value={0}>sin límite</option>
+                    {[1, 2, 3, 4, 5].map((d) => (
+                      <option key={d} value={d}>
+                        {plural(d, "salto", "saltos")}
+                      </option>
+                    ))}
+                  </select>
+                  <span className="text-muted">de</span>
+                  <select
+                    className="field !h-7 flex-1 min-w-0 !text-[12px]"
+                    aria-label="Equipo foco"
+                    disabled={!filter.hops}
+                    value={filter.focus ?? ""}
+                    onChange={(e) => setFilter((f) => ({ ...f, focus: e.target.value || undefined }))}
+                  >
+                    {nodesByName.map((n) => (
+                      <option key={n.id} value={n.id}>
+                        {n.name}
+                      </option>
+                    ))}
+                  </select>
+                </div>
+                <div>
+                  <Toggle checked={ui.l2} onChange={(l2v) => setUi((u) => ({ ...u, l2: l2v }))} label="Puertos activos sin vecino" />
+                  <p className="mt-0.5 pl-10 text-[11px] text-muted leading-snug">
+                    Dibuja un nodo "L2 desconocido" junto a cada equipo con interfaces activas sin vecino CDP/LLDP (requiere "Estado de puertos"). Con más de {MAX_L2_NODES} equipos así, solo el del equipo seleccionado.
+                  </p>
+                </div>
+              </div>
+            </Collapsible>
+
+            <Collapsible
+              title="Revisiones de enlaces"
+              badge={issueList.length || undefined}
+              summary={
+                issueList.length
+                  ? [checkCount.crit && plural(checkCount.crit, "crítica", "críticas"), checkCount.warn && plural(checkCount.warn, "aviso", "avisos")].filter(Boolean).join(" · ")
+                  : "Sin hallazgos con lo leído"
+              }
+              open={isOpen("revisiones")}
+              onToggle={(v) => setOpen("revisiones", v)}
+            >
+              <div className="space-y-2 text-[12px]">
+                <p className="text-[11px] text-muted leading-snug">
+                  Dúplex, velocidad, VLAN nativa, trunk contra access, miembros fuera del agregado, puertos caídos, errores CRC y enlaces que solo ve un lado. Usa lo leído con
+                  "Estado de puertos" y lo que anuncia el vecino por CDP/LLDP; los errores son acumulados desde el último clear counters.
+                </p>
+                {issueList.length > 0 && (
+                  <ul className="space-y-1 max-h-64 overflow-y-auto">
+                    {issueList.map((x, i) => (
+                      <li key={`${x.k}${x.kind}${i}`}>
+                        <button
+                          type="button"
+                          onClick={() => focusOn(x.l.a)}
+                          className="w-full flex items-start gap-1.5 text-left rounded-md px-1.5 py-1 hover:bg-hover"
+                          title="Ver en el diagrama"
+                        >
+                          <TriangleAlert size={13} className={`mt-0.5 shrink-0 ${x.sev === "crit" ? "text-danger" : "text-warn"}`} aria-label={x.sev === "crit" ? "Crítica" : "Aviso"} />
+                          <span className="min-w-0">
+                            <span className="font-medium">{ISSUE_LABEL[x.kind]}</span>
+                            <span className="block text-[11.5px] text-muted [overflow-wrap:anywhere]">{x.text}</span>
+                          </span>
+                        </button>
+                      </li>
+                    ))}
+                  </ul>
+                )}
+              </div>
+            </Collapsible>
+
             <Collapsible
               title="Tráfico en enlaces"
               summary={trafficSummary}
@@ -1370,9 +2183,21 @@ export function TopologyTool({
                     {traffic.status.snmp.length > 0 && <p>SNMP: {traffic.status.snmp.join(", ")}</p>}
                     {traffic.status.cli.length > 0 && <p>Consola: {traffic.status.cli.join(", ")}</p>}
                     {traffic.status.none.length > 0 && (
-                      <p className="text-muted">
-                        Sin fuente: {traffic.status.none.join(", ")}. {trafficCli ? "Conecta su sesión o crea su perfil SNMP." : 'Crea su perfil SNMP o activa "También por consola".'}
-                      </p>
+                      <div className="space-y-1">
+                        {/* Sin SNMP ni consola no hay tráfico: el motivo y la acción, a la vista. */}
+                        <p className="text-warn">
+                          Sin datos de tráfico de {traffic.status.none.join(", ")}: {trafficCli ? "conecta su sesión o crea su perfil SNMP." : "no tiene perfil SNMP."}
+                        </p>
+                        {!trafficCli && terminals.length > 0 && (
+                          <button
+                            onClick={() => setTrafficCli(true)}
+                            className="h-7 px-2.5 rounded-md border border-line text-[12px] hover:bg-hover"
+                            title="Envía show interfaces, display interface o show interfaces extensive a su sesión conectada en cada lectura (solo consulta)"
+                          >
+                            Leer por consola
+                          </button>
+                        )}
+                      </div>
                     )}
                     {traffic.status.errors.map((e) => (
                       <p key={e} className="text-danger">
@@ -1489,6 +2314,11 @@ export function TopologyTool({
                     {sel.platform.length > 120 ? `${sel.platform.slice(0, 119)}…` : sel.platform}
                   </p>
                 )}
+                {lifecycle && modelFromPlatform(sel.platform) && (
+                  <p className="text-[11.5px]">
+                    <LifecycleChip model={modelFromPlatform(sel.platform)!} name={sel.name} />
+                  </p>
+                )}
                 <div className="space-y-1 max-h-56 overflow-y-auto">
                   {topo.links
                     .filter((l) => l.a === sel.id || l.b === sel.id)
@@ -1498,6 +2328,7 @@ export function TopologyTool({
                       const myPort = mine ? l.aPort : l.bPort;
                       const info = portLine(sel, myPort);
                       const editable = isUserProto(l.proto);
+                      const linkIssues = checks.get(linkKey(l));
                       return (
                         <div key={i} className="flex items-start rounded-md hover:bg-hover">
                           <button onClick={() => setSelected(other?.id ?? null)} className="flex-1 min-w-0 text-left px-2 py-1">
@@ -1505,6 +2336,15 @@ export function TopologyTool({
                               {myPort || "?"} → {other?.name} {(mine ? l.bPort : l.aPort) || ""}
                             </span>
                             {!isPhysicalProto(l.proto) && <span className="ml-1.5 text-[11px] text-muted">{protoLabel(l)}</span>}
+                            {linkIssues && (
+                              <TriangleAlert
+                                size={12}
+                                className={`inline ml-1.5 -mt-0.5 ${worstSev(linkIssues) === "crit" ? "text-danger" : "text-warn"}`}
+                                aria-label={linkIssues.map((i) => i.text).join(". ")}
+                              >
+                                <title>{linkIssues.map((i) => i.text).join("\n")}</title>
+                              </TriangleAlert>
+                            )}
                             {info && <span className="block text-[11px] text-muted truncate">{info}</span>}
                           </button>
                           {editable && (
@@ -1557,6 +2397,16 @@ export function TopologyTool({
                     Hasta aquí
                   </Btn>
                 </div>
+                <Btn
+                  className="w-full !text-[11.5px]"
+                  title="Muestra solo los equipos a 2 saltos de este (se ajusta en Filtros)"
+                  onClick={() => {
+                    setFilter((f) => ({ ...f, hops: f.hops || 2, focus: sel.id }));
+                    setOpen("filtros", true);
+                  }}
+                >
+                  <ListFilter size={13} /> Ver su vecindario
+                </Btn>
                 {!sel.explored &&
                   (() => {
                     const saved = savedFor(sel);
@@ -1588,9 +2438,36 @@ export function TopologyTool({
                       </div>
                     );
                   })()}
+                {/* Equipo que solo se alcanza desde el actual: ssh/telnet en la misma pestaña (también ya explorado,
+                    p. ej. para volver a leer su tráfico por consola). */}
+                {sel.ip && term && mode === "cli" && nodeId(sel.name) !== nodeId(here ?? "") && (
+                  <div className="space-y-1.5 pt-1.5 border-t border-line">
+                    <p className="text-[11.5px] text-muted leading-snug">
+                      ¿No llegas desde tu PC? Salta desde <span className="font-medium text-fg">{here}</span> en su misma pestaña.
+                    </p>
+                    <div className="flex items-center gap-2">
+                      <select className="field !h-7 !text-[12px] !w-auto" aria-label="Protocolo del salto" value={proto} onChange={(e) => setProto(e.target.value as "ssh" | "telnet")}>
+                        <option value="ssh">{vendor === "huawei" ? "stelnet" : "ssh"}</option>
+                        <option value="telnet">telnet</option>
+                      </select>
+                      {proto === "ssh" && vendor !== "huawei" && (
+                        <input
+                          className="field !h-7 !text-[12px]"
+                          placeholder={`Usuario${term.session.username ? ` (${term.session.username})` : ""}`}
+                          aria-label="Usuario para el salto"
+                          value={hopUser}
+                          onChange={(e) => setHopUser(e.target.value)}
+                        />
+                      )}
+                    </div>
+                    <Btn className="w-full" disabled={busy} onClick={() => hopTo(sel)} title="Envía el comando de salto en la pestaña del equipo actual; te autenticas ahí">
+                      Saltar desde {here}
+                    </Btn>
+                  </div>
+                )}
                 {sel.ip && (
-                  <Btn className="w-full" onClick={() => writeText(sel.ip!)}>
-                    Copiar IP
+                  <Btn className="w-full" title={`Copia ${sel.ip} (también ${isMac ? "⌘" : "Ctrl"}+C con el equipo seleccionado en el mapa, o clic derecho sobre él)`} onClick={() => copyText(sel.ip!, "IP")}>
+                    <Copy size={13} /> Copiar IP
                   </Btn>
                 )}
               </div>

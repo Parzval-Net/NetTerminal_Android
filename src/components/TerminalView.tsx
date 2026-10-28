@@ -82,7 +82,7 @@ const NEWLINE = { cr: "\r", lf: "\n", crlf: "\r\n" } as const;
  * Comandos que muestran modelo y versión (abreviados o no): show version, display version,
  * get system status/version, show sysinfo/info, fap-get-status. Tras uno, se lee la pantalla.
  */
-const VERSION_CMD = /(?:^|[#>\]$%:]\s*)(?:sh\w* +ver\w*|dis\w* +ver\w*|get +sys\w* +(?:stat|ver)\w*|show +(?:sysinfo|info)|fap-get-status)\b/i;
+const VERSION_CMD = /(?:^|[#>\]$%:]\s*)(?:sh\w* +(?:ver|inv)\w*|dis\w* +ver\w*|get +sys\w* +(?:stat|ver)\w*|show +(?:sysinfo|info)|fap-get-status)\b/i;
 const MAX_RECONNECTS = 30;
 /** Espera creciente (5, 10, 20, 40, 60 s…) para no gatillar bloqueos de cuenta en TACACS/RADIUS. */
 const reconnectSecs = (attempt: number) => Math.min(60, 5 * 2 ** Math.max(0, attempt - 1));

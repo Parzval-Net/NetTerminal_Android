@@ -4,18 +4,17 @@ import { runOnDevice } from "../../lib/deviceRun";
 import { vendorFor } from "../../lib/commands";
 import { computeRisk } from "../../lib/packs";
 import { SnmpProfile, targetParams } from "../../lib/snmp";
-import { TopoNode, TopoVendor, Topology, canonPort, isCliError, knownAddrs, nodeId } from "../../lib/topology";
+import { TopoNode, TopoVendor, Topology, canonPort, isCliError, knownAddrs, nodeId, promptName } from "../../lib/topology";
 import { OID, TopoRead, ifIndexByPort, ifNames } from "../../lib/topoSnmp";
 import {
   CounterSample,
   MAX_TRAFFIC_IFACES,
   PortRate,
-  TRAFFIC_COMMANDS,
-  TRAFFIC_FALLBACK,
   counterOids,
   parseCliCounters,
   parseCounterGets,
   portRate,
+  trafficCommands,
 } from "../../lib/topoTraffic";
 import type { TerminalRef } from "./FileManager";
 
@@ -57,7 +56,9 @@ export function profileFor(n: TopoNode, profiles: SnmpProfile[]): SnmpProfile | 
   return profiles.find((p) => p.saved && p.version !== "1" && (addrs.includes(p.host.trim()) || (!!p.name && nodeId(p.name) === n.id)));
 }
 
-const terminalFor = (n: TopoNode, terminals: TerminalRef[]) =>
+/** Pestaña del equipo: la del salto que llegó a él (si la hay) o la que apunta a su IP o nombre. */
+const terminalFor = (n: TopoNode, terminals: TerminalRef[], via?: Record<string, string>) =>
+  (via?.[n.id] ? terminals.find((t) => t.connId === via[n.id]) : undefined) ??
   terminals.find((t) => (t.host && knownAddrs(n).includes(t.host)) || nodeId(t.name) === n.id);
 
 interface IfCache {
@@ -79,20 +80,25 @@ export function useTopoTraffic({
   terminals,
   opts,
   visible,
+  via,
 }: {
   topo: Topology;
   profiles: SnmpProfile[];
   terminals: TerminalRef[];
   opts: TrafficOptions;
   visible: boolean;
+  /** Equipos alcanzados saltando dentro de una pestaña: id del equipo → conexión. */
+  via?: Record<string, string>;
 }) {
   const [rates, setRates] = useState<Map<string, Map<string, PortRate>>>(() => new Map());
   const [status, setStatus] = useState<TrafficStatus>(EMPTY);
-  const ctx = useRef({ topo, profiles, terminals, cli: opts.cli });
-  ctx.current = { topo, profiles, terminals, cli: opts.cli };
+  const ctx = useRef({ topo, profiles, terminals, cli: opts.cli, via });
+  ctx.current = { topo, profiles, terminals, cli: opts.cli, via };
   const prev = useRef(new Map<string, Map<string, CounterSample>>());
   const ifCache = useRef(new Map<string, IfCache>());
   const inFlight = useRef(new Set<string>());
+  /** Comando de contadores que respondió en cada equipo: no se reintentan los demás en cada ronda. */
+  const cliCmd = useRef(new Map<string, string>());
   const ratesRef = useRef(rates);
 
   /** El descubrimiento por SNMP ya leyó ifName: se reutiliza sin otra lectura. */
@@ -147,18 +153,27 @@ export function useTopoTraffic({
       return out;
     };
 
-    const readCli = async (term: TerminalRef, ports: string[]): Promise<Map<string, CounterSample>> => {
-      const vendor = vendorFor(term.highlight) as TopoVendor;
-      let cmd = TRAFFIC_COMMANDS[vendor];
-      if (!cmd) throw new Error("sin comando de contadores para este fabricante");
-      // Defensa en profundidad: solo se envía un comando de consulta.
-      if (computeRisk(cmd) !== "read") throw new Error("comando no permitido");
-      let out = await runOnDevice(term.connId, cmd, 60);
-      const alt = TRAFFIC_FALLBACK[cmd];
-      if (alt && isCliError(out) && computeRisk(alt) === "read") {
-        cmd = alt;
+    const readCli = async (n: TopoNode, term: TerminalRef, ports: string[]): Promise<Map<string, CounterSample>> => {
+      const h = term.highlight && term.highlight !== "off" ? (vendorFor(term.highlight) as TopoVendor) : undefined;
+      const known = cliCmd.current.get(n.id);
+      // Defensa en profundidad: solo se envían comandos de consulta.
+      const cmds = (known ? [known] : trafficCommands(term.session.platform, h)).filter((c) => computeRisk(c) === "read");
+      if (!cmds.length) throw new Error("sin comando de contadores para este fabricante");
+      let out = "";
+      for (const cmd of cmds) {
         out = await runOnDevice(term.connId, cmd, 60);
+        if (!isCliError(out)) {
+          cliCmd.current.set(n.id, cmd);
+          break;
+        }
       }
+      if (isCliError(out)) {
+        cliCmd.current.delete(n.id);
+        throw new Error(`el equipo no reconoce ${cmds.join(" ni ")}`);
+      }
+      // Con saltos, la pestaña puede estar ahora en otro equipo: sus contadores no son de este.
+      const who = promptName(out);
+      if (who && nodeId(who) !== n.id) throw new Error(`su pestaña está ahora en ${who}`);
       const ts = Date.now();
       const counters = parseCliCounters(out);
       const res = new Map<string, CounterSample>();
@@ -171,7 +186,7 @@ export function useTopoTraffic({
 
     const tick = async () => {
       if (document.visibilityState === "hidden") return;
-      const { topo: t, profiles: ps, terminals: ts, cli } = ctx.current;
+      const { topo: t, profiles: ps, terminals: ts, cli, via: hopVia } = ctx.current;
       const st: TrafficStatus = { snmp: [], cli: [], none: [], errors: [], last: Date.now() };
       const jobs = t.nodes
         .filter((n) => n.explored)
@@ -179,7 +194,7 @@ export function useTopoTraffic({
           const ports = linkedPorts(t, n.id);
           if (!ports.length) return null;
           const p = profileFor(n, ps);
-          const term = !p && cli ? terminalFor(n, ts) : undefined;
+          const term = !p && cli ? terminalFor(n, ts, hopVia) : undefined;
           if (!p && !term) {
             st.none.push(n.name);
             return null;
@@ -189,7 +204,7 @@ export function useTopoTraffic({
           if (inFlight.current.has(n.id)) return [n.id, ratesRef.current.get(n.id) ?? new Map()];
           inFlight.current.add(n.id);
           try {
-            const samples = p ? await readSnmp(n, p, ports) : await readCli(term!, ports);
+            const samples = p ? await readSnmp(n, p, ports) : await readCli(n, term!, ports);
             const before = prev.current.get(n.id) ?? new Map<string, CounterSample>();
             const out = new Map<string, PortRate>();
             for (const [k, s] of samples) out.set(k, portRate(before.get(k), s));

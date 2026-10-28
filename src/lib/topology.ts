@@ -2,6 +2,7 @@
  * Topología desde CDP/LLDP y vecinos de ruteo (OSPF, EIGRP, BGP): comandos por fabricante,
  * lectura de salidas, grafo, elementos manuales y sugerencias desde descripciones y tablas MAC.
  */
+import { isRejected, promptName } from "./cliText";
 
 /** Origen de un enlace. */
 export type LinkProto = "CDP" | "LLDP" | "OSPF" | "EIGRP" | "BGP" | "manual" | "descripción" | "MAC/OUI";
@@ -28,6 +29,12 @@ export interface Neighbor {
   addrs?: string[];
   /** Sesión BGP que no es un enlace físico (iBGP entre loopbacks, multihop). */
   logical?: boolean;
+  /** VLAN nativa (CDP) o PVID (LLDP) que anuncia el vecino en su puerto. */
+  remoteNative?: string;
+  /** Dúplex que anuncia el vecino en su puerto (CDP). */
+  remoteDuplex?: string;
+  /** Capacidades anunciadas (CDP "Capabilities", LLDP "Enabled Capabilities"). */
+  caps?: string;
 }
 
 /** Estado de una interfaz local, leído con comandos de consulta. */
@@ -37,6 +44,18 @@ export interface PortInfo {
   desc?: string;
   /** Port-channel / Eth-Trunk / ae al que pertenece. */
   group?: string;
+  /** Dúplex (full, half, a-full) según el propio equipo o lo que anuncia el vecino por CDP. */
+  duplex?: string;
+  /** VLAN de acceso o "trunk" (columna Vlan de show interfaces status). */
+  vlan?: string;
+  /** VLAN nativa o PVID, anunciada por el vecino conectado (CDP/LLDP). */
+  native?: string;
+  /** Estado como miembro del agregado: P (en el bundle), D, s, I, H o Up/Down/Unselect (Huawei). */
+  lag?: string;
+  /** Errores FCS/CRC acumulados (Cisco show interfaces counters errors). */
+  crc?: string;
+  /** Errores de entrada acumulados (Huawei display interface brief). */
+  inErr?: string;
 }
 
 export interface TopoNode {
@@ -58,6 +77,8 @@ export interface TopoNode {
   manual?: boolean;
   /** Tabla MAC por interfaz local (clave canonPort), leída con la fuente MAC/OUI. */
   macs?: Record<string, MacPort>;
+  /** Capacidades anunciadas por CDP/LLDP (Router, Switch, Phone, W, T…), para el rol. */
+  caps?: string;
 }
 
 export interface TopoLink {
@@ -69,6 +90,8 @@ export interface TopoLink {
   proto: LinkProto | string;
   /** Sesión lógica (BGP no directamente conectado): no es un salto físico. */
   logical?: boolean;
+  /** Equipos explorados que informaron este enlace (CDP/LLDP), para detectar asimetrías. */
+  seenBy?: string[];
 }
 
 export interface Topology {
@@ -128,7 +151,7 @@ export const ADDRESS_COMMANDS: Record<TopoVendor, string | undefined> = {
 
 /** Comandos de estado de interfaces y agregados (opcionales, de solo lectura). */
 export const PORT_COMMANDS: Record<TopoVendor, string[]> = {
-  cisco: ["show interfaces status", "show etherchannel summary"],
+  cisco: ["show interfaces status", "show etherchannel summary", "show interfaces counters errors"],
   huawei: ["display interface brief", "display interface description", "display eth-trunk"],
   juniper: ["show interfaces descriptions"],
   fortinet: [],
@@ -148,9 +171,7 @@ export const junosDetailCommand = (iface: string): string | null => (isSafeIface
  * deshabilitado (IOS responde "% CDP is not enabled", "% LLDP is not enabled", "% BGP not active").
  */
 export function isCliError(out: string): boolean {
-  return /% ?Invalid (input|command)|% ?Unrecognized command|% ?Incomplete command|Error: ?Unrecognized command|Error: ?Wrong parameter|syntax error|unknown command|Unknown action|Command fail|Invalid command|^\s*% ?(CDP|LLDP) is not enabled|^\s*% ?BGP not active/im.test(
-    out,
-  );
+  return isRejected(out) || /^\s*% ?(CDP|LLDP) is not enabled|^\s*% ?BGP not active/im.test(out);
 }
 
 const IP_RE = String.raw`\d{1,3}(?:\.\d{1,3}){3}`;
@@ -203,38 +224,94 @@ export function shortPort(p: string): string {
  * Forma canónica de una interfaz para comparar entre fabricantes:
  * GE0/0/1 (Huawei) = GigabitEthernet0/0/1 (Cisco) = Gi0/0/1 -> "gi0/0/1".
  */
+/** Caché de canonPort: el mismo puerto se normaliza miles de veces por render (claves, revisiones). */
+const canonCache = new Map<string, string>();
+
 export function canonPort(p: string): string {
+  const hit = canonCache.get(p);
+  if (hit !== undefined) return hit;
+  const r = canonPortRaw(p);
+  if (canonCache.size > 20000) canonCache.clear();
+  canonCache.set(p, r);
+  return r;
+}
+
+function canonPortRaw(p: string): string {
   const s = p
     .trim()
     .toLowerCase()
     .replace(/\s+/g, "")
     .replace(/^((?:ge|xe|et|ae|mge)-[\d/]+)\.0$/, "$1");
+  // Cada familia con su nombre completo y las abreviaturas de Cisco: "show interfaces" usa el
+  // nombre completo, LLDP la forma corta (Gi1/0/1, Tw1/0/1) y "show cdp neighbors" la de tres
+  // letras (Gig 1/0/1, Ten, Fas, For, Hun). Sin unificarlas, el enlace no encuentra sus
+  // contadores. Todas exigen un dígito después, y las más largas van primero.
   const families: [RegExp, string][] = [
-    [/^(hundredgig(abit)?e(thernet)?|hu|100ge)/, "hu"],
-    [/^(fortygig(abit)?e(thernet)?|fo|40ge)/, "fo"],
-    [/^(twentyfivegig(abit)?e(thernet)?|twe|25ge)/, "twe"],
-    [/^(tengig(abit)?e(thernet)?|xgigabitethernet|xge|te|10ge)/, "te"],
-    [/^(gigabitethernet|gige|gi|ge)(?=\d)/, "gi"],
-    [/^(fastethernet|fa)/, "fa"],
+    [/^(fourhundredgig(abit)?e(thernet)?|fou|400ge)(?=\d)/, "fou"],
+    [/^(hundredgig(abit)?e(thernet)?|hun|hu|100ge)(?=\d)/, "hu"],
+    [/^(fiftygig(abit)?e(thernet)?|fif|50ge)(?=\d)/, "fif"],
+    [/^(fortygig(abit)?e(thernet)?|for|fo|40ge)(?=\d)/, "fo"],
+    [/^(twentyfivegig(abit)?e(thernet)?|twe|25ge)(?=\d)/, "twe"],
+    [/^(tengig(abit)?e(thernet)?|xgigabitethernet|xge|ten|te|10ge)(?=\d)/, "te"],
+    [/^(fivegig(abit)?e(thernet)?|fiv|fi)(?=\d)/, "fi"],
+    [/^(twogig(abit)?e(thernet)?|two|tw)(?=\d)/, "tw"],
+    [/^(appgig(abit)?e(thernet)?|app|ap)(?=\d)/, "ap"],
+    [/^(gigabitethernet|gige|gig|gi|ge)(?=\d)/, "gi"],
+    [/^(fastethernet|fas|fa)(?=\d)/, "fa"],
     [/^(port-channel|po|eth-trunk|bundle-ether|be)(?=\d)/, "po"],
     [/^(ethernet|eth|et)(?=\d)/, "eth"],
+    [/^(vlan|vl)(?=\d)/, "vl"],
   ];
   for (const [re, fam] of families) if (re.test(s)) return s.replace(re, fam);
   return s;
 }
 
-/** Hostname desde el prompt al final de la salida (Router#, <SW>, user@host>, FGT #). */
-export function promptName(output: string): string | null {
-  const last = output.trimEnd().split("\n").pop() ?? "";
-  const m =
-    last.match(/^<([\w.\-]+)>\s*$/) ||
-    // Tras el nombre, un separador explícito: "[\w.-]+[^\]]*" era cuadrático en una línea larga.
-    last.match(/^\[~?\*?([\w.\-]+)(?:[^\]\w.\-][^\]]*)?\]\s*$/) ||
-    last.match(/^[\w.\-]+@([\w.\-]+)[>#%]\s*$/) ||
-    last.match(/^([\w.\-]+)(?:\s\([^)]*\))?\s?[#$]\s*$/) ||
-    last.match(/^([\w.\-]+)(?:\([^)]*\))?[#>]\s*$/);
-  return m ? m[1] : null;
+/**
+ * Fabricante según el prompt al final de la salida: <SW> o [SW] Huawei/H3C, usuario@equipo>
+ * Junos, "FGT #" (espacio antes de #) FortiOS y Router# o Router> Cisco. Tras saltar a otro
+ * equipo desde la misma sesión, la topología cambia sola la sintaxis de los comandos.
+ */
+export function vendorFromPrompt(output: string): TopoVendor | null {
+  const last = output.trimEnd().split("\n").pop()?.trim() ?? "";
+  if (/^<[\w.\-]+>$/.test(last) || /^\[~?\*?[\w.\-]+(?:[^\]\w.\-][^\]]*)?\]$/.test(last)) return "huawei";
+  if (/^[\w.\-]+@[\w.\-]+[>#%]$/.test(last)) return "juniper";
+  if (/^[\w.\-]+(?:\s\([^)]*\))?\s[#$]$/.test(last)) return "fortinet";
+  if (/^[\w.\-]+(?:\([^)]*\))?[#>]$/.test(last)) return "cisco";
+  return null;
 }
+
+/** Usuario que se puede escribir en un comando de salto (sin espacios ni opciones). */
+const HOP_USER = /^[A-Za-z0-9][\w.@\\-]{0,63}$/;
+
+/**
+ * Comando para saltar al vecino desde la consola del equipo actual (la misma pestaña), cuando
+ * el vecino solo es alcanzable desde ese equipo y no desde el PC. La IP viene de un vecino
+ * (dato del equipo): solo una IPv4/IPv6 literal. El usuario, sin espacios ni guiones al inicio.
+ * - Cisco IOS/IOS-XE: "ssh -l usuario IP"; NX-OS: "ssh usuario@IP"; Telnet: "telnet IP".
+ * - Huawei VRP: "stelnet IP" (pide el usuario en el equipo) o "telnet IP".
+ * - Junos: "ssh usuario@IP" o "telnet IP".
+ * - FortiOS: "execute ssh usuario@IP" o "execute telnet IP".
+ */
+export function hopCommand(vendor: TopoVendor, platform: string | undefined, proto: "ssh" | "telnet", user: string, ip: string): string | null {
+  if (!isIpv4(ip) && !isIpv6(ip)) return null;
+  const u = user.trim();
+  const needsUser = proto === "ssh" && vendor !== "huawei";
+  if (needsUser && !HOP_USER.test(u)) return null;
+  if (proto === "telnet") return vendor === "fortinet" ? `execute telnet ${ip}` : `telnet ${ip}`;
+  switch (vendor) {
+    case "huawei":
+      return `stelnet ${ip}`;
+    case "juniper":
+      return `ssh ${u}@${ip}`;
+    case "fortinet":
+      return `execute ssh ${u}@${ip}`;
+    default:
+      return platform === "nxos" ? `ssh ${u}@${ip}` : `ssh -l ${u} ${ip}`;
+  }
+}
+
+/** Hostname desde el prompt al final de la salida (Router#, <SW>, user@host>, FGT #). */
+export { promptName };
 
 function field(block: string, re: RegExp): string | undefined {
   return block.match(re)?.[1]?.trim() || undefined;
@@ -259,6 +336,9 @@ export function parseCdp(out: string): Neighbor[] {
           ip: usableIp(field(b, /(?:IP(?:v4)? [Aa]ddress|IP address):\s*(\d+\.\d+\.\d+\.\d+)/)),
           platform: field(b, /Platform:\s*([^,\n]+)/),
           proto: "CDP",
+          remoteNative: field(b, /Native VLAN:\s*(\d+)/),
+          remoteDuplex: field(b, /Duplex:\s*(\S+)/),
+          caps: field(b, /Capabilities:\s*([^\n]+)/),
         },
       ];
     });
@@ -284,6 +364,8 @@ export function parseCiscoLldp(out: string): Neighbor[] {
           ip: usableIp(mgmtAt(b) >= 0 ? field(b.slice(mgmtAt(b)), /IP:\s*(\d+\.\d+\.\d+\.\d+)/) : undefined),
           platform: field(b, /System Description:\s*\n\s*([^\n]+)/),
           proto: "LLDP",
+          remoteNative: field(b, /Vlan ID:\s*(\d+)/),
+          caps: field(b, /Enabled Capabilities:\s*([^\n]+)/),
         },
       ];
     });
@@ -307,6 +389,8 @@ export function parseHuaweiLldp(out: string): Neighbor[] {
         ip: usableIp(field(nb, /Management address\s*:\s*(\d+\.\d+\.\d+\.\d+)/)),
         platform: field(nb, /System description\s*:\s*([^\n]+)/),
         proto: "LLDP",
+        remoteNative: field(nb, /Port VLAN ID\(PVID\)\s*:\s*(\d+)/i),
+        caps: field(nb, /System capabilities enabled\s*:\s*([^\n]+)/i),
       });
     }
   }
@@ -395,6 +479,9 @@ export function parseNeighbors(vendor: string, outputs: string[]): Neighbor[] {
       prev.ip ??= n.ip;
       prev.platform ??= n.platform;
       prev.group ??= n.group;
+      prev.remoteNative ??= n.remoteNative;
+      prev.remoteDuplex ??= n.remoteDuplex;
+      prev.caps ??= n.caps;
       if (/^\d+$/.test(prev.remotePort) && !/^\d+$/.test(n.remotePort)) prev.remotePort = n.remotePort;
     }
   }
@@ -609,8 +696,8 @@ export function parsePortInfo(outputs: string[]): Record<string, PortInfo> {
       for (const l of lines.slice(hi + 1)) {
         if (!/^\S/.test(l) || /^-+/.test(l) || /[#>]\s*$/.test(l)) continue;
         const r = sliceRow(l.slice(0, vlanAt), cols.filter((c) => c.name !== "Vlan"));
-        const [, , speed] = l.slice(vlanAt).trim().split(/\s+/);
-        put(r.Port, { status: r.Status, speed, desc: r.Name });
+        const [vlan, duplex, speed] = l.slice(vlanAt).trim().split(/\s+/);
+        put(r.Port, { status: r.Status, speed, desc: r.Name, vlan, duplex });
       }
       continue;
     }
@@ -638,7 +725,7 @@ export function parsePortInfo(outputs: string[]): Record<string, PortInfo> {
           continue;
         }
         if (!group) continue;
-        for (const m of l.matchAll(/(\S+)\((\w+)\)/g)) if (!/^Po\d+$/.test(m[1])) put(m[1], { group });
+        for (const m of l.matchAll(/(\S+)\((\w+)\)/g)) if (!/^Po\d+$/.test(m[1])) put(m[1], { group, lag: m[2] });
       }
       continue;
     }
@@ -652,12 +739,23 @@ export function parsePortInfo(outputs: string[]): Record<string, PortInfo> {
       }
       continue;
     }
-    // Huawei "display interface brief": Interface PHY Protocol InUti ...
+    // Huawei "display interface brief": Interface PHY Protocol InUti OutUti inErrors outErrors
     hi = lines.findIndex((l) => /^Interface\s+PHY\s+Protocol/.test(l));
     if (hi >= 0) {
       for (const l of lines.slice(hi + 1)) {
-        const m = l.match(/^(?=\S*\d)(\S+)\s+(\S+)\s+(\S+)/);
-        if (m) put(m[1], { status: `${m[2]}/${m[3]}` });
+        const m = l.match(/^(?=\S*\d)(\S+)\s+(\S+)\s+(\S+)(?:\s+\S+\s+\S+\s+(\d+)\b)?/);
+        if (m) put(m[1], { status: `${m[2]}/${m[3]}`, inErr: m[4] });
+      }
+      continue;
+    }
+    // Cisco "show interfaces counters errors" (IOS/IOS-XE/NX-OS): Port Align-Err FCS-Err Xmit-Err Rcv-Err ...
+    hi = lines.findIndex((l) => /^Port\s+Align-Err\s+FCS-Err/.test(l));
+    if (hi >= 0) {
+      for (const l of lines.slice(hi + 1)) {
+        // La segunda tabla (Single-Col, Multi-Col…) tiene otro encabezado: ahí termina la primera.
+        if (/^Port\s/.test(l)) break;
+        const m = l.match(/^(?=\S*\d)(\S+)\s+\d+\s+(\d+)\b/);
+        if (m) put(m[1], { crc: m[2] });
       }
       continue;
     }
@@ -669,7 +767,7 @@ export function parsePortInfo(outputs: string[]): Record<string, PortInfo> {
         if (g) group = g[1];
         // Prefijo en un lookahead: "(?:…|\S*Ethernet)\S*\d" era cuadrático en una línea larga.
         const m = l.match(/^(?=\d+GE|XGE|GE|MultiGE|\S*Ethernet)(\S*\d)\s+(Up|Down|Selected|Unselect|Unselected|Indep)\b/i);
-        if (m && group) put(m[1], { group });
+        if (m && group) put(m[1], { group, lag: m[2] });
       }
       continue;
     }
@@ -721,8 +819,13 @@ function cleanNeighbor(n: Neighbor): Neighbor {
     platform: cleanOpt(n.platform),
     group: cleanOpt(n.group, LIMITS.port),
     addrs: n.addrs?.filter(isIpv4),
+    remoteNative: cleanOpt(n.remoteNative, 8),
+    remoteDuplex: cleanOpt(n.remoteDuplex, 16),
+    caps: cleanOpt(n.caps, 120),
   };
 }
+
+const PORT_FIELDS = ["status", "speed", "desc", "group", "duplex", "vlan", "native", "lag", "crc", "inErr"] as const;
 
 function cleanPorts(ports: Record<string, PortInfo> | undefined): Record<string, PortInfo> | undefined {
   if (!ports) return undefined;
@@ -731,7 +834,7 @@ function cleanPorts(ports: Record<string, PortInfo> | undefined): Record<string,
     const key = clean(k, LIMITS.port);
     if (!key || UNSAFE_KEYS.has(key)) continue;
     const info: PortInfo = {};
-    for (const f of ["status", "speed", "desc", "group"] as const) {
+    for (const f of PORT_FIELDS) {
       const v = cleanOpt(p[f], f === "desc" ? MAX_DEVICE_TEXT : LIMITS.port);
       if (v) info[f] = v;
     }
@@ -797,6 +900,7 @@ export function mergeNeighbors(
     }
     if (extra.ip && !n.ip) n.ip = extra.ip;
     if (extra.platform && !n.platform) n.platform = extra.platform;
+    if (extra.caps) n.caps = extra.caps;
     if (extra.explored) {
       n.explored = true;
       // Un equipo explorado ya no es una suposición: deja de ser manual o solo-dirección.
@@ -807,7 +911,12 @@ export function mergeNeighbors(
     return n;
   };
   const self = ensure(device.name, { ip: device.ip, platform: device.platform, explored: true });
-  if (device.ports) self.ports = { ...self.ports, ...device.ports };
+  // Por puerto: lo que anunció un vecino (VLAN nativa, dúplex) se conserva junto a la lectura nueva.
+  if (device.ports) {
+    const merged: Record<string, PortInfo> = { ...self.ports };
+    for (const [k, p] of Object.entries(device.ports)) merged[k] = { ...merged[k], ...p };
+    self.ports = merged;
+  }
   // La tabla MAC es una foto del momento: una lectura nueva reemplaza la anterior.
   if (device.macs) self.macs = device.macs;
   if (device.addrs?.length) self.addrs = unionAddrs(self.addrs, device.addrs);
@@ -830,11 +939,24 @@ export function mergeNeighbors(
   };
 
   const same = (x: string, y: string) => !!x && !!y && canonPort(x) === canonPort(y);
+  // Lo que este equipo informa se vuelve a anotar desde cero: un vecino que dejó de ver no queda como visto.
+  for (const l of links) if (l.seenBy && (l.a === self.id || l.b === self.id)) l.seenBy = l.seenBy.filter((x) => x !== self.id);
   for (const nb of neighbors) {
-    const other = nb.byAddr ? ensureAddr(nb) : ensure(nb.name, { ip: nb.ip, platform: nb.platform });
+    const other = nb.byAddr ? ensureAddr(nb) : ensure(nb.name, { ip: nb.ip, platform: nb.platform, caps: nb.caps });
     if (!other || other.id === self.id) continue;
     const aPort = nb.localPort ? shortPort(nb.localPort) : "";
     const bPort = nb.remotePort ? shortPort(nb.remotePort) : "";
+    // VLAN nativa y dúplex que el vecino anuncia de su propio puerto.
+    if (bPort && (nb.remoteNative || nb.remoteDuplex)) {
+      const k = canonPort(bPort);
+      if (!UNSAFE_KEYS.has(k)) {
+        const cur = other.ports?.[k] ?? {};
+        other.ports = {
+          ...other.ports,
+          [k]: { ...cur, ...(nb.remoteNative ? { native: nb.remoteNative } : {}), ...(nb.remoteDuplex ? { duplex: nb.remoteDuplex } : {}) },
+        };
+      }
+    }
     if (nb.group && aPort) {
       const k = canonPort(aPort);
       self.ports = { ...self.ports, [k]: { ...self.ports?.[k], group: self.ports?.[k]?.group ?? shortPort(nb.group) } };
@@ -849,6 +971,10 @@ export function mergeNeighbors(
     // BGP sin interfaz: una sesión por par; si es directa y el par ya está unido, no aporta.
     if (!dup && nb.proto === "BGP" && !aPort) dup = pair.find((l) => l.proto === "BGP") ?? (nb.logical ? undefined : pair[0]);
     const link: TopoLink = { a: self.id, aPort, b: other.id, bPort, proto: nb.proto, ...(nb.logical ? { logical: true } : {}) };
+    const seen = (l: TopoLink) => {
+      if (isPhysicalProto(nb.proto)) l.seenBy = [...new Set([...(l.seenBy ?? []), self.id])];
+    };
+    seen(dup ?? link);
     if (!dup) links.push(link);
     else if (protoRank(nb.proto) > protoRank(dup.proto)) {
       // Un origen más confiable reemplaza al anterior (manual o ruteo confirmado por CDP/LLDP).
@@ -900,9 +1026,9 @@ export function layout(t: Topology): Topology {
 }
 
 /** Grupo (Port-channel, Eth-Trunk, ae) de un enlace, visto desde cualquiera de sus extremos. */
-export function linkGroup(t: Topology, l: TopoLink): string | undefined {
-  const a = t.nodes.find((n) => n.id === l.a);
-  const b = t.nodes.find((n) => n.id === l.b);
+export function linkGroup(t: Topology, l: TopoLink, byId?: Map<string, TopoNode>): string | undefined {
+  const a = byId ? byId.get(l.a) : t.nodes.find((n) => n.id === l.a);
+  const b = byId ? byId.get(l.b) : t.nodes.find((n) => n.id === l.b);
   return portOf(a, l.aPort)?.group ?? portOf(b, l.bPort)?.group;
 }
 
@@ -1184,7 +1310,9 @@ export function linkGeometry(t: Topology, links: TopoLink[], gap = 26) {
   const byPair = new Map<string, TopoLink[]>();
   for (const l of links) {
     const k = [l.a, l.b].sort().join("~");
-    byPair.set(k, [...(byPair.get(k) ?? []), l]);
+    const list = byPair.get(k);
+    if (list) list.push(l);
+    else byPair.set(k, [l]);
   }
   const pos = new Map(t.nodes.map((n) => [n.id, n]));
   return links.flatMap((l) => {

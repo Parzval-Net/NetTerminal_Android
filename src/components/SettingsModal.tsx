@@ -12,7 +12,7 @@ import { HighlightSettings } from "./HighlightSettings";
 import { AlertSettings } from "./AlertSettings";
 import { CredentialSettings } from "./CredentialSettings";
 import { allFolders } from "../lib/folders";
-import { readText, writeText } from "@tauri-apps/plugin-clipboard-manager";
+import { readText } from "@tauri-apps/plugin-clipboard-manager";
 import { Settings, UpdateInfo, defaultSettings } from "../lib/settings";
 import { Session } from "../types";
 import { TermPreset, fontStack, presets } from "../lib/theme";
@@ -30,6 +30,7 @@ interface Props {
   onImportSessions: (list: Session[]) => Promise<number>;
   /** Importación desde archivos de otros clientes. */
   onImportFile?: () => void;
+  onExportFile: () => void;
   initialSection?: Section;
   mcpStatus: string;
   onChange: (patch: Partial<Settings>) => void;
@@ -93,6 +94,7 @@ export function SettingsModal({
   sessions,
   onImportSessions,
   onImportFile,
+  onExportFile,
   initialSection,
   mcpStatus,
   onChange,
@@ -140,14 +142,6 @@ export function SettingsModal({
   const flash = (msg: string) => {
     setNotice(msg);
     window.setTimeout(() => setNotice(""), 3500);
-  };
-
-  const exportSessions = async () => {
-    const list = sessions
-      .filter((x) => x.type !== "local")
-      .map(({ id: _id, created_at: _c, save_password: _pw, ...rest }) => rest);
-    await writeText(JSON.stringify(list, null, 2));
-    flash(`${plural(list.length, "sesión copiada", "sesiones copiadas")} al portapapeles (nunca incluye contraseñas)`);
   };
 
   const importSessions = async () => {
@@ -390,6 +384,12 @@ export function SettingsModal({
                   <Switch checked={s.confirmClose} onChange={(v) => onChange({ confirmClose: v })} />
                 </Item>
                 <Item
+                  label="Ciclo de vida del equipo (EoL)"
+                  hint="Muestra en la barra de estado el modelo, la etapa de fin de vida (fin de venta, de software, de soporte) y si conviene actualizar el sistema operativo, leyendo el show version que ejecutes (no envía comandos). Bases oficiales de Cisco, Meraki, Fortinet, Juniper y HPE Aruba; se descargan recién al activarlo"
+                >
+                  <Switch checked={s.lifecycleInfo} onChange={(v) => onChange({ lifecycleInfo: v })} />
+                </Item>
+                <Item
                   label="Activar algoritmos legacy automáticamente"
                   hint="Si un equipo SSH exige ssh-rsa, SHA1 o CBC, reconecta una vez en modo compatible y lo deja guardado en la sesión. Usa algoritmos débiles: actívalo solo en redes de gestión confiables"
                 >
@@ -511,7 +511,7 @@ export function SettingsModal({
 
             {section === "sessions" && (
               <>
-                <Item label="Sesiones" hint="Comparte tu lista de equipos vía portapapeles (JSON) o importa desde otros clientes">
+                <Item label="Sesiones" hint="Comparte tu lista de equipos en XML o JSON, o importa desde otros clientes">
                   <div className="flex gap-1.5">
                     <button
                       onClick={importSessions}
@@ -529,10 +529,11 @@ export function SettingsModal({
                       </button>
                     )}
                     <button
-                      onClick={exportSessions}
+                      onClick={onExportFile}
+                      title="Elige qué sesiones: XML (compatible con SecureCRT) o JSON"
                       className="px-3 h-7 rounded-md border border-line hover:bg-hover"
                     >
-                      Exportar
+                      Exportar…
                     </button>
                   </div>
                 </Item>
@@ -552,7 +553,7 @@ export function SettingsModal({
             <button
               onClick={() => setConfirmReset(true)}
               title="Las reglas de resaltado personalizadas se conservan"
-              className="text-[12px] text-muted hover:text-danger"
+              className="px-2.5 h-7 rounded-md border border-line text-[12px] text-muted hover:text-danger hover:border-danger"
             >
               Restablecer valores
             </button>
@@ -891,7 +892,7 @@ function ThemeCard({
         </div>
       </div>
       <div className="flex items-center justify-between px-2.5 h-7 text-[12px]">
-        <span className="truncate">
+        <span className="truncate" title={hint ? `${preset.name} · ${hint}` : preset.name}>
           {preset.name}
           {hint && <span className="text-muted"> · {hint}</span>}
         </span>

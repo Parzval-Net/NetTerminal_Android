@@ -31,11 +31,19 @@ fn patterns() -> &'static Patterns {
     static P: OnceLock<Patterns> = OnceLock::new();
     P.get_or_init(|| Patterns {
         more: Regex::new(r"(?i)(--\s*more\s*--|-{2,}\s*more\s*-{2,}|\(more\)|press any key)\s*$").unwrap(),
-        // Prompt de Cisco/Arista (Router#), Huawei (<SW> / [SW]), Juniper (user@host>)
-        // y FortiOS ("fw01 #", "fw01 (global) #")
-        prompt: Regex::new(
-            r"(?m)^[\w.\-@()/:~]*[\w)\]>][#>$%]\s*$|^[<\[][\w.\-~/:]+[>\]]\s*$|^[\w.\-]+(?: \([\w\-.]+\))? [#$]\s*$",
-        )
+        // Los mismos prompts que src/lib/cliText.ts (lista común en scripts/tests/fixtures/prompts.json):
+        // Huawei/H3C <SW>, [~SW], [*SW-GE1/0/1]; MikroTik [admin@MikroTik] >; shell RHEL
+        // [user@host ~]$; Junos, PAN-OS y shells user@host>, user@host:~$; Cisco/Arista/Aruba
+        // Router#, Router(config-if)#, IOS-XR RP/0/RSP0/CPU0:asr9k#, ASA ciscoasa/admin#; FortiOS fw01 #, con VDOM
+        // fw01 (root) (interface) #.
+        prompt: Regex::new(concat!(
+            r"(?m)^<[\w.\-]+>\s*$",
+            r"|^\[[\w.\-]+@[\w.\-]+\](?: /[\w/\-]*)? ?>\s*$",
+            r"|^\[[\w.\-]+@[\w.\-]+(?: [^\]\n]*)?\][#$]\s*$",
+            r"|^\[[~*]{0,2}[\w.\-]+(?:[^\]\w.\-\s][^\]\s]*)?\]\s*$",
+            r"|^[\w.\-]+@[\w.\-]+(?::\S*)?[>#%$]\s*$",
+            r"|^(?:[\w/]+:)?[\w.\-]+(?:/[\w.\-]+){0,2}(?: ?\([^()\n]*\)){0,3} ?[#>$%]\s*$",
+        ))
         .unwrap(),
         // "Destination filename [ios.bin]?", "[confirm]", "Address or name of remote host []?"
         confirm: Regex::new(r"(?i)(\[confirm\]|\[[^\]\n]*\]\s*\?)\s*$").unwrap(),
@@ -53,7 +61,9 @@ const MAX_OUTPUT: usize = 16 * 1024 * 1024;
 /// Texto final que se conserva para reconocer preguntas de confirmación.
 const TAIL_KEEP: usize = 4096;
 
-pub fn run(app: AppHandle, conn: String, command: String, timeout_secs: u64) -> Result<String, String> {
+/// `answer = false`: no confirma nada; ante una pregunta responde que no (Ctrl+C en "[confirm]"),
+/// espera el prompt y lo informa en el resultado (`declined`).
+pub fn run(app: AppHandle, conn: String, command: String, timeout_secs: u64, answer: bool) -> Result<String, String> {
     if command.contains(['\r', '\n']) {
         return Err("Un solo comando por operación".into());
     }
@@ -79,6 +89,7 @@ pub fn run(app: AppHandle, conn: String, command: String, timeout_secs: u64) -> 
         let mut output = String::new();
         let mut tail = String::new(); // texto desde la última respuesta automática
         let mut answered = 0;
+        let mut declined: Option<String> = None;
         let mut echo = EchoScan::default();
         // Líneas completas hacia la interfaz: un fragmento puede cortar una línea a la mitad.
         let mut partial = String::new();
@@ -124,12 +135,23 @@ pub fn run(app: AppHandle, conn: String, command: String, timeout_secs: u64) -> 
             partial.push_str(&chunk);
             flush(&mut partial, false);
             let t = tail.trim_end_matches([' ', '\t']);
+            let question = || t.lines().last().unwrap_or("").trim().chars().take(200).collect::<String>();
             let reply = if p.more.is_match(t) {
                 Some(" ")
             } else if p.yes_no.is_match(t) {
-                Some("y\r")
+                if answer {
+                    Some("y\r")
+                } else {
+                    declined.get_or_insert_with(question);
+                    Some("n\r")
+                }
             } else if p.confirm.is_match(t) {
-                Some("\r")
+                if answer {
+                    Some("\r")
+                } else {
+                    declined.get_or_insert_with(question);
+                    Some("\x03")
+                }
             } else {
                 None
             };
@@ -148,8 +170,8 @@ pub fn run(app: AppHandle, conn: String, command: String, timeout_secs: u64) -> 
             }
         }
         flush(&mut partial, true);
-        let failed = p.error.is_match(&output);
-        emit("result", String::new(), Some(json!({ "ok": !failed, "output": output })));
+        let failed = p.error.is_match(&output) || declined.is_some();
+        emit("result", String::new(), Some(json!({ "ok": !failed, "output": output, "declined": declined })));
         emit("done", String::new(), None);
     });
     Ok(job)
@@ -221,6 +243,16 @@ mod tests {
             assert!(p.prompt.is_match(prompt), "{prompt}");
         }
         assert!(!p.prompt.is_match("Accessing tftp://10.0.0.5/ios.bin..."));
+        // Lista común con src/lib/cliText.ts.
+        let fx: serde_json::Value = serde_json::from_str(include_str!("../../scripts/tests/fixtures/prompts.json")).unwrap();
+        for pair in fx["prompts"].as_array().unwrap() {
+            let line = pair[0].as_str().unwrap();
+            assert!(p.prompt.is_match(line), "debería ser prompt: {line:?}");
+        }
+        for line in fx["not_prompts"].as_array().unwrap() {
+            let line = line.as_str().unwrap();
+            assert!(!p.prompt.is_match(line), "no es prompt: {line:?}");
+        }
         assert!(p.error.is_match("%Error opening tftp://10.0.0.5/x.bin (Timed out)"));
         assert!(!p.error.is_match("[OK - 33591768 bytes]"));
     }

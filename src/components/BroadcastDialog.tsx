@@ -13,6 +13,8 @@ interface Props {
   /** Riesgo declarado (catálogo): se usa si es mayor que el calculado. */
   declared?: Risk;
   delayMs: number;
+  /** CLI Lab: sin pausa entre equipos (se ejecutan en paralelo) y con otro verbo. */
+  verb?: string;
   onCancel: () => void;
   onConfirm: (deviceDelayMs: number) => void;
 }
@@ -22,7 +24,7 @@ interface Props {
  * de cada línea. Si algo cambia configuración o puede cortar servicio, hay que escribir
  * la cantidad de equipos para habilitar el envío.
  */
-export function BroadcastDialog({ text, resolved, declared, delayMs, onCancel, onConfirm }: Props) {
+export function BroadcastDialog({ text, resolved, declared, delayMs, verb, onCancel, onConfirm }: Props) {
   const lines = useMemo(() => text.replace(/\s+$/, "").split("\n"), [text]);
   // Comentarios, "!" y salidas de modo no se marcan: solo ensuciarían la vista.
   const risks = useMemo(
@@ -69,11 +71,11 @@ export function BroadcastDialog({ text, resolved, declared, delayMs, onCancel, o
         <header className="px-5 pt-4 pb-2">
           <h2 id="bc-title" className="text-[14px] font-semibold flex items-center gap-2">
             <Radio size={15} className={risk === "read" ? "text-accent" : riskColor[risk]} />
-            Enviar a {n} {n === 1 ? "equipo" : "equipos"}
+            {verb ? `${verb} en` : "Enviar a"} {n} {n === 1 ? "equipo" : "equipos"}
           </h2>
           <p className={`text-[12px] mt-0.5 ${risk === "read" ? "text-muted" : riskColor[risk] + " font-medium"}`}>
             {riskLabel[risk]}
-            {risk === "disruptive" ? ": puede cortar servicio en todos los equipos de la lista." : ""}
+            {risk === "disruptive" ? " en todos los equipos de la lista." : ""}
           </p>
         </header>
         <div className="px-5 overflow-y-auto space-y-3 min-h-0">
@@ -109,7 +111,7 @@ export function BroadcastDialog({ text, resolved, declared, delayMs, onCancel, o
             </div>
           </div>
           <div className="flex flex-wrap items-end gap-4 pb-1">
-            <label className="text-[12px]">
+            {!verb && <label className="text-[12px]">
               <span className="block text-[11.5px] font-medium text-muted mb-1">Pausa entre equipos</span>
               <span className="flex items-center gap-1.5">
                 <input
@@ -123,7 +125,7 @@ export function BroadcastDialog({ text, resolved, declared, delayMs, onCancel, o
                 />
                 ms
               </span>
-            </label>
+            </label>}
             {needsCount && n > 0 && (
               <label className="text-[12px] flex-1 min-w-[220px]">
                 <span className={`block text-[11.5px] font-medium mb-1 ${riskColor[risk]}`}>
@@ -146,7 +148,7 @@ export function BroadcastDialog({ text, resolved, declared, delayMs, onCancel, o
               risk === "disruptive" ? "bg-danger text-danger-fg" : risk === "change" ? "bg-warn text-accent-fg" : "bg-accent text-accent-fg"
             }`}
           >
-            Enviar a {n} {n === 1 ? "equipo" : "equipos"}
+            {verb ? `${verb} en` : "Enviar a"} {n} {n === 1 ? "equipo" : "equipos"}
           </button>
         </footer>
       </div>

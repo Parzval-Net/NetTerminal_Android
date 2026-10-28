@@ -63,8 +63,8 @@ export function MonitorTool({ targets, samples, status, onChange, onClear, onSil
 
   return (
     <div className="space-y-4">
-      <div className="flex items-center justify-between gap-3">
-        <p className="text-[12px] text-muted">
+      <div className="flex flex-wrap items-center justify-between gap-3">
+        <p className="flex-1 min-w-[16rem] text-[12px] text-muted">
           Vigila que un equipo responda (ICMP) o que un acceso esté disponible (TCP: 22, 23, 443…). Suena una alarma al
           caer y otra al recuperarse, aunque estés en otra pestaña.
         </p>

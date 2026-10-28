@@ -180,7 +180,7 @@ function SnmpClient({ settings: s, running, onChange, refreshRunning, onConfirm 
           </div>
         }
       >
-        <div className="grid gap-3 [grid-template-columns:2fr_0.7fr_0.9fr_0.8fr_0.7fr_1.4fr]">
+        <div className="grid gap-3 grid-cols-2 @[40rem]:grid-cols-3 @[56rem]:[grid-template-columns:2fr_0.7fr_0.9fr_0.8fr_0.7fr_1.4fr]">
           <Label text="Host o IP">
             <input className="field font-mono" value={cur.host} placeholder="192.0.2.1" onChange={(e) => set({ host: e.target.value })} />
           </Label>
@@ -206,7 +206,7 @@ function SnmpClient({ settings: s, running, onChange, refreshRunning, onConfirm 
         </div>
 
         {cur.version !== "3" ? (
-          <div className="mt-3 grid gap-3 [grid-template-columns:2fr_4fr]">
+          <div className="mt-3 grid gap-3 grid-cols-1 @[40rem]:[grid-template-columns:2fr_4fr]">
             <Label text={cur.saved ? "Community (guardada en la bóveda)" : "Community"}>
               <input
                 className="field font-mono"
@@ -220,7 +220,7 @@ function SnmpClient({ settings: s, running, onChange, refreshRunning, onConfirm 
             </Label>
           </div>
         ) : (
-          <div className="mt-3 grid gap-3 [grid-template-columns:1.2fr_1.1fr_1.3fr_1.3fr_1.4fr_1.3fr_1fr]">
+          <div className="mt-3 grid gap-3 grid-cols-2 @[40rem]:grid-cols-3 @[64rem]:[grid-template-columns:1.2fr_1.1fr_1.3fr_1.3fr_1.4fr_1.3fr_1fr]">
             <Label text="Usuario">
               <input className="field font-mono" value={cur.user} autoComplete="off" onChange={(e) => set({ user: e.target.value })} />
             </Label>
@@ -623,7 +623,7 @@ function PresetsSection({ target, profile, onConfirm }: { target: TargetFn; prof
               <tbody>
                 {res.scalars.map(({ col, row }) => (
                   <tr key={col.oid} className="border-t border-line first:border-0 align-top">
-                    <td className="py-1.5 pr-4 text-muted whitespace-nowrap w-48">{col.label}</td>
+                    <td className="py-1.5 pr-4 text-muted whitespace-nowrap w-28 @[36rem]:w-48">{col.label}</td>
                     <td className="py-1.5 break-words select-text">{formatCell(col, row)}</td>
                   </tr>
                 ))}

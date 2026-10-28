@@ -170,6 +170,15 @@ button {
 .code-editor::placeholder {
   -webkit-text-fill-color: var(--muted);
   color: var(--muted);
+  opacity: 0.6;
+  font-style: italic;
+}
+
+/* Fondo de los diálogos: sobre la interfaz oscura un negro al 25 % no se distingue. */
+:root[data-theme="dark"] .bg-black\/25,
+:root[data-theme="dark"] .bg-black\/30,
+:root[data-theme="dark"] .bg-black\/35 {
+  background-color: rgb(0 0 0 / 0.6);
 }
 
 /* Topología: trazo animado en el sentido del tráfico. Solo stroke-dashoffset en CSS (sin renders

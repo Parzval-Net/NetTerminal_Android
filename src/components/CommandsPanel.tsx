@@ -201,9 +201,11 @@ export const CommandsPanel = memo(function CommandsPanel(p: Props) {
                 onClick={p.onDetect}
                 disabled={p.detecting}
                 title={`Detectar ejecutando "${vendor.detectCommand}" en la sesión`}
-                className="flex items-center gap-1 px-2 h-7 rounded-md border border-line text-[11.5px] hover:bg-hover disabled:opacity-40"
+                className="shrink-0 flex items-center gap-1 px-2 h-7 rounded-md border border-line text-[11.5px] hover:bg-hover disabled:opacity-40"
               >
-                <Radar size={12} className={p.detecting ? "animate-pulse" : ""} /> Detectar
+                <Radar size={12} className={p.detecting ? "animate-pulse" : ""} />
+                {/* Panel angosto: solo el ícono, para que el selector de plataforma se lea. */}
+                <span className="hidden @[19rem]:inline">Detectar</span>
               </button>
             )}
           </div>
@@ -212,16 +214,18 @@ export const CommandsPanel = memo(function CommandsPanel(p: Props) {
           <Search size={13} className="absolute left-2.5 top-1/2 -translate-y-1/2 text-muted" />
           <input
             className="field !h-7 !pl-8 !text-[12px]"
-            placeholder="Buscar comando o tarea (ej: vecinos, óptico, CPU)"
+            placeholder="Buscar comando o tarea"
+            title="Por comando o por tarea: vecinos, óptico, CPU, VLAN…"
             value={query}
             onChange={(e) => setQuery(e.target.value)}
             onKeyDown={(e) => e.key === "Escape" && setQuery("")}
           />
         </div>
-        <div className="flex items-center gap-3 text-[11.5px] text-muted">
-          <label className="flex items-center gap-1.5">
+        <div className="flex items-center gap-3 text-[11.5px] text-muted whitespace-nowrap">
+          <label className="flex items-center gap-1.5" title="Solo consultas: oculta lo que cambia configuración o puede cortar servicio">
             <input type="checkbox" className="accent-[var(--accent)]" checked={onlyRead} onChange={(e) => setOnlyRead(e.target.checked)} />
-            Solo consultas
+            <span className="@[19rem]:hidden">Consultas</span>
+            <span className="hidden @[19rem]:inline">Solo consultas</span>
           </label>
           <label className="flex items-center gap-1.5">
             <input type="checkbox" className="accent-[var(--accent)]" checked={onlyFav} onChange={(e) => setOnlyFav(e.target.checked)} />
@@ -229,7 +233,7 @@ export const CommandsPanel = memo(function CommandsPanel(p: Props) {
           </label>
           <span className="ml-auto">{total}</span>
           {vendor && (
-            <button title="Agregar un comando propio" onClick={() => p.onAdd(vendor.id)} className="h-6 px-1 -mx-1 text-accent hover:underline flex items-center gap-0.5">
+            <button title="Agregar un comando propio" onClick={() => p.onAdd(vendor.id)} className="h-6 px-1 text-accent hover:underline flex items-center gap-0.5">
               <Plus size={12} /> Propio
             </button>
           )}

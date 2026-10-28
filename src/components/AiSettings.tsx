@@ -57,6 +57,11 @@ export function AiSettings({ settings: s, status, onChange }: Props) {
         2,
       ),
     ],
+    [
+      "Otra aplicación (API HTTP)",
+      "JSON-RPC 2.0 por POST: tools/list y tools/call; send_command pide aprobación en NetTerminal",
+      `# Conexiones abiertas (id de cada pestaña)\ncurl -s ${url} -H "Authorization: Bearer ${token}" -H "Content-Type: application/json" \\\n  -d '{"jsonrpc":"2.0","id":1,"method":"tools/call","params":{"name":"list_connections","arguments":{}}}'\n\n# Ejecutar un comando (el usuario lo aprueba en la app)\ncurl -s ${url} -H "Authorization: Bearer ${token}" -H "Content-Type: application/json" \\\n  -d '{"jsonrpc":"2.0","id":2,"method":"tools/call","params":{"name":"send_command","arguments":{"connection_id":"ID","command":"show clock","wait_seconds":10}}}'`,
+    ],
   ];
 
   return (

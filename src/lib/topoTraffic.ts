@@ -168,6 +168,33 @@ export const TRAFFIC_COMMANDS: Record<TopoVendor, string | undefined> = {
 };
 export const TRAFFIC_FALLBACK: Record<string, string> = { "show interfaces": "show interface" };
 
+/**
+ * Comandos de contadores a probar para una sesión, en orden. Con la plataforma detectada (o
+ * fijada en el catálogo) va el comando de su fabricante; si no, el del resaltado elegido; y si
+ * tampoco hay resaltado ("Según ajustes"), Cisco y luego Huawei: antes un Huawei sin resaltado
+ * recibía "show interfaces", fallaba y el enlace quedaba sin tráfico. Solo comandos de consulta.
+ */
+export function trafficCommands(platform: string | undefined, highlightVendor: TopoVendor | undefined): string[] {
+  const p = platform ?? "";
+  const vendor: TopoVendor | undefined = /^(vrp|yunshan)/.test(p)
+    ? "huawei"
+    : /^(junos|ex-legacy)/.test(p)
+      ? "juniper"
+      : /^fos/.test(p)
+        ? "fortinet"
+        : /^(ios|iosxe|iosxr|nxos)$/.test(p)
+          ? "cisco"
+          : highlightVendor;
+  const base = vendor ? [TRAFFIC_COMMANDS[vendor]] : [TRAFFIC_COMMANDS.cisco, TRAFFIC_COMMANDS.huawei];
+  const out: string[] = [];
+  for (const c of base) {
+    if (!c) continue;
+    out.push(c);
+    if (TRAFFIC_FALLBACK[c]) out.push(TRAFFIC_FALLBACK[c]);
+  }
+  return [...new Set(out)];
+}
+
 /** Contadores por interfaz leídos de la consola (clave canonPort). */
 export interface CliCounters {
   name: string;

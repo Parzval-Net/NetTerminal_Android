@@ -24,4 +24,5 @@ export function PanelResize({ width, onResize }: { width: number; onResize: (w: 
 
 /** Clases del panel: en ventanas angostas se superpone a la terminal en vez de achicarla. */
 export const panelClass = (overlay: boolean) =>
-  `shrink-0 flex flex-col border-l border-line bg-chrome ${overlay ? "absolute right-0 top-0 bottom-0 z-30 shadow-pop" : "relative"}`;
+  // @container: los paneles adaptan sus textos a su propio ancho (260 px o más), no al de la ventana.
+  `@container shrink-0 flex flex-col border-l border-line bg-chrome ${overlay ? "absolute right-0 top-0 bottom-0 z-30 shadow-pop" : "relative"}`;

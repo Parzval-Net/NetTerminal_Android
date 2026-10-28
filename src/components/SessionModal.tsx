@@ -85,6 +85,8 @@ export function SessionModal({ initial, title, defaultFolder, folders, onClose, 
   /** Hay una guardada y no se está cambiando: se muestra la máscara fija. */
   const hadPw = !!initial?.save_password;
   const [changing, setChanging] = useState(!hadPw);
+  /** Se pidió borrar la guardada: vaciar el campo no la recupera. */
+  const [deleted, setDeleted] = useState(false);
   const [cred, setCred] = useState<CredStatus | null>(null);
   const refreshCred = () => credStatus().then(setCred).catch(() => {});
   useEffect(() => {
@@ -108,7 +110,7 @@ export function SessionModal({ initial, title, defaultFolder, folders, onClose, 
     const tunnels = s.type === "ssh" && s.tunnels?.length ? s.tunnels : undefined;
     const pw = credChange();
     if (s.save_password && s.type !== "local" && !hadPw && pw.action !== "set")
-      return setError("Escribe la contraseña a guardar o desmarca \"Guardar contraseña\"");
+      return setError("Escribe la contraseña a guardar");
     if (pw.action === "set" && /[\r\n\0]/.test(pw.password)) return setError("La contraseña no puede contener saltos de línea");
     if (pw.action === "set" && new TextEncoder().encode(pw.password).length > 1024) return setError("La contraseña es demasiado larga");
     const save_password = s.type !== "local" && s.save_password ? true : undefined;
@@ -117,6 +119,33 @@ export function SessionModal({ initial, title, defaultFolder, folders, onClose, 
 
   const remote = s.type === "ssh" || s.type === "telnet" || s.type === "raw";
   const win = useDragResize<HTMLFormElement>("sessionWindow");
+  const pwBlock = (
+    <PasswordBlock
+      session={s}
+      hadPw={hadPw}
+      changing={changing}
+      newPw={newPw}
+      cred={cred}
+      onChangeClick={() => setChanging(true)}
+      onDelete={() => {
+        setNewPw("");
+        setDeleted(true);
+        // Queda el campo para escribir otra; sin escribir nada, la guardada se borra al guardar.
+        setChanging(true);
+        set("save_password", undefined);
+      }}
+      onNewPw={(v) => {
+        setError("");
+        setNewPw(v);
+        // Escribir una clave implica guardarla; vaciarla la descarta, salvo al cambiar una guardada
+        // (vacío = mantenerla).
+        if (v) set("save_password", true);
+        else if (!hadPw || deleted) set("save_password", undefined);
+      }}
+      onUnlocked={refreshCred}
+      onUser={(v) => set("username", v || undefined)}
+    />
+  );
 
   return (
     <div className="fixed inset-0 z-50 grid place-items-center bg-black/25 p-4" onMouseDown={onClose}>
@@ -228,6 +257,7 @@ export function SessionModal({ initial, title, defaultFolder, folders, onClose, 
                   />
                 </Field>
               </Row>
+              {pwBlock}
               <Field label="Jump host / bastión (opcional)">
                 <input
                   className="field"
@@ -353,30 +383,7 @@ export function SessionModal({ initial, title, defaultFolder, folders, onClose, 
             </p>
           )}
 
-          {s.type !== "local" && (
-            <PasswordBlock
-              session={s}
-              hadPw={hadPw}
-              changing={changing}
-              newPw={newPw}
-              cred={cred}
-              onToggle={(v) => {
-                setError("");
-                set("save_password", v || undefined);
-              }}
-              onChangeClick={() => setChanging(true)}
-              onDelete={() => {
-                setNewPw("");
-                set("save_password", undefined);
-              }}
-              onNewPw={(v) => {
-                setError("");
-                setNewPw(v);
-              }}
-              onUnlocked={refreshCred}
-              onUser={(v) => set("username", v || undefined)}
-            />
-          )}
+          {s.type !== "local" && s.type !== "ssh" && pwBlock}
 
           {s.type !== "local" && (
             <details className="rounded-lg border border-line" open={!!(s.on_connect || s.local_echo || s.auto_reconnect || s.backspace)}>
@@ -507,7 +514,6 @@ function PasswordBlock(p: {
   changing: boolean;
   newPw: string;
   cred: CredStatus | null;
-  onToggle: (v: boolean) => void;
   onChangeClick: () => void;
   onDelete: () => void;
   onNewPw: (v: string) => void;
@@ -518,85 +524,76 @@ function PasswordBlock(p: {
   const on = !!s.save_password;
   const noVault = cred?.backend === "vault" && !cred.exists;
   const locked = needsUnlock(cred);
-  const userHint = s.type !== "ssh" && !s.username;
+  const userHint = on && s.type !== "ssh" && !s.username;
   return (
-    <div className="rounded-lg border border-line px-3 py-2.5 space-y-2.5">
-      <label className="flex items-start gap-2.5 text-[12.5px]">
-        <input
-          type="checkbox"
-          className="mt-0.5 accent-[var(--accent)]"
-          checked={on}
-          onChange={(e) => p.onToggle(e.target.checked)}
-        />
-        <span>
-          Guardar contraseña
-          <span className="block text-muted text-[11.5px]">
-            Se completa sola en el primer pedido de contraseña al conectar (una vez, dentro de 60 s).
-            {s.type !== "ssh" && " En Telnet, TCP y Serial también envía el usuario si está definido."}
-          </span>
-        </span>
-      </label>
-      {on && (
-        <>
-          {s.type !== "ssh" && (
-            <Field label="Usuario (opcional)">
-              <input
-                className="field"
-                value={s.username ?? ""}
-                placeholder="Se envía en el prompt Username: o login:"
-                onChange={(e) => p.onUser(e.target.value)}
-              />
-            </Field>
-          )}
-          {p.hadPw && !p.changing ? (
-            <div className="flex items-center gap-2">
-              <input className="field flex-1 font-mono tracking-widest" type="password" value={MASK} readOnly tabIndex={-1} aria-label="Contraseña guardada" />
-              <span className="flex items-center gap-1 text-[11.5px] text-accent shrink-0">
-                <KeyRound size={12} /> Guardada
-              </span>
-              <button type="button" onClick={p.onChangeClick} className="px-2.5 h-8 rounded-md border border-line hover:bg-hover shrink-0">
-                Cambiar
-              </button>
-              <button
-                type="button"
-                onClick={p.onDelete}
-                className="px-2.5 h-8 rounded-md border border-line text-danger hover:bg-hover shrink-0"
-              >
-                Borrar
-              </button>
-            </div>
-          ) : (
-            <Field label={p.hadPw ? "Nueva contraseña" : "Contraseña"}>
-              <input
-                className="field"
-                type="password"
-                autoComplete="new-password"
-                spellCheck={false}
-                maxLength={1024}
-                value={p.newPw}
-                placeholder={p.hadPw ? "Vacío: mantener la guardada" : ""}
-                onChange={(e) => p.onNewPw(e.target.value)}
-              />
-            </Field>
-          )}
-          {userHint && <p className="text-[11.5px] text-muted">Sin usuario definido solo se completa la contraseña.</p>}
-          {noVault && (
-            <p className="text-[11.5px] text-warn">
-              Primero crea la bóveda con una contraseña maestra en Ajustes › Credenciales.
-            </p>
-          )}
-          {locked && (
-            <div className="space-y-1">
-              <p className="text-[11.5px] text-warn">La bóveda está bloqueada: desbloquéala para guardar.</p>
-              <VaultUnlock onUnlocked={p.onUnlocked} />
-            </div>
-          )}
-          <p className="text-[11.5px] text-muted">
-            Se guarda en la {storageLabel(cred)}, nunca en el archivo de sesiones, logs ni exportaciones, y no se puede
-            volver a ver. Úsala solo en equipos autorizados y según la política de seguridad de la empresa.
-          </p>
-        </>
+    <div
+      className="rounded-lg border px-3 py-2.5 space-y-2.5"
+      style={{
+        borderColor: "color-mix(in srgb, var(--accent) 55%, transparent)",
+        background: "color-mix(in srgb, var(--accent) 7%, transparent)",
+      }}
+    >
+      <div className="flex items-center gap-1.5 text-[12.5px] font-medium">
+        <KeyRound size={14} className="text-accent" /> Contraseña
+        <span className="ml-auto text-[11px] font-normal text-muted">Opcional · se completa sola al conectar</span>
+      </div>
+      {s.type !== "ssh" && (
+        <Field label="Usuario (opcional)">
+          <input
+            className="field"
+            value={s.username ?? ""}
+            placeholder="Se envía en el prompt Username: o login:"
+            onChange={(e) => p.onUser(e.target.value)}
+          />
+        </Field>
       )}
+      {p.hadPw && on && !p.changing ? (
+        <div className="flex items-center gap-2">
+          <input className="field flex-1 font-mono tracking-widest" type="password" value={MASK} readOnly tabIndex={-1} aria-label="Contraseña guardada" />
+          <span className="flex items-center gap-1 text-[11.5px] text-accent shrink-0">
+            <KeyRound size={12} /> Guardada
+          </span>
+          <button type="button" onClick={p.onChangeClick} className="px-2.5 h-8 rounded-md border border-line hover:bg-hover shrink-0">
+            Cambiar
+          </button>
+          <button
+            type="button"
+            onClick={p.onDelete}
+            className="px-2.5 h-8 rounded-md border border-line text-danger hover:bg-hover shrink-0"
+          >
+            Borrar
+          </button>
+        </div>
+      ) : (
+        <input
+          className="field !border-accent"
+          type="password"
+          autoComplete="new-password"
+          spellCheck={false}
+          maxLength={1024}
+          value={p.newPw}
+          aria-label={p.hadPw ? "Nueva contraseña" : "Contraseña"}
+          placeholder={p.hadPw && on ? "Vacío: mantener la guardada" : "Escribe la contraseña para guardarla"}
+          onChange={(e) => p.onNewPw(e.target.value)}
+        />
+      )}
+      {userHint && <p className="text-[11.5px] text-muted">Sin usuario definido solo se completa la contraseña.</p>}
+      {on && noVault && (
+        <p className="text-[11.5px] text-warn">
+          Primero crea la bóveda con una contraseña maestra en Ajustes › Credenciales.
+        </p>
+      )}
+      {on && locked && (
+        <div className="space-y-1">
+          <p className="text-[11.5px] text-warn">La bóveda está bloqueada: desbloquéala para guardar.</p>
+          <VaultUnlock onUnlocked={p.onUnlocked} />
+        </div>
+      )}
+      <p className="text-[11.5px] text-muted">
+        Se completa en el primer pedido de contraseña (una vez, dentro de 60 s).
+        {s.type !== "ssh" && " En Telnet, TCP y Serial también envía el usuario si está definido."} Se guarda en la{" "}
+        {storageLabel(cred)}, nunca en el archivo de sesiones, logs ni exportaciones, y no se puede volver a ver.
+      </p>
     </div>
   );
 }
