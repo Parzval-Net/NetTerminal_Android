@@ -12,6 +12,8 @@ export const modLabel = isMac ? "⌘" : "Ctrl+Shift+";
 export const zoomLabel = isMac ? "⌘" : "Ctrl+Shift+";
 /** Atajo de "Cerrar todas las pestañas" para mostrar en la interfaz. */
 export const closeAllLabel = isMac ? "⌘⇧W" : "Ctrl+Shift+Alt+W";
+/** Atajo del modo foco. Ctrl+Shift+F ya es "Buscar" en Windows/Linux, por eso lleva Alt allí. */
+export const focusLabel = isMac ? "⌘⇧F" : "Ctrl+Shift+Alt+F";
 
 export type AppAction =
   | "settings"
@@ -23,6 +25,7 @@ export type AppAction =
   | "newTab"
   | "closeTab"
   | "closeAll"
+  | "focusMode"
   | "newSession"
   | "quickConnect"
   | "cliLab"
@@ -59,6 +62,12 @@ export function shortcutFor(e: KeyboardEvent): AppAction | null {
   const w = key === "w" || e.code === "KeyW";
   if (w && (isMac ? e.metaKey && e.shiftKey && !e.ctrlKey && !e.altKey : e.ctrlKey && e.shiftKey && e.altKey && !e.metaKey))
     return "closeAll";
+
+  // Modo foco: ⌘⇧F en macOS (⌘F sin Shift sigue siendo Buscar) y Ctrl+Shift+Alt+F en Windows/Linux,
+  // donde Ctrl+Shift+F es Buscar. Va antes de isMod, que no distingue Shift ni Alt.
+  const f = key === "f" || e.code === "KeyF";
+  if (f && (isMac ? e.metaKey && e.shiftKey && !e.ctrlKey && !e.altKey : e.ctrlKey && e.shiftKey && e.altKey && !e.metaKey))
+    return "focusMode";
 
   if (!isMod(e)) return null;
   switch (key) {

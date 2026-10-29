@@ -78,7 +78,8 @@ interface Props {
   onQuickConnect?: () => void;
 }
 
-type MenuItem = [string, React.ReactNode, () => void, boolean?];
+/** [etiqueta, icono, acción, deshabilitado, atajo que se muestra a la derecha]. */
+type MenuItem = [string, React.ReactNode, () => void, boolean?, string?];
 type Menu = { x: number; y: number; items: MenuItem[] };
 type Selected = { kind: "session"; id: string } | { kind: "folder"; path: string } | null;
 
@@ -681,14 +682,39 @@ export function ContextMenu({ menu, onClose }: { menu: Menu; onClose: () => void
     };
   }, [onClose]);
 
+  // Teclado: el foco entra al primer ítem, las flechas lo mueven y, si la acción no deja el foco
+  // en otro lado (un campo, un diálogo), vuelve a donde estaba (p. ej. la terminal).
+  useEffect(() => {
+    const prev = document.activeElement as HTMLElement | null;
+    ref.current?.querySelector<HTMLElement>('button:not([disabled])')?.focus({ preventScroll: true });
+    return () => {
+      const cur = document.activeElement;
+      if ((!cur || cur === document.body) && prev?.isConnected) prev.focus({ preventScroll: true });
+    };
+  }, []);
+  const onMenuKey = (e: React.KeyboardEvent) => {
+    const items = Array.from(ref.current?.querySelectorAll<HTMLElement>("button:not([disabled])") ?? []);
+    if (!items.length) return;
+    const i = items.indexOf(document.activeElement as HTMLElement);
+    let next = -1;
+    if (e.key === "ArrowDown") next = (i + 1) % items.length;
+    else if (e.key === "ArrowUp") next = (i - 1 + items.length) % items.length;
+    else if (e.key === "Home") next = 0;
+    else if (e.key === "End") next = items.length - 1;
+    else return;
+    e.preventDefault();
+    items[next].focus();
+  };
+
   return (
     <div
       ref={ref}
       role="menu"
+      onKeyDown={onMenuKey}
       className="fixed z-50 min-w-48 py-1 bg-panel border border-line rounded-lg shadow-pop"
       style={{ left: pos.x, top: pos.y }}
     >
-      {menu.items.map(([label, icon, action, disabled]) => (
+      {menu.items.map(([label, icon, action, disabled, shortcut]) => (
         <button
           key={label}
           role="menuitem"
@@ -697,12 +723,13 @@ export function ContextMenu({ menu, onClose }: { menu: Menu; onClose: () => void
             onClose();
             action();
           }}
-          className={`w-full flex items-center gap-2.5 px-3 h-7 text-left text-[12.5px] hover:bg-hover disabled:opacity-40 ${
+          className={`w-full flex items-center gap-2.5 px-3 h-7 text-left text-[12.5px] hover:bg-hover focus-visible:bg-hover disabled:opacity-40 ${
             label.startsWith("Eliminar") ? "text-danger" : ""
           }`}
         >
           <span className="text-muted">{icon}</span>
-          {label}
+          <span className="flex-1">{label}</span>
+          {shortcut && <kbd className="ml-4 text-[11px] text-muted font-sans">{shortcut}</kbd>}
         </button>
       ))}
     </div>

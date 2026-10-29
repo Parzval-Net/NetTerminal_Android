@@ -59,7 +59,7 @@ const MODULES: [ModuleId, string, string][] = [
  * `keywords`: lo que busca el cuadro de búsqueda (etiquetas de los ajustes de la sección).
  */
 const sections: { id: Section; label: string; Icon: typeof Palette; group: string; keywords: string }[] = [
-  { id: "appearance", label: "Apariencia", Icon: Palette, group: "General", keywords: "interfaz claro oscuro sistema pestañas verticales horizontales tema de terminal fuente tamaño interlineado cursor parpadeante colores" },
+  { id: "appearance", label: "Apariencia", Icon: Palette, group: "General", keywords: "interfaz claro oscuro sistema barra de sesiones flotante superpuesta pestañas verticales horizontales tema de terminal fuente tamaño interlineado cursor parpadeante colores" },
   { id: "terminal", label: "Terminal", Icon: SquareTerminal, group: "General", keywords: "historial scrollback copiar al seleccionar pegar clic derecho confirmar al cerrar legacy ssh algoritmos antiguos ssh-rsa compatibilidad sugerencias de comandos autocompletar abreviaturas historial de sugerencias tecla de lista confirmar envío varias líneas barra de botones pausa entre líneas notas" },
   { id: "highlight", label: "Resaltado", Icon: Highlighter, group: "General", keywords: "resaltado sintaxis reglas regex esquemas fabricante cisco juniper huawei fortinet colores exportar importar" },
   { id: "data", label: "Logs", Icon: ScrollText, group: "Sesiones y datos", keywords: "logs grabar automáticamente hora en cada línea nombre del archivo patrón anexar rotación diaria ocultar secretos carpeta de logs" },
@@ -252,6 +252,13 @@ export function SettingsModal({
                       ["vertical", "Verticales"],
                     ]}
                   />
+                </Item>
+
+                <Item
+                  label="Barra de sesiones flotante"
+                  hint="Con la barra de sesiones cerrada, al pasar el mouse por Sesiones (barra de actividad) se abre sobre la terminal sin empujarla; se cierra al salir, elegir una sesión o con Esc, y «Fijar» la vuelve a acoplar"
+                >
+                  <Switch checked={s.floatingSidebar} onChange={(v) => onChange({ floatingSidebar: v })} />
                 </Item>
 
                 <div>
@@ -453,7 +460,7 @@ export function SettingsModal({
                 <Item label="Confirmar envío de varias líneas" hint="Muestra un resumen antes de enviar o pegar un bloque en un equipo remoto">
                   <Switch checked={s.confirmSend} onChange={(v) => onChange({ confirmSend: v })} />
                 </Item>
-                <Item label="Barra de botones" hint="Comandos rápidos y scripts sobre la barra de estado">
+                <Item label="Barra de botones" hint="Comandos rápidos y scripts sobre la barra de estado. Se oculta sola si no hay botones; «Nuevo botón» y los scripts siguen en la paleta (⌘K)">
                   <Switch checked={s.showButtonBar} onChange={(v) => onChange({ showButtonBar: v })} />
                 </Item>
                 <Item label="Pausa entre líneas" hint="Útil en consolas serial o equipos que pierden caracteres al pegar">

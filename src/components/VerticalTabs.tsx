@@ -1,13 +1,14 @@
 import { persist, stored } from "../lib/prefs";
 import { memo, useCallback, useEffect, useRef, useState } from "react";
-import { PanelLeftClose, PanelLeftOpen, PanelTop, Plus, Wrench, X } from "lucide-react";
+import { Columns2, LayoutGrid, Maximize2, Minimize2, PanelLeftClose, PanelLeftOpen, PanelTop, Plus, Rows2, X } from "lucide-react";
 import { tabTitle } from "../types";
 import { ContextMenu } from "./Sidebar";
 import { SessionIcon, isQuickSession } from "./SessionIcon";
 import { TabBarProps, closeBtnClass, dotColor, dropMark } from "./TabBar";
 import { useTabDrag } from "../lib/tabDrag";
-import { MenuItem, layoutItem, newTabMenuItems, tabMenuItems } from "./tabMenu";
-import { modLabel } from "../lib/platform";
+import { MenuItem, layoutItem, newTabMenuItems, splitMenuItems, tabMenuItems } from "./tabMenu";
+import { layoutLabel } from "../lib/split";
+import { focusLabel, modLabel } from "../lib/platform";
 
 const MIN_W = 160;
 const MAX_W = 420;
@@ -22,7 +23,7 @@ const clamp = (w: number) => Math.max(MIN_W, Math.min(MAX_W, Math.round(w)));
  * Navegación: flechas/Inicio/Fin mueven el foco, Enter/Espacio activan, F2 renombra, Supr cierra.
  */
 export const VerticalTabs = memo(function VerticalTabs(props: TabBarProps) {
-  const { tabs, states, activeId, onSelect, onClose, onNew, toolsOpen, alerts, onRename, activity, alerted, onTabLayout } = props;
+  const { tabs, states, activeId, onSelect, onClose, onRename, activity, alerted, onTabLayout, split, onSplit, focusMode, onToggleFocus } = props;
   const drag = useTabDrag("data-id", "y", props.onReorder);
   const [width, setWidth] = useState(() => clamp(stored("vtabsWidth", DEFAULT_W)));
   const [collapsed, setCollapsed] = useState(() => stored("vtabsCollapsed", false));
@@ -84,7 +85,7 @@ export const VerticalTabs = memo(function VerticalTabs(props: TabBarProps) {
     else if (e.key === "Home") next = 0;
     else if (e.key === "End") next = items.length - 1;
     else if (e.key === "Enter" || e.key === " ") onSelect(id);
-    else if (e.key === "F2" && id !== "tools") rename(id);
+    else if (e.key === "F2") rename(id);
     else if (e.key === "Delete") onClose(id);
     else return;
     e.preventDefault();
@@ -100,8 +101,9 @@ export const VerticalTabs = memo(function VerticalTabs(props: TabBarProps) {
       ? "bg-term text-term-fg ring-1 ring-line shadow-sm"
       : "text-muted hover:text-fg hover:bg-hover";
   const focusable = "cursor-default focus-visible:outline-offset-[-2px]";
-  // Un único tab enfocable con Tab (roving tabindex): el activo o, si no hay, el primero.
-  const focusId = activeId ?? (toolsOpen ? "tools" : tabs[0]?.id);
+  // Un único tab enfocable con Tab (roving tabindex): el activo o, si no hay (p. ej. se ve
+  // Herramientas), el primero.
+  const focusId = tabs.some((t) => t.id === activeId) ? activeId : tabs[0]?.id;
 
   return (
     <nav
@@ -109,18 +111,54 @@ export const VerticalTabs = memo(function VerticalTabs(props: TabBarProps) {
       className="relative shrink-0 flex flex-col min-h-0 border-r border-line bg-chrome"
       style={{ width: collapsed ? RAIL_W : width }}
     >
-      <div className={`h-9 shrink-0 flex items-center gap-0.5 ${collapsed ? "justify-center" : "pl-3 pr-1.5"}`}>
-        {!collapsed && (
-          <span className="flex-1 min-w-0 truncate text-[11px] font-semibold uppercase tracking-wide text-muted">
-            Pestañas {tabs.length > 0 && <span className="tabular-nums font-normal">· {tabs.length}</span>}
-          </span>
+      {/* Encabezado: reúne los controles que en horizontal van en la barra superior (que aquí no existe). */}
+      <div className={`shrink-0 flex items-center gap-0.5 ${collapsed ? "flex-col py-1" : "h-9 pl-3 pr-1.5"}`}>
+        {!collapsed &&
+          (focusMode ? (
+            <button
+              onClick={onToggleFocus}
+              title={`Salir del modo foco (${focusLabel})`}
+              className="flex-1 min-w-0 h-7 px-1.5 -ml-1.5 flex items-center gap-1.5 rounded-md text-left text-[12px] text-accent hover:bg-hover"
+            >
+              <Minimize2 size={14} className="shrink-0" />
+              <span className="truncate">Salir del modo foco</span>
+            </button>
+          ) : (
+            <span className="flex-1 min-w-0 truncate text-[11px] font-semibold uppercase tracking-wide text-muted">
+              Pestañas {tabs.length > 0 && <span className="tabular-nums font-normal">· {tabs.length}</span>}
+            </span>
+          ))}
+        {onSplit && (
+          <button
+            onClick={(e) => {
+              const r = e.currentTarget.getBoundingClientRect();
+              setMenu({ x: r.left, y: r.bottom + 4, items: splitMenuItems(split ?? null, onSplit) });
+            }}
+            title={split ? `Vista dividida: ${layoutLabel[split]}` : "Vista dividida: ver 2 o 4 pestañas a la vez"}
+            aria-label="Vista dividida"
+            aria-pressed={!!split}
+            className={`w-7 h-7 shrink-0 grid place-items-center rounded-md hover:bg-hover ${split ? "text-accent" : "text-muted hover:text-fg"}`}
+          >
+            {split === "rows" ? <Rows2 size={15} /> : split === "grid" ? <LayoutGrid size={15} /> : <Columns2 size={15} />}
+          </button>
+        )}
+        {onToggleFocus && (collapsed || !focusMode) && (
+          <button
+            onClick={onToggleFocus}
+            title={focusMode ? `Salir del modo foco (${focusLabel})` : `Modo foco: solo pestañas y terminal (${focusLabel})`}
+            aria-label={focusMode ? "Salir del modo foco" : "Modo foco"}
+            aria-pressed={!!focusMode}
+            className={`w-7 h-7 shrink-0 grid place-items-center rounded-md hover:bg-hover ${focusMode ? "text-accent" : "text-muted hover:text-fg"}`}
+          >
+            {focusMode ? <Minimize2 size={14} /> : <Maximize2 size={14} />}
+          </button>
         )}
         <button
           onClick={() => setCollapsed((c) => !c)}
           title={collapsed ? "Expandir pestañas" : "Plegar pestañas a iconos"}
           aria-label={collapsed ? "Expandir pestañas" : "Plegar pestañas"}
           aria-expanded={!collapsed}
-          className="w-7 h-7 grid place-items-center rounded-md text-muted hover:text-fg hover:bg-hover"
+          className="w-7 h-7 shrink-0 grid place-items-center rounded-md text-muted hover:text-fg hover:bg-hover"
         >
           {collapsed ? <PanelLeftOpen size={15} /> : <PanelLeftClose size={15} />}
         </button>
@@ -139,45 +177,6 @@ export const VerticalTabs = memo(function VerticalTabs(props: TabBarProps) {
         }}
         className={`flex-1 min-h-0 overflow-y-auto overflow-x-hidden [scrollbar-width:thin] flex flex-col gap-0.5 pb-1 ${collapsed ? "px-0" : "px-1.5"}`}
       >
-        {toolsOpen && (
-          <div
-            role="tab"
-            data-id="tools"
-            aria-selected={activeId === "tools"}
-            tabIndex={focusId === "tools" ? 0 : -1}
-            onMouseDown={(e) => {
-              if (e.button === 1) {
-                e.preventDefault();
-                onClose("tools");
-              } else onSelect("tools");
-            }}
-            title={`Herramientas${alerts > 0 ? ` · ${alerts} sondas caídas` : ""}\nClic medio: cerrar`}
-            className={`${rowBase} ${rowState(activeId === "tools")} ${focusable}`}
-          >
-            <Wrench size={13} className="shrink-0" />
-            {collapsed ? (
-              alerts > 0 && <span className="absolute top-0.5 right-0.5 w-2 h-2 rounded-full bg-danger" />
-            ) : (
-              <>
-                <span className="truncate flex-1">Herramientas</span>
-                {alerts > 0 && (
-                  <span className="px-1.5 rounded-full bg-danger text-danger-fg text-[11px] font-semibold shrink-0" title={`${alerts} sondas caídas`}>
-                    ✕ {alerts}
-                  </span>
-                )}
-                <button
-                  tabIndex={-1}
-                  aria-label="Cerrar Herramientas"
-                  onMouseDown={(e) => e.stopPropagation()}
-                  onClick={() => onClose("tools")}
-                  className={closeBtnClass(activeId === "tools")}
-                >
-                  <X size={12} />
-                </button>
-              </>
-            )}
-          </div>
-        )}
         {tabs.map((t) => {
           const active = t.id === activeId;
           const status = states[t.id]?.status ?? "connecting";
@@ -275,13 +274,19 @@ export const VerticalTabs = memo(function VerticalTabs(props: TabBarProps) {
           );
         })}
         <button
-          onClick={onNew}
+          // El menú se cierra con un clic fuera (mousedown): sin esto, un segundo clic en el "+" lo cierra y lo reabre.
+          onMouseDown={(e) => e.stopPropagation()}
+          onClick={(e) => {
+            const r = e.currentTarget.getBoundingClientRect();
+            setMenu((m) => (m ? null : { x: r.left, y: r.bottom + 4, items: newTabMenuItems(props) }));
+          }}
           onContextMenu={(e) => {
             e.preventDefault();
             setMenu({ x: e.clientX, y: e.clientY, items: newTabMenuItems(props) });
           }}
-          title={`Terminal local (${modLabel}T) · clic derecho: conexión rápida o nueva sesión`}
-          aria-label="Nueva terminal local"
+          title={`Nueva pestaña: terminal local (${modLabel}T), conexión rápida (${modLabel}O) o nueva sesión`}
+          aria-label="Nueva pestaña"
+          aria-haspopup="menu"
           className={
             collapsed
               ? "mx-auto mt-0.5 w-8 h-8 shrink-0 grid place-items-center rounded-md text-muted hover:text-fg hover:bg-hover"

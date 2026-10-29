@@ -1,5 +1,5 @@
 import { memo, useCallback, useEffect, useRef, useState } from "react";
-import { Columns2, LayoutGrid, PanelLeft, Plus, Rows2, Wrench, X } from "lucide-react";
+import { Columns2, LayoutGrid, Maximize2, Minimize2, Plus, Rows2, Wrench, X } from "lucide-react";
 import { newTabMenuItems } from "./tabMenu";
 import { SplitLayout, layoutLabel } from "../lib/split";
 import type { TabLayout } from "../lib/settings";
@@ -7,7 +7,7 @@ import { MenuItem, layoutItem, splitMenuItems, tabMenuItems } from "./tabMenu";
 import { ConnStatus, Tab, TabState, tabTitle } from "../types";
 import { ContextMenu } from "./Sidebar";
 import { SessionIcon, isQuickSession } from "./SessionIcon";
-import { modLabel } from "../lib/platform";
+import { focusLabel, modLabel } from "../lib/platform";
 import type { CloseScope } from "../lib/closeAll";
 import { useTabDrag } from "../lib/tabDrag";
 
@@ -21,14 +21,24 @@ export interface TabBarProps {
   /** Conexión rápida sin guardar y nueva sesión guardada (menú del "+"). */
   onQuickConnect?: () => void;
   onNewSession?: () => void;
+  /** Crea un botón de la barra de botones (el menú del "+" y la paleta lo ofrecen aunque la barra esté oculta). */
+  onNewButton?: () => void;
+  /** Modo foco: solo pestañas y terminal. */
+  focusMode?: boolean;
+  onToggleFocus?: () => void;
+  /** Break, buscar e historial de comandos de una pestaña (menú contextual). */
+  onBreak?: (id: string) => void;
+  onFind?: (id: string) => void;
+  onHistory?: (id: string) => void;
   /** Guarda una pestaña abierta con conexión rápida como sesión. */
   onSaveAs?: (id: string) => void;
   /** Cerrar varias pestañas desde el menú contextual (con un solo aviso). */
   onCloseMany?: (scope: CloseScope, id: string) => void;
-  onToggleSidebar: () => void;
+  /** Herramientas ya abierta (sus módulos siguen vivos aunque se vea una terminal). */
   toolsOpen: boolean;
-  onOpenTools: () => void;
-  /** Sondas caídas: se muestran en la pestaña de herramientas. */
+  /** Abre Herramientas o, si ya se ve, vuelve a la última terminal sin cerrarla (⌘E). */
+  onToggleTools: () => void;
+  /** Sondas caídas: se muestran junto al botón de Herramientas. */
   alerts: number;
   onRename: (id: string, title: string | undefined) => void;
   onDuplicate: (id: string) => void;
@@ -91,10 +101,7 @@ export const TabBar = memo(function TabBar(props: TabBarProps) {
   activeId,
   onSelect,
   onClose,
-  onNew,
-  onToggleSidebar,
-  toolsOpen,
-  onOpenTools,
+  onToggleTools,
   alerts,
   onRename,
   activity,
@@ -124,15 +131,11 @@ export const TabBar = memo(function TabBar(props: TabBarProps) {
     onRename(id, v && v !== tab.session.name ? v : undefined);
   };
 
+  // En vertical, las pestañas y sus controles (vista dividida, modo foco) viven en VerticalTabs.
+  if (vertical) return null;
+
   return (
-    <div className="h-10 shrink-0 flex items-end gap-1 px-1.5 bg-chrome border-b border-line">
-      <button
-        onClick={onToggleSidebar}
-        title={`Mostrar/ocultar sesiones (${modLabel}B)`}
-        className="mb-1.5 w-7 h-7 grid place-items-center rounded-md text-muted hover:text-fg hover:bg-hover"
-      >
-        <PanelLeft size={16} />
-      </button>
+    <div className="@container h-[34px] shrink-0 flex items-end gap-1 px-1.5 bg-chrome border-b border-line">
       <div
         ref={stripRef}
         className="flex-1 min-w-0 self-stretch flex items-end gap-0.5 overflow-x-auto [scrollbar-width:none]"
@@ -143,35 +146,6 @@ export const TabBar = memo(function TabBar(props: TabBarProps) {
           setMenu({ x: e.clientX, y: e.clientY, items: layoutItem(props) });
         }}
       >
-        {!vertical && toolsOpen && (
-          <div
-            onMouseDown={(e) => {
-              if (e.button === 1) onClose("tools");
-              else onSelect("tools");
-            }}
-            className={`group flex items-center gap-2 h-8 pl-3 pr-1.5 rounded-t-lg text-[12.5px] shrink-0 ${
-              activeId === "tools"
-                ? "bg-bg text-fg border border-line border-b-transparent -mb-px"
-                : "text-muted hover:text-fg hover:bg-hover"
-            }`}
-          >
-            <Wrench size={13} />
-            Herramientas
-            {alerts > 0 && (
-              <span className="px-1.5 rounded-full bg-danger text-danger-fg text-[11px] font-semibold" title={`${alerts} sondas caídas`}>
-                ✕ {alerts}
-              </span>
-            )}
-            <button
-              onMouseDown={(e) => e.stopPropagation()}
-              onClick={() => onClose("tools")}
-              aria-label="Cerrar Herramientas"
-              className={closeBtnClass(false)}
-            >
-              <X size={12} />
-            </button>
-          </div>
-        )}
         {!vertical && tabs.map((t) => {
           const active = t.id === activeId;
           const status = states[t.id]?.status ?? "connecting";
@@ -199,7 +173,7 @@ export const TabBar = memo(function TabBar(props: TabBarProps) {
                 });
               }}
               title={`${tabTitle(t)}${t.title ? ` (${t.session.name})` : ""}\nArrastra para mover · doble clic: renombrar · clic derecho: opciones · clic medio: cerrar`}
-              className={`group relative flex items-center gap-2 h-8 pl-3 pr-1.5 min-w-[120px] max-w-[220px] rounded-t-lg text-[12.5px] ${
+              className={`group relative flex items-center gap-2 h-7 pl-3 pr-1.5 min-w-[120px] max-w-[220px] rounded-t-lg text-[12.5px] ${
                 drag.dragId === t.id ? "opacity-50" : ""
               } ${drag.target?.id === t.id ? dropMark(drag.target.after ? "right" : "left") : ""} ${
                 active
@@ -251,17 +225,26 @@ export const TabBar = memo(function TabBar(props: TabBarProps) {
           );
         })}
         {menu && <ContextMenu menu={menu} onClose={closeMenu} />}
-        {!vertical && <button
-          onClick={onNew}
-          onContextMenu={(e) => {
-            e.preventDefault();
-            setMenu({ x: e.clientX, y: e.clientY, items: newTabMenuItems(props) });
-          }}
-          title={`Terminal local (${modLabel}T) · clic derecho: conexión rápida o nueva sesión`}
-          className="mb-1.5 ml-1 w-7 h-7 shrink-0 grid place-items-center rounded-md text-muted hover:text-fg hover:bg-hover"
-        >
-          <Plus size={16} />
-        </button>}
+        {!vertical && (
+          <button
+            // El menú se cierra con un clic fuera (mousedown): sin esto, un segundo clic en el "+" lo cierra y lo reabre.
+            onMouseDown={(e) => e.stopPropagation()}
+            onClick={(e) => {
+              const r = e.currentTarget.getBoundingClientRect();
+              setMenu((m) => (m ? null : { x: r.left, y: r.bottom + 4, items: newTabMenuItems(props) }));
+            }}
+            onContextMenu={(e) => {
+              e.preventDefault();
+              setMenu({ x: e.clientX, y: e.clientY, items: newTabMenuItems(props) });
+            }}
+            title={`Nueva pestaña: terminal local (${modLabel}T), conexión rápida (${modLabel}O) o nueva sesión`}
+            aria-label="Nueva pestaña"
+            aria-haspopup="menu"
+            className="mb-[5px] ml-1 w-7 h-6 shrink-0 grid place-items-center rounded-md text-muted hover:text-fg hover:bg-hover"
+          >
+            <Plus size={16} />
+          </button>
+        )}
       </div>
       {onSplit && (
         <button
@@ -271,23 +254,54 @@ export const TabBar = memo(function TabBar(props: TabBarProps) {
           }}
           title={split ? `Vista dividida: ${layoutLabel[split]}` : "Vista dividida: ver 2 o 4 pestañas a la vez"}
           aria-pressed={!!split}
-          className={`mb-1.5 w-7 h-7 shrink-0 grid place-items-center rounded-md hover:bg-hover ${split ? "text-accent" : "text-muted hover:text-fg"}`}
+          className={`mb-[5px] w-7 h-6 shrink-0 grid place-items-center rounded-md hover:bg-hover ${split ? "text-accent" : "text-muted hover:text-fg"}`}
         >
           {split === "rows" ? <Rows2 size={15} /> : split === "grid" ? <LayoutGrid size={15} /> : <Columns2 size={15} />}
         </button>
       )}
-      {(!toolsOpen || alerts > 0) && (
+      {props.onToggleFocus && (
         <button
-          onClick={onOpenTools}
-          title={`Herramientas: monitoreo, diagnóstico, TFTP, syslog, plugins (${modLabel}E)`}
-          className={`mb-1.5 h-7 px-2 shrink-0 flex items-center gap-1 rounded-md hover:bg-hover ${
-            alerts > 0 ? "text-danger" : "text-muted hover:text-fg"
+          onClick={props.onToggleFocus}
+          title={props.focusMode ? `Salir del modo foco (${focusLabel})` : `Modo foco: solo pestañas y terminal (${focusLabel})`}
+          aria-label={props.focusMode ? "Salir del modo foco" : "Modo foco"}
+          aria-pressed={!!props.focusMode}
+          className={`mb-[5px] h-6 shrink-0 flex items-center gap-1.5 rounded-md hover:bg-hover ${
+            props.focusMode ? "px-2 text-[12px] text-accent" : "w-7 justify-center text-muted hover:text-fg"
           }`}
         >
-          <Wrench size={15} />
-          {alerts > 0 && <span className="text-[11px] font-semibold">✕ {alerts}</span>}
+          {props.focusMode ? <Minimize2 size={14} /> : <Maximize2 size={14} />}
+          {props.focusMode && "Salir del modo foco"}
         </button>
       )}
+      {/* En modo foco, Herramientas sigue en ⌘E y la paleta. */}
+      {!props.focusMode && <ToolsButton active={activeId === "tools"} alerts={alerts} onClick={onToggleTools} />}
     </div>
   );
 });
+
+/**
+ * Botón de Herramientas, siempre visible: resalta cuando la vista está activa y avisa las
+ * sondas caídas. El texto se oculta con la barra angosta (container query de la barra, como
+ * en StatusBar): con ventana mínima o barra lateral abierta queda el icono, el title y el aviso.
+ */
+function ToolsButton({ active, alerts, onClick }: { active: boolean; alerts: number; onClick: () => void }) {
+  return (
+    <button
+      onClick={onClick}
+      title={`Herramientas: monitoreo, diagnóstico, TFTP, syslog, plugins (${modLabel}E)${alerts > 0 ? `\n${alerts} sondas caídas` : ""}`}
+      aria-label={`Herramientas${alerts > 0 ? `, ${alerts} sondas caídas` : ""}`}
+      aria-pressed={active}
+      className={`mb-[5px] h-6 px-2 shrink-0 flex items-center gap-1.5 rounded-md text-[12.5px] ${
+        active ? "bg-selected text-fg font-medium" : "text-muted hover:text-fg hover:bg-hover"
+      }`}
+    >
+      <Wrench size={15} className={alerts > 0 ? "text-danger" : ""} />
+      <span className="hidden @[40rem]:inline">Herramientas</span>
+      {alerts > 0 && (
+        <span className="px-1.5 rounded-full bg-danger text-danger-fg text-[11px] font-semibold" title={`${alerts} sondas caídas`}>
+          ✕ {alerts}
+        </span>
+      )}
+    </button>
+  );
+}

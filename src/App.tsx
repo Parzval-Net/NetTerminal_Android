@@ -5,6 +5,8 @@ import { Sidebar } from "./components/Sidebar";
 import { TabBar, type TabBarProps } from "./components/TabBar";
 import { VerticalTabs } from "./components/VerticalTabs";
 import { StatusBar } from "./components/StatusBar";
+import { ActivityBar } from "./components/ActivityBar";
+import { HistoryMenu } from "./components/HistoryMenu";
 import { TerminalView, TermController } from "./components/TerminalView";
 import type { CredChange } from "./components/SessionModal";
 import { ConfirmDialog } from "./components/ConfirmDialog";
@@ -29,10 +31,10 @@ import type { ScriptLaunch } from "./components/ScriptLaunchDialog";
 import type { Section } from "./components/SettingsModal";
 import type { Macro, UpdateInfo } from "./lib/settings";
 import { openUrl } from "@tauri-apps/plugin-opener";
-import { Sparkles, X as XIcon } from "lucide-react";
+import { Pin, Sparkles, X as XIcon } from "lucide-react";
 import { listen } from "@tauri-apps/api/event";
 import { ConnStatus, Session, Tab, TabState, historyKey, tabTitle } from "./types";
-import { closeAllLabel, localOsVendor, modLabel, shortcutFor } from "./lib/platform";
+import { closeAllLabel, focusLabel, isMac, localOsVendor, modLabel, shortcutFor } from "./lib/platform";
 import { presets, resolvePreset, useSystemDark } from "./lib/theme";
 import { Settings, logOptions, useSettings } from "./lib/settings";
 import { useAlerts } from "./lib/alerts";
@@ -172,6 +174,15 @@ function Workspace({
   const controllers = useRef(new Map<string, TermController>());
 
   useEffect(() => persist("sidebar", sidebarOpen), [sidebarOpen]);
+  /** Modo foco: solo pestañas y terminal (sin barra de actividad, sesiones, paneles, botones ni estado). Se recuerda. */
+  const [focusMode, setFocusMode] = useState(() => stored("focusMode", false));
+  useEffect(() => persist("focusMode", focusMode), [focusMode]);
+  /** Barra de sesiones flotante abierta (solo con el ajuste activo y la barra acoplada cerrada). */
+  const [peek, setPeek] = useState(false);
+  const peekTimer = useRef<number | undefined>(undefined);
+  const peekRef = useRef<HTMLDivElement>(null);
+  /** La barra de botones se oculta sola sin botones; esto la muestra igual (scripts) desde la paleta. */
+  const [barForced, setBarForced] = useState(false);
   const [notesOpen, setNotesOpenRaw] = useState(() => stored("notesOpen", false));
   const [commandsOpen, setCommandsOpenRaw] = useState(() => stored("commandsOpen", false));
   useEffect(() => persist("commandsOpen", commandsOpen), [commandsOpen]);
@@ -303,6 +314,8 @@ function Workspace({
 
 
   const [toolsOpen, setToolsOpen] = useState(false);
+  /** Pestaña cuyo historial de comandos enviados se muestra (null: cerrado). */
+  const [historyFor, setHistoryFor] = useState<string | null>(null);
 
   // Pestañas en segundo plano con salida nueva (se limpia al verlas).
   const [activity, setActivity] = useState<Set<string>>(new Set());
@@ -389,6 +402,32 @@ function Workspace({
     setActiveId("tools");
   }, []);
 
+  /**
+   * ⌘E y el botón de Herramientas: si la vista ya se ve, vuelve a la última terminal SIN cerrarla
+   * (los servidores, el syslog y las mediciones siguen vivos); si no, la abre o la activa.
+   */
+  const toggleTools = () => (activeId === "tools" ? setActiveId(lastTermRef.current) : openTools());
+
+  /**
+   * Cierra Herramientas de verdad (botón X de su encabezado, menú del botón o ⌘W sobre la vista).
+   * Los monitoreos de Monitoreo/Diagnóstico viven en App (useMonitors) y no se cortan; lo que se
+   * pierde al desmontar es lo que cada módulo muestra en pantalla (mensajes de syslog, transferencias,
+   * mediciones, un SNMP en curso). Los servidores activos sí se pueden consultar: se avisa por ellos.
+   */
+  const requestCloseTools = async () => {
+    const running = await invoke<string[]>("server_running").catch(() => [] as string[]);
+    if (!running.length) return closeTab("tools");
+    const names: Record<string, string> = { tftp: "TFTP", http: "HTTP", ftp: "FTP", syslog: "Syslog", snmptrap: "traps SNMP" };
+    setConfirm({
+      title: "¿Cerrar Herramientas?",
+      message: `Hay servidores activos (${running.map((k) => names[k] ?? k).join(", ")}). Siguen funcionando, pero Herramientas dejará de mostrar sus mensajes, transferencias y mediciones. Para salir sin cerrar Herramientas, usa ${modLabel}E.`,
+      label: "Cerrar Herramientas",
+      danger: true,
+      defaultCancel: true,
+      action: () => closeTab("tools"),
+    });
+  };
+
   const closeTab = useCallback((id: string) => {
     if (id === "tools") {
       setToolsOpen(false);
@@ -414,6 +453,7 @@ function Workspace({
 
   // Evita cortar por accidente una sesión remota activa.
   const requestClose = (id: string) => {
+    if (id === "tools") return requestCloseTools();
     const tab = tabs.find((t) => t.id === id);
     const risky = tab && tab.session.type !== "local" && states[id]?.status === "connected";
     // Una conexión rápida sin guardar se pierde al cerrar: se avisa siempre, aunque "Confirmar al cerrar" esté apagado.
@@ -901,7 +941,7 @@ function Workspace({
         case "commands":
           return toggleCommands();
         case "tools":
-          return activeId === "tools" ? closeTab("tools") : openTools();
+          return toggleTools();
         case "duplicateTab":
           return activeTab && openTab(activeTab.session);
         case "newSession":
@@ -911,7 +951,9 @@ function Workspace({
         case "cliLab":
           return openLab();
         case "toggleSidebar":
-          return setSidebarOpen((o) => !o);
+          return h.toggleSidebar();
+        case "focusMode":
+          return setFocusMode((f) => !f);
         case "find":
           return activeCtrl()?.openFind();
         case "nextTab":
@@ -1087,7 +1129,37 @@ function Workspace({
     setSidebarOrder: (sidebarOrder: Record<string, string[]>) => update({ sidebarOrder }),
     requestClose,
     requestCloseMany,
-    toggleSidebar: () => setSidebarOpen((o) => !o),
+    toggleSidebar: () => {
+      setPeek(false);
+      setSidebarOpen((o) => !o);
+    },
+    toggleFocus: () => setFocusMode((f) => !f),
+    newButton: () => setMacroEdit(null),
+    /** Clic en Sesiones: con el modo flotante y la barra cerrada abre/cierra la superpuesta; si no, acopla u oculta. */
+    clickSessions: () => {
+      if (settings.floatingSidebar && !sidebarOpen) setPeek((v) => !v);
+      else {
+        setPeek(false);
+        setSidebarOpen((o) => !o);
+      }
+    },
+    peekEnter: () => {
+      window.clearTimeout(peekTimer.current);
+      if (settings.floatingSidebar && !sidebarOpen && !focusMode) setPeek(true);
+    },
+    peekLeave: () => {
+      window.clearTimeout(peekTimer.current);
+      peekTimer.current = window.setTimeout(() => {
+        // No se cierra con un menú contextual abierto ni mientras se escribe en el filtro.
+        const box = peekRef.current;
+        if (document.querySelector('[role="menu"]') || (box && box.contains(document.activeElement) && document.activeElement?.tagName === "INPUT")) return;
+        setPeek(false);
+      }, 300);
+    },
+    pinSessions: () => {
+      setPeek(false);
+      setSidebarOpen(true);
+    },
     setTabLayout: (tabLayout: Settings["tabLayout"]) => update({ tabLayout }),
     reorderTab: (from: string, to: string, after: boolean) => setTabs((ts) => moveItem(ts, from, to, after)),
     renameTab: (id: string, title: string | undefined) => setTabs((ts) => ts.map((t) => (t.id === id ? { ...t, title } : t))),
@@ -1165,15 +1237,19 @@ function Workspace({
     stopScript: () => scriptRun && invoke("stop_script", { run: scriptRun.run }).catch(() => {}),
     deleteMacro: (m: Macro) => update((s) => ({ macros: s.macros.filter((x) => x.id !== m.id) })),
     toggleLog,
-    sendBreak: () => {
-      const ctrl = activeCtrl();
+    sendBreak: (id: string | undefined = activeId ?? undefined) => {
+      const ctrl = id ? controllers.current.get(id) : undefined;
       if (!ctrl) return;
       invoke("send_break", { id: ctrl.connId() }).catch((e) => toast(String(e), "error"));
       ctrl.focus();
     },
     reconnect: () => activeCtrl()?.reconnect(),
     disconnect: () => activeCtrl()?.disconnect(),
-    find: () => activeCtrl()?.openFind(),
+    find: (id: string | undefined = activeId ?? undefined) => (id ? controllers.current.get(id) : undefined)?.openFind(),
+    openHistory: (id: string | undefined = activeId ?? undefined) => id && setHistoryFor(id),
+    toggleTools,
+    requestCloseTools,
+    closeHistory: () => setHistoryFor(null),
     openSettings: () => setSettingsOpen(true),
     openAi: () => {
       setSettingsSection("ai");
@@ -1231,9 +1307,14 @@ function Workspace({
     onQuickConnect: h.openQuick,
     onNewSession: h.newSession,
     onSaveAs: h.saveTabAs,
-    onToggleSidebar: h.toggleSidebar,
+    onNewButton: settings.showButtonBar ? h.newButton : undefined,
+    focusMode,
+    onToggleFocus: h.toggleFocus,
+    onBreak: h.sendBreak,
+    onFind: h.find,
+    onHistory: h.openHistory,
     toolsOpen,
-    onOpenTools: openTools,
+    onToggleTools: h.toggleTools,
     alerts: monitors.downCount,
     onRename: h.renameTab,
     onReorder: h.reorderTab,
@@ -1251,10 +1332,25 @@ function Workspace({
     onTabLayout: h.setTabLayout,
   };
 
-  return (
-    <div className="h-full flex bg-bg text-fg">
-      {sidebarOpen && (
-        <Sidebar
+  // Barra flotante: Esc o un clic fuera la cierran (sin consumir la tecla: la terminal la sigue recibiendo).
+  useEffect(() => {
+    if (!peek) return;
+    const onKey = (e: KeyboardEvent) => e.key === "Escape" && setPeek(false);
+    const onDown = (e: MouseEvent) => {
+      const t = e.target as Element | null;
+      if (t?.closest('[role="menu"], [data-sessions-btn]') || peekRef.current?.contains(t)) return;
+      setPeek(false);
+    };
+    window.addEventListener("keydown", onKey, true);
+    window.addEventListener("mousedown", onDown, true);
+    return () => {
+      window.removeEventListener("keydown", onKey, true);
+      window.removeEventListener("mousedown", onDown, true);
+    };
+  }, [peek]);
+
+  const sidebarEl = (extra: Partial<React.ComponentProps<typeof Sidebar>> = {}) => (
+    <Sidebar
           sessions={sessions}
           extraFolders={settings.extraFolders}
           order={settings.sidebarOrder}
@@ -1272,9 +1368,66 @@ function Workspace({
           onConfirm={setConfirm}
           onImportFile={h.openImport}
           onExportFile={h.openExport}
+          {...extra}
+        />
+  );
+
+  return (
+    <div className="h-full flex bg-bg text-fg relative">
+      {!focusMode && (
+        <ActivityBar
+          sidebarOpen={sidebarOpen || peek}
+          floatingSessions={settings.floatingSidebar && !sidebarOpen}
+          toolsActive={activeId === "tools"}
+          toolsOpen={toolsOpen}
+          alerts={monitors.downCount}
+          labOpen={!!labOpen}
+          commandsOpen={commandsOpen}
+          notesOpen={notesOpen}
+          settingsOpen={settingsOpen}
+          onSessions={h.clickSessions}
+          onSessionsEnter={h.peekEnter}
+          onSessionsLeave={h.peekLeave}
+          onTools={h.toggleTools}
+          onCloseTools={h.requestCloseTools}
+          onLab={openLab}
+          onCommands={h.toggleCommands}
+          onNotes={h.toggleNotes}
+          onSettings={h.openSettings}
         />
       )}
-
+      {!focusMode && sidebarOpen && sidebarEl()}
+      {/* Barra de sesiones flotante: encima de la terminal, sin empujarla. */}
+      {!focusMode && !sidebarOpen && settings.floatingSidebar && peek && (
+        <div
+          ref={peekRef}
+          onMouseEnter={h.peekEnter}
+          onMouseLeave={h.peekLeave}
+          className="absolute left-11 top-0 bottom-0 z-30 w-64 flex flex-col bg-chrome border-r border-line shadow-pop"
+        >
+          <div className="h-8 shrink-0 flex items-center gap-1 pl-3 pr-1.5 border-b border-line text-[11px] font-semibold uppercase tracking-wide text-muted">
+            <span className="flex-1">Sesiones</span>
+            <button
+              onClick={h.pinSessions}
+              title="Fijar: acoplar la barra de sesiones junto a la terminal"
+              aria-label="Fijar la barra de sesiones"
+              className="h-6 px-1.5 flex items-center gap-1 rounded-md normal-case font-normal text-[12px] hover:text-fg hover:bg-hover"
+            >
+              <Pin size={13} />
+              Fijar
+            </button>
+          </div>
+          <div className="flex-1 min-h-0">
+            {sidebarEl({
+              onOpen: (x: Session) => (setPeek(false), openTab(x)),
+              onOpenMany: (x: Session[]) => (setPeek(false), h.openMany(x)),
+              onNew: (f?: string) => (setPeek(false), h.newSession(f)),
+              onQuickConnect: () => (setPeek(false), h.openQuick()),
+              onEdit: (x: Session) => (setPeek(false), h.editSession(x)),
+            })}
+          </div>
+        </div>
+      )}
       <main className="flex-1 min-w-0 flex flex-col">
         {update_ && (
           <div className="shrink-0 border-b border-line bg-selected">
@@ -1361,6 +1514,8 @@ function Workspace({
             <Suspense fallback={null}>
               <ToolsView
                 active={activeId === "tools"}
+                onBack={h.toggleTools}
+                onClose={h.requestCloseTools}
                 settings={settings}
                 update={update}
                 monitors={monitors}
@@ -1374,10 +1529,10 @@ function Workspace({
             </Suspense>
           )}
           {tabs.length === 0 && activeId !== "tools" && (
-            <EmptyState onLocal={newLocal} onPalette={() => setPaletteOpen(true)} onQuick={h.openQuick} onNew={() => setModal({})} onTools={openTools} />
+            <EmptyState onLocal={newLocal} onPalette={() => setPaletteOpen(true)} onQuick={h.openQuick} onNew={() => setModal({})} onTools={h.toggleTools} />
           )}
         </div>
-        {commandsOpen && (
+        {!focusMode && commandsOpen && (
           <CommandsPanel
             width={panelWidth}
             overlay={panelOverlay}
@@ -1400,7 +1555,7 @@ function Workspace({
             onPacks={h.openPacks}
           />
         )}
-        {notesOpen && (
+        {!focusMode && notesOpen && (
           <NotesPanel
             width={panelWidth}
             overlay={panelOverlay}
@@ -1418,7 +1573,9 @@ function Workspace({
         </div>
 
         {/* En Herramientas no hay terminal a la que enviar: la barra solo ocuparía espacio. */}
-        {settings.showButtonBar && activeId !== "tools" && (
+        {/* Se oculta sola sin sesión activa o sin botones (los scripts siguen en la paleta). En modo
+            foco solo queda mientras corre un script, para poder detenerlo. */}
+        {settings.showButtonBar && activeId !== "tools" && !!activeTab && (settings.macros.length > 0 || barForced) && (!focusMode || !!scriptRun) && (
           <ButtonBar
             macros={settings.macros}
             connected={activeConnected || broadcastMode}
@@ -1433,25 +1590,17 @@ function Workspace({
           />
         )}
 
-        <StatusBar
+        {!focusMode && <StatusBar
           tab={activeTab}
           device={settings.lifecycleInfo && activeId ? tabDevice[activeId] : undefined}
           state={activeId ? states[activeId] : undefined}
           onToggleLog={h.toggleLog}
-          onBreak={h.sendBreak}
           onReconnect={h.reconnect}
           onDisconnect={h.disconnect}
-          onFind={h.find}
-          onSettings={h.openSettings}
           aiEnabled={settings.mcpEnabled}
           onAi={h.openAi}
-          notesOpen={notesOpen}
-          onNotes={h.toggleNotes}
-          commandsOpen={commandsOpen}
-          onCommands={h.toggleCommands}
-          onResend={h.sendToSession}
           onSaveAs={activeTab ? () => h.saveTabAs(activeTab.id) : undefined}
-        />
+        />}
       </main>
 
       {modal && (
@@ -1613,6 +1762,43 @@ function Workspace({
           onClose={() => setPaletteOpen(false)}
           onOpen={openTab}
           actions={[
+            // Acciones de la sesión activa que ya no están en la barra de estado.
+            ...(activeTab
+              ? [
+                  { label: "Buscar en la terminal", detail: "Busca texto en la salida de la pestaña activa", shortcut: `${modLabel}F`, run: () => h.find() },
+                  ...(!activeTab.session.scp
+                    ? [{ label: "Historial de comandos enviados", detail: "Últimos comandos de Notas, catálogo y botones para este equipo", run: () => h.openHistory() }]
+                    : []),
+                  ...(activeTab.session.type === "serial" || activeTab.session.type === "telnet"
+                    ? [{ label: "Enviar Break", detail: "Señal Break a la consola de la pestaña activa", run: () => h.sendBreak() }]
+                    : []),
+                  states[activeTab.id]?.status === "closed"
+                    ? { label: "Reconectar sesión", detail: "Vuelve a conectar la pestaña activa", run: () => h.reconnect() }
+                    : { label: "Desconectar sesión", detail: "Corta la conexión; la pestaña queda abierta", run: () => h.disconnect() },
+                ]
+              : []),
+            { label: "Modo foco", detail: focusMode ? "Salir: vuelve a mostrar barras y paneles" : "Oculta barras y paneles: solo pestañas y terminal", shortcut: focusLabel, run: h.toggleFocus },
+            ...(settings.showButtonBar
+              ? [
+                  { label: "Nuevo botón de comando", detail: "Crea un botón en la barra de botones (comando o script)", run: h.newButton },
+                  ...(settings.macros.length === 0
+                    ? [
+                        barForced
+                          ? { label: "Ocultar barra de botones", detail: "Sin botones, la barra se oculta sola", run: () => setBarForced(false) }
+                          : { label: "Scripts y barra de botones", detail: "Muestra la barra de botones para ejecutar o importar scripts", run: () => setBarForced(true) },
+                      ]
+                    : []),
+                ]
+              : []),
+            { label: "Herramientas de red", detail: activeId === "tools" ? "Volver a la última terminal (Herramientas sigue abierta)" : "Monitoreo, diagnóstico, topología, syslog, SNMP, respaldos, plugins", shortcut: `${modLabel}E`, run: h.toggleTools },
+            ...(toolsOpen ? [{ label: "Cerrar Herramientas", detail: "Cierra la vista y sus módulos (avisa si hay servidores activos)", run: h.requestCloseTools }] : []),
+            { label: "Notas", detail: "Panel de notas con envío a la sesión", shortcut: `${modLabel}J`, run: h.toggleNotes },
+            { label: "Catálogo de comandos", detail: "Comandos por fabricante", shortcut: `${modLabel}L`, run: h.toggleCommands },
+            { label: "Barra de sesiones", detail: "Mostrar u ocultar la lista de sesiones", shortcut: `${modLabel}B`, run: h.toggleSidebar },
+            { label: "Ajustes", detail: "Preferencias de la aplicación", shortcut: isMac ? "⌘," : "Ctrl+,", run: h.openSettings },
+            { label: "Nueva terminal local", detail: "Abre una pestaña con la terminal de este equipo", shortcut: `${modLabel}T`, run: newLocal },
+            { label: "Conexión rápida", detail: "SSH o Telnet sin guardar la sesión", shortcut: `${modLabel}O`, run: h.openQuick },
+            { label: "Nueva sesión guardada", detail: "Crea una sesión en la barra de sesiones", shortcut: `${modLabel}N`, run: () => h.newSession() },
             {
               label: "CLI Lab: script multilínea",
               detail: "Ejecuta varios comandos en orden en una o varias sesiones, leyendo cada respuesta",
@@ -1635,6 +1821,14 @@ function Workspace({
                 ]
               : []),
           ]}
+        />
+      )}
+      {historyFor && tabs.some((t) => t.id === historyFor) && (
+        <HistoryMenu
+          historyKey={historyKey(tabs.find((t) => t.id === historyFor)!.session)}
+          connected={states[historyFor]?.status === "connected"}
+          onResend={h.sendToSession}
+          onClose={h.closeHistory}
         />
       )}
       {quickOpen && <QuickConnectDialog onClose={() => setQuickOpen(false)} onOpen={openTab} />}

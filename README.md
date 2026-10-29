@@ -71,7 +71,7 @@ Las capturas usan datos ficticios. Hay más en la [página del producto](https:/
 2. **Conéctate** desde la búsqueda (⌘K o Ctrl+Shift+K) escribiendo `admin@192.0.2.1` o solo la IP. Para Serial o TCP crudo usa el formulario de Conexión rápida (⌘O o Ctrl+Shift+O), que no guarda la sesión.
 3. **Guarda tus equipos** con el **+** de la barra lateral, o impórtalos desde tu cliente actual. Si quieres, guarda la contraseña en la bóveda.
 4. **Trabaja con el catálogo** (⌘L o Ctrl+Shift+L): pulsa "Detectar" para ajustar la sintaxis a tu equipo y elige el comando.
-5. **Abre las herramientas** (⌘E o Ctrl+Shift+E) para topología, transferencias, SNMP, monitoreo y más. Cada módulo se activa en Ajustes › Módulos.
+5. **Abre las herramientas** (⌘E o Ctrl+Shift+E, o el ícono de la llave en la barra izquierda) para topología, transferencias, SNMP, monitoreo y más; con el mismo atajo vuelves a la terminal sin cerrarlas. Cada módulo se activa en Ajustes › Módulos.
 
 ## Atajos principales
 
@@ -85,6 +85,7 @@ Las capturas usan datos ficticios. Hay más en la [página del producto](https:/
 | CLI Lab | ⌘I | Ctrl+Shift+I |
 | Herramientas | ⌘E | Ctrl+Shift+E |
 | Buscar en la salida | ⌘F | Ctrl+Shift+F |
+| Modo foco (solo pestañas y terminal) | ⌘⇧F | Ctrl+Shift+Alt+F |
 | Copiar / pegar | ⌘C / ⌘V | Ctrl+Shift+C / Ctrl+Shift+V |
 
 En Windows y Linux los atajos usan Ctrl+Shift para no interferir con Ctrl+C o Ctrl+W dentro de la terminal. La lista completa está en la [documentación técnica](docs/TECNICO.md#atajos).

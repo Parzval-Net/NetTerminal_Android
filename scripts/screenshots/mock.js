@@ -180,6 +180,9 @@ if (location.search.includes("scene=vrp")) {
   if (q.get("bs") === "del" || q.get("bs") === "bs") sessions[3].backspace = q.get("bs");
 }
 if (location.search.includes("scene=vertical") || location.search.includes("layout=vertical")) settings.tabLayout = "vertical";
+// &floating=1: barra de sesiones flotante; &nomacros=1: sin botones (la barra de botones se oculta sola).
+if (location.search.includes("floating=1")) settings.floatingSidebar = true;
+if (location.search.includes("nomacros=1")) settings.macros = [];
 // ?toast=1: una alerta por palabra clave activa que dispara un aviso (toast) y marca la primera pestaña.
 if (location.search.includes("toast=1")) {
   settings.alertRules = [{ id: "qa-updown", name: "Interfaz cambió de estado", pattern: "%LINK-3-UPDOWN", regex: false, caseSensitive: true, enabled: true, folder: "", toast: true, sound: false, markTab: true, highlight: false }];
@@ -1189,8 +1192,11 @@ const click = (l) => act("click", l);
 async function svgNode(name) {
   await wait(200);
   const t = [...document.querySelectorAll("svg text")].find((e) => e.textContent === name);
-  t?.parentElement?.dispatchEvent(new PointerEvent("pointerdown", { bubbles: true, pointerId: 1 }));
-  document.querySelector("svg")?.dispatchEvent(new PointerEvent("pointerup", { bubbles: true, pointerId: 1 }));
+  // Con coordenadas del nodo: Topología decide el arrastre y el clic por la posición del puntero.
+  const r = t?.parentElement?.getBoundingClientRect();
+  const at = { bubbles: true, pointerId: 1, isPrimary: true, button: 0, clientX: (r?.left ?? 0) + (r?.width ?? 0) / 2, clientY: (r?.top ?? 0) + (r?.height ?? 0) / 2 };
+  t?.parentElement?.dispatchEvent(new PointerEvent("pointerdown", { ...at, buttons: 1 }));
+  document.querySelector("svg")?.dispatchEvent(new PointerEvent("pointerup", { ...at, buttons: 0 }));
   await wait(250);
 }
 const open = (l) => act("dblclick", l);
