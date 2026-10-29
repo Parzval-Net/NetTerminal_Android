@@ -176,7 +176,13 @@ function Workspace({
   useEffect(() => persist("sidebar", sidebarOpen), [sidebarOpen]);
   // Ancho de la barra de sesiones: 256 px por defecto (w-64), entre 180 y 480 px.
   const [sidebarWidth, setSidebarWidth] = useState(() => stored("sidebarWidth", 256));
-  useEffect(() => persist("sidebarWidth", sidebarWidth), [sidebarWidth]);
+  // Se guarda al soltar (300 ms sin cambios), no en cada movimiento del arrastre.
+  useEffect(() => {
+    const t = window.setTimeout(() => persist("sidebarWidth", sidebarWidth), 300);
+    return () => window.clearTimeout(t);
+  }, [sidebarWidth]);
+  // Un solo cambio de ancho por cuadro: el arrastre emite mousemove más rápido que el refresco.
+  const sidebarPending = useRef<number | null>(null);
   /** Modo foco: solo pestañas y terminal (sin barra de actividad, sesiones, paneles, botones ni estado). Se recuerda. */
   const [focusMode, setFocusMode] = useState(() => stored("focusMode", false));
   useEffect(() => persist("focusMode", focusMode), [focusMode]);
@@ -1233,7 +1239,15 @@ function Workspace({
     editCommand: (c: CatalogEntry) => setCmdEdit({ vendor: settings.catalogVendor, initial: c }),
     openPacks: () => setPacksOpen(true),
     resizeNotes: (w: number) => setNotesWidth(Math.max(260, Math.min(w, window.innerWidth * 0.7))),
-    resizeSidebar: (w: number) => setSidebarWidth(Math.max(180, Math.min(w, 480))),
+    resizeSidebar: (w: number) => {
+      const first = sidebarPending.current === null;
+      sidebarPending.current = Math.max(180, Math.min(w, 480));
+      if (first)
+        requestAnimationFrame(() => {
+          if (sidebarPending.current !== null) setSidebarWidth(sidebarPending.current);
+          sidebarPending.current = null;
+        });
+    },
     closeNotes: () => {
       setNotesOpen(false);
       activeCtrl()?.focus();

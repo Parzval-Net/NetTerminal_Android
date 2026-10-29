@@ -135,9 +135,19 @@ pub fn run(app: AppHandle, conn: String, command: String, timeout_secs: u64, ans
                 emit("error", "Tiempo agotado esperando al equipo".into(), None);
                 break;
             }
-            let Ok(chunk) = rx.recv_timeout(Duration::from_millis(500)) else {
-                flush(&mut partial, true);
-                continue;
+            let chunk = match rx.recv_timeout(Duration::from_millis(500)) {
+                Ok(c) => c,
+                Err(std::sync::mpsc::RecvTimeoutError::Timeout) => {
+                    flush(&mut partial, true);
+                    continue;
+                }
+                // La sesión se cerró: sin esto el hilo giraba hasta el plazo con el turno tomado y
+                // bloqueaba los siguientes trabajos de la pestaña al reconectar.
+                Err(std::sync::mpsc::RecvTimeoutError::Disconnected) => {
+                    flush(&mut partial, true);
+                    emit("error", "La sesión se cerró".into(), None);
+                    break;
+                }
             };
             if output.len() + chunk.len() > MAX_OUTPUT {
                 flush(&mut partial, true);
@@ -181,6 +191,7 @@ pub fn run(app: AppHandle, conn: String, command: String, timeout_secs: u64, ans
             if let Some(r) = reply {
                 answered += 1;
                 if answered > 200 {
+                    leave_pager(conns, &conn, p, &tail);
                     emit("error", "Demasiadas confirmaciones; se detuvo por seguridad".into(), None);
                     break;
                 }

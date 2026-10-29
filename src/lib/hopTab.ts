@@ -185,6 +185,11 @@ export function stepHop(job: HopJob, screen: string, now: number): { job: HopJob
   }
 
   // phase === "sent": lo que respondió el equipo después del eco del comando.
+  // Tope absoluto: una pantalla que cambia sin parar (logging por consola, un reloj) nunca queda quieta.
+  if (now - (j.sentAt ?? now) > USER_WAIT_MS) {
+    fail(`El salto a ${j.neighbor} no terminó en ${Math.round(USER_WAIT_MS / 60_000)} min.`);
+    return { job: j, actions };
+  }
   const after = afterEcho(screen, j.cmd);
   const s = classifyHopScreen(after);
   const err = hopError(after);

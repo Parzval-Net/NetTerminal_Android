@@ -118,6 +118,7 @@ import { wheelFactor, wheelIntent } from "../../lib/mapZoom";
 import {
   HopAction,
   HopJob,
+  PROMPT_WAIT_MS,
   afterEcho,
   classifyHopScreen,
   hopTabSession,
@@ -291,7 +292,8 @@ function loadUi(): TopoUi {
       // anteriores: se parte del estilo vigente (vista por excepción; el estilo previo es "Vista detallada").
       anim: ver >= UI_VERSION && v.anim === true,
       traffic: v.traffic === true,
-      cli: v.cli === true,
+      // La lectura por consola envía comandos sola: se confirma en cada apertura de la app (no se recuerda).
+      cli: false,
       arrows: ver < UI_VERSION || v.arrows !== false,
       rates: ver < UI_VERSION || v.rates !== false,
       color: ver < UI_VERSION || v.color !== false,
@@ -2058,7 +2060,14 @@ export function TopologyTool({
           finish(r);
           continue;
         }
-        if (!t.screen) continue;
+        // Sin acceso a la pantalla no se puede seguir el salto: se corta pasado el mismo plazo del prompt.
+        if (!t.screen) {
+          if (now - r.job.startedAt > PROMPT_WAIT_MS) {
+            setMsg(`No se pudo leer la pestaña de ${r.neighbor.name}: se canceló el salto.`);
+            finish(r);
+          }
+          continue;
+        }
         const step = stepHop(r.job, t.screen(30), now);
         r.job = step.job;
         for (const a of step.actions) apply(r, t, a);

@@ -40,7 +40,6 @@ export const ButtonBar = memo(function ButtonBar(p: Props) {
       if (!name) return;
       setScripts(await invoke<string[]>("list_scripts").catch(() => scripts));
       p.onNotice?.(`${name} quedó en la carpeta de scripts`);
-      if (p.connected) p.onRunScript(name);
     } catch (err) {
       p.onNotice?.(`No se pudo usar el script: ${err}`, "error");
     }
