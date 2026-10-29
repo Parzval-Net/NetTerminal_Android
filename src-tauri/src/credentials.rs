@@ -199,10 +199,17 @@ fn check_master(master: &str) -> Result<(), String> {
 }
 
 fn check_id(id: &str) -> Result<(), String> {
-    if id.is_empty() || id.len() > MAX_ID || id.chars().any(|c| c.is_control()) {
+    // Las entradas de vecinos solo se tocan con hop_*: un id de sesión con ese prefijo podría
+    // leerlas (autocompletado) o pisarlas.
+    if id.is_empty() || id.len() > MAX_ID || id.chars().any(|c| c.is_control()) || id.starts_with(NS_HOP) {
         return Err("Sesión inválida".into());
     }
     Ok(())
+}
+
+/// Un id de sesión nunca usa los prefijos reservados de la bóveda ("snmp:", "hop:").
+pub fn reserved_id(id: &str) -> bool {
+    id.starts_with(NS_SNMP) || id.starts_with(NS_HOP)
 }
 
 impl Credentials {

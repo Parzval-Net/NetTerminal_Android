@@ -587,3 +587,12 @@ assert.equal(H.vendorOfPlatform("MikroTik"), undefined);
 assert.ok(H.isNxos("Cisco Nexus9000 C93180") && !H.isNxos("cisco WS-C3850"));
 
 console.log("hopTab: ok");
+
+// Clave de credencial de vecino: misma IP escrita distinto = misma clave (igual que el backend).
+{
+  const { hopCredKey } = await import("../../src/lib/hopCred.ts");
+  assert.equal(hopCredKey("2001:DB8:0::1", "noc"), hopCredKey("2001:db8::1", "noc"));
+  assert.equal(hopCredKey("::ffff:192.0.2.1", "noc"), hopCredKey("192.0.2.1", "noc"));
+  assert.equal(hopCredKey(" 192.0.2.1 ", "noc"), "192.0.2.1|noc");
+}
+

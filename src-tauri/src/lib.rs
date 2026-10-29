@@ -160,7 +160,7 @@ fn hop_type_password(
 ) -> Result<(), String> {
     let addr: std::net::IpAddr = ip.trim().parse().map_err(|_| "IP del vecino no válida")?;
     let host = addr.to_string();
-    if cmd.is_empty() || cmd.len() > 200 || cmd.chars().any(|c| c.is_control()) || !cmd.contains(&ip.trim().to_string()) {
+    if cmd.is_empty() || cmd.len() > 200 || cmd.chars().any(|c| c.is_control()) || !hop_cmd_targets(&cmd, &host, user.trim()) {
         return Err("Comando de salto no válido".into());
     }
     if token.is_empty() || token.len() > 160 {
@@ -168,20 +168,24 @@ fn hop_type_password(
     }
     let (_, session) = state.conns.info(&conn).ok_or("Sesión no conectada")?;
     let secret = match source.as_str() {
-        "saved" => state
-            .creds
-            .hop_get(&host, &user)
-            .ok_or("No hay contraseña guardada para este vecino, o la bóveda está bloqueada")?,
+        "saved" => {
+            // Las pestañas de salto son copias de una sesión guardada (la del pivote): la clave del
+            // vecino no se escribe en una conexión cualquiera.
+            let base = state.store.get(&session.id).ok_or("La pestaña de salto no es una copia de una sesión guardada")?;
+            if !same_destination(&base, &session) {
+                return Err("La pestaña de salto no coincide con su sesión guardada".into());
+            }
+            state
+                .creds
+                .hop_get(&host, &user)
+            .ok_or("No hay contraseña guardada para este vecino, o la bóveda está bloqueada")?
+        }
         "pivot" => {
             let id = pivot_id.filter(|i| !i.is_empty()).ok_or("El pivote no es una sesión guardada")?;
             let saved = state.store.get(&id).ok_or("El pivote no es una sesión guardada")?;
             // La pestaña de salto tiene que ser una copia de la sesión del pivote: la contraseña solo
             // se escribe en un equipo al que se llegó desde ese pivote.
-            let same = saved.save_password == Some(true)
-                && session.id == saved.id
-                && session.session_type == saved.session_type
-                && session.host == saved.host
-                && session.port == saved.port;
+            let same = saved.save_password == Some(true) && session.id == saved.id && same_destination(&saved, &session);
             if !same {
                 return Err("La pestaña no es una copia de la sesión del pivote con contraseña guardada".into());
             }
@@ -225,6 +229,40 @@ fn vault_reset(state: State<'_, AppState>) -> Result<(), String> {
     state.creds.reset()
 }
 
+/// La conexión va al mismo destino que la sesión guardada: un frontend comprometido no puede
+/// redirigir una contraseña cambiando host, puerto, usuario, jump host o argumentos de ssh.
+fn same_destination(saved: &Session, session: &Session) -> bool {
+    saved.session_type == session.session_type
+        && session.session_type != models::SessionType::Local
+        && saved.host == session.host
+        && saved.port == session.port
+        && saved.serial_port == session.serial_port
+        && saved.username == session.username
+        && saved.jump_host == session.jump_host
+        // Los argumentos extra también fijan el destino (-o HostName=, -o ProxyJump=, -J, -p, -l).
+        && saved.ssh_args == session.ssh_args
+}
+
+/// El comando de salto apunta a `ip` como argumento propio (no como parte de otra IP) y, si
+/// nombra un usuario ("-l usuario" o "usuario@ip"), es `user`.
+fn hop_cmd_targets(cmd: &str, ip: &str, user: &str) -> bool {
+    let toks: Vec<&str> = cmd.split_whitespace().collect();
+    let mut hit = false;
+    for (i, t) in toks.iter().enumerate() {
+        let (u, h) = t.rsplit_once('@').map_or((None, *t), |(u, h)| (Some(u), h));
+        if h.parse::<std::net::IpAddr>().is_ok_and(|a| a.to_string() == ip) {
+            hit = true;
+            if u.is_some_and(|u| u != user) {
+                return false;
+            }
+        }
+        if *t == "-l" && toks.get(i + 1).is_some_and(|u| *u != user) {
+            return false;
+        }
+    }
+    hit
+}
+
 /// Contraseña a autocompletar: solo si la sesión guardada lo tiene activo y el destino
 /// pedido es el mismo que el guardado (un frontend comprometido no puede redirigirla a
 /// otro host cambiando el objeto de sesión).
@@ -234,16 +272,7 @@ fn fill_for(session: &Session, state: &AppState) -> Option<connection::FillSpec>
         return None;
     }
     let saved = state.store.get(&session.id)?;
-    let same = saved.save_password == Some(true)
-        && saved.session_type == session.session_type
-        && saved.host == session.host
-        && saved.port == session.port
-        && saved.serial_port == session.serial_port
-        && saved.username == session.username
-        && saved.jump_host == session.jump_host
-        // Los argumentos extra también fijan el destino (-o HostName=, -o ProxyJump=, -J, -p, -l).
-        && saved.ssh_args == session.ssh_args;
-    if !same {
+    if saved.save_password != Some(true) || !same_destination(&saved, session) {
         return None;
     }
     let secret = state.creds.get(&saved.id)?;
@@ -1398,6 +1427,26 @@ pub fn run() {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn hop_command_must_target_the_neighbor() {
+        assert!(hop_cmd_targets("ssh -l noc 192.0.2.1", "192.0.2.1", "noc"));
+        assert!(hop_cmd_targets("ssh noc@192.0.2.1", "192.0.2.1", "noc"));
+        assert!(hop_cmd_targets("telnet 192.0.2.1", "192.0.2.1", "noc"));
+        // Otra IP que contiene a la del vecino, otro usuario o sin IP: no.
+        assert!(!hop_cmd_targets("ssh -l noc 192.0.2.12", "192.0.2.1", "noc"));
+        assert!(!hop_cmd_targets("ssh -l otro 192.0.2.1", "192.0.2.1", "noc"));
+        assert!(!hop_cmd_targets("ssh otro@192.0.2.1", "192.0.2.1", "noc"));
+        assert!(!hop_cmd_targets("show version", "192.0.2.1", "noc"));
+        assert!(hop_cmd_targets("ssh -l noc 2001:db8::1", "2001:db8::1", "noc"));
+    }
+
+    #[test]
+    fn reserved_vault_ids_are_not_session_ids() {
+        assert!(credentials::reserved_id("hop:192.0.2.1|noc"));
+        assert!(credentials::reserved_id("snmp:core"));
+        assert!(!credentials::reserved_id("0b9e0c7e-1f7b-4d5e-9d3a-8c2f6a1b2c3d"));
+    }
 
     #[test]
     fn tftp_md5_known_vectors() {

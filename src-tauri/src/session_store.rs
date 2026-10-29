@@ -185,6 +185,9 @@ impl SessionStore {
     }
 
     pub fn save(&self, mut session: Session) -> Result<Session, String> {
+        if crate::credentials::reserved_id(&session.id) {
+            return Err("Id de sesión inválido".into());
+        }
         let mut list = self.sessions.lock().unwrap();
         if session.id.is_empty() {
             session.id = Uuid::new_v4().to_string();
@@ -218,6 +221,9 @@ impl SessionStore {
     pub fn update_many(&self, changed: Vec<Session>) -> Result<Vec<Session>, String> {
         let mut list = self.sessions.lock().unwrap();
         for s in changed {
+            if crate::credentials::reserved_id(&s.id) {
+                continue;
+            }
             if let Some(idx) = list.iter().position(|x| x.id == s.id) {
                 list[idx] = s;
             }
