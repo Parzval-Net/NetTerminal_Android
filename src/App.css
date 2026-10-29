@@ -167,6 +167,13 @@ button {
 }
 
 /* El texto del editor es transparente (se ve la capa resaltada); el placeholder no. */
+/* Editor de Notas y CLI Lab: el anillo de foco va por dentro (por fuera quedaba recortado y solo se
+   veía una franja en el borde izquierdo). */
+.code-editor:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: -2px;
+}
+
 .code-editor::placeholder {
   -webkit-text-fill-color: var(--muted);
   color: var(--muted);

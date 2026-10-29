@@ -512,8 +512,8 @@ const handlers = {
   get_settings: () => settings,
   save_settings: () => null,
   save_topology: () => null,
-  app_version: () => "0.9.14",
-  update_check: () => ({ current: "0.9.14", latest: "0.9.14", newer: false, url: "", notes: "", published: "", supported: true, reason: null }),
+  app_version: () => "0.9.15",
+  update_check: () => ({ current: "0.9.15", latest: "0.9.15", newer: false, url: "", notes: "", published: "", supported: true, reason: null }),
   app_repo: () => "Parzval-Net/Net_Terminal",
   cmdpacks_list: () => [],
   list_notes: () => [
@@ -959,10 +959,32 @@ if (new URLSearchParams(location.search).has("video")) {
   };
   // Detectar plataforma y otras consultas por la vía de herramientas (device_run).
   const deviceRun = handlers.device_run;
+  const fortiCtx = new Map();
   handlers.device_run = (args) => {
     if (/running-config|current-configuration/.test(args.command)) return deviceRun(args);
     const s = connSessions.get(args.conn) ?? {};
     const job = `job-${nextId++}`;
+    // FortiOS: el prompt muestra el contexto ("fw01 (port1) # ") y "edit" de una entrada nueva avisa.
+    if (s.highlight === "fortinet") {
+      const stack = fortiCtx.get(args.conn) ?? [];
+      const ctxPrompt = () => `${s.name}${stack.length ? ` (${stack[stack.length - 1]})` : ""} # `;
+      const before = ctxPrompt();
+      const c = args.command.trim();
+      let body = "";
+      const m = c.match(/^(config|edit)\s+"?([^"]+?)"?$/);
+      if (m) {
+        if (m[1] === "edit" && !/^\d+$/.test(m[2])) body = `new entry '${m[2]}' added\r\n\r\n`;
+        stack.push(m[1] === "config" ? m[2].split(/\s+/).pop() : m[2]);
+      } else if (c === "next" || c === "end") stack.pop();
+      else if (!/^(set|unset|get|show|diagnose|execute)\b/.test(c)) body = "command parse error before '" + c.split(/\s+/)[0] + "'\r\nCommand fail. Return code -61\r\n";
+      fortiCtx.set(args.conn, stack);
+      const output = `${before}${args.command}\r\n${body}${ctxPrompt()}`;
+      setTimeout(() => {
+        emit("tool-job", { job, kind: "result", text: "", data: { ok: !/Command fail/.test(body), output } });
+        emit("tool-job", { job, kind: "done", text: "" });
+      }, 250);
+      return job;
+    }
     const prompt = s.highlight === "huawei" ? `<${s.name}>` : `${s.name}#`;
     // CLI Lab: comandos inexistentes dan error de CLI; "reload" pregunta y, sin answer, se rechaza.
     // Un Huawei no entiende la sintaxis de Cisco: el CLI Lab marca error y detiene ese equipo.
@@ -970,6 +992,18 @@ if (new URLSearchParams(location.search).has("video")) {
     const bad = huaweiBad || /^(sh(ow)? bogus|foo)/i.test(args.command.trim());
     const ask = /^reload/i.test(args.command.trim());
     const declined = ask && args.answer === false ? "Proceed with reload? [confirm]" : null;
+    // Medición del CLI Lab: "show tech" responde unas 3.000 líneas, como un equipo real.
+    if (/^show tech/i.test(args.command.trim())) {
+      const big = Array.from({ length: 3000 }, (_, i) =>
+        i % 3 === 0 ? `interface GigabitEthernet1/0/${i % 48} description UPLINK ${i}` : i % 3 === 1 ? ` ip address 10.${i % 255}.1.1 255.255.255.0` : " no shutdown",
+      ).join("\r\n");
+      const output = `${prompt}${args.command}\r\n${big}\r\n${prompt}`;
+      setTimeout(() => {
+        emit("tool-job", { job, kind: "result", text: "", data: { ok: true, output } });
+        emit("tool-job", { job, kind: "done", text: "" });
+      }, 300);
+      return job;
+    }
     const body = huaweiBad
       ? "                ^\r\nError: Unrecognized command found at '^' position.\r\n"
       : bad

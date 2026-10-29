@@ -1,15 +1,16 @@
-import { useEffect, useMemo, useRef, useState } from "react";
+import { memo, useEffect, useMemo, useRef, useState } from "react";
 import type { ITheme } from "@xterm/xterm";
 import { writeText } from "@tauri-apps/plugin-clipboard-manager";
-import { CircleAlert, CircleCheck, Copy, Play, Save, Square, Terminal, X } from "lucide-react";
+import { Check, CircleAlert, CircleCheck, Copy, Play, Plus, Save, Square, Terminal, X } from "lucide-react";
 import { invoke } from "@tauri-apps/api/core";
-import { CodeEditor } from "./CodeEditor";
+import { CodeEditor, renderHighlighted } from "./CodeEditor";
+import { cssColor } from "../lib/highlight";
 import { TargetOptions } from "./BroadcastTarget";
 import { BroadcastDialog } from "./BroadcastDialog";
 import { fillTemplate, templateVars } from "./TemplateDialog";
 import { Compiled } from "../lib/highlight";
 import { Resolved, isBroadcastRunning, targetLabel, useBroadcastTarget, useWorkspace } from "../lib/broadcast";
-import { LabItem, SAVE_COMMAND, clearLab, isLabRunning, labReport, runLab, scriptLines, stopLab, useLabRun } from "../lib/cliLab";
+import { LabItem, LabStep, SAVE_COMMAND, clearLab, isLabRunning, labReport, runLab, scriptLines, splitStep, stopLab, useLabRun } from "../lib/cliLab";
 import { runOnDeviceResult } from "../lib/deviceRun";
 import { isSecretVar } from "../lib/templateSecrets";
 import { useDragResize } from "../lib/useDragResize";
@@ -44,6 +45,18 @@ interface Props {
   connOf: (tabId: string) => string | undefined;
   onClose: () => void;
 }
+
+/**
+ * Jerarquía de botones con las mismas medidas que el resto de la app (una sola acción principal
+ * por vista: Ejecutar, h-8). Todas las áreas de clic miden 28 px o más (WCAG 2.2, 2.5.8 pide 24 px).
+ */
+const BTN_SECONDARY =
+  "flex items-center gap-1.5 px-3 h-7 rounded-md border border-line text-[12px] hover:bg-hover disabled:opacity-40 disabled:hover:bg-transparent";
+const BTN_GHOST =
+  "flex items-center gap-1.5 px-2 h-7 rounded-md text-[12px] text-muted hover:text-fg hover:bg-hover disabled:opacity-40 disabled:hover:bg-transparent disabled:hover:text-muted";
+const BTN_ICON = "w-7 h-7 shrink-0 grid place-items-center rounded-md text-muted hover:text-fg hover:bg-hover";
+/** Título de sección: el mismo en el editor (Variables) y el panel derecho (Destino, Opciones). */
+const SECTION = "mb-1.5 text-[11px] font-semibold uppercase tracking-wide text-muted";
 
 const DRAFT = "cliLabDraft";
 const LAB_DEFAULTS = { stopOnError: true, answer: false, parallel: 4, timeout: 30 };
@@ -202,7 +215,7 @@ export function CliLab(p: Props) {
         role="dialog"
         aria-label="CLI Lab"
       >
-        <header {...win.handle} className="shrink-0 flex items-center gap-2 px-4 h-12 border-b border-line select-none">
+        <header {...win.handle} className="shrink-0 flex items-center gap-2 px-5 h-12 border-b border-line select-none">
           <Terminal size={16} className="text-accent" />
           <h2 className="text-[14px] font-semibold mr-2">CLI Lab</h2>
           <select
@@ -250,26 +263,56 @@ export function CliLab(p: Props) {
               onBlur={() => setNaming(null)}
             />
           ) : (
-          <button onClick={() => saveScript(false)} disabled={!text.trim() || (!!note && !dirty)} title={note ? `Guardar cambios en la nota "${note.name}"` : "Guardar como nota nueva"} className="flex items-center gap-1 px-2 h-7 rounded-md border border-line hover:bg-hover disabled:opacity-40 text-[12px]">
+          <button
+            onClick={() => saveScript(false)}
+            disabled={!text.trim() || (!!note && !dirty)}
+            title={note ? `Guardar cambios en la nota "${note.name}"${dirty ? " (hay cambios sin guardar)" : ""}` : "Guardar como nota nueva"}
+            className={BTN_SECONDARY}
+          >
             <Save size={13} /> Guardar
+            {/* Punto de cambios sin guardar: el estado se ve sin ocupar texto en el encabezado. */}
+            {note && dirty && <span aria-label="Cambios sin guardar" className="w-1.5 h-1.5 rounded-full bg-warn" />}
           </button>
           )}
           {note && (
-            <button onClick={() => saveScript(true)} className="px-2 h-7 rounded-md border border-line hover:bg-hover text-[12px]">
+            <button onClick={() => saveScript(true)} className={BTN_GHOST}>
               Guardar como…
             </button>
           )}
-          {note && dirty && <span className="text-[11px] text-muted">Cambios sin guardar</span>}
           <span className="flex-1" />
-          <button onClick={p.onClose} aria-label="Cerrar" className="w-7 h-7 grid place-items-center rounded-md text-muted hover:text-fg hover:bg-hover">
+          <button onClick={p.onClose} aria-label="Cerrar" title="Cerrar (Esc)" className={BTN_ICON}>
             <X size={16} />
           </button>
         </header>
 
         <div className="flex-1 min-h-0 flex">
           <section className="flex-1 min-w-0 flex flex-col">
+            {/* Barra del editor: acciones sobre el texto del script (la ejecución va en el panel derecho). */}
+            <div className="shrink-0 flex items-center gap-1 pl-3 pr-2 h-9 border-b border-line text-[12px]">
+              <span className="font-medium">Script CLI</span>
+              <span className="text-muted">· {plural(lines.length, "comando", "comandos")}</span>
+              <span className="flex-1" />
+              <button
+                disabled={!saveCmd}
+                title={
+                  saveCmd
+                    ? `Agrega "${saveCmd}" al final para guardar la configuración`
+                    : p.vendor === "fortinet"
+                      ? "FortiOS guarda la configuración al cerrar el bloque con end"
+                      : "Sin comando de guardado conocido para este fabricante"
+                }
+                onClick={() => saveCmd && setText((t) => `${t.replace(/\s+$/, "")}${t.trim() ? "\n" : ""}${saveCmd}\n`)}
+                className={BTN_GHOST}
+              >
+                <Plus size={13} /> Guardar config
+              </button>
+              <button onClick={() => writeText(text).then(() => setMsg("Script copiado"))} disabled={!text.trim()} title="Copiar el script" className={BTN_GHOST}>
+                <Copy size={13} /> Copiar
+              </button>
+            </div>
             <div className="flex-1 min-h-0 flex flex-col overflow-hidden border-b border-line">
               <CodeEditor
+                gutter
                 value={text}
                 onChange={setText}
                 compiled={p.compiled}
@@ -285,30 +328,13 @@ export function CliLab(p: Props) {
                 }}
               />
             </div>
-            <div className="shrink-0 flex items-center gap-2 px-3 h-9 text-[11.5px] text-muted">
-              <span>{plural(lines.length, "comando", "comandos")}</span>
-              <button
-                disabled={!saveCmd}
-                title={
-                  saveCmd
-                    ? `Agrega "${saveCmd}" al final`
-                    : p.vendor === "fortinet"
-                      ? "FortiOS guarda la configuración al cerrar el bloque con end"
-                      : "Sin comando de guardado conocido para este fabricante"
-                }
-                onClick={() => saveCmd && setText((t) => `${t.replace(/\s+$/, "")}${t.trim() ? "\n" : ""}${saveCmd}\n`)}
-                className="px-2 h-6 rounded-md border border-line hover:bg-hover hover:text-fg disabled:opacity-40"
-              >
-                + Guardar config{saveCmd ? ` (${saveCmd})` : ""}
-              </button>
-              <span className="flex-1" />
-              <span>{`${isMac ? "⌘" : "Ctrl+"}Enter ejecuta`}</span>
-            </div>
             {vars.length > 0 && (
-              <div className="shrink-0 px-3 pb-2 grid gap-2" style={{ gridTemplateColumns: "repeat(auto-fill, minmax(180px, 1fr))" }}>
+              <div className="shrink-0 px-3 pt-2 pb-3 border-b border-line">
+              <h3 className={SECTION}>Variables</h3>
+              <div className="grid gap-2" style={{ gridTemplateColumns: "repeat(auto-fill, minmax(180px, 1fr))" }}>
                 {vars.map((v) => (
                   <label key={v} className="block text-[11.5px]">
-                    <span className="block mb-0.5 font-medium text-muted">{`{{${v}}}`}</span>
+                    <span className="block mb-1 font-mono text-muted">{`{{${v}}}`}</span>
                     <input
                       className="field !h-7 !text-[12px]"
                       type={isSecretVar(v) ? "password" : "text"}
@@ -319,29 +345,30 @@ export function CliLab(p: Props) {
                   </label>
                 ))}
               </div>
+              </div>
             )}
             {run && (
               <section className="shrink-0 h-[48%] min-h-[150px] border-t border-line flex min-w-0">
                 <div className="w-56 shrink-0 border-r border-line flex flex-col">
-                  <div className="flex items-center gap-2 px-3 h-8 text-[11.5px] border-b border-line">
+                  <div className="flex items-center gap-1 pl-3 pr-1 h-9 text-[12px] border-b border-line">
                     <span className="font-medium">{running ? "Ejecutando…" : "Resultado"}</span>
-                    <span className="text-muted">
-                      {run.items.filter((i) => i.status === "ok").length}/{run.items.length} OK
+                    <span className="text-muted tabular-nums">
+                      · {run.items.filter((i) => i.status === "ok").length}/{run.items.length} OK
                     </span>
                     <span className="flex-1" />
-                    <button title="Copiar informe" className="text-muted hover:text-fg" onClick={() => writeText(labReport(run)).then(() => setMsg("Informe copiado"))}>
-                      <Copy size={13} />
+                    <button aria-label="Copiar informe" title="Copiar informe" className={BTN_ICON} onClick={() => writeText(labReport(run)).then(() => setMsg("Informe copiado"))}>
+                      <Copy size={14} />
                     </button>
                     {!running && (
-                      <button title="Cerrar resultado" className="text-muted hover:text-fg" onClick={clearLab}>
-                        <X size={13} />
+                      <button aria-label="Cerrar resultado" title="Cerrar resultado" className={BTN_ICON} onClick={clearLab}>
+                        <X size={14} />
                       </button>
                     )}
                   </div>
                   <ul className="flex-1 overflow-y-auto text-[12px]">
                     {run.items.map((i) => (
                       <li key={i.tabId}>
-                        <button onClick={() => setView(i.tabId)} className={`w-full flex items-center gap-2 px-3 h-7 text-left hover:bg-hover ${shown?.tabId === i.tabId ? "bg-selected" : ""}`}>
+                        <button onClick={() => setView(i.tabId)} className={`w-full flex items-center gap-2 px-3 h-8 text-left hover:bg-hover ${shown?.tabId === i.tabId ? "bg-selected" : ""}`}>
                           <StatusIcon item={i} />
                           <span className="truncate flex-1">{i.name}</span>
                           <span className={`text-[11px] tabular-nums ${statusColor[i.status]}`}>
@@ -352,23 +379,7 @@ export function CliLab(p: Props) {
                     ))}
                   </ul>
                 </div>
-                <div className="flex-1 min-w-0 overflow-auto font-mono text-[11.5px] p-2">
-                  {!shown && <p className="font-sans text-[12px] text-muted p-2">Elige un equipo para ver la respuesta de cada comando.</p>}
-                  {shown && shown.reason && <p className="font-sans text-[12px] text-danger px-1 pb-1">{shown.reason}</p>}
-                  {shown?.steps.map((s, k) => (
-                    <div
-                      key={k}
-                      ref={!s.ok && shown.steps.findIndex((x) => !x.ok) === k ? failRef : undefined}
-                      className={`mb-1.5 rounded border-l-2 pl-2 ${s.ok ? "border-line" : "border-danger"}`}
-                    >
-                      <div className={`font-semibold ${s.ok ? "" : "text-danger"}`}>
-                        {k + 1}. {s.cmd}
-                      </div>
-                      {s.note && <div className="font-sans text-danger">{s.note}</div>}
-                      <pre className="whitespace-pre-wrap text-muted">{s.output.replace(/\r/g, "").trim()}</pre>
-                    </div>
-                  ))}
-                </div>
+                <LabOutput item={shown} compiled={p.compiled} theme={p.theme} font={p.font} fontSize={p.fontSize} failRef={failRef} />
               </section>
             )}
           </section>
@@ -377,10 +388,14 @@ export function CliLab(p: Props) {
             {/* Opciones con scroll propio: el botón Ejecutar/Detener queda siempre visible abajo. */}
             <div className="flex-1 min-h-0 overflow-y-auto">
             <div className="p-2">
-              <h3 className="px-2 pb-1 text-[11.5px] font-medium text-muted">Destino ({targetLabel(target, ws)} · {plural(n, "conectada", "conectadas")})</h3>
+              <h3 className={`${SECTION} px-2 flex items-center gap-2`} title={targetLabel(target, ws)}>
+                Destino
+                <span className="ml-auto normal-case tracking-normal font-normal">{plural(n, "conectada", "conectadas")}</span>
+              </h3>
               <TargetOptions />
             </div>
-            <div className="px-4 py-2 space-y-2 border-t border-line text-[12px]">
+            <div className="px-4 py-3 space-y-2.5 border-t border-line text-[12px]">
+              <h3 className={SECTION}>Opciones</h3>
               <label className="flex items-center gap-2">
                 <input type="checkbox" className="accent-[var(--accent)]" checked={opts.stopOnError} onChange={(e) => setOpts((o) => ({ ...o, stopOnError: e.target.checked }))} />
                 Detener el equipo al primer error
@@ -394,18 +409,20 @@ export function CliLab(p: Props) {
               </label>
               <label className="flex items-center justify-between gap-2">
                 Equipos a la vez
-                <input type="number" min={1} max={10} className="field !h-7 !w-16" value={opts.parallel} onChange={(e) => setOpts((o) => ({ ...o, parallel: Math.max(1, Math.min(10, Number(e.target.value) || 1)) }))} />
+                <input type="number" min={1} max={10} className="field !h-7 !w-16 text-right tabular-nums" value={opts.parallel} onChange={(e) => setOpts((o) => ({ ...o, parallel: Math.max(1, Math.min(10, Number(e.target.value) || 1)) }))} />
               </label>
               <label className="flex items-center justify-between gap-2" title="Si el equipo no vuelve al prompt en este plazo, la línea queda en error">
                 Espera máx. por comando (s)
-                <input type="number" min={5} max={600} className="field !h-7 !w-16" value={opts.timeout} onChange={(e) => setOpts((o) => ({ ...o, timeout: Number(e.target.value) || 30 }))} />
+                <input type="number" min={5} max={600} className="field !h-7 !w-16 text-right tabular-nums" value={opts.timeout} onChange={(e) => setOpts((o) => ({ ...o, timeout: Number(e.target.value) || 30 }))} />
               </label>
             </div>
             </div>
             <div className="shrink-0 p-3 border-t border-line space-y-2">
-              {msg && <p className="text-[11.5px] text-warn">{msg}</p>}
+              <p role="status" aria-live="polite" className={`text-[11.5px] text-warn ${msg ? "" : "hidden"}`}>
+                {msg}
+              </p>
               {running ? (
-                <button onClick={stopLab} className="w-full flex items-center justify-center gap-1.5 h-9 rounded-md bg-danger text-danger-fg font-medium hover:opacity-90">
+                <button onClick={stopLab} className="w-full flex items-center justify-center gap-1.5 h-8 rounded-md bg-danger text-danger-fg font-medium hover:opacity-90">
                   <Square size={11} fill="currentColor" /> Detener
                 </button>
               ) : (
@@ -413,9 +430,11 @@ export function CliLab(p: Props) {
                   onClick={execute}
                   disabled={!lines.length || n === 0}
                   title={!lines.length ? "Escribe al menos un comando" : n === 0 ? "Ninguna sesión conectada en el destino elegido" : undefined}
-                  className="w-full flex items-center justify-center gap-1.5 h-9 rounded-md bg-accent text-accent-fg font-medium hover:opacity-90 disabled:opacity-40"
+                  className="w-full flex items-center justify-center gap-1.5 h-8 rounded-md bg-accent text-accent-fg font-medium hover:opacity-90 disabled:opacity-40"
                 >
                   <Play size={13} /> Ejecutar en {plural(n, "equipo", "equipos")}
+                  {/* Atajo como en la paleta de comandos: texto, sin recuadro. */}
+                  <kbd className="ml-1 font-sans text-[11px] font-normal opacity-75">{isMac ? "⌘↵" : "Ctrl+↵"}</kbd>
                 </button>
               )}
             </div>
@@ -442,3 +461,80 @@ function StatusIcon({ item }: { item: LabItem }) {
   if (item.status === "error") return <CircleAlert size={13} className="text-danger shrink-0" />;
   return <span className={`w-[13px] h-[13px] shrink-0 rounded-full border ${item.status === "running" ? "border-accent animate-pulse" : "border-line"}`} />;
 }
+
+/** Líneas que se dibujan por comando antes de "Mostrar más" (un show tech puede traer miles). */
+const STEP_LINES = 200;
+
+interface OutputProps {
+  item: LabItem | null;
+  compiled: Compiled[];
+  theme: ITheme;
+  font: string;
+  fontSize: number;
+  failRef: React.RefObject<HTMLDivElement | null>;
+}
+
+/**
+ * Salida como la consola del equipo: prompt y comando, ✓ o ✗, y lo que respondió. Memorizada: al
+ * escribir en el editor no se vuelve a dibujar (con miles de líneas cada tecla costaba cientos de ms).
+ */
+const LabOutput = memo(function LabOutput({ item, compiled, theme, font, fontSize, failRef }: OutputProps) {
+  const firstFail = item ? item.steps.findIndex((x) => !x.ok) : -1;
+  return (
+    <div
+      className="flex-1 min-w-0 overflow-auto py-1.5"
+      style={{ background: theme.background, color: theme.foreground, fontFamily: fontStack(font), fontSize: Math.max(11, fontSize - 1) }}
+    >
+      {!item && <p className="font-sans text-[12px] text-muted p-3">Elige un equipo para ver la respuesta de cada comando.</p>}
+      {item?.reason && <p className="font-sans text-[12px] text-danger px-3 pb-1.5">{item.reason}</p>}
+      {item?.steps.map((s, k) => (
+        <StepRow key={k} step={s} compiled={compiled} theme={theme} rowRef={k === firstFail ? failRef : undefined} />
+      ))}
+      {item?.status === "running" && (
+        <div className="px-3 py-1 font-sans text-[12px] text-muted animate-pulse">Ejecutando línea {item.steps.length + 1}…</div>
+      )}
+    </div>
+  );
+});
+
+/** Un comando: los pasos ya terminados no cambian, así que cada fila se dibuja una sola vez. */
+const StepRow = memo(function StepRow({
+  step: s,
+  compiled,
+  theme,
+  rowRef,
+}: {
+  step: LabStep;
+  compiled: Compiled[];
+  theme: ITheme;
+  rowRef?: React.RefObject<HTMLDivElement | null>;
+}) {
+  const [all, setAll] = useState(false);
+  const { prompt, body } = useMemo(() => splitStep(s.output, s.cmd), [s.output, s.cmd]);
+  const visible = all ? body : body.slice(0, STEP_LINES);
+  const showNote = !!s.note && body.every((l) => !s.note!.includes(l.trim()) || !l.trim());
+  return (
+    <div ref={rowRef} className={`px-3 py-1 leading-[1.55] ${s.ok ? "hover:bg-hover" : "bg-[color-mix(in_srgb,var(--danger)_10%,transparent)]"}`}>
+      <div className="flex items-start gap-2 whitespace-pre">
+        {s.ok ? <Check size={13} className="shrink-0 mt-[3px] text-ok" /> : <X size={13} className="shrink-0 mt-[3px] text-danger" />}
+        <span className="min-w-0">
+          {prompt && <span style={{ color: cssColor("gray", theme) }}>{prompt} </span>}
+          {renderHighlighted(s.cmd.trim(), compiled, theme)}
+        </span>
+      </div>
+      {(body.length > 0 || showNote) && (
+        <div className="pl-[21px] pt-0.5 whitespace-pre">
+          {visible.map((l, i) => (
+            <div key={i}>{renderHighlighted(l, compiled, theme)}</div>
+          ))}
+          {body.length > visible.length && (
+            <button onClick={() => setAll(true)} className="my-0.5 px-2 h-6 rounded-md font-sans text-[11.5px] text-accent hover:bg-hover">
+              Mostrar {body.length - visible.length} líneas más
+            </button>
+          )}
+          {showNote && <div className="font-sans text-[12px] text-danger">{s.note}</div>}
+        </div>
+      )}
+    </div>
+  );
+});
