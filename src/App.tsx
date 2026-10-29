@@ -172,6 +172,9 @@ function Workspace({
   const controllers = useRef(new Map<string, TermController>());
 
   useEffect(() => persist("sidebar", sidebarOpen), [sidebarOpen]);
+  // Ancho de la barra de sesiones: 256 px por defecto (w-64), entre 180 y 480 px.
+  const [sidebarWidth, setSidebarWidth] = useState(() => stored("sidebarWidth", 256));
+  useEffect(() => persist("sidebarWidth", sidebarWidth), [sidebarWidth]);
   const [notesOpen, setNotesOpenRaw] = useState(() => stored("notesOpen", false));
   const [commandsOpen, setCommandsOpenRaw] = useState(() => stored("commandsOpen", false));
   useEffect(() => persist("commandsOpen", commandsOpen), [commandsOpen]);
@@ -1154,6 +1157,7 @@ function Workspace({
     editCommand: (c: CatalogEntry) => setCmdEdit({ vendor: settings.catalogVendor, initial: c }),
     openPacks: () => setPacksOpen(true),
     resizeNotes: (w: number) => setNotesWidth(Math.max(260, Math.min(w, window.innerWidth * 0.7))),
+    resizeSidebar: (w: number) => setSidebarWidth(Math.max(180, Math.min(w, 480))),
     closeNotes: () => {
       setNotesOpen(false);
       activeCtrl()?.focus();
@@ -1257,6 +1261,8 @@ function Workspace({
         <Sidebar
           sessions={sessions}
           extraFolders={settings.extraFolders}
+          width={sidebarWidth}
+          onResize={h.resizeSidebar}
           order={settings.sidebarOrder}
           onSetOrder={h.setSidebarOrder}
           live={live}

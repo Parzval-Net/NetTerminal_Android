@@ -1,9 +1,22 @@
-/** Borde izquierdo arrastrable de un panel lateral (Comandos, Notas). */
-export function PanelResize({ width, onResize }: { width: number; onResize: (w: number) => void }) {
+/**
+ * Borde arrastrable de un panel lateral (Comandos y Notas a la izquierda de su borde
+ * derecho; la barra de sesiones usa `side="right"` en su borde derecho).
+ */
+export function PanelResize({
+  width,
+  onResize,
+  side = "left",
+}: {
+  width: number;
+  onResize: (w: number) => void;
+  side?: "left" | "right";
+}) {
   const startDrag = (e: React.MouseEvent) => {
     e.preventDefault();
     const startX = e.clientX;
-    const move = (ev: MouseEvent) => onResize(width + (startX - ev.clientX));
+    // Panel a la derecha: arrastrar hacia la izquierda lo achica. Barra a la izquierda: al revés.
+    const move = (ev: MouseEvent) =>
+      onResize(side === "left" ? width + (startX - ev.clientX) : width + (ev.clientX - startX));
     const up = () => {
       window.removeEventListener("mousemove", move);
       window.removeEventListener("mouseup", up);
@@ -17,7 +30,7 @@ export function PanelResize({ width, onResize }: { width: number; onResize: (w: 
     <div
       onMouseDown={startDrag}
       title="Arrastra para cambiar el ancho"
-      className="absolute -left-1 top-0 bottom-0 w-2 cursor-col-resize z-10 hover:bg-[var(--selected)]"
+      className={`absolute top-0 bottom-0 w-2 cursor-col-resize z-10 hover:bg-[var(--selected)] ${side === "left" ? "-left-1" : "-right-1"}`}
     />
   );
 }

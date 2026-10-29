@@ -45,6 +45,7 @@ import {
 } from "../lib/folders";
 
 import { plural } from "../lib/plural";
+import { PanelResize } from "./PanelResize";
 export interface ConfirmRequest {
   title: string;
   message: string;
@@ -56,6 +57,9 @@ export interface ConfirmRequest {
 interface Props {
   sessions: Session[];
   extraFolders: string[];
+  /** Ancho en px de la barra (lo arrastra el usuario por su borde derecho). */
+  width: number;
+  onResize: (w: number) => void;
   /** Orden manual por carpeta: carpetas y sesiones intercaladas (p. ej. "Shell local" arriba). */
   order: SidebarOrder;
   onSetOrder: (order: SidebarOrder) => void;
@@ -578,7 +582,10 @@ export const Sidebar = memo(function Sidebar(p: Props) {
   const target = selectedFolder(selected, sessions);
 
   return (
-    <aside className="w-64 shrink-0 h-full flex flex-col bg-chrome border-r border-line">
+    <aside
+      style={{ width: p.width }}
+      className="relative shrink-0 h-full flex flex-col bg-chrome border-r border-line"
+    >
       <div className="flex items-center gap-0.5 px-2.5 pt-3 pb-2">
         <div className="relative flex-1 mr-1">
           <Search size={14} className="absolute left-2.5 top-1/2 -translate-y-1/2 text-muted" />
@@ -643,6 +650,7 @@ export const Sidebar = memo(function Sidebar(p: Props) {
       </nav>
 
       {menu && <ContextMenu menu={menu} onClose={closeMenu} />}
+      <PanelResize side="right" width={p.width} onResize={p.onResize} />
     </aside>
   );
 });
