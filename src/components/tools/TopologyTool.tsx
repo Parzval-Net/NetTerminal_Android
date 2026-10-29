@@ -106,10 +106,13 @@ import {
   toDrawio,
   toMermaid,
   toSvg,
-  trafficLabel,
+  shortName,
+  trafficShort,
+  UTIL_WARN,
   updateManualLink,
   updateManualNode,
   utilLevel,
+  flowTiming,
 } from "../../lib/topology";
 import {
   ARP_FALLBACK,
@@ -196,7 +199,7 @@ type ManualForm =
   | { kind: "link"; edit?: TopoLink; a: string; aPort: string; b: string; bPort: string };
 
 /** Secciones del panel lateral. */
-type PanelSection = "fuentes" | "alcance" | "filtros" | "revisiones" | "trafico" | "sugerencias" | "detalle" | "ruta" | "manual" | "snapshots" | "leyenda";
+type PanelSection = "fuentes" | "alcance" | "filtros" | "revisiones" | "trafico" | "sugerencias" | "detalle" | "ruta" | "manual" | "snapshots" | "leyenda" | "enlaces";
 type DiscoveryMode = "cli" | "snmp";
 /**
  * Estado visual de la herramienta (panel, secciones, modo de descubrimiento, intervalo y animación
@@ -210,6 +213,7 @@ interface TopoUi {
   snmpProfile: string;
   interval: TrafficInterval;
   anim: boolean;
+  /** Versión de la preferencia de animación: hasta la 2 venía apagada por defecto y quedó guardada así. */
   /** Puntas de flecha por sentido sobre cada enlace con tráfico. */
   arrows: boolean;
   /** Etiqueta de tasas (↑ ↓ y %) junto a cada enlace con tráfico. */
@@ -249,6 +253,7 @@ function loadUi(): TopoUi {
       mode: v.mode === "snmp" ? "snmp" : "cli",
       snmpProfile: typeof v.snmpProfile === "string" ? v.snmpProfile.slice(0, 64) : "",
       interval: TRAFFIC_INTERVALS.includes(v.interval as TrafficInterval) ? (v.interval as TrafficInterval) : 30,
+      // Desde la versión 2 la animación parte encendida; lo guardado antes era el valor por defecto.
       anim: v.anim === true,
       arrows: v.arrows !== false,
       rates: v.rates !== false,
@@ -295,6 +300,41 @@ function useReducedMotion(): boolean {
     return () => q.removeEventListener("change", on);
   }, []);
   return reduced;
+}
+
+/**
+ * Desplazamiento con dos dedos en un touchpad (no una rueda de mouse). WebKit (macOS) entrega la
+ * rueda del mouse en múltiplos de 4.000244 px por paso (el mismo criterio que usa Mapbox GL);
+ * Chromium (WebView2 en Windows) informa wheelDeltaY en pasos de 120 para la rueda y otros valores
+ * para el touchpad. Sin esos datos, el movimiento horizontal o un delta fino delatan el touchpad.
+ */
+const WEBKIT_WHEEL_STEP = 4.000244140625;
+function isTrackpadScroll(e: { deltaX: number; deltaY: number; deltaMode: number; wheelDeltaY?: number }): boolean {
+  if (e.deltaMode !== 0) return false;
+  if (e.deltaY !== 0 && Math.abs(e.deltaY) % WEBKIT_WHEEL_STEP === 0) return false;
+  const w = e.wheelDeltaY;
+  if (typeof w === "number" && w !== 0) return Math.abs(w) % 120 !== 0;
+  return e.deltaX !== 0 || Math.abs(e.deltaY) < 40 || !Number.isInteger(e.deltaY);
+}
+
+/**
+ * Un sentido del tráfico: puntos que viajan junto al enlace (un trazo de largo cero con punta
+ * redonda es un círculo), con un borde del color del fondo para que se lean sobre cualquier línea.
+ */
+function FlowLane({ d, color, style, reverse }: { d: string; color: string; style: React.CSSProperties; reverse?: boolean }) {
+  const cls = `topo-flow${reverse ? " topo-flow-rev" : ""}`;
+  return (
+    <>
+      <path className={cls} style={style} d={d} fill="none" stroke="var(--panel)" strokeWidth={6} strokeLinecap="round" />
+      <path className={cls} style={style} d={d} fill="none" stroke={color} strokeWidth={4} strokeLinecap="round" />
+    </>
+  );
+}
+
+/** Duración y pasos del carril animado (ver flowTiming). */
+function flowStyle(bps: number | null, speed: number | undefined): React.CSSProperties {
+  const { dur, steps } = flowTiming(bps, speed);
+  return { animationDuration: `${dur}s`, animationTimingFunction: `steps(${steps})` };
 }
 
 /** Desplaza una curva cuadrática en paralelo (un carril por sentido). */
@@ -387,6 +427,117 @@ type Geo = ReturnType<typeof linkGeometry>[number];
 /** Línea de "puerto: estado" para el tooltip de un extremo. */
 const infoLine = (port: string, info: string) => (info ? `${port}: ${info}` : "");
 
+interface TrafficRow {
+  key: string;
+  a: string;
+  b: string;
+  aPort: string;
+  bPort: string;
+  lt: LinkTraffic;
+}
+
+/** Máximo de enlaces animados a la vez (los más cargados): medido en una topología de 400 equipos. */
+const FLOW_MAX = 60;
+
+/** Filas a la vista antes de "Ver todos": las más cargadas, que son las que importan. */
+const TRAFFIC_TOP = 10;
+
+/**
+ * Tabla flotante de enlaces por carga (botón "Enlaces" junto a la leyenda). Memorizada: solo se
+ * redibuja con una lectura nueva o al cambiar el enlace elegido, no al arrastrar equipos. Muestra
+ * las 10 más cargadas; con más, busca por equipo o puerto y filtra las que pasan el 70 %.
+ */
+const TrafficTable = memo(function TrafficTable({
+  id,
+  rows,
+  byUtil,
+  focus,
+  onPick,
+  onClose,
+}: {
+  id: string;
+  rows: TrafficRow[];
+  byUtil: boolean;
+  focus: string | null;
+  onPick: (r: TrafficRow) => void;
+  onClose: () => void;
+}) {
+  const [q, setQ] = useState("");
+  const [onlyHot, setOnlyHot] = useState(false);
+  const [all, setAll] = useState(false);
+  const needle = q.trim().toLowerCase();
+  const matched = rows.filter(
+    (r) => (!onlyHot || (r.lt.util ?? 0) >= UTIL_WARN) && (!needle || `${r.a} ${r.aPort} ${r.b} ${r.bPort}`.toLowerCase().includes(needle)),
+  );
+  const list = all || needle || onlyHot ? matched : matched.slice(0, TRAFFIC_TOP);
+  const big = rows.length > TRAFFIC_TOP;
+  return (
+    <div
+      id={id}
+      role="group"
+      aria-label="Enlaces por carga"
+      className="w-[340px] max-w-full flex flex-col rounded-lg border border-line bg-panel shadow-pop text-[12px]"
+      style={{ maxHeight: "min(360px, 60vh)" }}
+      onKeyDown={(e) => e.key === "Escape" && onClose()}
+    >
+      <div className="flex items-center gap-1.5 px-2.5 pt-2 pb-1.5 border-b border-line">
+        <span className="font-medium flex-1">Enlaces por carga</span>
+        <button
+          type="button"
+          aria-pressed={onlyHot}
+          onClick={() => setOnlyHot((v) => !v)}
+          className={`h-6 px-2 rounded-md border text-[11px] ${onlyHot ? "border-[var(--accent)] text-accent bg-[var(--selected)]" : "border-line text-muted hover:bg-hover"}`}
+        >
+          ≥ 70 %
+        </button>
+        <button type="button" aria-label="Cerrar" onClick={onClose} className="h-6 w-6 grid place-items-center rounded-md text-muted hover:text-fg hover:bg-hover">
+          <X size={13} />
+        </button>
+      </div>
+      {big && (
+        <div className="px-2.5 py-1.5 border-b border-line">
+          <input className="field !h-7 !text-[12px] w-full" placeholder="Buscar equipo o puerto" value={q} onChange={(e) => setQ(e.target.value)} aria-label="Buscar enlace" />
+        </div>
+      )}
+      <ul className="min-h-0 overflow-auto py-1">
+        {list.map((r) => {
+          const c = byUtil ? UTIL_VAR[utilLevel(r.lt.util)] : "var(--text)";
+          const on = focus === r.key;
+          return (
+            <li key={r.key}>
+              <button
+                type="button"
+                aria-pressed={on}
+                title={`${r.a} ${r.aPort || "?"} → ${r.b}: ${fmtBps(r.lt.ab)}\n${r.b} ${r.bPort || "?"} → ${r.a}: ${fmtBps(r.lt.ba)}${r.lt.speed ? `\nEnlace de ${fmtBps(r.lt.speed)}` : ""}\nClic para ubicarlo en el mapa`}
+                onClick={() => onPick(r)}
+                className={`w-full flex items-center gap-2 px-2.5 h-7 text-left hover:bg-hover ${on ? "bg-selected" : ""}`}
+              >
+                <span className="flex-1 min-w-0 truncate">
+                  {shortName(r.a)} <span className="text-muted">{r.aPort}</span> ↔ {shortName(r.b)}
+                </span>
+                {r.lt.util !== undefined && (
+                  <span className="w-10 h-1 shrink-0 rounded-full bg-line overflow-hidden" aria-hidden>
+                    <span className="block h-full rounded-full" style={{ width: `${Math.min(100, Math.round(r.lt.util * 100))}%`, background: c }} />
+                  </span>
+                )}
+                <span className="w-14 shrink-0 text-right font-semibold tabular-nums" style={{ color: c }}>
+                  {trafficShort(r.lt)}
+                </span>
+              </button>
+            </li>
+          );
+        })}
+        {!list.length && <li className="px-2.5 py-2 text-muted">{onlyHot ? "Ningún enlace sobre 70 %." : "Sin coincidencias."}</li>}
+      </ul>
+      {big && !all && !needle && !onlyHot && (
+        <button type="button" onClick={() => setAll(true)} className="h-7 border-t border-line text-[11.5px] text-accent hover:bg-hover rounded-b-lg">
+          Ver todos ({rows.length})
+        </button>
+      )}
+    </div>
+  );
+});
+
 /**
  * Un enlace del diagrama. Memorizado: al arrastrar un equipo solo se redibujan sus enlaces (los
  * demás conservan la misma geometría y props).
@@ -459,10 +610,10 @@ const LinkView = memo(function LinkView({
       />
       {lt && (
         <>
-          {/* Un carril y una punta de flecha por sentido: A→B y B→A. */}
-          {animate && !!lt.ab && <path className="topo-flow" d={lanePath(g.a, g.c, g.b, 4)} fill="none" stroke={dirLevel(lt.ab)} strokeWidth={1.5} strokeLinecap="round" />}
-          {animate && !!lt.ba && <path className="topo-flow topo-flow-rev" d={lanePath(g.a, g.c, g.b, -4)} fill="none" stroke={dirLevel(lt.ba)} strokeWidth={1.5} strokeLinecap="round" />}
-          {arrows && (
+          {/* Un carril por sentido (A→B y B→A): puntos en movimiento con animación, flechas fijas sin ella. */}
+          {animate && !!lt.ab && <FlowLane d={lanePath(g.a, g.c, g.b, 5)} color={dirLevel(lt.ab)} style={flowStyle(lt.ab, lt.speed)} />}
+          {animate && !!lt.ba && <FlowLane d={lanePath(g.a, g.c, g.b, -5)} color={dirLevel(lt.ba)} style={flowStyle(lt.ba, lt.speed)} reverse />}
+          {arrows && !animate && (
             <>
               <polygon points={arrowHead(g.a, g.c, g.b, 0.4, true, 5)} fill={dirLevel(lt.ab)} stroke="var(--panel)" strokeWidth={0.75} />
               <polygon points={arrowHead(g.a, g.c, g.b, 0.6, false, -5)} fill={dirLevel(lt.ba)} stroke="var(--panel)" strokeWidth={0.75} />
@@ -669,7 +820,9 @@ export function TopologyTool({
   const [filter, setFilter] = useState<TopoFilter>(NO_FILTER);
   const [query, setQuery] = useState("");
   const [searchOpen, setSearchOpen] = useState(false);
-  const [focusReq, setFocusReq] = useState<string | null>(null);
+  const [focusReq, setFocusReq] = useState<string | Pt | null>(null);
+  /** Enlace elegido en la tabla de tráfico: se resalta y se centra en el mapa. */
+  const [focusLink, setFocusLink] = useState<string | null>(null);
   const scroller = useRef<HTMLDivElement>(null);
   const suggestionsRef = useRef<HTMLDivElement>(null);
   const manualRef = useRef<HTMLDivElement>(null);
@@ -1078,38 +1231,96 @@ export function TopologyTool({
   }, [trafficOn, traffic.rates, topo.links]);
   // La animación va en los carriles de cada sentido: sin flechas tampoco se anima.
   const animate = ui.anim && ui.arrows && !reducedMotion && visible;
-  /** Etiquetas de tasa: en enlaces paralelos se apilan en el centro del par, con el puerto de A. */
-  const trafficLabels = useMemo(() => {
+  /**
+   * Rótulos de tráfico del mapa: una píldora corta por enlace (% de uso, o la tasa si no se conoce la
+   * velocidad) sobre el centro de la línea, como las etiquetas de enlace de Weathermap o SolarWinds.
+   * Los enlaces paralelos entre el mismo par llevan una sola, con el agregado y el peor uso. El
+   * detalle por sentido queda en el tooltip y en la tabla del panel.
+   */
+  const trafficPills = useMemo(() => {
     if (!linkRates.size) return [];
     const pairKey = (l: TopoLink) => [l.a, l.b].sort().join("~");
-    const mids = new Map<string, Pt[]>();
-    for (const g of geometry) mids.set(pairKey(g.l), [...(mids.get(pairKey(g.l)) ?? []), g.mid]);
-    const used = new Map<string, number>();
-    const out: { key: string; x: number; y: number; text: string; color: string; dim: boolean; anchor: "middle" | "end" }[] = [];
+    // Una pasada: por par, los centros de todas sus curvas, sus claves y los enlaces con tráfico.
+    const pairs = new Map<string, { mids: Pt[]; keys: string[]; items: { g: Geo; lt: LinkTraffic }[] }>();
+    for (const g of geometry) {
+      const k = linkKey(g.l);
+      if (removed.has(k)) continue;
+      const pk = pairKey(g.l);
+      let e = pairs.get(pk);
+      if (!e) pairs.set(pk, (e = { mids: [], keys: [], items: [] }));
+      e.mids.push(g.mid);
+      e.keys.push(k);
+      const lt = linkRates.get(k);
+      if (lt) e.items.push({ g, lt });
+    }
+    const out: { key: string; x: number; y: number; text: string; color: string; dim: boolean; keys: string[] }[] = [];
+    for (const [pk, { mids, keys, items }] of pairs) {
+      if (!items.length) continue;
+      const worst = items.reduce((a, b) => ((b.lt.util ?? -1) > (a.lt.util ?? -1) ? b : a));
+      const multi = items[0].g.pair.length > 1;
+      const grp = multi ? linkGroup(shown, items[0].g.l, shownById) : undefined;
+      const short = trafficShort(worst.lt);
+      out.push({
+        key: pk,
+        x: mids.reduce((a, m) => a + m.x, 0) / mids.length,
+        y: mids.reduce((a, m) => a + m.y, 0) / mids.length,
+        text: multi ? `${grp ? `${grp} ×${items[0].g.pair.length}` : "máx"} · ${short}` : short,
+        color: ui.color ? UTIL_VAR[utilLevel(worst.lt.util)] : "var(--text)",
+        dim: !!route && !keys.some((k) => routeKeys.has(k)),
+        keys,
+      });
+    }
+    return out;
+  }, [geometry, linkRates, removed, route, routeKeys, ui.color, shown, shownById]);
+  /** Pares con píldora (todos sus enlaces): su rótulo de agregado ("Po1 ×2") ya va dentro de ella. */
+  const pillPairs = useMemo(() => new Set(ui.rates ? trafficPills.flatMap((p) => p.keys) : []), [trafficPills, ui.rates]);
+
+  /** Tabla del panel: cada enlace con tráfico, del más cargado al menos (sin velocidad, por tasa). */
+  // Sin posiciones: al arrastrar un equipo la geometría cambia en cada cuadro, pero las filas no, y
+  // se devuelve el mismo arreglo para que la tabla (memorizada) y la animación no se recalculen.
+  const rowsRef = useRef<TrafficRow[]>([]);
+  const trafficRows = useMemo(() => {
+    const rows: TrafficRow[] = [];
     for (const g of geometry) {
       const k = linkKey(g.l);
       const lt = linkRates.get(k);
       if (!lt || removed.has(k)) continue;
-      const pk = pairKey(g.l);
-      const i = used.get(pk) ?? 0;
-      used.set(pk, i + 1);
-      const ms = mids.get(pk)!;
-      const multi = g.pair.length > 1;
-      // Paralelos: la pila queda a la izquierda del par, fuera de las líneas y del rótulo del agregado.
-      const x = multi ? Math.min(...ms.map((m) => m.x)) - 18 : g.mid.x;
-      const y = (multi ? ms.reduce((a, m) => a + m.y, 0) / ms.length - 6 : g.mid.y + 20) + i * 14;
-      out.push({
-        key: `${k}|${g.l.proto}`,
-        x,
-        y,
-        anchor: multi ? "end" : "middle",
-        text: multi ? `${g.l.aPort || "?"}: ${trafficLabel(lt)}` : trafficLabel(lt, node(g.l.a)?.name ?? g.l.a),
-        color: ui.color ? UTIL_VAR[utilLevel(lt.util)] : "var(--text)",
-        dim: !!route && !routeKeys.has(k),
-      });
+      rows.push({ key: k, a: node(g.l.a)?.name ?? anyName(g.l.a), b: node(g.l.b)?.name ?? anyName(g.l.b), aPort: g.l.aPort, bPort: g.l.bPort, lt });
     }
-    return out;
-  }, [geometry, linkRates, removed, route, routeKeys, ui.color]);
+    const peak = (lt: LinkTraffic) => Math.max(lt.ab ?? 0, lt.ba ?? 0);
+    rows.sort((x, y) => (y.lt.util ?? -1) - (x.lt.util ?? -1) || peak(y.lt) - peak(x.lt));
+    const prev = rowsRef.current;
+    const same = prev.length === rows.length && prev.every((r, i) => r.key === rows[i].key && r.lt === rows[i].lt && r.a === rows[i].a && r.b === rows[i].b);
+    if (!same) rowsRef.current = rows;
+    return rowsRef.current;
+  }, [geometry, linkRates, removed]);
+  /** Centro de cada enlace a la vista, para ubicar el que se elige en la tabla. */
+  const midsRef = useRef(new Map<string, Pt>());
+  midsRef.current = useMemo(() => new Map(geometry.map((g) => [linkKey(g.l), g.mid])), [geometry]);
+  /**
+   * Enlaces animados: solo los FLOW_MAX más cargados. Cada paso de la animación repinta el mapa, y
+   * con cientos de enlaces animados una topología grande baja de 60 a pocos cuadros por segundo;
+   * el resto conserva las flechas fijas.
+   */
+  const animKeys = useMemo(() => new Set(animate ? trafficRows.slice(0, FLOW_MAX).map((r) => r.key) : []), [animate, trafficRows]);
+  const trafficHot = useMemo(() => trafficRows.filter((r) => (r.lt.util ?? 0) >= UTIL_WARN).length, [trafficRows]);
+  const linksId = useId();
+  const closeLinks = useCallback(() => setUi((u) => ({ ...u, sec: { ...u.sec, enlaces: false } })), []);
+  /** Clic en la tabla: resalta el enlace y lo centra (otro clic en el mismo lo suelta). */
+  const focusLinkRef = useRef(focusLink);
+  focusLinkRef.current = focusLink;
+  const pickLink = useCallback((r: TrafficRow) => {
+    if (focusLinkRef.current === r.key) return setFocusLink(null);
+    setFocusLink(r.key);
+    const mid = midsRef.current.get(r.key);
+    if (!mid) return;
+    setZoom((z) => Math.max(z, 1.4));
+    setFocusReq(mid);
+  }, []);
+  // El enlace elegido dejó de tener tráfico o de estar a la vista: se suelta el resaltado.
+  useEffect(() => {
+    if (focusLink && !trafficRows.some((r) => r.key === focusLink)) setFocusLink(null);
+  }, [focusLink, trafficRows]);
 
   // Sugerencias: se calculan del diagrama ya leído, sin comandos, y solo con su fuente activa.
   const suggestions = useMemo(() => collectSuggestions(topoData, sources, dismissed), [topoData, sources, dismissed]);
@@ -1378,7 +1589,7 @@ export function TopologyTool({
     if (!focusReq) return;
     setFocusReq(null);
     const el = scroller.current;
-    const n = shown.nodes.find((x) => x.id === focusReq);
+    const n = typeof focusReq === "string" ? shown.nodes.find((x) => x.id === focusReq) : focusReq;
     if (!el || !n) return;
     const w = el.clientWidth * zoom;
     const h = el.clientHeight * zoom;
@@ -1420,15 +1631,24 @@ export function TopologyTool({
       const r = el.getBoundingClientRect();
       return [x - r.left, y - r.top] as const;
     };
-    // Windows, Linux y Chromium: el pellizco llega como rueda con ctrlKey (igual que Ctrl + rueda).
+    // Rueda del mouse: zoom anclado al puntero, como un mapa. Pellizco del touchpad en Windows,
+    // Linux y Chromium: llega como rueda con ctrlKey. Dos dedos en el touchpad sin pellizco y
+    // Shift + rueda: desplazamiento normal (el mapa también se mueve arrastrando el fondo).
     let gesturing = false;
     const onWheel = (e: WheelEvent) => {
-      if (!e.ctrlKey && !e.metaKey) return; // dos dedos sin pellizco: desplazamiento normal
+      const pinch = e.ctrlKey || e.metaKey;
+      if (!pinch && (e.shiftKey || isTrackpadScroll(e as WheelEvent & { wheelDeltaY?: number }))) return;
       e.preventDefault();
       if (gesturing) return;
-      const d = Math.max(-50, Math.min(50, e.deltaMode === 1 ? e.deltaY * 16 : e.deltaY));
       const [cx, cy] = local(e.clientX, e.clientY);
-      zoomAt(zoomRef.current * Math.exp(-d * 0.01), cx, cy);
+      if (pinch) {
+        const d = Math.max(-50, Math.min(50, e.deltaMode === 1 ? e.deltaY * 16 : e.deltaY));
+        zoomAt(zoomRef.current * Math.exp(-d * 0.01), cx, cy);
+      } else {
+        // Un paso de rueda (100 px) acerca o aleja un 16 %.
+        const d = Math.max(-300, Math.min(300, e.deltaMode === 1 ? e.deltaY * 33 : e.deltaY));
+        zoomAt(zoomRef.current * Math.exp(-d * 0.0015), cx, cy);
+      }
     };
     // macOS (WebKit): el pellizco llega como gesto con su escala.
     let base = 1;
@@ -1459,6 +1679,38 @@ export function TopologyTool({
       el.removeEventListener("gestureend", onGestureEnd);
     };
   }, [zoomAt]);
+
+  // Arrastrar el fondo (o con el botón del medio, en cualquier parte) mueve el mapa: con la rueda
+  // dedicada al zoom, es la forma de desplazarse con mouse.
+  const [panning, setPanning] = useState(false);
+  const endPan = useRef<(() => void) | null>(null);
+  // Si la herramienta se cierra a mitad de un arrastre, no quedan escuchas en la ventana.
+  useEffect(() => () => endPan.current?.(), []);
+  const startPan = (e: React.PointerEvent<SVGSVGElement>) => {
+    const el = scroller.current;
+    const onBackground = e.button === 0 && e.target === e.currentTarget;
+    if (!el || !(onBackground || e.button === 1)) return;
+    e.preventDefault();
+    endPan.current?.();
+    const start = { x: e.clientX, y: e.clientY, sl: el.scrollLeft, st: el.scrollTop };
+    setPanning(true);
+    const move = (ev: PointerEvent) => {
+      el.scrollLeft = start.sl - (ev.clientX - start.x);
+      el.scrollTop = start.st - (ev.clientY - start.y);
+    };
+    // pointercancel: en pantallas táctiles el navegador puede quedarse con el gesto sin pointerup.
+    const up = () => {
+      endPan.current = null;
+      setPanning(false);
+      window.removeEventListener("pointermove", move);
+      window.removeEventListener("pointerup", up);
+      window.removeEventListener("pointercancel", up);
+    };
+    endPan.current = up;
+    window.addEventListener("pointermove", move);
+    window.addEventListener("pointerup", up);
+    window.addEventListener("pointercancel", up);
+  };
 
   // Ctrl/⌘+C con un equipo seleccionado en el mapa copia su IP, salvo que haya texto
   // seleccionado o el foco esté en un campo (ahí manda la copia normal).
@@ -1634,10 +1886,10 @@ export function TopologyTool({
           </p>
         )}
         <div className="flex flex-wrap items-center gap-1 mt-2.5 @max-[860px]:[&_button]:px-2" role="toolbar" aria-label="Diagrama">
-          <Btn kind="ghost" title={`Acercar (o pellizca en el touchpad, o ${isMac ? "⌘" : "Ctrl"} + rueda sobre el mapa)`} onClick={() => setZoom((z) => Math.min(ZOOM_MAX, z + 0.2))}>
+          <Btn kind="ghost" title="Acercar (o rueda del mouse o pellizco del touchpad sobre el mapa; arrastra el fondo para moverlo)" onClick={() => setZoom((z) => Math.min(ZOOM_MAX, z + 0.2))}>
             <ZoomIn size={14} />
           </Btn>
-          <Btn kind="ghost" title={`Alejar (o pellizca en el touchpad, o ${isMac ? "⌘" : "Ctrl"} + rueda sobre el mapa)`} onClick={() => setZoom((z) => Math.max(ZOOM_MIN, z - 0.2))}>
+          <Btn kind="ghost" title="Alejar (o rueda del mouse o pellizco del touchpad sobre el mapa; arrastra el fondo para moverlo)" onClick={() => setZoom((z) => Math.max(ZOOM_MIN, z - 0.2))}>
             <ZoomOut size={14} />
           </Btn>
           <Btn kind="ghost" title="Ajustar a la vista" aria-label="Ajustar a la vista" onClick={fit}>
@@ -1807,7 +2059,8 @@ export function TopologyTool({
       ) : (
         <svg
           viewBox={`${box.x} ${box.y} ${box.w} ${box.h}`}
-          style={{ width: `${zoom * 100}%`, height: `${zoom * 100}%` }}
+          style={{ width: `${zoom * 100}%`, height: `${zoom * 100}%`, cursor: panning ? "grabbing" : "grab" }}
+          onPointerDown={startPan}
           onPointerMove={onPointerMove}
           onPointerUp={endDrag}
           onPointerLeave={endDrag}
@@ -1828,13 +2081,13 @@ export function TopologyTool({
                 bInfo={portLine(b, g.l.bPort)}
                 state={state}
                 isRoute={isRoute}
-                hot={isRoute || selected === g.l.a || selected === g.l.b}
+                hot={isRoute || focusLink === k || selected === g.l.a || selected === g.l.b}
                 dim={!!route && !isRoute}
                 lt={state ? undefined : linkRates.get(k)}
                 color={ui.color}
                 arrows={ui.arrows}
-                animate={animate}
-                grp={linkGroup(shown, g.l, shownById)}
+                animate={animate && animKeys.has(k)}
+                grp={pillPairs.has(k) ? undefined : linkGroup(shown, g.l, shownById)}
                 issues={state === "removed" ? undefined : checks.get(k)}
                 onIssue={onIssue}
               />
@@ -1861,25 +2114,19 @@ export function TopologyTool({
               />
             );
           })}
-          {/* Las tasas van en una capa propia sobre los equipos: un enlace corto no las tapa. */}
-          {ui.rates && trafficLabels.map((t) => (
-            <text
-              key={t.key}
-              x={t.x}
-              y={t.y}
-              opacity={t.dim ? 0.25 : 1}
-              fontSize={10.5}
-              fontWeight={600}
-              textAnchor={t.anchor}
-              fill={t.color}
-              stroke="var(--panel)"
-              strokeWidth={4}
-              paintOrder="stroke"
-              pointerEvents="none"
-            >
-              {t.text}
-            </text>
-          ))}
+          {/* Las píldoras van en una capa propia sobre los equipos: un enlace corto no las tapa. */}
+          {ui.rates &&
+            trafficPills.map((t) => {
+              const w = t.text.length * 6.4 + 12;
+              return (
+                <g key={t.key} opacity={t.dim ? 0.25 : 1} pointerEvents="none">
+                  <rect x={t.x - w / 2} y={t.y - 9} width={w} height={18} rx={9} fill="var(--panel)" stroke={t.color} strokeWidth={1.25} />
+                  <text x={t.x} y={t.y + 3.8} fontSize={11} fontWeight={600} textAnchor="middle" fill={t.color} style={{ fontVariantNumeric: "tabular-nums" }}>
+                    {t.text}
+                  </text>
+                </g>
+              );
+            })}
         </svg>
       )}
           </div>
@@ -1896,9 +2143,19 @@ export function TopologyTool({
               </Btn>
             </div>
           )}
-          {showLegend && (
+          {(showLegend || trafficRows.length > 0) && (
             <div className="absolute bottom-2 left-2 flex flex-col items-start gap-1.5 max-w-[calc(100%-1rem)]">
-              {isOpen("leyenda") && (
+              {isOpen("enlaces") && trafficRows.length > 0 && (
+                <TrafficTable
+                  id={linksId}
+                  rows={trafficRows}
+                  byUtil={ui.color}
+                  focus={focusLink}
+                  onPick={pickLink}
+                  onClose={closeLinks}
+                />
+              )}
+              {showLegend && isOpen("leyenda") && (
                 <div
                   id={legendId}
                   className="flex flex-col gap-1 rounded-lg border border-line bg-panel shadow-pop px-3 py-2 text-[11.5px] text-muted"
@@ -1948,22 +2205,47 @@ export function TopologyTool({
                           <polygon points="13,1.5 19,4.5 13,7.5" fill="var(--ok)" />
                           <polygon points="21,4.5 15,7.5 21,10.5" fill="var(--warn)" />
                         </svg>
-                        Una flecha por sentido · rótulo "equipo A → sale de A · ← llega a A" (≈: aproximada; detalle al pasar el mouse)
+                        Una flecha por sentido · rótulo con el % de uso del sentido más cargado (≈: aproximada; detalle al pasar el mouse y en "Enlaces")
                       </span>}
                     </>
                   )}
                 </div>
               )}
-              <button
-                type="button"
-                aria-expanded={isOpen("leyenda")}
-                aria-controls={legendId}
-                onClick={() => setOpen("leyenda", !isOpen("leyenda"))}
-                className="inline-flex items-center gap-1 h-7 px-2.5 rounded-md border border-line bg-panel text-[11.5px] text-muted hover:text-fg hover:bg-hover"
-              >
-                <ChevronUp size={13} aria-hidden className={`transition-transform ${isOpen("leyenda") ? "" : "rotate-180"}`} />
-                Leyenda
-              </button>
+              <div className="flex items-center gap-1.5">
+                {showLegend && (
+                  <button
+                    type="button"
+                    aria-expanded={isOpen("leyenda")}
+                    aria-controls={legendId}
+                    onClick={() => setUi((u) => ({ ...u, sec: { ...u.sec, leyenda: !u.sec.leyenda, enlaces: false } }))}
+                    className="inline-flex items-center gap-1 h-7 px-2.5 rounded-md border border-line bg-panel text-[11.5px] text-muted hover:text-fg hover:bg-hover"
+                  >
+                    <ChevronUp size={13} aria-hidden className={`transition-transform ${isOpen("leyenda") ? "" : "rotate-180"}`} />
+                    Leyenda
+                  </button>
+                )}
+                {trafficRows.length > 0 && (
+                  // Una sola tarjeta abierta a la vez: la leyenda y la tabla comparten la esquina.
+                  <button
+                    type="button"
+                    aria-expanded={isOpen("enlaces")}
+                    aria-controls={linksId}
+                    title="Enlaces con tráfico, del más cargado al menos"
+                    onClick={() => setUi((u) => ({ ...u, sec: { ...u.sec, enlaces: !u.sec.enlaces, leyenda: false } }))}
+                    className={`inline-flex items-center gap-1 h-7 px-2.5 rounded-md border bg-panel text-[11.5px] hover:bg-hover ${isOpen("enlaces") ? "border-[var(--accent)] text-accent" : "border-line text-muted hover:text-fg"}`}
+                  >
+                    <ChevronUp size={13} aria-hidden className={`transition-transform ${isOpen("enlaces") ? "" : "rotate-180"}`} />
+                    Enlaces
+                    {trafficHot > 0 ? (
+                      <span className="ml-0.5 rounded-full px-1.5 text-[10.5px] font-semibold text-white" style={{ background: "var(--danger)" }} title={`${trafficHot} sobre 70 %`}>
+                        {trafficHot}
+                      </span>
+                    ) : (
+                      <span className="ml-0.5 tabular-nums">{trafficRows.length}</span>
+                    )}
+                  </button>
+                )}
+              </div>
             </div>
           )}
         </div>
@@ -2171,13 +2453,16 @@ export function TopologyTool({
                   <p className="mt-0.5 pl-10 text-[11px] text-muted leading-snug">Una punta por sentido sobre cada enlace. Sin flechas, el color (si está activo) sigue indicando la utilización.</p>
                 </div>
                 <div>
-                  <Toggle checked={ui.rates} onChange={(rates) => setUi((u) => ({ ...u, rates }))} label="Velocidad de tráfico" />
-                  <p className="mt-0.5 pl-10 text-[11px] text-muted leading-snug">Muestra ↑ ↓ en Mb/s y el % de uso junto al enlace. El detalle sigue disponible al pasar el mouse.</p>
+                  <Toggle checked={ui.rates} onChange={(rates) => setUi((u) => ({ ...u, rates }))} label="Rótulo en el enlace" />
+                  <p className="mt-0.5 pl-10 text-[11px] text-muted leading-snug">
+                    Una etiqueta corta sobre cada enlace con el % de uso (o la tasa, si no se conoce la velocidad). Las tasas por sentido están en "Enlaces", abajo a la izquierda del mapa, y al pasar el mouse.
+                  </p>
                 </div>
                 <div>
                   <Toggle checked={ui.anim && ui.arrows} onChange={(anim) => setUi((u) => ({ ...u, anim, arrows: anim || u.arrows }))} label="Animación" />
                   <p className="mt-0.5 pl-10 text-[11px] text-muted leading-snug">
-                    Trazo animado en el sentido del tráfico (CSS, se pausa con la herramienta oculta).
+                    Puntos que viajan por cada sentido del enlace, más rápido cuanto más carga (se pausa con la herramienta oculta). Con más de {FLOW_MAX} enlaces con
+                    tráfico se animan los {FLOW_MAX} más cargados y el resto mantiene sus flechas.
                     {reducedMotion ? " El sistema pide reducir movimiento: queda desactivada." : ""}
                   </p>
                 </div>

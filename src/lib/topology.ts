@@ -1255,6 +1255,22 @@ export type UtilLevel = "ok" | "warn" | "crit" | "none";
 /** Umbrales de utilización: amarillo desde 70 %, rojo desde 90 %. */
 export const UTIL_WARN = 0.7;
 export const UTIL_CRIT = 0.9;
+/** Distancia entre los puntos del flujo animado, en px (igual que el stroke-dasharray del CSS). */
+export const FLOW_GAP = 16;
+
+/**
+ * Ritmo de la animación de un sentido del enlace: más tráfico, puntos más rápidos. Con la velocidad
+ * del enlace se usa la utilización; sin ella, el volumen en escala logarítmica (1 kbps lento, 1 Gbps
+ * rápido). Avanza en pasos de 30 por segundo (fluido a la vista, la mitad de repintados que a 60).
+ */
+export function flowTiming(bps: number | null | undefined, speed?: number): { dur: number; steps: number } {
+  const b = Math.max(0, bps ?? 0);
+  const rate = speed && speed > 0 ? Math.min(1, b / speed) : Math.min(1, Math.max(0, (Math.log10(b + 1) - 3) / 6));
+  // Velocidad visual de 40 a 160 px/s sobre un ciclo de FLOW_GAP px (la distancia entre puntos).
+  const dur = Math.round((FLOW_GAP / (40 + 120 * Math.sqrt(rate))) * 100) / 100;
+  return { dur, steps: Math.max(3, Math.round(dur * 30)) };
+}
+
 export const utilLevel = (u: number | undefined): UtilLevel =>
   u === undefined || !Number.isFinite(u) ? "none" : u >= UTIL_CRIT ? "crit" : u >= UTIL_WARN ? "warn" : "ok";
 /**
@@ -1290,6 +1306,15 @@ export const shortName = (name: string, max = 16) => (name.length > max ? `${nam
  * "→" es lo que sale de A hacia el otro extremo y "←" lo que llega a A. Con la utilización
  * aproximada (velocidad desde el BW configurado) el porcentaje lleva "≈".
  */
+/**
+ * Rótulo corto para el mapa: el % de uso del sentido más cargado, o la tasa mayor si no se conoce
+ * la velocidad del enlace. El detalle por sentido va en el tooltip y en la tabla del panel.
+ */
+export function trafficShort(lt: LinkTraffic): string {
+  if (lt.util !== undefined) return `${lt.approx ? "≈" : ""}${Math.round(lt.util * 100)} %`;
+  return fmtBps(Math.max(lt.ab ?? 0, lt.ba ?? 0));
+}
+
 export function trafficLabel(lt: LinkTraffic, aName?: string): string {
   const pct = lt.util === undefined ? "" : ` · ${lt.approx ? "≈" : ""}${Math.round(lt.util * 100)} %`;
   return `${aName ? `${shortName(aName)} ` : ""}→ ${fmtBps(lt.ab)} · ← ${fmtBps(lt.ba)}${pct}`;
@@ -1353,14 +1378,26 @@ export function toSvg(t: Topology, W = 170, H = 54, traffic?: Map<string, LinkTr
     ? [
         ...UTIL_LEGEND.map(([text, lv]): [string, string] => [text, UTIL_COLORS[lv]]),
         ["Velocidad desconocida", UTIL_COLORS.none],
-        ["Rótulo: equipo A → lo que sale de A · ← lo que llega a A (≈: utilización aproximada)", "#8a919c"],
+        ["Rótulo: % de uso del sentido más cargado (≈: aproximada); sin velocidad, la tasa mayor", "#8a919c"],
       ]
     : [];
-  const legendRows = kinds.length + trafficRows.length;
+  // Tabla de enlaces por carga bajo la leyenda (como el botón "Enlaces" de la app): el SVG no tiene tooltip.
+  const loadRows = withTraffic
+    ? t.links
+        .flatMap((l) => {
+          const lt = traffic!.get(linkKey(l));
+          if (!lt) return [];
+          const nm = (id: string) => t.nodes.find((n) => n.id === id)?.name ?? id;
+          return [{ lt, text: `${nm(l.a)} ${l.aPort || "?"} ↔ ${nm(l.b)} ${l.bPort || "?"}: ${trafficLabel(lt)}` }];
+        })
+        .sort((x, y) => (y.lt.util ?? -1) - (x.lt.util ?? -1) || Math.max(y.lt.ab ?? 0, y.lt.ba ?? 0) - Math.max(x.lt.ab ?? 0, x.lt.ba ?? 0))
+    : [];
+  const legendRows = kinds.length + trafficRows.length + (loadRows.length ? loadRows.length + 1 : 0);
   const legendH = legendRows ? legendRows * 18 + 16 : 0;
   const minX = Math.min(...xs) - W / 2 - 40;
   const minY = Math.min(...ys) - H / 2 - 40;
-  const w = Math.max(...xs) - minX + W / 2 + 40;
+  // Ancho para la fila más larga de la tabla de enlaces (en mapas chicos no cabría).
+  const w = Math.max(Math.max(...xs) - minX + W / 2 + 40, 80 + Math.max(0, ...loadRows.map((r) => r.text.length)) * 6.2);
   const h = Math.max(...ys) - minY + H / 2 + 40 + legendH;
   const parts = [
     `<svg xmlns="http://www.w3.org/2000/svg" viewBox="${minX} ${minY} ${w} ${h}" width="${w}" height="${h}" font-family="Helvetica, Arial, sans-serif">`,
@@ -1368,22 +1405,43 @@ export function toSvg(t: Topology, W = 170, H = 54, traffic?: Map<string, LinkTr
   ];
   const label = (p: Pt, text: string, weight = 400, fill = "#1f2328") =>
     `<text x="${p.x}" y="${p.y}" font-size="11" font-weight="${weight}" fill="${fill}" text-anchor="middle" paint-order="stroke" stroke="#fff" stroke-width="4">${xmlEsc(text)}</text>`;
+  const pill = (p: Pt, text: string, color: string) => {
+    const w = text.length * 6.4 + 12;
+    return `<rect x="${(p.x - w / 2).toFixed(1)}" y="${p.y - 9}" width="${w.toFixed(1)}" height="18" rx="9" fill="#fff" stroke="${color}" stroke-width="1.25"/><text x="${p.x}" y="${p.y + 3.8}" font-size="11" font-weight="600" fill="${color}" text-anchor="middle">${xmlEsc(text)}</text>`;
+  };
+  const geo = linkGeometry(t, t.links);
+  // Un rótulo de tráfico por par de equipos (los paralelos comparten uno, con el agregado y el peor uso).
+  const pairOf = (l: TopoLink) => [l.a, l.b].sort().join("~");
+  const pills = new Map<string, { mids: Pt[]; worst?: LinkTraffic; grp?: string; n: number }>();
+  for (const g of geo) {
+    const lt = traffic?.get(linkKey(g.l));
+    const e = pills.get(pairOf(g.l)) ?? { mids: [], n: g.pair.length, grp: g.pair.length > 1 ? linkGroup(t, g.l) : undefined };
+    e.mids.push(g.mid);
+    if (lt && (!e.worst || (lt.util ?? -1) > (e.worst.util ?? -1))) e.worst = lt;
+    pills.set(pairOf(g.l), e);
+  }
   const groups = new Set<string>();
-  for (const g of linkGeometry(t, t.links)) {
+  for (const g of geo) {
     const dash = linkDash(g.l);
     const lt = traffic?.get(linkKey(g.l));
     const stroke = lt ? UTIL_COLORS[utilLevel(lt.util)] : "#8a919c";
     const width = lt ? (2 + 3 * Math.min(1, lt.util ?? 0)).toFixed(1) : "2";
     parts.push(`<path d="${g.d}" fill="none" stroke="${stroke}" stroke-width="${width}"${dash ? ` stroke-dasharray="${dash}" stroke-linecap="round"` : ""}/>`);
-    if (lt) parts.push(label({ x: g.mid.x, y: g.mid.y + 16 }, trafficLabel(lt, t.nodes.find((n) => n.id === g.l.a)?.name ?? g.l.a), 600, stroke));
     if (g.l.aPort) parts.push(label(g.pa, g.l.aPort));
     if (g.l.bPort) parts.push(label(g.pb, g.l.bPort));
     const grp = linkGroup(t, g.l);
     const gk = `${[g.l.a, g.l.b].sort().join("~")}|${grp}`;
+    if (pills.get(pairOf(g.l))?.worst) continue;
     if (grp && g.pair.length > 1 && !groups.has(gk)) {
       groups.add(gk);
       parts.push(label(g.mid, `${grp} ×${g.pair.length}`, 600));
     } else if (isRoutingProto(g.l.proto) || g.l.proto === "MAC/OUI") parts.push(label(g.mid, protoLabel(g.l), 600, "#636b78"));
+  }
+  for (const e of pills.values()) {
+    if (!e.worst) continue;
+    const p = { x: e.mids.reduce((a, m) => a + m.x, 0) / e.mids.length, y: e.mids.reduce((a, m) => a + m.y, 0) / e.mids.length };
+    const short = trafficShort(e.worst);
+    parts.push(pill(p, e.n > 1 ? `${e.grp ? `${e.grp} ×${e.n}` : "máx"} · ${short}` : short, UTIL_COLORS[utilLevel(e.worst.util)]));
   }
   for (const n of t.nodes) {
     parts.push(
@@ -1403,6 +1461,11 @@ export function toSvg(t: Topology, W = 170, H = 54, traffic?: Map<string, LinkTr
     };
     kinds.forEach(([text, s], i) => row(i, text, "#8a919c", linkDash(s)));
     trafficRows.forEach(([text, color], i) => row(kinds.length + i, text, color, undefined, 4));
+    if (loadRows.length) {
+      const base = kinds.length + trafficRows.length;
+      parts.push(`<text x="${minX + 16}" y="${y0 + base * 18 + 10}" font-size="11" font-weight="600" fill="#1f2328">Enlaces por carga (→ sale del primer equipo · ← llega a él)</text>`);
+      loadRows.forEach((r, i) => row(base + 1 + i, r.text, UTIL_COLORS[utilLevel(r.lt.util)], undefined, 4));
+    }
   }
   parts.push("</svg>");
   return parts.join("\n");

@@ -1197,6 +1197,11 @@ assert.equal(R.linkTraffic(lk, new Map([["core", new Map([["gi1/0/1", { inBps: 5
 assert.deepEqual([0, 0.69, 0.7, 0.899, 0.9, 1.2, undefined, NaN].map(T.utilLevel), ["ok", "ok", "warn", "warn", "crit", "crit", "none", "none"]);
 assert.deepEqual([0, 950, 999_499, 35e6, 120e6, 1.2e9, null, -1].map(T.fmtBps), ["0 b/s", "950 b/s", "999 kb/s", "35 Mb/s", "120 Mb/s", "1.2 Gb/s", "?", "?"]);
 assert.equal(T.trafficLabel({ ab: 120e6, ba: 35e6, speed: 1e9, util: 0.12, ts: 0 }), "→ 120 Mb/s · ← 35 Mb/s · 12 %");
+// Rótulo corto del mapa: % de uso; sin velocidad, la tasa mayor de los dos sentidos.
+assert.equal(T.trafficShort({ ab: 120e6, ba: 35e6, speed: 1e9, util: 0.12, ts: 0 }), "12 %");
+assert.equal(T.trafficShort({ ab: 120e6, ba: 35e6, speed: 1e9, util: 0.12, approx: true, ts: 0 }), "≈12 %");
+assert.equal(T.trafficShort({ ab: 12e6, ba: 45e6, ts: 0 }), "45 Mb/s");
+assert.equal(T.trafficShort({ ab: null, ba: null, ts: 0 }), "0 b/s");
 assert.equal(T.trafficLabel({ ab: 120e6, ba: null, ts: 0 }), "→ 120 Mb/s · ← ?");
 // Con el equipo A explícito (nombre largo recortado) y utilización aproximada.
 assert.equal(T.trafficLabel({ ab: 120e6, ba: 35e6, speed: 1e9, util: 0.12, ts: 0 }, "core-sw01"), "core-sw01 → 120 Mb/s · ← 35 Mb/s · 12 %");
@@ -1316,13 +1321,16 @@ const tt = {
 const tmap = new Map([[T.linkKey(tt.links[0]), { ab: 950e6, ba: 35e6, speed: 1e9, util: 0.95, ts: Date.UTC(2026, 9, 23, 12) }]]);
 const tsvg = T.toSvg(tt, 170, 54, tmap);
 assert.ok(!/<b>|<x>/.test(tsvg), "SVG escapado");
-assert.match(tsvg, />=cmd\|&quot;&lt;b&gt;&amp; → 950 Mb\/s · ← 35 Mb\/s · 95 %<\/text>/, "rótulo con el nombre del equipo A, escapado");
+assert.match(tsvg, /stroke="#cf222e" stroke-width="1\.25"\/><text [^>]*>95 %<\/text>/, "rótulo corto con el % sobre el enlace");
+assert.match(tsvg, />=cmd\|&quot;&lt;b&gt;&amp; Gi1\/0\/1 ↔ b&lt;x&gt; Gi0\/1: → 950 Mb\/s · ← 35 Mb\/s · 95 %<\/text>/, "tabla de enlaces con nombres escapados");
 assert.match(tsvg, /stroke="#cf222e" stroke-width="4\.8"/, "rojo desde 90 %");
 assert.match(tsvg, /Utilización de 90 % o más/);
-assert.match(tsvg, /Rótulo: equipo A → lo que sale de A · ← lo que llega a A/);
+assert.match(tsvg, /Rótulo: % de uso del sentido más cargado/);
+assert.match(tsvg, /Enlaces por carga/);
 assert.match(tsvg, /Velocidad desconocida/);
 assert.match(tsvg, new RegExp(`stroke="${T.UTIL_COLORS.none}"`), "leyenda con el color de velocidad desconocida");
-assert.equal((tsvg.match(/· ← /g) ?? []).length, 2, "solo el enlace con datos lleva etiqueta (más la leyenda)");
+assert.equal((tsvg.match(/· ← /g) ?? []).length, 2, "solo el enlace con datos va en la tabla (más su encabezado)");
+assert.equal((tsvg.match(/rx="9"/g) ?? []).length, 1, "solo el enlace con datos lleva rótulo");
 assert.ok(!/Utilización/.test(T.toSvg(tt, 170, 54)), "sin tráfico, sin leyenda de tráfico");
 const tcsv = T.toCsv(tt, tmap).split("\n");
 assert.match(tcsv[0], /,protocolo,trafico_a_b_bps,trafico_b_a_bps,velocidad_enlace_bps,utilizacion_pct,lectura,utilizacion_aproximada$/);
@@ -1444,6 +1452,23 @@ assert.deepEqual(T.parseDismissed([1, 2]), {});
     ["huawei", "vrp8", "telnet", "", "10.1.1.2\nreboot"],
   ])
     assert.equal(T.hopCommand(...args), null, JSON.stringify(args));
+}
+
+// Ritmo de la animación de tráfico: más tráfico, puntos más rápidos (40 a 160 px/s); 30 pasos por segundo.
+{
+  const idle = T.flowTiming(0, 1e9);
+  const half = T.flowTiming(5e8, 1e9);
+  const full = T.flowTiming(1e9, 1e9);
+  assert.equal(idle.dur, 0.4);
+  assert.ok(half.dur < idle.dur && full.dur < half.dur, JSON.stringify({ idle, half, full }));
+  assert.equal(full.dur, 0.1);
+  assert.equal(T.flowTiming(2e9, 1e9).dur, 0.1, "sobre el 100 % no acelera más");
+  assert.equal(full.steps, 3);
+  assert.equal(idle.steps, 12);
+  // Sin velocidad del enlace: escala logarítmica del volumen (1 kbps lento, 1 Gbps rápido).
+  assert.ok(T.flowTiming(1e3).dur > T.flowTiming(1e6).dur && T.flowTiming(1e6).dur > T.flowTiming(1e9).dur);
+  assert.equal(T.flowTiming(1e9).dur, 0.1);
+  assert.equal(T.flowTiming(null).dur, 0.4);
 }
 
 console.log("topology: ok");
