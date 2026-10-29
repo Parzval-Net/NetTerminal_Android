@@ -83,7 +83,7 @@ interface Props {
 }
 
 /** [etiqueta, icono, acción, deshabilitado, atajo que se muestra a la derecha]. */
-type MenuItem = [string, React.ReactNode, () => void, boolean?, string?];
+type MenuItem = [string, React.ReactNode, () => void, boolean?, string?, boolean?];
 type Menu = { x: number; y: number; items: MenuItem[] };
 type Selected = { kind: "session"; id: string } | { kind: "folder"; path: string } | null;
 
@@ -722,9 +722,10 @@ export function ContextMenu({ menu, onClose }: { menu: Menu; onClose: () => void
       className="fixed z-50 min-w-48 py-1 bg-panel border border-line rounded-lg shadow-pop"
       style={{ left: pos.x, top: pos.y }}
     >
-      {menu.items.map(([label, icon, action, disabled, shortcut]) => (
+      {menu.items.map(([label, icon, action, disabled, shortcut, separated]) => (
         <button
           key={label}
+          data-sep={separated ? "" : undefined}
           role="menuitem"
           disabled={disabled}
           onClick={() => {
@@ -733,7 +734,7 @@ export function ContextMenu({ menu, onClose }: { menu: Menu; onClose: () => void
           }}
           className={`w-full flex items-center gap-2.5 px-3 h-7 text-left text-[12.5px] hover:bg-hover focus-visible:bg-hover disabled:opacity-40 ${
             label.startsWith("Eliminar") ? "text-danger" : ""
-          }`}
+          } ${separated ? "mt-1 border-t border-line pt-1 h-8 rounded-none" : ""}`}
         >
           <span className="text-muted">{icon}</span>
           <span className="flex-1">{label}</span>

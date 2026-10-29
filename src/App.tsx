@@ -34,7 +34,7 @@ import { openUrl } from "@tauri-apps/plugin-opener";
 import { Pin, Sparkles, X as XIcon } from "lucide-react";
 import { listen } from "@tauri-apps/api/event";
 import { ConnStatus, Session, Tab, TabState, historyKey, tabTitle } from "./types";
-import { closeAllLabel, focusLabel, isMac, localOsVendor, modLabel, shortcutFor } from "./lib/platform";
+import { closeAllLabel, focusLabel, historyLabel, isMac, localOsVendor, modLabel, shortcutFor } from "./lib/platform";
 import { presets, resolvePreset, useSystemDark } from "./lib/theme";
 import { Settings, logOptions, useSettings } from "./lib/settings";
 import { useAlerts } from "./lib/alerts";
@@ -959,6 +959,8 @@ function Workspace({
           return setFocusMode((f) => !f);
         case "find":
           return activeCtrl()?.openFind();
+        case "history":
+          return activeTab && !activeTab.session.scp && h.openHistory();
         case "nextTab":
           return cycle(1);
         case "prevTab":
@@ -1240,6 +1242,15 @@ function Workspace({
     capture: () => activeCtrl()?.getSelection() ?? "",
     runMacro: (m: Macro) => (m.kind === "script" ? m.script && runScript(m.script) : m.text && sendToSession(m.text)),
     runScript,
+    /** Copia un .py elegido en el equipo a la carpeta de scripts (el diálogo lo abre el backend). */
+    addScript: async () => {
+      try {
+        const name = await invoke<string | null>("import_script");
+        if (name) toast(`${name} quedó en la carpeta de scripts`);
+      } catch (err) {
+        toast(`No se pudo agregar el script: ${err}`, "error");
+      }
+    },
     stopScript: () => scriptRun && invoke("stop_script", { run: scriptRun.run }).catch(() => {}),
     deleteMacro: (m: Macro) => update((s) => ({ macros: s.macros.filter((x) => x.id !== m.id) })),
     toggleLog,
@@ -1319,9 +1330,6 @@ function Workspace({
     onBreak: h.sendBreak,
     onFind: h.find,
     onHistory: h.openHistory,
-    toolsOpen,
-    onToggleTools: h.toggleTools,
-    alerts: monitors.downCount,
     onRename: h.renameTab,
     onReorder: h.reorderTab,
     onDuplicate: h.duplicateTab,
@@ -1608,6 +1616,9 @@ function Workspace({
           aiEnabled={settings.mcpEnabled}
           onAi={h.openAi}
           onSaveAs={activeTab ? () => h.saveTabAs(activeTab.id) : undefined}
+          onFind={() => h.find()}
+          onHistory={() => (historyFor ? h.closeHistory() : h.openHistory())}
+          historyOpen={!!historyFor}
         />}
       </main>
 
@@ -1775,7 +1786,7 @@ function Workspace({
               ? [
                   { label: "Buscar en la terminal", detail: "Busca texto en la salida de la pestaña activa", shortcut: `${modLabel}F`, run: () => h.find() },
                   ...(!activeTab.session.scp
-                    ? [{ label: "Historial de comandos enviados", detail: "Últimos comandos de Notas, catálogo y botones para este equipo", run: () => h.openHistory() }]
+                    ? [{ label: "Historial de comandos enviados", detail: "Últimos comandos de Notas, catálogo y botones para este equipo", shortcut: historyLabel, run: () => h.openHistory() }]
                     : []),
                   ...(activeTab.session.type === "serial" || activeTab.session.type === "telnet"
                     ? [{ label: "Enviar Break", detail: "Señal Break a la consola de la pestaña activa", run: () => h.sendBreak() }]
@@ -1786,6 +1797,7 @@ function Workspace({
                 ]
               : []),
             { label: "Modo foco", detail: focusMode ? "Salir: vuelve a mostrar barras y paneles" : "Oculta barras y paneles: solo pestañas y terminal", shortcut: focusLabel, run: h.toggleFocus },
+            { label: "Agregar script desde el equipo…", detail: "Copia un .py de cualquier carpeta a la carpeta de scripts", run: h.addScript },
             ...(settings.showButtonBar
               ? [
                   { label: "Nuevo botón de comando", detail: "Crea un botón en la barra de botones (comando o script)", run: h.newButton },
