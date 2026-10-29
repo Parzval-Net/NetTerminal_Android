@@ -434,6 +434,9 @@ interface TrafficRow {
   mid: Pt;
 }
 
+/** Máximo de enlaces animados a la vez (los más cargados): medido en una topología de 400 equipos. */
+const FLOW_MAX = 60;
+
 /** Filas a la vista antes de "Ver todos": las más cargadas, que son las que importan. */
 const TRAFFIC_TOP = 10;
 
@@ -1277,6 +1280,12 @@ export function TopologyTool({
     const peak = (lt: LinkTraffic) => Math.max(lt.ab ?? 0, lt.ba ?? 0);
     return rows.sort((x, y) => (y.lt.util ?? -1) - (x.lt.util ?? -1) || peak(y.lt) - peak(x.lt));
   }, [geometry, linkRates, removed]);
+  /**
+   * Enlaces animados: solo los FLOW_MAX más cargados. Cada paso de la animación repinta el mapa, y
+   * con cientos de enlaces animados una topología grande baja de 60 a pocos cuadros por segundo;
+   * el resto conserva las flechas fijas.
+   */
+  const animKeys = useMemo(() => new Set(animate ? trafficRows.slice(0, FLOW_MAX).map((r) => r.key) : []), [animate, trafficRows]);
   const trafficHot = useMemo(() => trafficRows.filter((r) => (r.lt.util ?? 0) >= UTIL_WARN).length, [trafficRows]);
   const linksId = useId();
   const closeLinks = useCallback(() => setUi((u) => ({ ...u, sec: { ...u.sec, enlaces: false } })), []);
@@ -2045,7 +2054,7 @@ export function TopologyTool({
                 lt={state ? undefined : linkRates.get(k)}
                 color={ui.color}
                 arrows={ui.arrows}
-                animate={animate}
+                animate={animate && animKeys.has(k)}
                 grp={pillPairs.has(k) ? undefined : linkGroup(shown, g.l, shownById)}
                 issues={state === "removed" ? undefined : checks.get(k)}
                 onIssue={onIssue}
@@ -2420,7 +2429,8 @@ export function TopologyTool({
                 <div>
                   <Toggle checked={ui.anim && ui.arrows} onChange={(anim) => setUi((u) => ({ ...u, anim, arrows: anim || u.arrows }))} label="Animación" />
                   <p className="mt-0.5 pl-10 text-[11px] text-muted leading-snug">
-                    Puntos que viajan por cada sentido del enlace, más rápido cuanto más carga (se pausa con la herramienta oculta).
+                    Puntos que viajan por cada sentido del enlace, más rápido cuanto más carga (se pausa con la herramienta oculta). Con más de {FLOW_MAX} enlaces con
+                    tráfico se animan los {FLOW_MAX} más cargados y el resto mantiene sus flechas.
                     {reducedMotion ? " El sistema pide reducir movimiento: queda desactivada." : ""}
                   </p>
                 </div>

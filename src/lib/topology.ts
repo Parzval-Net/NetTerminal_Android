@@ -1378,10 +1378,21 @@ export function toSvg(t: Topology, W = 170, H = 54, traffic?: Map<string, LinkTr
     ? [
         ...UTIL_LEGEND.map(([text, lv]): [string, string] => [text, UTIL_COLORS[lv]]),
         ["Velocidad desconocida", UTIL_COLORS.none],
-        ["Rótulo: equipo A → lo que sale de A · ← lo que llega a A (≈: utilización aproximada)", "#8a919c"],
+        ["Rótulo: % de uso del sentido más cargado (≈: aproximada); sin velocidad, la tasa mayor", "#8a919c"],
       ]
     : [];
-  const legendRows = kinds.length + trafficRows.length;
+  // Tabla de enlaces por carga bajo la leyenda (como el botón "Enlaces" de la app): el SVG no tiene tooltip.
+  const loadRows = withTraffic
+    ? t.links
+        .flatMap((l) => {
+          const lt = traffic!.get(linkKey(l));
+          if (!lt) return [];
+          const nm = (id: string) => t.nodes.find((n) => n.id === id)?.name ?? id;
+          return [{ lt, text: `${nm(l.a)} ${l.aPort || "?"} ↔ ${nm(l.b)} ${l.bPort || "?"}: ${trafficLabel(lt)}` }];
+        })
+        .sort((x, y) => (y.lt.util ?? -1) - (x.lt.util ?? -1) || Math.max(y.lt.ab ?? 0, y.lt.ba ?? 0) - Math.max(x.lt.ab ?? 0, x.lt.ba ?? 0))
+    : [];
+  const legendRows = kinds.length + trafficRows.length + (loadRows.length ? loadRows.length + 1 : 0);
   const legendH = legendRows ? legendRows * 18 + 16 : 0;
   const minX = Math.min(...xs) - W / 2 - 40;
   const minY = Math.min(...ys) - H / 2 - 40;
@@ -1393,22 +1404,43 @@ export function toSvg(t: Topology, W = 170, H = 54, traffic?: Map<string, LinkTr
   ];
   const label = (p: Pt, text: string, weight = 400, fill = "#1f2328") =>
     `<text x="${p.x}" y="${p.y}" font-size="11" font-weight="${weight}" fill="${fill}" text-anchor="middle" paint-order="stroke" stroke="#fff" stroke-width="4">${xmlEsc(text)}</text>`;
+  const pill = (p: Pt, text: string, color: string) => {
+    const w = text.length * 6.4 + 12;
+    return `<rect x="${(p.x - w / 2).toFixed(1)}" y="${p.y - 9}" width="${w.toFixed(1)}" height="18" rx="9" fill="#fff" stroke="${color}" stroke-width="1.25"/><text x="${p.x}" y="${p.y + 3.8}" font-size="11" font-weight="600" fill="${color}" text-anchor="middle">${xmlEsc(text)}</text>`;
+  };
+  const geo = linkGeometry(t, t.links);
+  // Un rótulo de tráfico por par de equipos (los paralelos comparten uno, con el agregado y el peor uso).
+  const pairOf = (l: TopoLink) => [l.a, l.b].sort().join("~");
+  const pills = new Map<string, { mids: Pt[]; worst?: LinkTraffic; grp?: string; n: number }>();
+  for (const g of geo) {
+    const lt = traffic?.get(linkKey(g.l));
+    const e = pills.get(pairOf(g.l)) ?? { mids: [], n: g.pair.length, grp: g.pair.length > 1 ? linkGroup(t, g.l) : undefined };
+    e.mids.push(g.mid);
+    if (lt && (!e.worst || (lt.util ?? -1) > (e.worst.util ?? -1))) e.worst = lt;
+    pills.set(pairOf(g.l), e);
+  }
   const groups = new Set<string>();
-  for (const g of linkGeometry(t, t.links)) {
+  for (const g of geo) {
     const dash = linkDash(g.l);
     const lt = traffic?.get(linkKey(g.l));
     const stroke = lt ? UTIL_COLORS[utilLevel(lt.util)] : "#8a919c";
     const width = lt ? (2 + 3 * Math.min(1, lt.util ?? 0)).toFixed(1) : "2";
     parts.push(`<path d="${g.d}" fill="none" stroke="${stroke}" stroke-width="${width}"${dash ? ` stroke-dasharray="${dash}" stroke-linecap="round"` : ""}/>`);
-    if (lt) parts.push(label({ x: g.mid.x, y: g.mid.y + 16 }, trafficLabel(lt, t.nodes.find((n) => n.id === g.l.a)?.name ?? g.l.a), 600, stroke));
     if (g.l.aPort) parts.push(label(g.pa, g.l.aPort));
     if (g.l.bPort) parts.push(label(g.pb, g.l.bPort));
     const grp = linkGroup(t, g.l);
     const gk = `${[g.l.a, g.l.b].sort().join("~")}|${grp}`;
+    if (pills.get(pairOf(g.l))?.worst) continue;
     if (grp && g.pair.length > 1 && !groups.has(gk)) {
       groups.add(gk);
       parts.push(label(g.mid, `${grp} ×${g.pair.length}`, 600));
     } else if (isRoutingProto(g.l.proto) || g.l.proto === "MAC/OUI") parts.push(label(g.mid, protoLabel(g.l), 600, "#636b78"));
+  }
+  for (const e of pills.values()) {
+    if (!e.worst) continue;
+    const p = { x: e.mids.reduce((a, m) => a + m.x, 0) / e.mids.length, y: e.mids.reduce((a, m) => a + m.y, 0) / e.mids.length };
+    const short = trafficShort(e.worst);
+    parts.push(pill(p, e.n > 1 ? `${e.grp ? `${e.grp} ×${e.n}` : "máx"} · ${short}` : short, UTIL_COLORS[utilLevel(e.worst.util)]));
   }
   for (const n of t.nodes) {
     parts.push(
@@ -1428,6 +1460,11 @@ export function toSvg(t: Topology, W = 170, H = 54, traffic?: Map<string, LinkTr
     };
     kinds.forEach(([text, s], i) => row(i, text, "#8a919c", linkDash(s)));
     trafficRows.forEach(([text, color], i) => row(kinds.length + i, text, color, undefined, 4));
+    if (loadRows.length) {
+      const base = kinds.length + trafficRows.length;
+      parts.push(`<text x="${minX + 16}" y="${y0 + base * 18 + 10}" font-size="11" font-weight="600" fill="#1f2328">Enlaces por carga (→ sale del primer equipo · ← llega a él)</text>`);
+      loadRows.forEach((r, i) => row(base + 1 + i, r.text, UTIL_COLORS[utilLevel(r.lt.util)], undefined, 4));
+    }
   }
   parts.push("</svg>");
   return parts.join("\n");
