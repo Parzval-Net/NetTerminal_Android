@@ -43,6 +43,8 @@ struct Mirror {
     /// Inicio de la línea del último pedido respondido con la contraseña guardada (por el
     /// autocompletado o por un script): cada pedido se responde una sola vez.
     answered: Option<u64>,
+    /// Intentos de contraseña de saltos ya hechos (uno por paso de cada salto): nunca se repite.
+    hop_tokens: Vec<String>,
 }
 
 /// Cuántos bytes finales son el comienzo de un carácter UTF-8 todavía incompleto.
@@ -62,6 +64,9 @@ fn incomplete_utf8_tail(b: &[u8]) -> usize {
     }
     0
 }
+
+pub const HOP_ONE_TRY: &str = "La contraseña de este salto ya se intentó una vez: no se reintenta";
+pub const HOP_NO_ECHO: &str = "El pedido de contraseña no viene después del comando de salto";
 
 /// Fragmentos pendientes por suscriptor. Un script que solo envía y nunca lee no debe
 /// acumular toda la salida de la sesión en memoria: pasado el tope se descarta.
@@ -142,6 +147,36 @@ impl Mirror {
         let mut out = Zeroizing::new(Vec::with_capacity(secret.len() + newline.len()));
         out.extend_from_slice(secret.as_bytes());
         out.extend_from_slice(newline.as_bytes());
+        tx.send(Outgoing::Secret(out)).map_err(|_| "La conexión se cerró".to_string())?;
+        self.answered = Some(at);
+        Ok(())
+    }
+
+    /// Contraseña de un salto (Topología): como `type_secret`, pero el pedido tiene que venir
+    /// después del eco del comando de salto (`after`, ya enviado a esta conexión) y se hace un solo
+    /// intento por `token` (paso del salto): un nuevo "Password:" tras un rechazo no se responde.
+    /// El token se gasta solo cuando se escribe; un pedido que aún no llega se puede reintentar.
+    fn type_hop_secret(&mut self, tx: &Sender<Outgoing>, secret: &str, newline: &str, host: &str, after: &str, token: &str) -> Result<(), String> {
+        if self.hop_tokens.iter().any(|t| t == token) {
+            return Err(HOP_ONE_TRY.into());
+        }
+        let tail = self.tail(8192);
+        let echo = tail.rfind(after).ok_or(HOP_NO_ECHO)?;
+        let start = crate::autofill::screen_prompt(tail, Some(host), false)?;
+        if start <= echo {
+            return Err(HOP_NO_ECHO.into());
+        }
+        let at = self.written - (tail.len() - start) as u64;
+        if self.answered == Some(at) {
+            return Err("Ese pedido de contraseña ya se respondió: se escribe una vez por pedido".into());
+        }
+        let mut out = Zeroizing::new(Vec::with_capacity(secret.len() + newline.len()));
+        out.extend_from_slice(secret.as_bytes());
+        out.extend_from_slice(newline.as_bytes());
+        self.hop_tokens.push(token.to_string());
+        if self.hop_tokens.len() > 64 {
+            self.hop_tokens.remove(0);
+        }
         tx.send(Outgoing::Secret(out)).map_err(|_| "La conexión se cerró".to_string())?;
         self.answered = Some(at);
         Ok(())
@@ -513,6 +548,19 @@ impl ConnectionManager {
         };
         let mut m = lock(&mirror);
         m.type_secret(&input, &fill.secret, newline, host, strict)
+    }
+
+    /// Escribe la contraseña de un salto en el pedido de login que la pantalla muestra tras el
+    /// comando `after` (ver `Mirror::type_hop_secret`). El valor no vuelve a quien lo pide ni pasa
+    /// por el log, el historial o los suscriptores.
+    pub fn type_hop(&self, id: &str, secret: &str, host: &str, after: &str, token: &str) -> Result<(), String> {
+        let (mirror, input, newline) = {
+            let map = lock(&self.conns);
+            let conn = map.get(id).filter(|c| !c.sink.exited.load(Ordering::SeqCst)).ok_or("Sesión no conectada")?;
+            (conn.sink.mirror.clone(), conn.input.clone(), newline_of(&conn.session))
+        };
+        let mut m = lock(&mirror);
+        m.type_hop_secret(&input, secret, newline, host, after, token)
     }
 
     pub fn write(&self, id: &str, data: &[u8]) -> Result<(), String> {
@@ -2082,6 +2130,45 @@ mod tests {
         assert!(matches!(rx.try_recv(), Ok(super::Outgoing::Secret(_))));
         assert!(m.type_secret(&tx, "S3cret", "\r", None, false).unwrap_err().contains("ya se respondió"));
         assert!(rx.try_recv().is_err());
+    }
+
+    /// Contraseña de un salto: solo tras el eco del comando de salto, una vez por paso y sin llegar
+    /// al log, al historial ni a los suscriptores.
+    #[test]
+    fn hop_password_needs_the_hop_echo_and_is_tried_once() {
+        use crate::autofill::{AFTER_DENIED, NO_PROMPT, OTHER_HOST};
+        let (tx, rx) = std::sync::mpsc::channel();
+        let mut m = super::Mirror::default();
+        let cmd = "ssh -l noc 192.0.2.11";
+        let typed = |m: &mut super::Mirror, token: &str| m.type_hop_secret(&tx, "V3cino", "\r", "192.0.2.11", cmd, token);
+        // El pedido del propio pivote (login de la pestaña), sin comando de salto antes: no.
+        m.push(b"Welcome\r\nPassword: ");
+        assert_eq!(typed(&mut m, "t1|0"), Err(super::HOP_NO_ECHO.into()));
+        // Con el comando enviado pero el prompt de comandos a la vista (salto rechazado) no hay pedido.
+        m.push(b"\r\ncore-sw01#ssh -l noc 192.0.2.11\r\n% Connection refused by remote host\r\ncore-sw01#");
+        assert_eq!(typed(&mut m, "t1|0"), Err(NO_PROMPT.into()));
+        // Comando de salto enviado y pedido del vecino: se escribe.
+        m.push(b"ssh -l noc 192.0.2.11\r\nPassword: ");
+        assert_eq!(typed(&mut m, "t1|0"), Ok(()));
+        assert!(matches!(rx.try_recv(), Ok(super::Outgoing::Secret(s)) if &s[..] == b"V3cino\r"));
+        // Mismo pedido o mismo paso: no.
+        assert!(typed(&mut m, "t1|0").unwrap_err().contains("ya se intentó"));
+        // Rechazo y nuevo pedido: no se reintenta (ni con otro token, por el rechazo reciente).
+        m.push(b"\r\n% Authentication failed.\r\nPassword: ");
+        assert!(typed(&mut m, "t1|0").unwrap_err().contains("ya se intentó"));
+        assert_eq!(typed(&mut m, "t1|1"), Err(AFTER_DENIED.into()));
+        assert!(rx.try_recv().is_err(), "no se escribió nada más");
+        // Un pedido que nombra a otro host no recibe la contraseña de este vecino; el que nombra al
+        // vecino sí, con un paso nuevo.
+        let mut m2 = super::Mirror::default();
+        m2.push(b"core-sw01#ssh -l noc 192.0.2.11\r\nnoc@203.0.113.9's password: ");
+        assert_eq!(typed(&mut m2, "t1|2"), Err(OTHER_HOST.into()));
+        let mut m3 = super::Mirror::default();
+        m3.push(b"core-sw01#ssh -l noc 192.0.2.11\r\nnoc@192.0.2.11's password: ");
+        assert_eq!(typed(&mut m3, "t1|2"), Ok(()));
+        assert!(matches!(rx.try_recv(), Ok(super::Outgoing::Secret(_))));
+        // El valor no queda en el historial de pantalla (solo ve lo que devuelve el equipo).
+        assert!(!m.history.contains("V3cino"));
     }
 
     /// Login por TCP con contraseña guardada: se envían usuario y contraseña una sola vez,

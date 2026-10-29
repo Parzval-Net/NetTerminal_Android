@@ -34,6 +34,9 @@ const sessions = [
   ...(name === "sw-acceso-norte" ? { save_password: true } : {}),
 }));
 
+// ?nodist=1: dist-sw01 sin sesión guardada (solo se alcanza saltando desde core-sw01): la ruta es core-sw01 › dist-sw01 › sw-acceso-01.
+if (location.search.includes("nodist")) sessions.splice(sessions.findIndex((x) => x.name === "dist-sw01"), 1);
+
 const CISCO = `
 \x1b[2mUltimo acceso: hace 2 horas desde 192.0.2.250\x1b[0m
 
@@ -736,7 +739,8 @@ const handlers = {
   // Como el backend real: datos en binario y el cierre como texto por el mismo canal.
   connect: ({ id, session: sess, onData }) => {
     // Pestaña de salto de Topología ("vecino vía pivote"): el equipo al conectar es el pivote.
-    const session = / vía /.test(sess.name ?? "") ? { ...sess, name: sess.name.replace(/^.* vía /, "") } : sess;
+    // El nombre de la sesión de esa pestaña es la ruta completa "pivote › h1 › … › N": al conectar se llega al pivote.
+    const session = / › /.test(sess.name ?? "") ? { ...sess, name: sess.name.split(" › ")[0] } : / vía /.test(sess.name ?? "") ? { ...sess, name: sess.name.replace(/^.* vía /, "") } : sess;
     connSessions.set(id, session);
     const text = terminalFor(session).replace(/\r?\n/g, "\r\n");
     const ch = { data: onData.id, index: 0 };
@@ -953,10 +957,12 @@ if (new URLSearchParams(location.search).has("video")) {
   const hopSt = new Map();
   const knownKeys = new Set();
   const hopOf = (id) => hopSt.get(id) ?? (hopSt.set(id, { stack: [], mode: null, target: null }), hopSt.get(id));
+  // El prompt es el del equipo (por su IP), no el nombre de la pestaña: las pestañas de salto se llaman "N vía M".
+  const devName = (s) => sessions.find((x) => x.host === s.host && x.type !== "local")?.name ?? ({ "192.0.2.11": "dist-sw01" }[s.host] ?? s.name);
   const hopPrompt = (id) => {
     const s = connSessions.get(id) ?? {};
     const st = hopOf(id);
-    const name = st.stack.length ? st.stack[st.stack.length - 1] : s.name;
+    const name = st.stack.length ? st.stack[st.stack.length - 1] : devName(s);
     return s.highlight === "huawei" ? `<${name}>` : `${name}#`;
   };
   const hopReply = (id, raw) => {
@@ -972,7 +978,13 @@ if (new URLSearchParams(location.search).has("video")) {
     if (st.mode === "username") return ((st.mode = "password"), hw ? "Enter password:" : "Password: ");
     if (st.mode === "password") {
       st.mode = null;
-      if (c === "bad") return "% Authentication failed\r\n";
+      if (c === "bad") {
+        // ?retry=1: como un SSH real, vuelve a pedir la contraseña hasta 3 veces.
+        if (q0.has("retry") && (st.tries = (st.tries ?? 0) + 1) < 3) return ((st.mode = "password"), "% Authentication failed\r\nPassword: ");
+        st.tries = 0;
+        return "% Authentication failed\r\n";
+      }
+      st.tries = 0;
       st.stack.push(st.target);
       return `\r\nUnauthorized access prohibited.\r\n`;
     }
@@ -1011,9 +1023,9 @@ if (new URLSearchParams(location.search).has("video")) {
     if (hm) return "";
     if (s.type !== "local" && hopOf(id).stack.length) return hopPrompt(id);
     if (s.type === "local") return "\x1b[32muser@laptop\x1b[0m:\x1b[34m~\x1b[0m$ ";
-    if (s.highlight === "huawei") return `<${s.name}>`;
+    if (s.highlight === "huawei") return `<${devName(s)}>`;
     const m = modes.get(id);
-    return `${s.name}${m ? `(${m})` : ""}#`;
+    return `${devName(s)}${m ? `(${m})` : ""}#`;
   };
   const IPBRIEF = CISCO.split("\n").slice(4, 14).join("\n");
   const reply = (id, raw) => {
@@ -1203,6 +1215,48 @@ if (new URLSearchParams(location.search).has("video")) {
     lineBuf.set(id, buf);
     return null;
   };
+  // ---- Contraseñas de vecinos (saltos): como el backend real, la lista no trae contraseñas y la
+  // escritura va directo a la conexión (sin eco ni historial). ?hopcred=1 deja guardada la de
+  // sw-acceso-01 (admin@192.0.2.21), ?badcred=1 la deja mal escrita y ?pivotpw=1 da contraseña
+  // guardada a core-sw01 (credencial del pivote).
+  const hopCreds = new Map();
+  if (q0.has("hopcred")) hopCreds.set("192.0.2.21|admin", { pw: q0.has("badcred") ? "bad" : "Cl4ve-ficticia", used: null });
+  if (q0.has("pivotpw")) {
+    const pv = sessions.find((x) => x.name === "core-sw01");
+    if (pv) pv.save_password = true;
+  }
+  window.__hopWrites = [];
+  const usedTokens = new Set();
+  Object.assign(handlers, {
+    hop_cred_list: () => {
+      if (vault.backend === "vault" && !vault.unlocked) throw "La bóveda está bloqueada. Desbloquéala en Ajustes › Credenciales";
+      return [...hopCreds].map(([k, v]) => ({ ip: k.split("|")[0], user: k.split("|")[1], last_used: v.used })).sort((a, b) => a.ip.localeCompare(b.ip));
+    },
+    hop_cred_has: ({ ip, user }) => hopCreds.has(`${ip}|${user}`),
+    hop_cred_set: ({ ip, user, password }) => {
+      if (!/^\d+\.\d+\.\d+\.\d+$/.test(ip.trim())) throw "IP del vecino no válida";
+      hopCreds.set(`${ip.trim()}|${user.trim()}`, { pw: password, used: hopCreds.get(`${ip.trim()}|${user.trim()}`)?.used ?? null });
+      vault.exists = true;
+      return null;
+    },
+    hop_cred_delete: ({ ip, user }) => (hopCreds.delete(`${ip}|${user}`), null),
+    hop_type_password: ({ conn, source, ip, user, cmd, token }) => {
+      window.__hopWrites.push({ source, ip, token });
+      if (usedTokens.has(token)) throw "La contraseña de este salto ya se intentó una vez: no se reintenta";
+      const st = hopOf(conn);
+      if (st.mode !== "password" || !cmd.includes(ip)) throw "La pantalla no muestra un pedido de contraseña";
+      let pw;
+      if (source === "saved") {
+        const rec = hopCreds.get(`${ip}|${user}`);
+        if (!rec) throw "No hay contraseña guardada para este vecino, o la bóveda está bloqueada";
+        pw = rec.pw;
+        rec.used = Math.floor(Date.now() / 1000);
+      } else pw = q0.has("badpivot") ? "bad" : "Cl4ve-pivote";
+      usedTokens.add(token);
+      later(conn, () => out(conn, reply(conn, pw) + promptOf(conn)), 200);
+      return null;
+    },
+  });
   // ?scene=suggest-config: core-sw01 parte en modo configuración de interfaz (prueba de que
   // `sh` no se sugiere como `show`, porque ahí es `shutdown`); `end` vuelve a modo consulta.
   if (location.search.includes("scene=suggest-config")) {

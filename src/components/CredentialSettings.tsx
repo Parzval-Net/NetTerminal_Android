@@ -1,8 +1,10 @@
 import { useEffect, useState } from "react";
 import { invoke } from "@tauri-apps/api/core";
 import { KeyRound, Lock, ShieldCheck } from "lucide-react";
-import { CredStatus, credStatus, masterStrength, strengthText } from "../lib/credentials";
+import { CredStatus, credStatus, masterStrength, needsUnlock, strengthText } from "../lib/credentials";
+import { HopCredInfo, lastUsedText } from "../lib/hopCred";
 import { VaultUnlock } from "./VaultUnlock";
+import { HopPasswordDialog } from "./tools/HopPasswordDialog";
 
 const KEYCHAIN = "llavero del sistema operativo";
 
@@ -92,6 +94,8 @@ export function CredentialSettings() {
       )}
 
       {msg && <p className={`text-[11.5px] ${msg.error ? "text-danger" : "text-accent"}`}>{msg.text}</p>}
+
+      <HopCreds st={st} />
 
       {st.exists && (
         <div className="pt-3 border-t border-line flex items-center justify-between gap-4">
@@ -218,5 +222,115 @@ function ChangeMaster({ onChange }: { onChange: (old: string, next: string) => P
         </button>
       </form>
     </details>
+  );
+}
+
+/**
+ * Vecinos (saltos): contraseñas de equipos a los que Topología salta desde un pivote, una por IP y
+ * usuario, en la misma bóveda. Se listan sin la contraseña; se reemplazan o se agregan desde un campo
+ * oculto y se eliminan con confirmación.
+ */
+function HopCreds({ st }: { st: CredStatus }) {
+  const [list, setList] = useState<HopCredInfo[] | null>(null);
+  const [error, setError] = useState("");
+  const [dialog, setDialog] = useState<{ ip?: string; user?: string; edit?: boolean } | null>(null);
+  const [confirm, setConfirm] = useState<HopCredInfo | null>(null);
+  const locked = needsUnlock(st);
+  const refresh = () => {
+    if (locked) {
+      setList(null);
+      return;
+    }
+    invoke<HopCredInfo[]>("hop_cred_list")
+      .then((l) => {
+        setList(l);
+        setError("");
+      })
+      .catch((e) => setError(String(e)));
+  };
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  useEffect(refresh, [locked, st.exists, st.unlocked]);
+
+  const canAdd = st.backend === "keychain" || st.exists;
+  return (
+    <div className="space-y-2 pt-3 border-t border-line">
+      <div className="flex items-center justify-between gap-3">
+        <span>
+          Vecinos (saltos)
+          <span className="block text-[11.5px] text-muted">
+            Contraseñas de equipos a los que Topología salta desde otro, por IP y usuario. Se escriben solas, una vez por salto, cuando el equipo
+            pide la contraseña. Nunca se muestran.
+          </span>
+        </span>
+        <button
+          disabled={locked || !canAdd}
+          onClick={() => setDialog({})}
+          title={locked ? "Desbloquea la bóveda" : !canAdd ? "Crea la bóveda primero" : "Guardar la contraseña de un vecino"}
+          className="px-3 h-7 rounded-md border border-line hover:bg-hover disabled:opacity-50 shrink-0"
+        >
+          Agregar…
+        </button>
+      </div>
+      {locked ? (
+        <p className="text-[11.5px] text-muted">La bóveda está bloqueada: desbloquéala arriba para ver y editar esta lista.</p>
+      ) : error ? (
+        <p className="text-[11.5px] text-danger">{error}</p>
+      ) : list && list.length ? (
+        <ul className="rounded-lg border border-line divide-y divide-[var(--border)]">
+          {list.map((h) => (
+            <li key={`${h.ip}|${h.user}`} className="flex items-center gap-3 px-3 py-1.5 text-[12px]">
+              <span className="font-mono">{h.ip}</span>
+              <span>{h.user}</span>
+              <span className="text-muted text-[11.5px]">último uso: {lastUsedText(h.last_used)}</span>
+              <span className="ml-auto flex items-center gap-1.5">
+                {confirm?.ip === h.ip && confirm.user === h.user ? (
+                  <>
+                    <span className="text-[11.5px]">¿Eliminar?</span>
+                    <button onClick={() => setConfirm(null)} className="px-2 h-6 rounded-md border border-line hover:bg-hover">
+                      No
+                    </button>
+                    <button
+                      onClick={() =>
+                        invoke("hop_cred_delete", { ip: h.ip, user: h.user })
+                          .then(() => (setConfirm(null), refresh()))
+                          .catch((e) => (setConfirm(null), setError(String(e))))
+                      }
+                      className="px-2 h-6 rounded-md bg-danger text-danger-fg font-medium hover:opacity-90"
+                    >
+                      Eliminar
+                    </button>
+                  </>
+                ) : (
+                  <>
+                    <button onClick={() => setDialog({ ip: h.ip, user: h.user, edit: true })} className="px-2 h-6 rounded-md border border-line hover:bg-hover">
+                      Editar…
+                    </button>
+                    <button onClick={() => setConfirm(h)} className="px-2 h-6 rounded-md border border-line text-danger hover:bg-hover">
+                      Eliminar…
+                    </button>
+                  </>
+                )}
+              </span>
+            </li>
+          ))}
+        </ul>
+      ) : (
+        <p className="text-[11.5px] text-muted">No hay contraseñas de vecinos guardadas.</p>
+      )}
+      {dialog && (
+        <HopPasswordDialog
+          title={dialog.edit ? "Reemplazar la contraseña del vecino" : "Agregar la contraseña de un vecino"}
+          ip={dialog.ip}
+          user={dialog.user}
+          editable={!dialog.edit}
+          note={dialog.edit ? "La contraseña nueva reemplaza a la guardada." : "Se guarda para esa IP y ese usuario. Máximo 100 vecinos."}
+          onClose={() => setDialog(null)}
+          onSaved={() => {
+            setDialog(null);
+            refresh();
+          }}
+        />
+      )}
+    </div>
   );
 }

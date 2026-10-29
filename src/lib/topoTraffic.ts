@@ -6,9 +6,11 @@
  */
 import type { LinkTraffic, TopoLink, TopoVendor } from "./topology";
 import { plainCli } from "./cliText";
-import { canonPort, isCliError, knownAddrs, nodeId } from "./topology";
+import { canonPort, isCliError, knownAddrs } from "./topology";
 import type { TopoNode } from "./topology";
 import { OID } from "./topoSnmp";
+import { tabAtDevice } from "./hopTab";
+import type { TabRoute } from "./hopTab";
 
 // ---------- Umbrales y estados del enlace ----------
 
@@ -141,16 +143,17 @@ export function linkTraffic(l: TopoLink, rates: Map<string, Map<string, PortRate
 }
 
 /**
- * Pestaña del equipo: la del salto que llegó a él (si la hay) o la que apunta a su IP o nombre. Una
- * pestaña de salto que está en otro equipo (via) no cuenta como la del equipo al que se conectó
- * ni por IP ni por nombre: su prompt es el del vecino.
+ * Pestaña del equipo para leer su tráfico por consola: la que su ruta o su prompt ubican en él
+ * (ver `tabAtDevice`), verificada por prompt primero, o la que apunta a su IP o nombre si no se puede
+ * verificar. Nunca una pestaña que cambió de equipo: con el prompt de otro, no es la de este.
+ * Cada equipo de una ruta de saltos tiene su propia pestaña (`routes`, por id de pestaña).
  */
-export function terminalFor<T extends { connId: string; name: string; host?: string }>(n: TopoNode, terminals: T[], via?: Record<string, string>): T | undefined {
-  const hopped = new Set(Object.values(via ?? {}));
-  return (
-    (via?.[n.id] ? terminals.find((t) => t.connId === via[n.id]) : undefined) ??
-    terminals.find((t) => !hopped.has(t.connId) && ((t.host && knownAddrs(n).includes(t.host)) || nodeId(t.name) === n.id))
-  );
+export function terminalFor<T extends { connId: string; name: string; host?: string; tabId?: string; screen?: (n: number) => string }>(
+  n: TopoNode,
+  terminals: T[],
+  routes?: Record<string, TabRoute>,
+): T | undefined {
+  return tabAtDevice(n.id, knownAddrs(n), terminals, routes)?.tab;
 }
 
 // ---------- SNMP ----------

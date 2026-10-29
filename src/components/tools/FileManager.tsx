@@ -25,6 +25,8 @@ import { plural } from "../../lib/plural";
 import { SCP_EXIT_EVENT, type ScpExit, type ScpJob, busyRetry, isBusyError, scpOutcome } from "../../lib/scpVerify";
 export interface TerminalRef {
   connId: string;
+  /** Id de la pestaña (estable al reconectar, a diferencia de connId). */
+  tabId?: string;
   name: string;
   host?: string;
   highlight?: string;
@@ -33,6 +35,15 @@ export interface TerminalRef {
   screen?: (lines: number) => string;
   /** Escribe un aviso local en la pestaña (no llega al equipo). */
   notice?: (text: string) => void;
+}
+
+/** Una pestaña abierta con su estado (conectada o no), para la ruta de Topología. */
+export interface TabBrief {
+  tabId: string;
+  name: string;
+  host?: string;
+  status: "connecting" | "connected" | "closed";
+  session: Session;
 }
 
 export interface ScpRequest {

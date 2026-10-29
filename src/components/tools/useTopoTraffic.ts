@@ -19,6 +19,7 @@ import {
   trafficCommands,
 } from "../../lib/topoTraffic";
 import type { TerminalRef } from "./FileManager";
+import type { TabRoute } from "../../lib/hopTab";
 
 export type TrafficInterval = 15 | 30 | 60;
 export const TRAFFIC_INTERVALS: TrafficInterval[] = [15, 30, 60];
@@ -81,15 +82,18 @@ export function useTopoTraffic({
   terminals,
   opts,
   visible,
-  via,
+  routes,
 }: {
   topo: Topology;
   profiles: SnmpProfile[];
   terminals: TerminalRef[];
   opts: TrafficOptions;
   visible: boolean;
-  /** Equipos alcanzados saltando dentro de una pestaña: id del equipo → conexión. */
-  via?: Record<string, string>;
+  /**
+   * Ruta de cada pestaña abierta por un salto (por id de pestaña): cada equipo de la ruta se lee por la
+   * pestaña que está en él, verificada por su prompt; una que cambió de equipo no se usa.
+   */
+  routes?: Record<string, TabRoute>;
 }) {
   const [rates, setRates] = useState<Map<string, Map<string, PortRate>>>(() => new Map());
   const [status, setStatus] = useState<TrafficStatus>(EMPTY);
@@ -98,8 +102,8 @@ export function useTopoTraffic({
    * se superpone al estado guardado para las revisiones de enlaces, sin escribirlo en el diagrama.
    */
   const [live, setLive] = useState<Map<string, Map<string, PortInfo>>>(() => new Map());
-  const ctx = useRef({ topo, profiles, terminals, cli: opts.cli, via });
-  ctx.current = { topo, profiles, terminals, cli: opts.cli, via };
+  const ctx = useRef({ topo, profiles, terminals, cli: opts.cli, routes });
+  ctx.current = { topo, profiles, terminals, cli: opts.cli, routes };
   const prev = useRef(new Map<string, Map<string, CounterSample>>());
   const ifCache = useRef(new Map<string, IfCache>());
   const inFlight = useRef(new Set<string>());
@@ -206,7 +210,7 @@ export function useTopoTraffic({
 
     const tick = async () => {
       if (document.visibilityState === "hidden") return;
-      const { topo: t, profiles: ps, terminals: ts, cli, via: hopVia } = ctx.current;
+      const { topo: t, profiles: ps, terminals: ts, cli, routes: tabRoutes } = ctx.current;
       const st: TrafficStatus = { snmp: [], cli: [], none: [], errors: [], busy: [], last: Date.now() };
       const liveNow = new Map<string, Map<string, PortInfo>>();
       const jobs = t.nodes
@@ -215,7 +219,7 @@ export function useTopoTraffic({
           const ports = linkedPorts(t, n.id);
           if (!ports.length) return null;
           const p = profileFor(n, ps);
-          const term = !p && cli ? terminalFor(n, ts, hopVia) : undefined;
+          const term = !p && cli ? terminalFor(n, ts, tabRoutes) : undefined;
           if (!p && !term) {
             st.none.push(n.name);
             return null;

@@ -12,7 +12,7 @@ import { PerfTool } from "./PerfTool";
 import { TransferTool } from "./TransferTool";
 import { SyslogTool } from "./SyslogTool";
 import { PluginsTool } from "./PluginsTool";
-import type { ScpRequest, TerminalRef } from "./FileManager";
+import type { ScpRequest, TabBrief, TerminalRef } from "./FileManager";
 import { persist, stored } from "../../lib/prefs";
 import { modLabel } from "../../lib/platform";
 
@@ -62,7 +62,13 @@ interface Props {
   terminals: TerminalRef[];
   sessions: Session[];
   onScp: (req: ScpRequest) => void;
-  onOpenSession: (s: Session) => void;
+  /** `background`: abre la pestaña sin activarla. Devuelve el id de la pestaña. */
+  onOpenSession: (s: Session, opts?: { background?: boolean; title?: string }) => string | void;
+  /** Todas las pestañas con su estado, para la ruta de Topología. */
+  tabs: TabBrief[];
+  /** Activa una pestaña (sale de Herramientas). */
+  onFocusTab: (tabId: string) => void;
+  onReconnectTab: (tabId: string) => void;
   onConfirm: (req: { title: string; message: string; label: string; danger?: boolean; action: () => void }) => void;
 }
 
@@ -70,7 +76,7 @@ interface Props {
  * Pestaña de herramientas. Cada módulo se monta al visitarlo y luego se mantiene
  * vivo oculto, para no perder servidores, logs ni mediciones al cambiar de sección.
  */
-export const ToolsView = memo(function ToolsView({ active, onBack, onClose, settings, update, monitors, connId, terminals, sessions, onConfirm, onScp, onOpenSession }: Props) {
+export const ToolsView = memo(function ToolsView({ active, onBack, onClose, settings, update, monitors, connId, terminals, tabs, sessions, onConfirm, onScp, onOpenSession, onFocusTab, onReconnectTab }: Props) {
   const enabled = NAV.filter((n) => settings.modules[n.id] !== false);
   const [current, setCurrent] = useState<ModuleId>(() => {
     const last = stored<ModuleId | null>(LAST_KEY, null);
@@ -124,6 +130,9 @@ export const ToolsView = memo(function ToolsView({ active, onBack, onClose, sett
             snmpProfiles={settings.snmpProfiles ?? []}
             visible={active && current === "topology"}
             onOpenSession={onOpenSession}
+            tabs={tabs}
+            onFocusTab={onFocusTab}
+            onReconnectTab={onReconnectTab}
             onConfirm={onConfirm}
             lifecycle={settings.lifecycleInfo}
           />

@@ -116,6 +116,87 @@ fn cred_delete(session_id: String, state: State<'_, AppState>) -> Result<(), Str
     state.creds.delete(&session_id)
 }
 
+// ---------- Contraseñas de vecinos (saltos de Topología) ----------
+// Igual que las de sesión: ninguna se devuelve. Se guardan desde un campo oculto, se listan sin
+// valor y solo se escriben en una conexión con `hop_type_password`.
+
+#[tauri::command(async)]
+fn hop_cred_set(ip: String, user: String, password: String, state: State<'_, AppState>) -> Result<(), String> {
+    let password = zeroize::Zeroizing::new(password);
+    state.creds.hop_set(&ip, &user, &password)
+}
+
+#[tauri::command(async)]
+fn hop_cred_has(ip: String, user: String, state: State<'_, AppState>) -> Result<bool, String> {
+    state.creds.hop_has(&ip, &user)
+}
+
+#[tauri::command(async)]
+fn hop_cred_delete(ip: String, user: String, state: State<'_, AppState>) -> Result<(), String> {
+    state.creds.hop_delete(&ip, &user)
+}
+
+#[tauri::command(async)]
+fn hop_cred_list(state: State<'_, AppState>) -> Result<Vec<credentials::HopInfo>, String> {
+    state.creds.hop_list()
+}
+
+/// Escribe una contraseña en el pedido de login de un salto, una sola vez por paso (`token`).
+/// `source`: "saved" (la guardada del vecino, por IP y usuario) o "pivot" (la de la sesión guardada
+/// del pivote, solo si la conexión es una copia de esa sesión). El pedido tiene que aparecer en la
+/// pantalla después del comando de salto (`cmd`) y, si nombra un host, ser el del vecino. Nada vuelve
+/// al frontend ni pasa por el log o el historial.
+#[tauri::command(async)]
+#[allow(clippy::too_many_arguments)]
+fn hop_type_password(
+    conn: String,
+    source: String,
+    pivot_id: Option<String>,
+    ip: String,
+    user: String,
+    cmd: String,
+    token: String,
+    state: State<'_, AppState>,
+) -> Result<(), String> {
+    let addr: std::net::IpAddr = ip.trim().parse().map_err(|_| "IP del vecino no válida")?;
+    let host = addr.to_string();
+    if cmd.is_empty() || cmd.len() > 200 || cmd.chars().any(|c| c.is_control()) || !cmd.contains(&ip.trim().to_string()) {
+        return Err("Comando de salto no válido".into());
+    }
+    if token.is_empty() || token.len() > 160 {
+        return Err("Salto no válido".into());
+    }
+    let (_, session) = state.conns.info(&conn).ok_or("Sesión no conectada")?;
+    let secret = match source.as_str() {
+        "saved" => state
+            .creds
+            .hop_get(&host, &user)
+            .ok_or("No hay contraseña guardada para este vecino, o la bóveda está bloqueada")?,
+        "pivot" => {
+            let id = pivot_id.filter(|i| !i.is_empty()).ok_or("El pivote no es una sesión guardada")?;
+            let saved = state.store.get(&id).ok_or("El pivote no es una sesión guardada")?;
+            // La pestaña de salto tiene que ser una copia de la sesión del pivote: la contraseña solo
+            // se escribe en un equipo al que se llegó desde ese pivote.
+            let same = saved.save_password == Some(true)
+                && session.id == saved.id
+                && session.session_type == saved.session_type
+                && session.host == saved.host
+                && session.port == saved.port;
+            if !same {
+                return Err("La pestaña no es una copia de la sesión del pivote con contraseña guardada".into());
+            }
+            state.creds.get(&saved.id).ok_or("El pivote no tiene contraseña guardada, o la bóveda está bloqueada")?
+        }
+        _ => return Err("Origen de contraseña no válido".into()),
+    };
+    state.conns.type_hop(&conn, &secret, &host, cmd.trim(), &token)?;
+    if source == "saved" {
+        let now = std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).map_or(0, |d| d.as_secs());
+        state.creds.hop_touch(&host, &user, now);
+    }
+    Ok(())
+}
+
 #[tauri::command(async)]
 fn vault_create(master: String, state: State<'_, AppState>) -> Result<(), String> {
     let master = zeroize::Zeroizing::new(master);
@@ -1236,6 +1317,11 @@ pub fn run() {
             cred_set,
             cred_has,
             cred_delete,
+            hop_cred_set,
+            hop_cred_has,
+            hop_cred_delete,
+            hop_cred_list,
+            hop_type_password,
             vault_create,
             vault_unlock,
             vault_lock,

@@ -271,11 +271,16 @@ function Workspace({
     invoke<Session[]>("list_sessions").then(setSessions).catch(console.error);
   }, []);
 
-  const openTab = useCallback((session: Session) => {
+  /**
+   * `background`: la pestaña se abre sin activarla (Topología sigue a la vista). `title`: nombre de la
+   * pestaña (el de la sesión queda en el tooltip). Devuelve el id de la pestaña.
+   */
+  const openTab = useCallback((session: Session, opts?: { background?: boolean; title?: string }) => {
     const id = `t${++tabSeq}`;
-    setTabs((t) => [...t, { id, session }]);
+    setTabs((t) => [...t, { id, session, ...(opts?.title ? { title: opts.title } : {}) }]);
     setStates((s) => ({ ...s, [id]: { status: "connecting", logPath: null } }));
-    setActiveId(id);
+    if (!opts?.background) setActiveId(id);
+    return id;
   }, []);
 
   // Aviso único por ejecución: con muchas pestañas el historial de pantalla domina la memoria
@@ -1113,6 +1118,7 @@ function Workspace({
         .filter((t) => t.session.type !== "local" && states[t.id]?.status === "connected")
         .map((t) => ({
           connId: controllers.current.get(t.id)?.connId() ?? "",
+          tabId: t.id,
           name: tabTitle(t),
           host: t.session.host,
           highlight: t.session.highlight,
@@ -1123,6 +1129,14 @@ function Workspace({
         .filter((t) => t.connId),
     [tabs, states],
   );
+
+  // Todas las pestañas con su estado (Topología muestra cuáles de su ruta están caídas y las enfoca).
+  const tabBriefs = useMemo(
+    () => tabs.map((t) => ({ tabId: t.id, name: tabTitle(t), host: t.session.host, status: states[t.id]?.status ?? "connecting", session: t.session })),
+    [tabs, states],
+  );
+  const focusTab = useCallback((tabId: string) => setActiveId(tabId), []);
+  const reconnectTab = useCallback((tabId: string) => controllers.current.get(tabId)?.reconnect(), []);
 
   const h = useHandlers({
     // En tandas de 5 cada 1,5 s: abrir 40 sesiones de golpe satura AAA/TACACS y la CPU.
@@ -1552,6 +1566,9 @@ function Workspace({
                 connId={h.toolsConnId}
                 onConfirm={setConfirm}
                 onOpenSession={openTab}
+                tabs={tabBriefs}
+                onFocusTab={focusTab}
+                onReconnectTab={reconnectTab}
                 sessions={sessions}
                 onScp={h.scp}
                 terminals={terminals}

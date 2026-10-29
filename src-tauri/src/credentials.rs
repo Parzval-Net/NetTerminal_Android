@@ -29,6 +29,14 @@ const MAX_ID: usize = 128;
 /// entradas huérfanas al guardar la contraseña de una sesión no las toca.
 pub const NS_SNMP: &str = "snmp:";
 
+/// Prefijo de las contraseñas de vecinos alcanzados por salto (Topología): una entrada por
+/// equipo y usuario, con clave `hop:<IP>|<usuario>` (IP canónica). El valor es un JSON propio
+/// (`{"pw":…,"used":…}`); las bóvedas anteriores no los tienen y se abren igual (el formato del
+/// archivo no cambia: es el mismo mapa texto a texto). Tampoco las toca la limpieza de huérfanas.
+pub const NS_HOP: &str = "hop:";
+/// Tope de vecinos guardados: no es una libreta de contraseñas masiva.
+pub const MAX_HOP_ENTRIES: usize = 100;
+
 pub const LOCKED: &str = "La bóveda está bloqueada. Desbloquéala en Ajustes › Credenciales";
 
 #[derive(Clone, Copy, PartialEq, Debug)]
@@ -417,7 +425,7 @@ impl Credentials {
                 old.zeroize();
             }
             let stale: Vec<String> =
-                e.0.keys().filter(|k| *k != id && !k.starts_with(NS_SNMP) && !valid.contains(k)).cloned().collect();
+                e.0.keys().filter(|k| *k != id && !k.starts_with(NS_SNMP) && !k.starts_with(NS_HOP) && !valid.contains(k)).cloned().collect();
             for k in stale {
                 if let Some(mut v) = e.0.remove(&k) {
                     v.zeroize();
@@ -453,6 +461,148 @@ impl Credentials {
         let mut entries = Self::decrypt(inner.key.as_ref()?, &bytes).ok()?;
         entries.0.remove(id).map(Zeroizing::new)
     }
+
+    // ---------- Vecinos alcanzados por salto ----------
+
+    /// Lee las entradas con la llave en memoria (sin escribir). Ok(None): no hay bóveda.
+    fn read_entries<R>(&self, f: impl FnOnce(&Entries) -> R) -> Result<Option<R>, String> {
+        let mut inner = lock(&self.inner);
+        let Some((_, bytes)) = self.ensure_key(&mut inner, false)? else {
+            return Ok(None);
+        };
+        let key = inner.key.as_ref().ok_or(LOCKED)?;
+        Ok(Some(f(&Self::decrypt(key, &bytes)?)))
+    }
+
+    /// Guarda (o reemplaza) la contraseña de un vecino. Con tope de entradas.
+    pub fn hop_set(&self, ip: &str, user: &str, password: &str) -> Result<(), String> {
+        let key = hop_key(ip, user)?;
+        if password.is_empty() || password.len() > MAX_PASSWORD {
+            return Err(format!("La contraseña debe tener entre 1 y {MAX_PASSWORD} bytes"));
+        }
+        if password.chars().any(|c| matches!(c, '\r' | '\n' | '\0')) {
+            return Err("La contraseña no puede contener saltos de línea".into());
+        }
+        let mut full = false;
+        self.update(true, |e| {
+            let prior = e.0.get(&key).and_then(|v| HopRec::parse(v)).and_then(|r| r.used);
+            if prior.is_none() && !e.0.contains_key(&key) && e.0.keys().filter(|k| k.starts_with(NS_HOP)).count() >= MAX_HOP_ENTRIES {
+                full = true;
+                return;
+            }
+            let rec = Zeroizing::new(HopRec { pw: password.to_string(), used: prior }.encode());
+            if let Some(mut old) = e.0.insert(key.clone(), rec.to_string()) {
+                old.zeroize();
+            }
+        })?;
+        if full {
+            return Err(format!("Ya hay {MAX_HOP_ENTRIES} vecinos con contraseña guardada: elimina alguno en Ajustes › Credenciales"));
+        }
+        Ok(())
+    }
+
+    pub fn hop_delete(&self, ip: &str, user: &str) -> Result<(), String> {
+        let key = hop_key(ip, user)?;
+        self.update(false, |e| {
+            if let Some(mut v) = e.0.remove(&key) {
+                v.zeroize();
+            }
+        })
+    }
+
+    pub fn hop_has(&self, ip: &str, user: &str) -> Result<bool, String> {
+        let key = hop_key(ip, user)?;
+        Ok(self.read_entries(|e| e.0.contains_key(&key))?.unwrap_or(false))
+    }
+
+    /// Vecinos guardados, sin contraseñas, por IP y usuario.
+    pub fn hop_list(&self) -> Result<Vec<HopInfo>, String> {
+        let mut out = self
+            .read_entries(|e| {
+                e.0.iter()
+                    .filter_map(|(k, v)| {
+                        let (ip, user) = k.strip_prefix(NS_HOP)?.split_once('|')?;
+                        Some(HopInfo { ip: ip.to_string(), user: user.to_string(), last_used: HopRec::parse(v).and_then(|r| r.used) })
+                    })
+                    .collect::<Vec<_>>()
+            })?
+            .unwrap_or_default();
+        out.sort_by(|a, b| (&a.ip, &a.user).cmp(&(&b.ip, &b.user)));
+        Ok(out)
+    }
+
+    /// Solo para escribir la contraseña en un salto (nunca vuelve al frontend).
+    pub(crate) fn hop_get(&self, ip: &str, user: &str) -> Option<Zeroizing<String>> {
+        let key = hop_key(ip, user).ok()?;
+        let rec = self.read_entries(|e| e.0.get(&key).and_then(|v| HopRec::parse(v))).ok()???;
+        Some(Zeroizing::new(rec.pw.clone()))
+    }
+
+    /// Anota el último uso (segundos Unix). Un fallo no importa: es solo informativo.
+    pub(crate) fn hop_touch(&self, ip: &str, user: &str, now: u64) {
+        let Ok(key) = hop_key(ip, user) else { return };
+        let _ = self.update(false, |e| {
+            if let Some(mut rec) = e.0.get(&key).and_then(|v| HopRec::parse(v)) {
+                rec.used = Some(now);
+                let enc = Zeroizing::new(rec.encode());
+                if let Some(mut old) = e.0.insert(key.clone(), enc.to_string()) {
+                    old.zeroize();
+                }
+            }
+        });
+    }
+}
+
+/// Un vecino con contraseña guardada (para Ajustes › Credenciales). Sin la contraseña.
+#[derive(Serialize, Clone, Debug, PartialEq)]
+pub struct HopInfo {
+    pub ip: String,
+    pub user: String,
+    /// Último uso en un salto (segundos Unix); None si nunca se usó.
+    pub last_used: Option<u64>,
+}
+
+/// Valor de una entrada `hop:`: la contraseña y cuándo se usó por última vez.
+struct HopRec {
+    pw: String,
+    used: Option<u64>,
+}
+
+impl Drop for HopRec {
+    fn drop(&mut self) {
+        self.pw.zeroize();
+    }
+}
+
+impl HopRec {
+    fn parse(v: &str) -> Option<HopRec> {
+        let j: serde_json::Value = serde_json::from_str(v).ok()?;
+        Some(HopRec { pw: j.get("pw")?.as_str()?.to_string(), used: j.get("used").and_then(|u| u.as_u64()) })
+    }
+    fn encode(&self) -> String {
+        serde_json::json!({ "pw": self.pw, "used": self.used }).to_string()
+    }
+}
+
+/// Usuario de un comando de salto: mismas reglas que la interfaz (HOP_USER).
+pub fn valid_hop_user(u: &str) -> bool {
+    let mut cs = u.chars();
+    let ok_first = cs.next().is_some_and(|c| c.is_ascii_alphanumeric());
+    ok_first && u.len() <= 64 && cs.all(|c| c.is_ascii_alphanumeric() || matches!(c, '_' | '.' | '@' | '\\' | '-'))
+}
+
+/// Clave de la entrada de un vecino: IP canónica (minúsculas, sin ceros de más) y usuario.
+/// Rechaza nombres, IP no literales, la dirección no especificada y usuarios con caracteres raros.
+pub fn hop_key(ip: &str, user: &str) -> Result<String, String> {
+    let addr: std::net::IpAddr = ip.trim().parse().map_err(|_| "IP del vecino no válida")?;
+    if addr.is_unspecified() || addr.is_multicast() {
+        return Err("IP del vecino no válida".into());
+    }
+    let user = user.trim();
+    if !valid_hop_user(user) {
+        return Err("Usuario no válido (sin espacios ni símbolos raros)".into());
+    }
+    Ok(format!("{NS_HOP}{addr}|{user}"))
 }
 
 #[cfg(test)]
@@ -779,6 +929,128 @@ mod tests {
         let key = derive("maestra-larga", &h.salt, h.kdf).unwrap();
         assert_eq!(seal::decrypt(&key, &h.nonce, &b[HEADER_LEN..], &b[..HEADER_LEN]).unwrap().as_slice(), b"{}");
         std::fs::remove_dir_all(&d).unwrap();
+    }
+
+    // ---------- Vecinos alcanzados por salto ----------
+
+    #[test]
+    fn hop_key_is_normalized_and_strict() {
+        assert_eq!(hop_key("192.0.2.12", "noc").unwrap(), "hop:192.0.2.12|noc");
+        assert_eq!(hop_key(" 192.0.2.12 ", " noc ").unwrap(), "hop:192.0.2.12|noc");
+        // IPv6: la forma canónica es única (mayúsculas y ceros de más no crean entradas distintas).
+        assert_eq!(hop_key("2001:DB8:0:0:0:0:0:1", "noc").unwrap(), hop_key("2001:db8::1", "noc").unwrap());
+        // El usuario distingue mayúsculas: son cuentas distintas.
+        assert_ne!(hop_key("192.0.2.12", "Noc").unwrap(), hop_key("192.0.2.12", "noc").unwrap());
+        for ip in ["", "core-sw01", "192.0.2.256", "0.0.0.0", "::", "192.0.2.1|x", "192.0.2.1 -o x", "224.0.0.1"] {
+            assert!(hop_key(ip, "noc").is_err(), "{ip:?}");
+        }
+        for user in ["", "-l", "a b", "a|b", "a\nb", "noc;reboot", &"u".repeat(65)] {
+            assert!(hop_key("192.0.2.12", user).is_err(), "{user:?}");
+        }
+        for user in ["noc", "a", "DOM\\noc", "noc@corp.example", "svc_1-b.c"] {
+            assert!(valid_hop_user(user), "{user:?}");
+        }
+    }
+
+    #[test]
+    fn hop_credentials_roundtrip_without_leaking() {
+        let d = dir();
+        let c = Credentials::with(&d, true, Box::new(MemKeys::default()), FAST);
+        assert!(c.hop_set("192.0.2.12", "noc", "x").is_err(), "sin bóveda no se guarda");
+        c.create("maestra-larga").unwrap();
+        assert!(c.hop_list().unwrap().is_empty());
+        c.hop_set("192.0.2.12", "noc", "V3cino-Cl4ve").unwrap();
+        c.hop_set("192.0.2.13", "admin", "Otra-Cl4ve").unwrap();
+        assert!(c.hop_has("192.0.2.12", "noc").unwrap());
+        assert!(!c.hop_has("192.0.2.12", "admin").unwrap(), "la clave incluye el usuario");
+        assert_eq!(c.hop_get("192.0.2.12", "noc").as_deref().map(|s| s.as_str()), Some("V3cino-Cl4ve"));
+        // La lista no trae contraseñas y el archivo no las tiene en claro.
+        let list = c.hop_list().unwrap();
+        assert_eq!(
+            list,
+            vec![
+                HopInfo { ip: "192.0.2.12".into(), user: "noc".into(), last_used: None },
+                HopInfo { ip: "192.0.2.13".into(), user: "admin".into(), last_used: None },
+            ]
+        );
+        assert!(!format!("{list:?}").contains("Cl4ve"));
+        let raw = std::fs::read(d.join("credentials.vault")).unwrap();
+        assert!(!raw.windows(8).any(|w| w == b"V3cino-C"));
+        // Último uso; reemplazar la contraseña lo conserva.
+        c.hop_touch("192.0.2.12", "noc", 1_700_000_000);
+        c.hop_set("192.0.2.12", "noc", "Nueva-Cl4ve").unwrap();
+        assert_eq!(c.hop_list().unwrap()[0].last_used, Some(1_700_000_000));
+        assert_eq!(c.hop_get("192.0.2.12", "noc").as_deref().map(|s| s.as_str()), Some("Nueva-Cl4ve"));
+        // Una entrada de vecino no se mezcla con las de sesión (ni las limpia como huérfanas).
+        c.set("s1", "sesion", &["s1".into()]).unwrap();
+        c.set("s2", "otra", &["s1".into(), "s2".into()]).unwrap();
+        assert!(c.hop_has("192.0.2.13", "admin").unwrap());
+        assert_eq!(c.get("s2").as_deref().map(|s| s.as_str()), Some("otra"));
+        // Bloqueada: no se lista, no se lee ni se pide.
+        c.lock();
+        assert!(c.hop_get("192.0.2.12", "noc").is_none());
+        assert_eq!(c.hop_list().unwrap_err(), LOCKED);
+        assert_eq!(c.hop_has("192.0.2.12", "noc").unwrap_err(), LOCKED);
+        assert_eq!(c.hop_set("192.0.2.12", "noc", "x").unwrap_err(), LOCKED);
+        lock(&c.inner).throttle.retry_at = None;
+        c.unlock("maestra-larga").unwrap();
+        c.hop_delete("192.0.2.12", "noc").unwrap();
+        assert!(!c.hop_has("192.0.2.12", "noc").unwrap());
+        assert_eq!(c.hop_list().unwrap().len(), 1);
+        // Entradas inválidas.
+        assert!(c.hop_set("192.0.2.12", "noc", "").is_err());
+        assert!(c.hop_set("192.0.2.12", "noc", "a\nb").is_err());
+        assert!(c.hop_set("core-sw01", "noc", "x").is_err());
+        std::fs::remove_dir_all(&d).unwrap();
+    }
+
+    #[test]
+    fn hop_credentials_have_a_cap() {
+        let d = dir();
+        let c = Credentials::with(&d, true, Box::new(MemKeys::default()), FAST);
+        c.create("maestra-larga").unwrap();
+        for i in 0..MAX_HOP_ENTRIES {
+            c.hop_set(&format!("198.51.100.{}", i + 1), "noc", "x").unwrap();
+        }
+        assert!(c.hop_set("203.0.113.1", "noc", "x").unwrap_err().contains("100"));
+        // Reemplazar una existente sí se puede.
+        c.hop_set("198.51.100.1", "noc", "y").unwrap();
+        assert_eq!(c.hop_list().unwrap().len(), MAX_HOP_ENTRIES);
+        std::fs::remove_dir_all(&d).unwrap();
+    }
+
+    /// Las bóvedas de referencia (sin entradas de vecinos) abren igual: se les agregan vecinos sin
+    /// tocar la cabecera ni las contraseñas de sesión y SNMP, y las entradas de vecinos
+    /// sobreviven a guardar una sesión (que limpia huérfanas).
+    #[test]
+    fn golden_vaults_accept_hop_entries_and_keep_compat() {
+        for (name, portable, keys, master) in [
+            ("credentials-master.vault", true, MemKeys::default(), Some(GOLDEN_MASTER)),
+            ("credentials-keyring.vault", false, keyring_with(&GOLDEN_KEY), None),
+        ] {
+            let (d, before) = golden_dir(name);
+            let c = Credentials::with(&d, portable, Box::new(keys.clone()), FAST);
+            if let Some(m) = master {
+                c.unlock(m).unwrap();
+            }
+            assert!(c.hop_list().unwrap().is_empty(), "{name}: sin vecinos al inicio");
+            assert_eq!(std::fs::read(d.join("credentials.vault")).unwrap(), before, "{name}: listar no reescribe");
+            c.hop_set("192.0.2.12", "noc", "V3cino").unwrap();
+            c.set("sess-1", "Pr0b@nd0-123", &["sess-1".into(), "sess-ñ".into()]).unwrap();
+            let after = std::fs::read(d.join("credentials.vault")).unwrap();
+            assert_eq!(&after[..37], &before[..37], "{name}: cabecera sin el nonce");
+            let c2 = Credentials::with(&d, portable, Box::new(keys), FAST);
+            if let Some(m) = master {
+                c2.unlock(m).unwrap();
+            }
+            assert_golden_entries(&c2);
+            assert_eq!(c2.hop_get("192.0.2.12", "noc").as_deref().map(|s| s.as_str()), Some("V3cino"));
+            // El mapa descifrado sigue siendo texto a texto: una versión que no conoce `hop:` lo lee.
+            let (h, bytes) = c2.read().unwrap().unwrap();
+            assert_eq!(h.mode as u8, if portable { 1 } else { 0 });
+            assert!(bytes.len() > before.len());
+            std::fs::remove_dir_all(&d).unwrap();
+        }
     }
 
     #[test]

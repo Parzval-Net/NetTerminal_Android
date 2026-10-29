@@ -193,14 +193,66 @@ assert.ok(!atPrompt("noc@192.0.2.1's password: "));
 assert.ok(!atPrompt("core-sw01#show int"), "comando del usuario a medias");
 
 const node = (id, ip) => ({ id, name: id, ip, explored: true, x: 0, y: 0 });
+const SESSION = { id: "s1", name: "core-sw01", type: "ssh", host: "192.0.2.1", port: 22, username: "noc", created_at: "x" };
+const route3 = {
+  origin: "core-sw01",
+  session: SESSION,
+  steps: [
+    { name: "dist-sw01", ip: "192.0.2.11", cmd: "ssh -l noc 192.0.2.11", user: "noc" },
+    { name: "acc-sw01", ip: "192.0.2.21", cmd: "ssh -l noc 192.0.2.21", user: "noc" },
+  ],
+};
+const pane = (prompt) => () => `banner\r\n${prompt}`;
+// Una pestaña por equipo de la ruta: cada una se lee por su propio prompt.
 const tabs = [
-  { connId: "c1", name: "core-sw01", host: "192.0.2.1" },
-  { connId: "c2", name: "dist-sw01 vía core-sw01", host: "192.0.2.1" },
+  { connId: "c1", tabId: "t1", name: "core-sw01", host: "192.0.2.1", screen: pane("core-sw01#") },
+  { connId: "c2", tabId: "t2", name: "dist-sw01 vía core-sw01", host: "192.0.2.1", screen: pane("dist-sw01#") },
+  { connId: "c3", tabId: "t3", name: "acc-sw01 vía dist-sw01", host: "192.0.2.1", screen: pane("acc-sw01#") },
 ];
-assert.equal(R.terminalFor(node("core-sw01", "192.0.2.1"), tabs, {})?.connId, "c1");
-assert.equal(R.terminalFor(node("dist-sw01", "192.0.2.11"), tabs, { "dist-sw01": "c2" })?.connId, "c2", "el equipo alcanzado por salto se lee por esa pestaña");
-assert.equal(R.terminalFor(node("core-sw01", "192.0.2.1"), tabs.slice(1), { "dist-sw01": "c2" }), undefined, "la pestaña de salto no es la del pivote");
-assert.equal(R.terminalFor(node("core-sw01", "192.0.2.1"), tabs.slice(1), {})?.connId, "c2", "sin salto en curso vuelve a ser la del pivote");
+const routes = { t2: H.truncateRoute(route3, 1), t3: route3 };
+assert.equal(R.terminalFor(node("core-sw01", "192.0.2.1"), tabs, routes)?.connId, "c1", "el pivote lee por su pestaña");
+assert.equal(R.terminalFor(node("dist-sw01", "192.0.2.11"), tabs, routes)?.connId, "c2", "cada equipo de la ruta, su pestaña");
+assert.equal(R.terminalFor(node("acc-sw01", "192.0.2.21"), tabs, routes)?.connId, "c3");
+// Una pestaña que cambió de equipo nunca se lee: la del pivote ya no está en el pivote.
+const moved = [{ ...tabs[0], screen: pane("dist-sw01#") }, ...tabs.slice(1)];
+assert.equal(R.terminalFor(node("core-sw01", "192.0.2.1"), moved, routes), undefined, "su sesión apunta al pivote pero el prompt es de otro");
+assert.equal(R.terminalFor(node("dist-sw01", "192.0.2.11"), moved, routes)?.connId, "c2", "dos verificadas en el mismo equipo: la más reciente");
+// La pestaña de la ruta que volvió con "exit" al equipo anterior deja de ser la del último.
+const exited = [tabs[0], tabs[1], { ...tabs[2], screen: pane("dist-sw01#") }];
+assert.equal(R.terminalFor(node("acc-sw01", "192.0.2.21"), exited, routes), undefined);
+// Prompt de un equipo ajeno a la ruta (el usuario saltó a mano a otro): no es de ninguno de la ruta.
+const foreign = [tabs[0], tabs[1], { ...tabs[2], screen: pane("edge-sw09#") }];
+assert.equal(R.terminalFor(node("acc-sw01", "192.0.2.21"), foreign, routes), undefined);
+assert.equal(R.terminalFor(node("edge-sw09", "192.0.2.99"), foreign, routes), undefined, "ni de ese otro: su ruta no lo conoce");
+// Sin prompt a la vista (login, paginador): se usa el último equipo de la ruta, sin verificar.
+const busy = [tabs[0], tabs[1], { ...tabs[2], screen: () => "Password: " }];
+assert.equal(R.terminalFor(node("acc-sw01", "192.0.2.21"), busy, routes)?.connId, "c3");
+// Sin lectura de pantalla: por nombre o IP como antes; la pestaña de una ruta nunca por la IP del pivote.
+const noScreen = tabs.map(({ screen, ...t }) => t);
+assert.equal(R.terminalFor(node("core-sw01", "192.0.2.1"), noScreen, routes)?.connId, "c1");
+assert.equal(R.terminalFor(node("core-sw01", "192.0.2.1"), noScreen.slice(1), routes), undefined, "las de salto no son la del pivote");
+assert.equal(R.terminalFor(node("core-sw01", "192.0.2.1"), noScreen.slice(1), {})?.connId, "c3", "sin ruta registrada vuelve a valer la IP (la más reciente)");
+// Dos pestañas en el mismo equipo: la más reciente verificada.
+assert.equal(R.terminalFor(node("dist-sw01", "192.0.2.11"), [...tabs, { connId: "c4", tabId: "t4", name: "otra", screen: pane("dist-sw01#") }], routes)?.connId, "c4");
+
+// ---------- Ruta de la pestaña ----------
+
+assert.deepEqual(H.routeNames(route3), ["core-sw01", "dist-sw01", "acc-sw01"]);
+assert.equal(H.routeTooltip(route3), "core-sw01 › dist-sw01 › acc-sw01");
+assert.equal(H.routeTitle(route3), "acc-sw01 vía dist-sw01");
+assert.equal(H.routeTitle(H.truncateRoute(route3, 0)), "core-sw01");
+assert.equal(H.routeHere(route3), "acc-sw01");
+assert.equal(H.routePosition(route3, "x\ndist-sw01#"), 1);
+assert.equal(H.routePosition(route3, "x\nedge-sw09#"), -1);
+assert.equal(H.routePosition(route3, "Password: "), null);
+assert.equal(H.reconcileRoute(route3, "acc-sw01#"), route3, "misma referencia si no cambia");
+assert.deepEqual(H.routeNames(H.reconcileRoute(route3, "dist-sw01#")), ["core-sw01", "dist-sw01"], "un exit a mano acorta la ruta");
+assert.deepEqual(H.routeNames(H.reconcileRoute(route3, "core-sw01#")), ["core-sw01"]);
+assert.equal(H.reconcileRoute(route3, "edge-sw09#"), route3, "un equipo ajeno no cambia la ruta");
+assert.deepEqual(H.tabDevice({ name: "x", screen: pane("dist-sw01#") }, route3), { name: "dist-sw01", verified: true, index: 1 });
+assert.equal(H.tabDevice({ name: "x", screen: pane("otro#") }, route3), null);
+assert.deepEqual(H.tabDevice({ name: "x", screen: () => "--More--" }, route3), { name: "acc-sw01", verified: false, index: 2 });
+assert.deepEqual(H.tabDevice({ name: "Core principal", screen: pane("core-sw01#") }), { name: "core-sw01", verified: true, index: 0 });
 
 // ---------- Contadores con el rastro del paginador ----------
 
@@ -215,4 +267,309 @@ for (const erase of ["\r         \r", "\b\b\b\b\b\b\b\b\b         \b\b\b\b\b\b\b
 const rd = (a, b, ts) => ({ inOctets: a, outOctets: b, bits: 64, speed: 1e9, ts });
 const rate = R.portRate(rd(1_000_000_000n, 2_000_000_000n, 0), rd(1_030_000_000n, 2_075_000_000n, 30_000));
 assert.deepEqual([rate.inBps, rate.outBps], [8e6, 20e6]);
+
+
+// ---------- Salto encadenado: una pestaña nueva reproduce toda la ruta ----------
+
+const C1 = "ssh -l noc 192.0.2.11";
+const C2 = "ssh -l noc 192.0.2.21";
+const C3 = "ssh -l noc 192.0.2.31";
+const chain = (extra = {}) =>
+  H.newHopChain({
+    now: 0,
+    pivot: "core-sw01",
+    steps: [
+      { cmd: C1, to: "dist-sw01", ip: "192.0.2.11", user: "noc", ...extra.s1 },
+      { cmd: C2, to: "acc-sw01", ip: "192.0.2.21", user: "noc", ...extra.s2 },
+      { cmd: C3, to: "edge-sw01", ip: "192.0.2.31", user: "noc", ...extra.s3 },
+    ],
+  });
+/** Avanza el trabajo con pantallas sucesivas, cada una quieta el tiempo indicado. */
+const play = (job, frames, t0 = 0) => {
+  const acts = [];
+  let t = t0;
+  for (const [scr, quiet] of frames) {
+    for (let ms = 0; ms <= quiet; ms += 200) {
+      const rr = H.stepHop(job, scr, t + ms);
+      job = rr.job;
+      acts.push(...rr.actions.map((a) => ({ ...a, ms: t + ms })));
+    }
+    t += quiet + 200;
+  }
+  return { job, acts, t };
+};
+
+// Éxito: pivote, h1, h2 y destino; cada comando solo con el prompt del equipo anterior estable.
+const home = "core-sw01#";
+const e1 = `core-sw01#${C1}\r\nPassword: \r\nBanner dist\r\ndist-sw01#`;
+const e2 = `${e1}${C2}\r\nPassword: \r\nBanner acc\r\nacc-sw01#`;
+const e3 = `${e2}${C3}\r\nPassword: \r\nBanner edge\r\nedge-sw01#`;
+r = play(chain(), [
+  [home, 1000],
+  [`core-sw01#${C1}\r\n`, 300],
+  [`core-sw01#${C1}\r\nPassword: `, 1000],
+  [e1, 1500],
+  [`${e1}${C2}\r\nPassword: `, 1000],
+  [e2, 1500],
+  [`${e2}${C3}\r\nPassword: `, 1000],
+  [e3, 1500],
+]);
+assert.deepEqual(r.acts.filter((a) => a.kind === "send").map((a) => a.data), [`${C1}\r`, `${C2}\r`, `${C3}\r`], "un comando por paso, en orden, cada uno una sola vez");
+assert.deepEqual(r.acts.filter((a) => a.kind === "send").map((a) => a.from), ["core-sw01", "dist-sw01", "acc-sw01"], "cada uno desde el equipo anterior");
+assert.deepEqual(r.acts.filter((a) => a.kind === "step").map((a) => a.at), ["dist-sw01", "acc-sw01"]);
+assert.deepEqual(r.acts.filter((a) => a.kind === "done").map((a) => a.at), ["edge-sw01"]);
+assert.equal(r.job.phase, "done");
+assert.deepEqual(r.acts.filter((a) => a.kind === "done")[0].manual.map((m) => m.to), ["dist-sw01", "acc-sw01", "edge-sw01"], "la contraseña de cada vecino la escribió el usuario");
+assert.equal(r.acts.filter((a) => a.kind === "notify" && /Escribe la contraseña de/.test(a.text)).length, 3, "un aviso por vecino, una vez");
+assert.ok(!r.acts.some((a) => a.kind === "fill"), "sin credencial no se escribe nada");
+const sendAt = r.acts.filter((a) => a.kind === "send").map((a) => a.ms);
+const stepAt = r.acts.filter((a) => a.kind === "step").map((a) => a.ms);
+assert.ok(sendAt[1] >= stepAt[0] && sendAt[2] >= stepAt[1], "el siguiente comando sale tras llegar al equipo");
+
+// Con un banner a medias (sin prompt) no se envía el siguiente salto.
+r = play(chain(), [[home, 1000], [e1.replace("dist-sw01#", "Welcome to dist"), 1500]]);
+assert.equal(r.acts.filter((a) => a.kind === "send").length, 1);
+
+// Fallo en el paso 2: la pestaña queda en el último equipo alcanzado y el mensaje dice cuál paso.
+r = play(chain(), [
+  [home, 1000],
+  [`core-sw01#${C1}\r\nPassword: `, 300],
+  [e1, 1500],
+  [`${e1}${C2}\r\n% Connection refused by remote host\r\ndist-sw01#`, 2000],
+]);
+const f = r.acts.find((a) => a.kind === "fail");
+assert.equal(f.step, 1);
+assert.equal(f.sent, true);
+assert.match(f.reason, /^Paso 2 de 3 \(dist-sw01 › acc-sw01\): No se pudo saltar a acc-sw01: conexión rechazada/);
+assert.equal(r.acts.filter((a) => a.kind === "send").length, 2, "no sigue con el tercero");
+assert.equal(r.job.phase, "failed");
+assert.deepEqual(H.routeNames(H.routeAfterFail(route3, f.step)), ["core-sw01", "dist-sw01"], "la ruta de la pestaña termina en dist-sw01");
+// Fallo en el paso 1 (sin salir del pivote): la pestaña queda en el pivote.
+r = play(chain(), [[home, 1000], [`core-sw01#${C1}\r\n% Connection timed out; remote host not responding\r\ncore-sw01#`, 2000]]);
+assert.equal(r.acts.find((a) => a.kind === "fail").step, 0);
+assert.deepEqual(H.routeNames(H.routeAfterFail(route3, 0)), ["core-sw01"]);
+
+// Un equipo intermedio equivocado detiene la ruta (los saltos siguientes saldrían de otro equipo).
+r = play(chain(), [[home, 1000], [`core-sw01#${C1}\r\nBanner\r\nother-sw77#`, 1500]]);
+assert.match(r.acts.find((a) => a.kind === "fail").reason, /Llegó a other-sw77 y se esperaba dist-sw01/);
+assert.equal(r.acts.filter((a) => a.kind === "send").length, 1);
+// En el último paso una diferencia de nombre se acepta y se avisa.
+r = play(H.newHopJob({ cmd: C1, neighbor: "dist-sw01", pivot: "core-sw01", now: 0 }), [[home, 1000], [`core-sw01#${C1}\r\nBanner\r\nDIST-SW01-b#`, 1500]]);
+assert.match(r.acts.find((a) => a.kind === "done").mismatch, /se esperaba dist-sw01/);
+// El nombre con dominio coincide con el del prompt; un destino dado por IP no se compara.
+r = play(H.newHopJob({ cmd: C1, neighbor: "dist-sw01.example.net", pivot: "core-sw01", now: 0 }), [[home, 1000], [`core-sw01#${C1}\r\ndist-sw01#`, 1500]]);
+assert.equal(r.acts.find((a) => a.kind === "done").mismatch, undefined);
+r = play(H.newHopJob({ cmd: C1, neighbor: "192.0.2.11", pivot: "core-sw01", now: 0 }), [[home, 1000], [`core-sw01#${C1}\r\ndist-sw01#`, 1500]]);
+assert.equal(r.acts.find((a) => a.kind === "done").mismatch, undefined);
+
+// La llave de cada equipo se pregunta al usuario en su paso (una vez), sin contestarse sola.
+r = play(chain(), [
+  [home, 1000],
+  [`core-sw01#${C1}\r\nPassword: `, 300],
+  [e1, 1500],
+  [`${e1}${C2}\r\nAre you sure you want to continue connecting (yes/no/[fingerprint])? `, 1500],
+]);
+assert.equal(r.acts.filter((a) => a.kind === "ask").length, 1);
+assert.equal(r.acts.filter((a) => a.kind === "send").length, 2, "no se contesta sola ni se pasa al siguiente");
+
+// Plazos: el prompt del equipo alcanzado se espera por paso; la ruta entera tiene un tope absoluto.
+r = play(chain(), [[home, 1000], [`core-sw01#${C1}\r\nPassword: \r\ndist-sw01#`, 700], ["--More--", 100]]);
+assert.equal(r.job.phase, "await-prompt");
+assert.equal(r.job.index, 1, "esperando el prompt de dist-sw01 para el paso 2");
+const late = H.stepHop(r.job, "--More--", r.job.stepStartedAt + H.PROMPT_WAIT_MS + 1);
+assert.match(late.actions.find((a) => a.kind === "fail").reason, /Paso 2 de 3/);
+assert.match(late.actions.find((a) => a.kind === "fail").reason, /No apareció el prompt de dist-sw01/);
+const forever = H.stepHop(chain(), "core-sw01#", H.HOP_TOTAL_MS + 1);
+assert.match(forever.actions.find((a) => a.kind === "fail").reason, /no terminó en 30 min/);
+// Una pantalla que cambia sin parar tras enviar tampoco espera para siempre.
+let jb = { ...chain(), phase: "sent", sentAt: 0, pivot: "core-sw01" };
+const spin = H.stepHop(jb, `core-sw01#${C1}\r\nTrying…`, H.USER_WAIT_MS + 1);
+assert.match(spin.actions.find((a) => a.kind === "fail").reason, /Paso 1 de 3.*no terminó en 10 min/);
+
+// ---------- Credenciales: se escriben por el backend, una vez por paso, sin reintentos ----------
+
+const sentCred = (cred) => ({ ...H.newHopJob({ cmd: C1, neighbor: "dist-sw01", pivot: "core-sw01", now: 0, cred, ip: "192.0.2.11", user: "noc" }), phase: "sent", sentAt: 1000, tail: "", changedAt: 1000 });
+const pwScreen = `core-sw01#${C1}\r\nPassword: `;
+for (const src of ["saved", "pivot"]) {
+  // Con el pedido recién aparecido no se escribe: debe estar quieto.
+  r = play(sentCred(src), [[pwScreen, 100]], 1000);
+  assert.ok(!r.acts.some((a) => a.kind === "fill"), "pedido sin estabilizar");
+  // Quieto: se pide al backend una sola vez, con el origen y un token del paso.
+  r = play(sentCred(src), [[pwScreen, 2000]], 1000);
+  const fills = r.acts.filter((a) => a.kind === "fill");
+  assert.equal(fills.length, 1, `${src}: un solo intento aunque la pantalla siga igual`);
+  assert.equal(fills[0].source, src);
+  assert.match(fills[0].token, /^0\|0$/);
+  assert.equal(r.job.cred, "asking");
+  assert.ok(!r.acts.some((a) => a.kind === "notify"), "con credencial no se pide nada al usuario");
+  assert.equal(H.hopWaiting(r.job, pwScreen), "reply", "no necesita al usuario mientras la app la escribe");
+  // Escrita: sigue esperando; si el equipo la acepta, el salto termina.
+  const typed = H.hopCredResult(r.job, true);
+  assert.equal(typed.cred, "typed");
+  r = play(typed, [[pwScreen, 1000], [`${pwScreen}\r\nBanner\r\ndist-sw01#`, 1500]], 4000);
+  assert.deepEqual(r.acts.map((a) => a.kind), ["done"]);
+  assert.deepEqual(r.acts[0].manual, [], "no hay contraseña tecleada por el usuario que ofrecer guardar");
+  // Rechazada: nuevo "Password:" -> se avisa una vez, no se reintenta y la escribe el usuario.
+  const again = `${pwScreen}\r\nPassword: `;
+  r = play(typed, [[again, 3000]], 4000);
+  assert.equal(r.acts.filter((a) => a.kind === "cred-rejected").length, 1);
+  assert.ok(!r.acts.some((a) => a.kind === "fill"), "no hay segundo intento");
+  assert.match(r.acts.find((a) => a.kind === "cred-rejected").text, /fue rechazada: no se reintenta/);
+  assert.equal(r.job.cred, "rejected");
+  assert.equal(r.acts.filter((a) => a.kind === "notify" && /Escribe la contraseña de dist-sw01/.test(a.text)).length, 1, "y se le pide al usuario, una vez");
+  assert.equal(H.hopWaiting(r.job, again), "password", "ahora sí necesita al usuario");
+  r = play(r.job, [[again, 3000]], 8000);
+  assert.ok(!r.acts.some((a) => a.kind === "fill" || a.kind === "cred-rejected" || a.kind === "notify"), "ni al repetirse la pantalla");
+  // Rechazo con mensaje del equipo (sin nuevo pedido en pantalla aún).
+  for (const msg of ["Permission denied, please try again.", "% Authentication failed.", "% Login invalid", "Access denied"]) {
+    r = play(typed, [[`${pwScreen}\r\n${msg}\r\nconnecting`, 3000]], 4000);
+    assert.equal(r.acts.filter((a) => a.kind === "cred-rejected").length, 1, msg);
+  }
+  // El backend no la escribió (bóveda bloqueada, pedido de otro equipo): la escribe el usuario, sin reintento.
+  const fr = H.hopCredResult({ ...sentCred(src), cred: "asking" }, false);
+  assert.equal(fr.cred, "failed");
+  r = play(fr, [[pwScreen, 3000]], 4000);
+  assert.ok(!r.acts.some((a) => a.kind === "fill"));
+  assert.equal(r.acts.filter((a) => a.kind === "notify").length, 1);
+  assert.deepEqual(r.job.manual, [0]);
+}
+// La credencial no se aplica a un pedido de usuario.
+r = play(sentCred("saved"), [[`core-sw01#${C1}\r\nUsername: `, 2000]], 1000);
+assert.ok(!r.acts.some((a) => a.kind === "fill"));
+assert.equal(r.acts.filter((a) => a.kind === "notify").length, 1);
+// hopCredResult solo actúa si se había pedido.
+assert.equal(H.hopCredResult(sentCred("saved"), true).cred, "idle");
+
+// Cadena con credenciales por paso: el paso 2 usa la suya sola; el 1 lo teclea el usuario.
+r = play(chain({ s2: { cred: "saved" } }), [
+  [home, 1000],
+  [`core-sw01#${C1}\r\nPassword: `, 300],
+  [e1, 1500],
+  [`${e1}${C2}\r\nPassword: `, 1500],
+]);
+const fill2 = r.acts.filter((a) => a.kind === "fill");
+assert.deepEqual(fill2.map((a) => a.step), [1]);
+assert.equal(r.acts.filter((a) => a.kind === "notify" && /contraseña de dist-sw01/.test(a.text)).length, 1);
+assert.deepEqual(r.job.manual, [0]);
+
+// Rechazo con SSH que termina: el fallo dice autenticación rechazada y no hay otro intento.
+r = play(sentCred("saved"), [[pwScreen, 2000]], 1000);
+r = play(H.hopCredResult(r.job, true), [[`${pwScreen}\r\n% Authentication failed.\r\ncore-sw01#`, 2000]], 4000);
+assert.ok(r.acts.some((a) => a.kind === "fail" && /autenticación rechazada/.test(a.reason)));
+assert.ok(!r.acts.some((a) => a.kind === "fill"));
+
+// Detección de pedidos y rechazos (lo que mira el salto en la pantalla).
+assert.equal(H.passwordPrompts("Password: \r\nbad\r\nPassword: "), 2);
+assert.equal(H.passwordPrompts("core#show running-config | include password\r\n"), 0);
+assert.ok(H.authRejected("Permission denied (publickey,password)."));
+assert.ok(H.authRejected("% Authentication failed"));
+assert.ok(H.authRejected("% Login invalid"));
+assert.ok(H.authRejected("Access denied"));
+assert.ok(!H.authRejected("Last login: Mon\r\nBanner: authorized access only"));
+assert.equal(kind("noc@192.0.2.11's password: "), "password");
+assert.equal(kind("(noc@192.0.2.11) Password: "), "password");
+assert.equal(kind("Enter passphrase for key '/home/u/.ssh/id_ed25519':"), "password");
+
+// Qué espera el salto, para ofrecer ir a la pestaña.
+assert.equal(H.hopWaiting(fresh(), "core-sw01#"), "prompt");
+assert.equal(H.hopWaiting(fresh(), "Password: "), "password");
+assert.equal(H.hopWaiting(fresh(), "Username: "), "username");
+assert.equal(H.hopWaiting(sentJob(fresh()), `${echo}Are you sure you want to continue connecting (yes/no)? `), "hostkey");
+assert.equal(H.hopWaiting(sentJob(fresh()), `${echo}Trying 192.0.2.11 ...`), "reply");
+assert.equal(H.hopWaiting({ ...fresh(), phase: "done" }, ""), "done");
+
+// ---------- Plan: qué hace "Abrir terminal" y qué ofrece el menú ----------
+
+const N = (id, ip, platform) => ({ id, name: id, ip, platform });
+const nodes = [N("core-sw01", "192.0.2.1", "cisco WS-C3850"), N("dist-sw01", "192.0.2.11"), N("acc-sw01", "192.0.2.21"), N("iso-sw01", undefined)];
+const links = [
+  { a: "core-sw01", b: "dist-sw01" },
+  { a: "dist-sw01", b: "acc-sw01" },
+  { a: "acc-sw01", b: "iso-sw01" },
+  { a: "core-sw01", b: "acc-sw01", logical: true },
+];
+const cmdFor = (_from, to) => ({ cmd: `ssh -l noc ${to.ip}`, user: "noc" });
+const PT = (id, name, route, screenName, extra = {}) => ({
+  tabId: id,
+  name,
+  session: SESSION,
+  status: "connected",
+  route,
+  device: H.tabDevice({ name, screen: pane(screenName) }, route),
+  free: true,
+  ...extra,
+});
+const base2 = { nodes, links, saved: new Map(), needsPivot: false, directOk: true, cmdFor };
+const plan = (target, o = {}) => H.planOpen({ ...base2, target: nodes.find((n) => n.id === target), tabs: [PT("t1", "core-sw01", undefined, "core-sw01#")], ...o });
+
+// Con pestaña en el equipo: la enfoca.
+let pl = plan("core-sw01");
+assert.equal(pl.primary.kind, "focus");
+assert.equal(pl.primary.tabId, "t1");
+// Alcanzable directo (por defecto): conecta directo y ofrece abrir vía el anterior de la ruta.
+pl = plan("acc-sw01");
+assert.equal(pl.primary.kind, "direct");
+assert.deepEqual(pl.alternatives.map((a) => a.kind), ["route"]);
+assert.equal(pl.alternatives[0].label, "Abrir vía dist-sw01");
+assert.equal(pl.alternatives[0].detail, "core-sw01 › dist-sw01 › acc-sw01");
+assert.deepEqual(pl.names, ["core-sw01", "dist-sw01", "acc-sw01"]);
+// Marcado "solo por pivote": abre por la ruta (salto encadenado) y deja directo como alternativa.
+pl = plan("acc-sw01", { needsPivot: true });
+assert.equal(pl.primary.kind, "route");
+assert.deepEqual(H.routeNames(pl.primary.route), ["core-sw01", "dist-sw01", "acc-sw01"]);
+assert.deepEqual(pl.primary.route.steps.map((s) => s.cmd), ["ssh -l noc 192.0.2.11", "ssh -l noc 192.0.2.21"]);
+assert.equal(pl.primary.route.session, SESSION, "se reconecta la sesión del pivote");
+assert.deepEqual(pl.alternatives.map((a) => a.kind), ["direct"]);
+assert.equal(pl.alternatives[0].label, "Conectar directo desde este PC");
+// Sin sesión base directa: por la ruta aunque no esté marcado. Las sesiones lógicas (BGP) no son un salto.
+pl = plan("acc-sw01", { directOk: false });
+assert.equal(pl.primary.kind, "route");
+assert.equal(pl.primary.route.steps.length, 2);
+// Con una pestaña ya en el equipo anterior (ruta core › dist): se reutiliza esa ruta y se ofrece saltar en ella.
+const tDist = PT("t2", "dist-sw01 vía core-sw01", H.truncateRoute(route3, 1), "dist-sw01#");
+pl = plan("acc-sw01", { needsPivot: true, tabs: [PT("t1", "core-sw01", undefined, "core-sw01#"), tDist] });
+assert.equal(pl.primary.kind, "route");
+assert.deepEqual(pl.primary.route.steps.map((s) => s.name), ["dist-sw01", "acc-sw01"], "la ruta conocida de la pestaña de dist-sw01, más el salto nuevo");
+assert.deepEqual(pl.alternatives.map((a) => [a.kind, a.label]), [["direct", "Conectar directo desde este PC"], ["inplace", "Saltar en la pestaña de dist-sw01"]]);
+assert.equal(pl.alternatives[1].tabId, "t2");
+assert.deepEqual(pl.alternatives[1].route.steps.map((s) => s.name), ["dist-sw01", "acc-sw01"], "la ruta de la pestaña más el salto; en ella solo se da el último");
+// La pestaña de dist-sw01 ocupada (comando en curso): no se ofrece saltar en ella.
+pl = plan("acc-sw01", { needsPivot: true, tabs: [PT("t1", "core-sw01", undefined, "core-sw01#"), { ...tDist, free: false }] });
+assert.ok(!pl.alternatives.some((a) => a.kind === "inplace"));
+// Con una pestaña de la ruta en el propio equipo destino: enfoca esa y el breadcrumb es su ruta.
+pl = plan("acc-sw01", { tabs: [PT("t1", "core-sw01", undefined, "core-sw01#"), tDist, PT("t3", "acc-sw01 vía dist-sw01", route3, "acc-sw01#")] });
+assert.equal(pl.primary.kind, "focus");
+assert.equal(pl.primary.tabId, "t3");
+assert.deepEqual(pl.names, ["core-sw01", "dist-sw01", "acc-sw01"]);
+// Pestaña caída en el equipo: se ofrece reconectar y se abre de nuevo (no se enfoca una muerta).
+pl = plan("acc-sw01", { tabs: [PT("t1", "core-sw01", undefined, "core-sw01#"), PT("t3", "acc-sw01 vía dist-sw01", route3, "acc-sw01#", { status: "closed" })] });
+assert.equal(pl.primary.kind, "direct");
+assert.ok(pl.alternatives.some((a) => a.kind === "reconnect" && a.tabId === "t3"));
+// Una pestaña que cambió de equipo no cuenta como la del equipo.
+pl = plan("acc-sw01", { tabs: [PT("t1", "core-sw01", undefined, "core-sw01#"), PT("t3", "acc-sw01 vía dist-sw01", route3, "otro-sw#")] });
+assert.notEqual(pl.primary.kind, "focus");
+// Sin IP, sin ruta: sin acción y con el motivo.
+pl = plan("iso-sw01", { directOk: false, tabs: [] });
+assert.equal(pl.primary, undefined);
+assert.match(pl.reason, /IP de gestión/);
+// El comando que no se puede armar (usuario inválido) descarta la ruta.
+pl = plan("acc-sw01", { directOk: false, cmdFor: () => null });
+assert.equal(pl.primary, undefined);
+// Tope de la ruta: más de MAX_ROUTE_STEPS saltos no se arman.
+const longNodes = Array.from({ length: 9 }, (_, i) => N(`n${i}`, `192.0.2.${i + 1}`));
+const longLinks = longNodes.slice(1).map((n, i) => ({ a: longNodes[i].id, b: n.id }));
+pl = H.planOpen({ ...base2, nodes: longNodes, links: longLinks, target: longNodes[8], directOk: false, tabs: [PT("t1", "n0", undefined, "n0#")] });
+assert.equal(pl.primary, undefined, "8 saltos superan el tope");
+pl = H.planOpen({ ...base2, nodes: longNodes, links: longLinks, target: longNodes[H.MAX_ROUTE_STEPS], directOk: false, tabs: [PT("t1", "n0", undefined, "n0#")] });
+assert.equal(pl.primary.route.steps.length, H.MAX_ROUTE_STEPS);
+// La IP del vecino y el usuario solo entran validados: lo hace hopCommand, nunca el nombre CDP.
+assert.equal(T.hopCommand("cisco", "iosxe", "ssh", "noc", "192.0.2.11; reload"), null);
+assert.equal(T.hopCommand("cisco", "iosxe", "ssh", "noc -o ProxyCommand=x", "192.0.2.11"), null);
+assert.equal(H.vendorOfPlatform("cisco WS-C3850-24P"), "cisco");
+assert.equal(H.vendorOfPlatform("Huawei S5720"), "huawei");
+assert.equal(H.vendorOfPlatform("FortiGate-100F"), "fortinet");
+assert.equal(H.vendorOfPlatform("Juniper EX4300"), "juniper");
+assert.equal(H.vendorOfPlatform("MikroTik"), undefined);
+assert.ok(H.isNxos("Cisco Nexus9000 C93180") && !H.isNxos("cisco WS-C3850"));
+
 console.log("hopTab: ok");
