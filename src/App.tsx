@@ -1067,6 +1067,8 @@ function Workspace({
           host: t.session.host,
           highlight: t.session.highlight,
           session: t.session,
+          screen: (n: number) => controllers.current.get(t.id)?.recentText(n) ?? "",
+          notice: (text: string) => controllers.current.get(t.id)?.notice(text),
         }))
         .filter((t) => t.connId),
     [tabs, states],

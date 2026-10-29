@@ -731,7 +731,9 @@ const handlers = {
     return null;
   },
   // Como el backend real: datos en binario y el cierre como texto por el mismo canal.
-  connect: ({ id, session, onData }) => {
+  connect: ({ id, session: sess, onData }) => {
+    // Pestaña de salto de Topología ("vecino vía pivote"): el equipo al conectar es el pivote.
+    const session = / vía /.test(sess.name ?? "") ? { ...sess, name: sess.name.replace(/^.* vía /, "") } : sess;
     connSessions.set(id, session);
     const text = terminalFor(session).replace(/\r?\n/g, "\r\n");
     const ch = { data: onData.id, index: 0 };
@@ -899,8 +901,14 @@ if (TOPO_SNMP_SCENE) {
   }
   const q = new URLSearchParams(location.search);
   const ui = JSON.parse(localStorage.getItem("topoUi") ?? "{}");
-  Object.assign(ui, { mode: topoScene === "topology-snmp" ? "snmp" : "cli", snmpProfile: "pcore", interval: 15, anim: q.get("anim") !== "0" });
+  Object.assign(ui, { ver: 3, mode: topoScene === "topology-snmp" ? "snmp" : "cli", snmpProfile: "pcore", interval: 15, anim: q.get("anim") !== "0" });
   localStorage.setItem("topoUi", JSON.stringify(ui));
+}
+
+// ?topoUi={"traffic":true,"cli":true,"interval":15}: preferencias de Topología al abrir (recuerda el tráfico).
+{
+  const tu = new URLSearchParams(location.search).get("topoUi");
+  if (tu) localStorage.setItem("topoUi", JSON.stringify({ ver: 3, panel: true, ...JSON.parse(localStorage.getItem("topoUi") ?? "{}"), ...JSON.parse(tu) }));
 }
 
 // ---- Modo video (?video=1, scripts/video): la terminal responde a lo que se escribe o envía,
@@ -914,8 +922,70 @@ if (new URLSearchParams(location.search).has("video")) {
   };
   const lineBuf = new Map();
   const modes = new Map();
+  // ---- Salto desde el pivote (Topología › "Saltar desde"): ssh -l / ssh u@ip / telnet / stelnet.
+  // 192.0.2.11 pide la llave (solo la primera vez por ssh), usuario (telnet y Huawei) y contraseña;
+  // la contraseña "bad" falla; 192.0.2.99 rechaza la conexión y 192.0.2.98 y 192.0.2.22 no responden (?hoptimeout=ms); el resto, rechazo.
+  const HOP_HOSTS = { "192.0.2.11": "dist-sw01", "192.0.2.2": "core-sw02", "192.0.2.21": "sw-acceso-01" };
+  const hopSt = new Map();
+  const knownKeys = new Set();
+  const hopOf = (id) => hopSt.get(id) ?? (hopSt.set(id, { stack: [], mode: null, target: null }), hopSt.get(id));
+  const hopPrompt = (id) => {
+    const s = connSessions.get(id) ?? {};
+    const st = hopOf(id);
+    const name = st.stack.length ? st.stack[st.stack.length - 1] : s.name;
+    return s.highlight === "huawei" ? `<${name}>` : `${name}#`;
+  };
+  const hopReply = (id, raw) => {
+    const s = connSessions.get(id) ?? {};
+    if (s.type === "local") return null;
+    const st = hopOf(id);
+    const c = raw.trim();
+    const hw = s.highlight === "huawei";
+    if (st.mode === "hostkey") {
+      if (c === "yes" || c === "y") return ((st.mode = hw ? "username" : "password"), hw ? "Please input the username:" : "Warning: Permanently added to the list of known hosts.\r\nPassword: ");
+      return ((st.mode = null), "Host key verification failed.\r\n");
+    }
+    if (st.mode === "username") return ((st.mode = "password"), hw ? "Enter password:" : "Password: ");
+    if (st.mode === "password") {
+      st.mode = null;
+      if (c === "bad") return "% Authentication failed\r\n";
+      st.stack.push(st.target);
+      return `\r\nUnauthorized access prohibited.\r\n`;
+    }
+    const m = c.match(/^(?:ssh -l \S+ |ssh \S+@|execute ssh \S+@|stelnet |telnet |execute telnet )(\d+\.\d+\.\d+\.\d+)$/);
+    if (m) {
+      const ip = m[1];
+      const telnet = /telnet/.test(c);
+      if (ip === "192.0.2.98" || ip === "192.0.2.22") {
+        st.mode = "wait";
+        setTimeout(() => {
+          st.mode = null;
+          out(id, `\r\n% Connection timed out; remote host not responding\r\n${hopPrompt(id)}`);
+        }, Number(q0.get("hoptimeout") ?? 4000));
+        return `Trying ${ip} ...`;
+      }
+      if (!HOP_HOSTS[ip]) return "% Connection refused by remote host\r\n";
+      st.target = HOP_HOSTS[ip];
+      if (telnet) return ((st.mode = "username"), `Trying ${ip} ... Open\r\n\r\nUsername: `);
+      if (!knownKeys.has(`${id}|${ip}`) && !hw) {
+        knownKeys.add(`${id}|${ip}`);
+        st.mode = "hostkey";
+        return `The authenticity of host '${ip} (${ip})' can't be established.\r\nRSA key fingerprint is SHA256:3f9aJq0cXk2mZr7LsT1wQe8vNd5yBhU6oPiAxCzE4uM.\r\nAre you sure you want to continue connecting (yes/no)? `;
+      }
+      return ((st.mode = hw ? "username" : "password"), hw ? "Please input the username:" : "Password: ");
+    }
+    if (c === "exit" && st.stack.length) {
+      st.stack.pop();
+      return `[Connection to closed by foreign host]\r\n`;
+    }
+    return null;
+  };
+  const q0 = new URLSearchParams(location.search);
   const promptOf = (id) => {
     const s = connSessions.get(id) ?? {};
+    const hm = hopOf(id).mode;
+    if (hm) return "";
+    if (s.type !== "local" && hopOf(id).stack.length) return hopPrompt(id);
     if (s.type === "local") return "\x1b[32muser@laptop\x1b[0m:\x1b[34m~\x1b[0m$ ";
     if (s.highlight === "huawei") return `<${s.name}>`;
     const m = modes.get(id);
@@ -924,6 +994,8 @@ if (new URLSearchParams(location.search).has("video")) {
   const IPBRIEF = CISCO.split("\n").slice(4, 14).join("\n");
   const reply = (id, raw) => {
     const s = connSessions.get(id) ?? {};
+    const h = hopReply(id, raw);
+    if (h !== null) return `\r\n${h}`;
     return `\r\n${respond(id, s, raw)}`;
   };
   // Respuesta de ejemplo a un comando (texto con \r\n al final o vacío).
@@ -943,6 +1015,19 @@ if (new URLSearchParams(location.search).has("video")) {
       // Un router antiguo (ISR 4331, con fin de vida) y switches Catalyst 9500 (sin anuncio EoL).
       const pid = /router|^rt-|^mx-borde/.test(s.name ?? "") ? "ISR4331/K9" : "C9500-24Y4C";
       body = `Cisco IOS XE Software, Version 17.12.04\nCisco IOS Software [Dublin], Catalyst L3 Switch Software (CAT9K_IOSXE)\n${s.name} uptime is 47 weeks, 17 hours, 30 minutes\ncisco ${pid} (1RU) processor with 1795999K/6147K bytes of memory.\nModel Number                       : ${pid}`;
+    }
+    else if (/^sh(ow)? int(erfaces?)?$/.test(c) && s.highlight !== "huawei") {
+      // Contadores de las interfaces del equipo (los mismos que el agente SNMP simulado), como
+      // "show interfaces" de IOS-XE: crecen con el tiempo, con la velocidad física y el BW.
+      const ifs = SNMP_IFS[Object.keys(SNMP_NAMES).find((ip) => SNMP_NAMES[ip] === (hopOf(id).stack.at(-1) ?? s.name))] ?? [];
+      body = ifs
+        .map(([i, n, sp, inB, outB], k) => {
+          const full = n.replace(/^Te/, "TenGigabitEthernet").replace(/^Gi/, "GigabitEthernet");
+          const pk = (o) => Math.round(Number(o) / 700);
+          const io = octetsAt(inB, k), oo = octetsAt(outB, k + 1);
+          return `${full} is up, line protocol is up (connected)\n  Hardware is Ten Gigabit Ethernet, address is 0011.2233.${i}\n  MTU 1500 bytes, BW ${sp * 1000} Kbit/sec, DLY 10 usec,\n  Full-duplex, ${sp}Mb/s, media type is SFP-10GBase-LR\n  5 minute input rate 0 bits/sec, 0 packets/sec\n     ${pk(io)} packets input, ${io} bytes, 0 no buffer\n     ${pk(oo)} packets output, ${oo} bytes, 0 underruns`;
+        })
+        .join("\n");
     }
     else if (/^sh(ow)? ip int(erface)? br/.test(c)) body = IPBRIEF;
     else if (/^sh(ow)? (cdp|lldp) nei/.test(c)) body = "Device ID        Local Intrfce     Holdtme    Capability  Platform  Port ID\ncore-sw02        Ten 1/1/1         142             R S I  C9500-24Y Ten 1/1/1\ndist-sw01        Gig 1/0/1         131             R S I  C9300-48P Gig 1/0/48";
@@ -985,7 +1070,7 @@ if (new URLSearchParams(location.search).has("video")) {
       }, 250);
       return job;
     }
-    const prompt = s.highlight === "huawei" ? `<${s.name}>` : `${s.name}#`;
+    const prompt = hopOf(args.conn).stack.length ? hopPrompt(args.conn) : s.highlight === "huawei" ? `<${s.name}>` : `${s.name}#`;
     // CLI Lab: comandos inexistentes dan error de CLI; "reload" pregunta y, sin answer, se rechaza.
     // Un Huawei no entiende la sintaxis de Cisco: el CLI Lab marca error y detiene ese equipo.
     const huaweiBad = s.highlight === "huawei" && /^(conf(igure)? t|interface |description |show )/i.test(args.command.trim());
@@ -1438,6 +1523,14 @@ Object.assign(scenes, {
     await tool("Topología")();
     await wait(300);
     await click("Mostrar el tráfico de los enlaces (opciones en el panel)");
+  },
+  // Saltar desde el pivote: abre core-sw01 y deja Topología con dist-sw01 elegido (?video=1).
+  "topology-hop": async () => {
+    await open("core-sw01");
+    await wait(900);
+    await tool("Topología")();
+    await wait(400);
+    await svgNode("dist-sw01");
   },
   "t-subnet": tool("Subredes"),
   "t-perf": tool("Velocidad"),

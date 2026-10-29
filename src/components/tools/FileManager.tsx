@@ -29,6 +29,10 @@ export interface TerminalRef {
   host?: string;
   highlight?: string;
   session: Session;
+  /** Últimas líneas de la pantalla de la pestaña (sin enviar nada al equipo). */
+  screen?: (lines: number) => string;
+  /** Escribe un aviso local en la pestaña (no llega al equipo). */
+  notice?: (text: string) => void;
 }
 
 export interface ScpRequest {

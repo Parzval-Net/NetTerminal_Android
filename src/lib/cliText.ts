@@ -44,6 +44,15 @@ export function promptName(output: string): string | null {
   return null;
 }
 
+/**
+ * La pantalla de una pestaña termina en un prompt de equipo (ni "--More--", ni Password:, ni un
+ * comando a medias). Enviar con otra cosa a la vista pierde el primer carácter del comando
+ * ("how interfaces"). Sin lectura de pantalla no se puede saber y se asume que sí.
+ */
+export function atPrompt(screen: string | undefined): boolean {
+  return screen === undefined || promptName(screen.replace(/\r/g, "").trimEnd().split("\n").slice(-1).join("")) !== null;
+}
+
 /** La línea es un prompt de equipo o shell. */
 export const isPrompt = (line: string) => promptName(line) !== null;
 

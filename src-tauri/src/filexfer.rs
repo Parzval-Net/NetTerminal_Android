@@ -6,8 +6,9 @@ use crate::expect;
 use regex::Regex;
 use serde::Serialize;
 use serde_json::json;
+use std::collections::HashMap;
 use std::net::ToSocketAddrs;
-use std::sync::OnceLock;
+use std::sync::{Arc, Mutex, OnceLock};
 use std::time::{Duration, Instant};
 use tauri::{AppHandle, Emitter, Manager};
 
@@ -61,6 +62,20 @@ const MAX_OUTPUT: usize = 16 * 1024 * 1024;
 /// Texto final que se conserva para reconocer preguntas de confirmación.
 const TAIL_KEEP: usize = 4096;
 
+/// Un solo comando a la vez por sesión: dos trabajos en paralelo escribirían su comando mientras el
+/// otro responde "--More--" o espera el prompt, y el equipo se comería el primer carácter
+/// ("how interfaces"). Los trabajos de una misma sesión se encolan; el plazo corre desde que
+/// empiezan, no desde que se pidieron.
+fn session_lock(conn: &str) -> Arc<Mutex<()>> {
+    static LOCKS: OnceLock<Mutex<HashMap<String, Arc<Mutex<()>>>>> = OnceLock::new();
+    let mut map = LOCKS.get_or_init(Default::default).lock().unwrap_or_else(|e| e.into_inner());
+    // Sesiones cerradas: solo quedan las entradas que alguien usa.
+    if map.len() > 64 {
+        map.retain(|_, l| Arc::strong_count(l) > 1);
+    }
+    map.entry(conn.to_string()).or_default().clone()
+}
+
 /// `answer = false`: no confirma nada; ante una pregunta responde que no (Ctrl+C en "[confirm]"),
 /// espera el prompt y lo informa en el resultado (`declined`).
 pub fn run(app: AppHandle, conn: String, command: String, timeout_secs: u64, answer: bool) -> Result<String, String> {
@@ -69,7 +84,6 @@ pub fn run(app: AppHandle, conn: String, command: String, timeout_secs: u64, ans
     }
     let state = app.state::<crate::AppState>();
     state.conns.info(&conn).ok_or("La sesión no está conectada")?;
-    let rx = state.conns.tap(&conn).ok_or("La sesión no está conectada")?;
     let job = uuid::Uuid::new_v4().to_string();
     let id = job.clone();
     let deadline = Duration::from_secs(timeout_secs.clamp(5, 7200));
@@ -80,6 +94,13 @@ pub fn run(app: AppHandle, conn: String, command: String, timeout_secs: u64, ans
         };
         let conns = &app.state::<crate::AppState>().conns;
         let p = patterns();
+        let lock = session_lock(&conn);
+        let _turn = lock.lock().unwrap_or_else(|e| e.into_inner());
+        // La suscripción se toma recién al tocar el turno: antes acumularía la salida del trabajo anterior.
+        let Some(rx) = conns.tap(&conn) else {
+            emit("error", "La sesión no está conectada".into(), None);
+            return emit("done", String::new(), None);
+        };
         expect::drain(&rx);
         if let Err(e) = conns.write(&conn, format!("{command}\r").as_bytes()) {
             emit("error", e, None);
@@ -110,6 +131,7 @@ pub fn run(app: AppHandle, conn: String, command: String, timeout_secs: u64, ans
         loop {
             if start.elapsed() > deadline {
                 flush(&mut partial, true);
+                leave_pager(conns, &conn, p, &tail);
                 emit("error", "Tiempo agotado esperando al equipo".into(), None);
                 break;
             }
@@ -119,6 +141,7 @@ pub fn run(app: AppHandle, conn: String, command: String, timeout_secs: u64, ans
             };
             if output.len() + chunk.len() > MAX_OUTPUT {
                 flush(&mut partial, true);
+                leave_pager(conns, &conn, p, &tail);
                 emit("error", "La salida del equipo superó el máximo permitido; se detuvo la lectura".into(), None);
                 break;
             }
@@ -177,6 +200,14 @@ pub fn run(app: AppHandle, conn: String, command: String, timeout_secs: u64, ans
     Ok(job)
 }
 
+/// Si el trabajo se corta con el equipo esperando en "--More--", la sesión queda en el paginador y se
+/// comería el primer carácter del comando siguiente: "q" lo cierra (IOS, NX-OS, VRP, Junos).
+fn leave_pager(conns: &crate::connection::ConnectionManager, conn: &str, p: &Patterns, tail: &str) {
+    if p.more.is_match(tail.trim_end_matches([' ', '\t'])) {
+        let _ = conns.write(conn, b"q");
+    }
+}
+
 /// El comando terminó si, después de su eco, la última línea es un prompt del equipo.
 /// Si el eco no aparece tal cual (líneas largas que el equipo recorta), se usa toda la
 /// salida, exigiendo al menos un salto de línea.
@@ -228,6 +259,16 @@ pub fn source_ip_for(host: &str) -> Result<String, String> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn jobs_of_one_session_share_a_turn() {
+        let a = session_lock("conn-a");
+        assert!(Arc::ptr_eq(&a, &session_lock("conn-a")), "misma sesión, mismo turno");
+        assert!(!Arc::ptr_eq(&a, &session_lock("conn-b")), "otra sesión no espera");
+        let _held = a.lock().unwrap();
+        assert!(session_lock("conn-a").try_lock().is_err(), "un segundo trabajo espera su turno");
+        assert!(session_lock("conn-b").try_lock().is_ok());
+    }
 
     #[test]
     fn recognizes_prompts_and_confirmations() {

@@ -114,6 +114,18 @@ import {
   utilLevel,
   flowTiming,
 } from "../../lib/topology";
+import { wheelFactor, wheelIntent } from "../../lib/mapZoom";
+import {
+  HopAction,
+  HopJob,
+  afterEcho,
+  classifyHopScreen,
+  hopTabSession,
+  hopTabTitle,
+  isReplayable,
+  newHopJob,
+  stepHop,
+} from "../../lib/hopTab";
 import {
   ARP_FALLBACK,
   LLDP_V2_FALLBACK,
@@ -203,8 +215,8 @@ type PanelSection = "fuentes" | "alcance" | "filtros" | "revisiones" | "trafico"
 type DiscoveryMode = "cli" | "snmp";
 /**
  * Estado visual de la herramienta (panel, secciones, modo de descubrimiento, intervalo y animación
- * del tráfico). Es comodidad de interfaz: no va a Ajustes. El tráfico y la lectura por consola no se
- * recuerdan: parten apagados en cada apertura.
+ * del tráfico). Es comodidad de interfaz: no va a Ajustes. El tráfico y la lectura por consola se
+ * recuerdan (parten apagados la primera vez): sin eso había que activarlos en cada apertura.
  */
 interface TopoUi {
   panel: boolean;
@@ -213,7 +225,10 @@ interface TopoUi {
   snmpProfile: string;
   interval: TrafficInterval;
   anim: boolean;
-  /** Versión de la preferencia de animación: hasta la 2 venía apagada por defecto y quedó guardada así. */
+  /** Tráfico en enlaces encendido (se recuerda entre aperturas). */
+  traffic: boolean;
+  /** Lectura del tráfico también por consola (envía comandos de consulta a la sesión conectada). */
+  cli: boolean;
   /** Puntas de flecha por sentido sobre cada enlace con tráfico. */
   arrows: boolean;
   /** Etiqueta de tasas (↑ ↓ y %) junto a cada enlace con tráfico. */
@@ -233,12 +248,17 @@ const UI_DEFAULT: TopoUi = {
   snmpProfile: "",
   interval: 30,
   anim: false,
+  traffic: false,
+  cli: false,
   arrows: true,
   rates: true,
   color: true,
   l2: true,
   scope: NO_SCOPE,
 };
+
+/** Versión de las preferencias de estilo del tráfico guardadas en topoUi. */
+const UI_VERSION = 3;
 
 function loadUi(): TopoUi {
   try {
@@ -247,17 +267,21 @@ function loadUi(): TopoUi {
     const roomy = typeof window === "undefined" || window.innerWidth >= 1100;
     if (!v || typeof v !== "object") return { ...UI_DEFAULT, panel: roomy };
     const sec = v.sec && typeof v.sec === "object" ? v.sec : {};
+    const ver = typeof (v as { ver?: unknown }).ver === "number" ? (v as { ver: number }).ver : 0;
     return {
       panel: v.panel !== false && roomy,
       sec: { ...UI_DEFAULT.sec, ...sec },
       mode: v.mode === "snmp" ? "snmp" : "cli",
       snmpProfile: typeof v.snmpProfile === "string" ? v.snmpProfile.slice(0, 64) : "",
       interval: TRAFFIC_INTERVALS.includes(v.interval as TrafficInterval) ? (v.interval as TrafficInterval) : 30,
-      // Desde la versión 2 la animación parte encendida; lo guardado antes era el valor por defecto.
-      anim: v.anim === true,
-      arrows: v.arrows !== false,
-      rates: v.rates !== false,
-      color: v.color !== false,
+      // Lo guardado antes de la versión 3 (flechas, tasas, color y animación) era de diseños
+      // anteriores: se parte del estilo vigente (rótulos compactos y color, animación apagada).
+      anim: ver >= UI_VERSION && v.anim === true,
+      traffic: v.traffic === true,
+      cli: v.cli === true,
+      arrows: ver < UI_VERSION || v.arrows !== false,
+      rates: ver < UI_VERSION || v.rates !== false,
+      color: ver < UI_VERSION || v.color !== false,
       l2: v.l2 !== false,
       scope: {
         skipEndpoints: v.scope?.skipEndpoints === true,
@@ -300,21 +324,6 @@ function useReducedMotion(): boolean {
     return () => q.removeEventListener("change", on);
   }, []);
   return reduced;
-}
-
-/**
- * Desplazamiento con dos dedos en un touchpad (no una rueda de mouse). WebKit (macOS) entrega la
- * rueda del mouse en múltiplos de 4.000244 px por paso (el mismo criterio que usa Mapbox GL);
- * Chromium (WebView2 en Windows) informa wheelDeltaY en pasos de 120 para la rueda y otros valores
- * para el touchpad. Sin esos datos, el movimiento horizontal o un delta fino delatan el touchpad.
- */
-const WEBKIT_WHEEL_STEP = 4.000244140625;
-function isTrackpadScroll(e: { deltaX: number; deltaY: number; deltaMode: number; wheelDeltaY?: number }): boolean {
-  if (e.deltaMode !== 0) return false;
-  if (e.deltaY !== 0 && Math.abs(e.deltaY) % WEBKIT_WHEEL_STEP === 0) return false;
-  const w = e.wheelDeltaY;
-  if (typeof w === "number" && w !== 0) return Math.abs(w) % 120 !== 0;
-  return e.deltaX !== 0 || Math.abs(e.deltaY) < 40 || !Number.isInteger(e.deltaY);
 }
 
 /**
@@ -397,7 +406,7 @@ function useNodeData(nodes: TopoNode[]): TopoNode[] {
 
 function saveUi(ui: TopoUi) {
   try {
-    localStorage.setItem(UI_KEY, JSON.stringify(ui));
+    localStorage.setItem(UI_KEY, JSON.stringify({ ...ui, ver: UI_VERSION }));
   } catch {
     // Almacenamiento bloqueado o lleno: la herramienta sigue funcionando sin recordar el estado.
   }
@@ -983,6 +992,8 @@ export function TopologyTool({
    */
   const [hops, setHops] = useState<Record<string, { name: string; ip: string }[]>>({});
   const [hopUser, setHopUser] = useState("");
+  /** Equipo pivote de cada pestaña de salto (conexión → nombre): la ruta parte de él. */
+  const [hopOrigin, setHopOrigin] = useState<Record<string, string>>({});
   const drag = useRef<{ id: string; sx: number; sy: number; x: number; y: number; w: number; h: number } | null>(null);
   const [dragPos, setDragPos] = useState<{ id: string; x: number; y: number } | null>(null);
   const [ui, setUi] = useState<TopoUi>(loadUi);
@@ -1017,12 +1028,16 @@ export function TopologyTool({
   // Equipos alcanzados saltando en una pestaña: el tráfico por consola se lee por esa pestaña.
   const hopVia = useMemo(() => {
     const m: Record<string, string> = {};
-    for (const [conn, list] of Object.entries(hops)) for (const h of list) m[nodeId(h.name)] = conn;
+    // La pestaña solo está en el último equipo de su ruta: los anteriores no se pueden leer desde ella.
+    for (const [conn, list] of Object.entries(hops)) if (list.length) m[nodeId(list[list.length - 1].name)] = conn;
     return m;
   }, [hops]);
-  // Tráfico en enlaces: apagado al abrir; la lectura por consola también (envía comandos).
-  const [trafficOn, setTrafficOn] = useState(false);
-  const [trafficCli, setTrafficCli] = useState(false);
+  // Tráfico en enlaces y lectura por consola (envía comandos de consulta): parten apagados la primera
+  // vez y después se recuerdan, para no activarlos en cada apertura.
+  const trafficOn = ui.traffic;
+  const trafficCli = ui.cli;
+  const setTrafficOn = (traffic: boolean) => setUi((u) => ({ ...u, traffic }));
+  const setTrafficCli = (cli: boolean) => setUi((u) => ({ ...u, cli }));
   const reducedMotion = useReducedMotion();
   const traffic = useTopoTraffic({
     topo,
@@ -1623,9 +1638,53 @@ export function TopologyTool({
   };
 
   const hopRoute = term ? (hops[term.connId] ?? []) : [];
-  const here = hopRoute.length ? hopRoute[hopRoute.length - 1].name : term?.name;
+  const originOf = (t: TerminalRef) => hopOrigin[t.connId] ?? t.name;
+  const here = hopRoute.length ? hopRoute[hopRoute.length - 1].name : term ? originOf(term) : undefined;
 
-  /** Salta al vecino desde la consola del equipo actual, en la misma pestaña. */
+  /** Saltos en curso: cada uno espera el prompt de su pestaña antes de enviar el comando. */
+  interface HopRun {
+    key: string;
+    job: HopJob;
+    /** Pestaña donde se hace el salto; sin ella se espera a que la pestaña nueva conecte. */
+    connId?: string;
+    /** Sesión abierta y conexiones previas: así se reconoce la pestaña nueva. */
+    open?: { sessionId?: string; host?: string; known: string[]; at: number };
+    neighbor: { name: string; ip: string };
+    origin: string;
+    sent: boolean;
+  }
+  const hopRuns = useRef(new Map<string, HopRun>());
+  const [hopRunning, setHopRunning] = useState<string[]>([]);
+  const liveRef = useRef({ terminals, onConfirm });
+  liveRef.current = { terminals, onConfirm };
+  const syncRuns = () => setHopRunning([...hopRuns.current.keys()]);
+
+  const startHop = (n: TopoNode, t: TerminalRef, cmd: string, newTab: boolean) => {
+    const key = `${t.connId}|${n.id}`;
+    if (hopRuns.current.has(key)) {
+      setMsg(`Ya hay un salto a ${n.name} en curso.`);
+      return;
+    }
+    const origin = originOf(t);
+    // El prompt del pivote se toma de la pantalla de la pestaña (sin enviar nada): así el salto no sale
+    // hasta ver ese mismo prompt. Sin prompt a la vista, sirve el primero que aparezca.
+    const screen = t.screen?.(8) ?? "";
+    const seen = classifyHopScreen(screen);
+    const pivot = seen.kind === "prompt" ? seen.name : undefined;
+    const run: HopRun = { key, job: newHopJob({ cmd, neighbor: n.name, pivot, now: Date.now() }), neighbor: { name: n.name, ip: n.ip! }, origin, sent: false };
+    if (newTab) {
+      run.open = { sessionId: t.session.id || undefined, host: t.session.host, known: terminals.map((x) => x.connId), at: Date.now() };
+      onOpenSession(hopTabSession(t.session, hopTabTitle(n.name, origin)));
+      setMsg(`Abriendo una pestaña a ${origin} para saltar a ${n.name}. Autentícate ahí si hace falta: el salto se envía solo cuando aparezca el prompt de ${origin}.`);
+    } else {
+      run.connId = t.connId;
+      setMsg(`Esperando el prompt de ${origin} en su pestaña para enviar "${cmd}".`);
+    }
+    hopRuns.current.set(key, run);
+    syncRuns();
+  };
+
+  /** Salta al vecino desde el equipo pivote en una pestaña nueva; la pestaña actual no se toca. */
   const hopTo = (n: TopoNode) => {
     if (!term || !n.ip) return;
     const user = (hopUser || term.session.username || "").trim();
@@ -1634,17 +1693,101 @@ export function TopologyTool({
       setMsg(isIpv4(n.ip) || isIpv6(n.ip) ? "Escribe un usuario válido para el salto (sin espacios)." : `IP de gestión no válida: ${n.ip.slice(0, 64)}`);
       return;
     }
-    invoke("write", { id: term.connId, data: `${cmd}\r` }).catch((e) => setMsg(String(e)));
-    setHops((h) => ({ ...h, [term.connId]: [...(h[term.connId] ?? []), { name: n.name, ip: n.ip! }] }));
-    setMsg(`Enviado "${cmd}" en la pestaña de ${term.name}: autentícate ahí. Cuando veas el prompt de ${n.name}, vuelve y pulsa "Descubrir vecinos".`);
+    // Una pestaña de salto ya es de la herramienta: el siguiente salto sigue en ella.
+    if (hopOrigin[term.connId] !== undefined) return startHop(n, term, cmd, false);
+    if (!isReplayable(term.session)) {
+      onConfirm({
+        title: "Saltar en la pestaña actual",
+        message: `${term.name} no es una sesión SSH ni Telnet: no se puede abrir otra pestaña hacia el mismo equipo. ¿Enviar "${cmd}" en esa pestaña, cuando muestre su prompt?`,
+        label: "Enviar en esta pestaña",
+        defaultCancel: true,
+        action: () => startHop(n, term, cmd, false),
+      });
+      return;
+    }
+    startHop(n, term, cmd, true);
   };
+
+  // Avance de los saltos: lee la pantalla de cada pestaña y envía, pregunta o avisa según corresponda.
+  useEffect(() => {
+    if (!hopRunning.length) return;
+    const finish = (r: HopRun) => {
+      hopRuns.current.delete(r.key);
+      syncRuns();
+    };
+    const apply = (r: HopRun, t: TerminalRef, a: HopAction) => {
+      const id = t.connId;
+      if (a.kind === "send") {
+        r.sent = true;
+        invoke("write", { id, data: a.data }).catch((e) => setMsg(String(e)));
+        setHops((h) => ({ ...h, [id]: [...(h[id] ?? []), r.neighbor] }));
+        setHopOrigin((o) => (o[id] === undefined ? { ...o, [id]: r.origin } : o));
+        setMsg(`Enviado "${r.job.cmd}" en la pestaña "${t.name}": autentícate en ${r.neighbor.name} si lo pide.`);
+      } else if (a.kind === "notify") setMsg(a.text);
+      else if (a.kind === "ask")
+        liveRef.current.onConfirm({
+          title: `¿Aceptar la llave de ${r.neighbor.name}?`,
+          message: `${a.line}\n\n${r.origin} no conocía a ${r.neighbor.name} (${r.neighbor.ip}). Compara la huella en la pestaña antes de aceptar. Si ya contestaste ahí, cancela.`,
+          label: "Aceptar y continuar",
+          defaultCancel: true,
+          action: () => {
+            // La pantalla pudo cambiar mientras se decidía: solo se contesta si la pregunta sigue ahí.
+            const cur = liveRef.current.terminals.find((x) => x.connId === id);
+            const s = classifyHopScreen(afterEcho(cur?.screen?.(30) ?? "", r.job.cmd));
+            if (s.kind === "hostkey") invoke("write", { id, data: `${s.answer}\r` }).catch((e) => setMsg(String(e)));
+          },
+        });
+      else if (a.kind === "done") {
+        setConnId(id);
+        setMsg(`${a.at} conectado en la pestaña "${t.name}" y elegido en "Equipo": pulsa "Descubrir vecinos" para seguir la ruta.`);
+        finish(r);
+      } else if (a.kind === "fail") {
+        // El salto no llegó: el prompt sigue en el equipo anterior, así que la ruta no cuenta el vecino.
+        if (r.sent) setHops((h) => ({ ...h, [id]: (h[id] ?? []).filter((x) => x.name !== r.neighbor.name) }));
+        t.notice?.(a.reason);
+        setMsg(a.reason);
+        finish(r);
+      }
+    };
+    const timer = window.setInterval(() => {
+      const now = Date.now();
+      for (const r of [...hopRuns.current.values()]) {
+        const terms = liveRef.current.terminals;
+        if (!r.connId && r.open) {
+          const found = followedTerminal(terms, { sessionId: r.open.sessionId, host: r.open.host, known: r.open.known });
+          if (found) r.connId = found.connId;
+          else if (now - r.open.at > 60_000) {
+            setMsg(`La pestaña hacia ${r.origin} no llegó a conectar: no se envió el salto a ${r.neighbor.name}.`);
+            finish(r);
+          }
+          continue;
+        }
+        const t = terms.find((x) => x.connId === r.connId);
+        if (!t) {
+          setMsg(`La pestaña de ${r.neighbor.name} se cerró antes de terminar el salto.`);
+          if (r.connId) {
+            const gone = r.connId;
+            setHops((h) => ((h[gone] ?? []).length ? { ...h, [gone]: [] } : h));
+          }
+          finish(r);
+          continue;
+        }
+        if (!t.screen) continue;
+        const step = stepHop(r.job, t.screen(30), now);
+        r.job = step.job;
+        for (const a of step.actions) apply(r, t, a);
+      }
+    }, 400);
+    return () => window.clearInterval(timer);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [hopRunning.length]);
 
   /** Vuelve al equipo anterior de la ruta (exit en la misma pestaña). */
   const hopBack = () => {
     if (!term || !hopRoute.length) return;
     invoke("write", { id: term.connId, data: "exit\r" }).catch((e) => setMsg(String(e)));
     setHops((h) => ({ ...h, [term.connId]: hopRoute.slice(0, -1) }));
-    setMsg(`Enviado "exit": vuelves a ${hopRoute.length > 1 ? hopRoute[hopRoute.length - 2].name : term.name}.`);
+    setMsg(`Enviado "exit": vuelves a ${hopRoute.length > 1 ? hopRoute[hopRoute.length - 2].name : originOf(term)}.`);
   };
 
   const saveSnapshot = () => {
@@ -1805,24 +1948,21 @@ export function TopologyTool({
       const r = el.getBoundingClientRect();
       return [x - r.left, y - r.top] as const;
     };
-    // Rueda del mouse: zoom anclado al puntero, como un mapa. Pellizco del touchpad en Windows,
-    // Linux y Chromium: llega como rueda con ctrlKey. Dos dedos en el touchpad sin pellizco y
-    // Shift + rueda: desplazamiento normal (el mapa también se mueve arrastrando el fondo).
+    // Rueda vertical: zoom anclado al puntero, como un mapa, sin distinguir mouse de touchpad (no
+    // hay forma fiable: Magic Mouse y los mouse con desplazamiento suave dan deltas continuos).
+    // Pellizco en Chromium, WebView2 y WebKit: rueda con ctrlKey. Se desplaza con Shift + rueda, con
+    // movimiento horizontal del touchpad, o arrastrando el fondo.
     let gesturing = false;
+    // Último puntero sobre el mapa: los gestos de WebKit no siempre traen clientX/clientY.
+    let pointer: [number, number] | null = null;
+    const onMove = (e: PointerEvent) => (pointer = [e.clientX, e.clientY]);
     const onWheel = (e: WheelEvent) => {
-      const pinch = e.ctrlKey || e.metaKey;
-      if (!pinch && (e.shiftKey || isTrackpadScroll(e as WheelEvent & { wheelDeltaY?: number }))) return;
+      const intent = wheelIntent(e);
+      if (intent === "pan") return;
       e.preventDefault();
       if (gesturing) return;
       const [cx, cy] = local(e.clientX, e.clientY);
-      if (pinch) {
-        const d = Math.max(-50, Math.min(50, e.deltaMode === 1 ? e.deltaY * 16 : e.deltaY));
-        zoomAt(zoomRef.current * Math.exp(-d * 0.01), cx, cy);
-      } else {
-        // Un paso de rueda (100 px) acerca o aleja un 16 %.
-        const d = Math.max(-300, Math.min(300, e.deltaMode === 1 ? e.deltaY * 33 : e.deltaY));
-        zoomAt(zoomRef.current * Math.exp(-d * 0.0015), cx, cy);
-      }
+      zoomAt(zoomRef.current * wheelFactor(e, intent === "pinch"), cx, cy);
     };
     // macOS (WebKit): el pellizco llega como gesto con su escala.
     let base = 1;
@@ -1835,18 +1975,21 @@ export function TopologyTool({
     const onGestureChange = (e: Event) => {
       e.preventDefault();
       const g = e as Gesture;
-      const [cx, cy] = local(g.clientX, g.clientY);
-      zoomAt(base * g.scale, cx, cy);
+      const at = Number.isFinite(g.clientX) && Number.isFinite(g.clientY) ? ([g.clientX, g.clientY] as const) : (pointer ?? ([0, 0] as const));
+      const [cx, cy] = local(at[0], at[1]);
+      if (Number.isFinite(g.scale)) zoomAt(base * g.scale, cx, cy);
     };
     const onGestureEnd = (e: Event) => {
       e.preventDefault();
       gesturing = false;
     };
     el.addEventListener("wheel", onWheel, { passive: false });
-    el.addEventListener("gesturestart", onGestureStart);
-    el.addEventListener("gesturechange", onGestureChange);
-    el.addEventListener("gestureend", onGestureEnd);
+    el.addEventListener("pointermove", onMove);
+    el.addEventListener("gesturestart", onGestureStart, { passive: false });
+    el.addEventListener("gesturechange", onGestureChange, { passive: false });
+    el.addEventListener("gestureend", onGestureEnd, { passive: false });
     return () => {
+      el.removeEventListener("pointermove", onMove);
       el.removeEventListener("wheel", onWheel);
       el.removeEventListener("gesturestart", onGestureStart);
       el.removeEventListener("gesturechange", onGestureChange);
@@ -2047,10 +2190,10 @@ export function TopologyTool({
         </div>
         {mode === "cli" && term && hopRoute.length > 0 && (
           <div className="mt-1.5 flex flex-wrap items-center gap-2 text-[11.5px]">
-            <span className="text-muted">Ruta en la pestaña de {term.name}:</span>
-            <span className="font-medium">{[term.name, ...hopRoute.map((h) => h.name)].join(" → ")}</span>
+            <span className="text-muted">Ruta en la pestaña "{term.name}":</span>
+            <span className="font-medium">{[originOf(term), ...hopRoute.map((h) => h.name)].join(" → ")}</span>
             <Btn className="!h-6 !px-2 !text-[11.5px]" disabled={busy} onClick={hopBack} title='Envía "exit" en la pestaña: vuelve al equipo anterior'>
-              Volver a {hopRoute.length > 1 ? hopRoute[hopRoute.length - 2].name : term.name}
+              Volver a {hopRoute.length > 1 ? hopRoute[hopRoute.length - 2].name : originOf(term)}
             </Btn>
           </div>
         )}
@@ -2629,6 +2772,11 @@ export function TopologyTool({
                         )}
                       </div>
                     )}
+                    {traffic.status.busy.length > 0 && (
+                      <p className="text-muted">
+                        Pestaña ocupada ({traffic.status.busy.join(", ")}): sin prompt a la vista (paginador, contraseña o un comando en curso); no se le envía nada y se reintenta en la próxima lectura.
+                      </p>
+                    )}
                     {traffic.status.errors.map((e) => (
                       <p key={e} className="text-danger">
                         {e}
@@ -2873,7 +3021,7 @@ export function TopologyTool({
                 {sel.ip && term && mode === "cli" && nodeId(sel.name) !== nodeId(here ?? "") && (
                   <div className="space-y-1.5 pt-1.5 border-t border-line">
                     <p className="text-[11.5px] text-muted leading-snug">
-                      ¿No llegas desde tu PC? Salta desde <span className="font-medium text-fg">{here}</span> en su misma pestaña.
+                      ¿No llegas desde tu PC? Abre una pestaña nueva hacia <span className="font-medium text-fg">{here}</span> con la misma sesión y salta desde ahí; la pestaña actual no se toca.
                     </p>
                     <div className="flex items-center gap-2">
                       <select className="field !h-7 !text-[12px] !w-auto" aria-label="Protocolo del salto" value={proto} onChange={(e) => setProto(e.target.value as "ssh" | "telnet")}>
@@ -2890,7 +3038,12 @@ export function TopologyTool({
                         />
                       )}
                     </div>
-                    <Btn className="w-full" disabled={busy} onClick={() => hopTo(sel)} title="Envía el comando de salto en la pestaña del equipo actual; te autenticas ahí">
+                    <Btn
+                      className="w-full"
+                      disabled={busy || hopRunning.some((k) => k.endsWith(`|${sel.id}`))}
+                      onClick={() => hopTo(sel)}
+                      title="Abre una pestaña nueva al equipo actual y, al ver su prompt, envía el salto; te autenticas en esa pestaña"
+                    >
                       Saltar desde {here}
                     </Btn>
                   </div>

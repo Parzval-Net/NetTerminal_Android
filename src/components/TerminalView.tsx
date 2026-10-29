@@ -75,6 +75,8 @@ export interface TermController {
   copyAll: () => Promise<number>;
   /** Últimas líneas del historial como texto (para detectar la plataforma sin enviar nada). */
   recentText: (lines: number) => string;
+  /** Aviso local en la pestaña (no se envía al equipo). */
+  notice: (text: string) => void;
 }
 
 const NEWLINE = { cr: "\r", lf: "\n", crlf: "\r\n" } as const;
@@ -977,6 +979,7 @@ export const TerminalView = memo(function TerminalView({ id, session, active, vi
         term.focus();
       },
       disconnect,
+      notice: (text) => term.write(`\r\n${dim(`── ${text} ──`)}\r\n`),
       clearScrollback: () => term.clear(),
       reset: () => term.reset(),
       recentText: (n) => {

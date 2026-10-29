@@ -5,7 +5,9 @@
  * los comandos de TRAFFIC_COMMANDS (computeRisk === "read", con test).
  */
 import type { LinkTraffic, TopoLink, TopoVendor } from "./topology";
-import { canonPort, isCliError } from "./topology";
+import { plainCli } from "./cliText";
+import { canonPort, isCliError, knownAddrs, nodeId } from "./topology";
+import type { TopoNode } from "./topology";
 import { OID } from "./topoSnmp";
 
 /** Lectura de contadores de una interfaz. */
@@ -103,6 +105,19 @@ export function linkTraffic(l: TopoLink, rates: Map<string, Map<string, PortRate
     ...(approx ? { approx: true } : {}),
     ts: Math.max(ra?.ts ?? 0, rb?.ts ?? 0),
   };
+}
+
+/**
+ * Pestaña del equipo: la del salto que llegó a él (si la hay) o la que apunta a su IP o nombre. Una
+ * pestaña de salto que está en otro equipo (via) no cuenta como la del equipo al que se conectó
+ * ni por IP ni por nombre: su prompt es el del vecino.
+ */
+export function terminalFor<T extends { connId: string; name: string; host?: string }>(n: TopoNode, terminals: T[], via?: Record<string, string>): T | undefined {
+  const hopped = new Set(Object.values(via ?? {}));
+  return (
+    (via?.[n.id] ? terminals.find((t) => t.connId === via[n.id]) : undefined) ??
+    terminals.find((t) => !hopped.has(t.connId) && ((t.host && knownAddrs(n).includes(t.host)) || nodeId(t.name) === n.id))
+  );
 }
 
 // ---------- SNMP ----------
@@ -210,6 +225,12 @@ const HEADER = /^(?:(\S+) is (?:administratively )?(?:up|down|deleted)\b|(\S+) c
 const MAX_CLI_IFACES = 4096;
 const MAX_CLI_LEN = 4_000_000;
 
+/**
+ * "--More--" (IOS, NX-OS), "---- More ----" (VRP) y "---(more)---" (Junos) con el borrado que envía el
+ * equipo al avanzar de página: "\r" + espacios + "\r", retrocesos o ESC[K.
+ */
+const PAGER = /[ \t]*-{2,}[ \t]*\(?more\)?(?: \d+%)?[ \t]*-{2,}[ \t]*(?:\r[ \t]*\r|\x08+[ \t]*\x08+|\x1b\[K)?/gi;
+
 const UNIT = { k: 1e3, m: 1e6, g: 1e9, t: 1e12 } as const;
 
 /**
@@ -251,7 +272,10 @@ function countersOf(block: string): [bigint, bigint] | null {
 export function parseCliCounters(out: string): Map<string, CliCounters> {
   const res = new Map<string, CliCounters>();
   if (!out || isCliError(out)) return res;
-  const lines = out.slice(0, MAX_CLI_LEN).split(/\r?\n/);
+  // Lo que dejó el paginador ("--More--" y su borrado con retrocesos o ESC[K) queda pegado a la
+  // primera línea de cada página; si es el encabezado de una interfaz, esta se perdía y sus
+  // contadores se atribuían a la anterior. Se lee como lo muestra la terminal.
+  const lines = plainCli(out.slice(0, MAX_CLI_LEN).replace(PAGER, "")).split("\n");
   let name: string | undefined;
   let buf: string[] = [];
   const flush = () => {

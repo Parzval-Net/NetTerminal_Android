@@ -5,6 +5,7 @@ import { vendorFor } from "../../lib/commands";
 import { computeRisk } from "../../lib/packs";
 import { SnmpProfile, targetParams } from "../../lib/snmp";
 import { TopoNode, TopoVendor, Topology, canonPort, isCliError, knownAddrs, nodeId, promptName } from "../../lib/topology";
+import { atPrompt } from "../../lib/cliText";
 import { OID, TopoRead, ifIndexByPort, ifNames } from "../../lib/topoSnmp";
 import {
   CounterSample,
@@ -12,6 +13,7 @@ import {
   PortRate,
   counterOids,
   parseCliCounters,
+  terminalFor,
   parseCounterGets,
   portRate,
   trafficCommands,
@@ -34,10 +36,12 @@ export interface TrafficStatus {
   /** Equipos explorados sin perfil SNMP ni sesión de consola habilitada. */
   none: string[];
   errors: string[];
+  /** Pestañas que no estaban en un prompt (paginador, contraseña, comando en curso): no se les envió nada. */
+  busy: string[];
   last?: number;
 }
 
-const EMPTY: TrafficStatus = { snmp: [], cli: [], none: [], errors: [] };
+const EMPTY: TrafficStatus = { snmp: [], cli: [], none: [], errors: [], busy: [] };
 const NO_SECRETS = { community: "", authPass: "", privPass: "" };
 
 /** Interfaces del equipo con algún enlace en el diagrama (clave canonPort). */
@@ -56,10 +60,7 @@ export function profileFor(n: TopoNode, profiles: SnmpProfile[]): SnmpProfile | 
   return profiles.find((p) => p.saved && p.version !== "1" && (addrs.includes(p.host.trim()) || (!!p.name && nodeId(p.name) === n.id)));
 }
 
-/** Pestaña del equipo: la del salto que llegó a él (si la hay) o la que apunta a su IP o nombre. */
-const terminalFor = (n: TopoNode, terminals: TerminalRef[], via?: Record<string, string>) =>
-  (via?.[n.id] ? terminals.find((t) => t.connId === via[n.id]) : undefined) ??
-  terminals.find((t) => (t.host && knownAddrs(n).includes(t.host)) || nodeId(t.name) === n.id);
+class BusyTab extends Error {}
 
 interface IfCache {
   profile: string;
@@ -155,6 +156,9 @@ export function useTopoTraffic({
 
     const readCli = async (n: TopoNode, term: TerminalRef, ports: string[]): Promise<Map<string, CounterSample>> => {
       const h = term.highlight && term.highlight !== "off" ? (vendorFor(term.highlight) as TopoVendor) : undefined;
+      // Nunca a ciegas: sin prompt en pantalla (paginador, contraseña, comando del usuario a medias)
+      // el primer carácter se pierde y el comando llega mutilado.
+      if (!atPrompt(term.screen?.(6))) throw new BusyTab();
       const known = cliCmd.current.get(n.id);
       // Defensa en profundidad: solo se envían comandos de consulta.
       const cmds = (known ? [known] : trafficCommands(term.session.platform, h)).filter((c) => computeRisk(c) === "read");
@@ -187,7 +191,7 @@ export function useTopoTraffic({
     const tick = async () => {
       if (document.visibilityState === "hidden") return;
       const { topo: t, profiles: ps, terminals: ts, cli, via: hopVia } = ctx.current;
-      const st: TrafficStatus = { snmp: [], cli: [], none: [], errors: [], last: Date.now() };
+      const st: TrafficStatus = { snmp: [], cli: [], none: [], errors: [], busy: [], last: Date.now() };
       const jobs = t.nodes
         .filter((n) => n.explored)
         .map(async (n): Promise<[string, Map<string, PortRate>] | null> => {
@@ -211,6 +215,10 @@ export function useTopoTraffic({
             prev.current.set(n.id, samples);
             return [n.id, out];
           } catch (e) {
+            if (e instanceof BusyTab) {
+              st.busy.push(n.name);
+              return [n.id, ratesRef.current.get(n.id) ?? new Map()];
+            }
             st.errors.push(`${n.name}: ${String(e).slice(0, 160)}`);
             return null;
           } finally {
