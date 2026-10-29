@@ -1226,11 +1226,11 @@ const hcRows = [
   { oid: `${O_.ifHCInOctets}.3`, type: "noSuchInstance", value: "" },
 ];
 const g64 = R.parseCounterGets(hcRows, [10101, 3], true, 5);
-assert.deepEqual(g64.samples.get(10101), { inOctets: 18446744073709551000n, outOctets: 42n, bits: 64, speed: 1e10, ts: 5 }, "Counter64 sin perder precisión");
+assert.deepEqual(g64.samples.get(10101), { inOctets: 18446744073709551000n, outOctets: 42n, bits: 64, speed: 1e10, ts: 5, src: "snmp" }, "Counter64 sin perder precisión");
 assert.ok(!g64.samples.has(3) && !g64.hcMissing);
 assert.ok(R.parseCounterGets([{ oid: `${O_.ifHCInOctets}.1`, type: "noSuchObject", value: "" }], [1], true, 0).hcMissing, "sin ifXTable: pedir 32 bits");
 const g32 = R.parseCounterGets([{ oid: `${O_.ifInOctets}.1`, type: "Counter32", value: "4294967295" }, { oid: `${O_.ifOutOctets}.1`, type: "Counter32", value: "7" }, { oid: `${O_.ifSpeed}.1`, type: "Gauge32", value: "100000000" }], [1], false, 0);
-assert.deepEqual(g32.samples.get(1), { inOctets: 4294967295n, outOctets: 7n, bits: 32, speed: 1e8, ts: 0 });
+assert.deepEqual(g32.samples.get(1), { inOctets: 4294967295n, outOctets: 7n, bits: 32, speed: 1e8, ts: 0, src: "snmp" });
 assert.equal(R.parseCounterGets([{ oid: `${O_.ifInOctets}.1`, type: "OCTET STRING", value: "1e9" }, { oid: `${O_.ifOutOctets}.1`, type: "Counter32", value: "-5" }], [1], false, 0).samples.size, 0, "valores no numéricos descartados");
 
 // ---------- Tráfico por consola ----------
@@ -1250,7 +1250,7 @@ TenGigabitEthernet1/1/1 is administratively down, line protocol is down (disable
      0 packets output, 0 bytes, 0 underruns
 core-sw01#`;
 const ios = R.parseCliCounters(iosIf);
-assert.deepEqual(ios.get("gi1/0/1"), { name: "GigabitEthernet1/0/1", inOctets: 987654321n, outOctets: 1234567890123n, speed: 1e9 }, "la velocidad física gana sobre un bandwidth configurado");
+assert.deepEqual(ios.get("gi1/0/1"), { name: "GigabitEthernet1/0/1", inOctets: 987654321n, outOctets: 1234567890123n, speed: 1e9, status: "connected", duplex: "full" }, "la velocidad física gana sobre un bandwidth configurado");
 assert.equal(ios.get("te1/1/1").speed, 1e10);
 assert.equal(ios.get("te1/1/1").speedApprox, true, "solo BW: aproximada");
 assert.equal(R.parseCliCounters("Gi0/1 is up\n  full-duplex, 10 Gb/s, media type is 10G\n 1 packets input, 2 bytes\n 3 packets output, 4 bytes").get("gi0/1").speed, 1e10, "NX-OS");
@@ -1304,6 +1304,82 @@ const trafficCmds = [...Object.values(R.TRAFFIC_COMMANDS).filter(Boolean), ...Ob
 assert.deepEqual(trafficCmds.sort(), ["display interface", "show interface", "show interfaces", "show interfaces extensive"]);
 for (const cmd of trafficCmds) assert.equal(computeRisk(cmd), "read", cmd);
 assert.equal(R.TRAFFIC_COMMANDS.fortinet, undefined);
+
+// ---------- Vista por excepción: umbrales, estados y origen de la lectura ----------
+{
+  // Mismos umbrales que el color continuo de la vista detallada.
+  assert.equal(R.UTIL_HIGH, T.UTIL_WARN);
+  assert.equal(R.UTIL_SATURATED, T.UTIL_CRIT);
+  assert.equal(R.UTIL_HIGH, 0.7);
+  assert.equal(R.UTIL_SATURATED, 0.9);
+  assert.equal(R.trafficLevel(0.69), "normal");
+  assert.equal(R.trafficLevel(0.7), "high");
+  assert.equal(R.trafficLevel(0.89), "high");
+  assert.equal(R.trafficLevel(0.9), "saturated");
+  assert.equal(R.trafficLevel(1.2), "saturated");
+  assert.equal(R.trafficLevel(undefined), "normal", "sin dato no se distingue de normal");
+  assert.equal(R.trafficLevel(NaN), "normal");
+  // Por sentido: el estado de cada sentido sale de su tasa contra la velocidad.
+  assert.equal(R.dirLevel(960e6, 1e9), "saturated");
+  assert.equal(R.dirLevel(120e6, 1e9), "normal");
+  assert.equal(R.dirLevel(780e6, 1e9), "high");
+  assert.equal(R.dirLevel(null, 1e9), "normal");
+  assert.equal(R.dirLevel(5e9, undefined), "normal");
+  assert.ok(R.LEVEL_RANK.down === R.LEVEL_RANK.saturated && R.LEVEL_RANK.saturated > R.LEVEL_RANK.high && R.LEVEL_RANK.high > R.LEVEL_RANK.issues && R.LEVEL_RANK.issues > R.LEVEL_RANK.normal);
+
+  // El origen de la lectura (SNMP o consola) llega hasta el enlace.
+  const base = { inOctets: 0n, outOctets: 0n, bits: 64, speed: 1e9 };
+  const r0 = R.portRate({ ...base, ts: 0, src: "cli" }, { ...base, inOctets: 1000n, outOctets: 2000n, ts: 1000, src: "cli" });
+  assert.equal(r0.src, "cli");
+  const lk = { a: "x", aPort: "Gi1", b: "y", bPort: "Gi2", proto: "CDP" };
+  assert.equal(R.linkTraffic(lk, new Map([["x", new Map([["gi1", r0]])]])).src, "cli");
+  const rs = { ...r0, ts: 5000, src: "snmp" };
+  assert.equal(R.linkTraffic(lk, new Map([["x", new Map([["gi1", r0]])], ["y", new Map([["gi2", rs]])]])).src, "snmp", "manda la lectura más reciente");
+  assert.equal(R.linkTraffic(lk, new Map([["x", new Map([["gi1", { ...r0, src: undefined }]])]])).src, undefined);
+
+  // show interfaces (Cisco): estado, dúplex y errores de la misma lectura de tráfico.
+  const ci = R.parseCliCounters(`GigabitEthernet1/0/5 is down, line protocol is down (err-disabled)
+  Full-duplex, 1000Mb/s, media type is 10/100/1000BaseTX
+     5 minute input rate 0 bits/sec, 0 packets/sec
+     100 packets input, 2000 bytes, 0 no buffer
+     12 input errors, 12 CRC, 0 frame, 0 overrun, 0 ignored
+     50 packets output, 3000 bytes, 0 underruns
+GigabitEthernet1/0/6 is up, line protocol is up (connected)
+  Half-duplex, 100Mb/s, media type is 10/100/1000BaseTX
+     200 packets input, 4000 bytes, 0 no buffer
+     0 input errors, 0 CRC, 0 frame, 0 overrun, 0 ignored
+     60 packets output, 5000 bytes, 0 underruns
+GigabitEthernet1/0/7 is administratively down, line protocol is down
+  Auto-duplex, Auto-speed
+     1 packets input, 2 bytes, 0 no buffer
+     1 packets output, 2 bytes, 0 underruns
+`);
+  const e5 = ci.get("gi1/0/5");
+  assert.deepEqual({ status: e5.status, duplex: e5.duplex, crc: e5.crc, inErr: e5.inErr }, { status: "err-disabled", duplex: "full", crc: "12", inErr: "12" });
+  assert.equal(ci.get("gi1/0/6").status, "connected");
+  assert.equal(ci.get("gi1/0/6").duplex, "half");
+  assert.equal(ci.get("gi1/0/6").crc, "0");
+  assert.equal(ci.get("gi1/0/7").status, "administratively down");
+  assert.equal(ci.get("gi1/0/7").duplex, undefined);
+  // Sin el motivo entre paréntesis (IOS antiguo): enlace/protocolo.
+  assert.equal(R.parseCliCounters("Gi0/1 is up, line protocol is up\n  100 packets input, 2000 bytes\n  100 packets output, 2000 bytes").get("gi0/1").status, "up/up");
+
+  // show interfaces trunk (IOS): VLAN nativa de cada trunk propio; solo la primera tabla.
+  const trunk = T.parsePortInfo([`Port        Mode             Encapsulation  Status        Native vlan
+Gi1/0/1     on               802.1q         trunking      99
+Gi1/0/2     on               802.1q         not-trunking  1
+Po1         on               802.1q         trunking      1
+
+Port        Vlans allowed on trunk
+Gi1/0/1     1-4094
+Gi1/0/3     1-4094
+sw1#`]);
+  assert.deepEqual({ ...trunk["gi1/0/1"] }, { native: "99", vlan: "trunk" });
+  assert.equal(trunk["gi1/0/2"], undefined, "not-trunking no informa");
+  assert.equal(trunk["po1"].native, "1");
+  assert.equal(trunk["gi1/0/3"], undefined);
+  assert.ok(T.PORT_COMMANDS.cisco.includes("show interfaces trunk"));
+}
 
 // ---------- Exportaciones con tráfico ----------
 

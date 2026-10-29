@@ -799,19 +799,19 @@ const SNMP_IFS = {
   "192.0.2.1": [
     [10101, "Te1/1/1", 10000, 1.1e9, 2.4e9],
     [10102, "Te1/1/2", 10000, 0.2e9, 0.3e9],
-    [10001, "Gi1/0/1", 1000, 0.21e9, 0.76e9],
-    [10002, "Gi1/0/2", 1000, 0.18e9, 0.94e9],
+    [10001, "Gi1/0/1", 1000, 0.12e9, 0.96e9],
+    [10002, "Gi1/0/2", 1000, 0.2e9, 0.55e9],
     [10010, "Gi1/0/10", 1000, 35e6, 120e6],
     [10030, "Gi1/0/30", 1000, 2e6, 1e6],
     [10046, "Gi1/0/46", 1000, 8e6, 4e6],
   ],
   "192.0.2.2": [
     [10101, "Te1/1/1", 10000, 2.4e9, 1.1e9],
-    [10011, "Gi1/0/11", 1000, 95e6, 310e6],
+    [10011, "Gi1/0/11", 1000, 120e6, 780e6],
   ],
   "192.0.2.11": [
-    [10048, "Gi1/0/48", 1000, 0.76e9, 0.21e9],
-    [10047, "Gi1/0/47", 1000, 0.94e9, 0.18e9],
+    [10048, "Gi1/0/48", 1000, 0.96e9, 0.12e9],
+    [10047, "Gi1/0/47", 1000, 0.55e9, 0.2e9],
     [10001, "Gi1/0/1", 1000, 12e6, 45e6],
     [10002, "Gi1/0/2", 1000, 140e6, 610e6],
   ],
@@ -899,19 +899,40 @@ if (TOPO_SNMP_SCENE) {
     settings.topoSources = { routing: true, mac: true };
   } else {
     // Más separación que el diagrama base: cada enlace lleva su tasa.
-    settings.topology = { nodes: topology.nodes.map((n) => ({ ...n, x: 480 + (n.x - 480) * 1.35, y: n.y * 1.2 })), links: topology.links.map((l) => ({ ...l })) };
+    // Estado de puertos de ejemplo: un Po1 al 96 % bajando (asimétrico), un enlace al 78 %, uno caído
+    // (err-disabled), uno con 12 errores CRC y otro con dúplex distinto (full contra half).
+    const trafficPorts = {
+      "core-sw01": {
+        "gi1/0/1": { status: "connected", speed: "a-1000", duplex: "a-full", vlan: "trunk", group: "Po1", lag: "P" },
+        "gi1/0/2": { status: "connected", speed: "a-1000", duplex: "a-full", vlan: "trunk", group: "Po1", lag: "P" },
+        "te1/1/1": { status: "connected", speed: "10G", duplex: "full", vlan: "trunk", desc: "ISL core-sw02" },
+        "gi1/0/10": { status: "connected", speed: "a-1000", duplex: "a-full", vlan: "trunk", crc: "12" },
+      },
+      "core-sw02": { "gi1/0/11": { status: "connected", speed: "a-1000", duplex: "a-full" } },
+      "dist-sw01": {
+        "gi1/0/48": { status: "connected", speed: "a-1000", duplex: "a-full", vlan: "trunk", group: "Po1", lag: "P" },
+        "gi1/0/47": { status: "connected", speed: "a-1000", duplex: "a-full", vlan: "trunk", group: "Po1", lag: "P" },
+        "gi1/0/1": { status: "err-disabled", speed: "auto", vlan: "trunk" },
+        "gi1/0/2": { status: "connected", speed: "a-1000", duplex: "a-full", vlan: "trunk" },
+      },
+      "sw-acceso-02": { "gi1/0/24": { duplex: "half" } },
+    };
+    settings.topology = {
+      nodes: topology.nodes.map((n) => ({ ...n, ports: trafficPorts[n.id], x: 480 + (n.x - 480) * 1.35, y: n.y * 1.2 })),
+      links: topology.links.map((l) => ({ ...l, ...(topology.nodes.find((x) => x.id === l.b)?.explored ? { seenBy: [l.a, l.b] } : { seenBy: [l.a] }) })),
+    };
     settings.topoSources = {};
   }
   const q = new URLSearchParams(location.search);
   const ui = JSON.parse(localStorage.getItem("topoUi") ?? "{}");
-  Object.assign(ui, { ver: 3, mode: topoScene === "topology-snmp" ? "snmp" : "cli", snmpProfile: "pcore", interval: 15, anim: q.get("anim") !== "0" });
+  Object.assign(ui, { ver: 4, mode: topoScene === "topology-snmp" ? "snmp" : "cli", snmpProfile: "pcore", interval: 15, anim: q.get("anim") !== "0", detail: q.get("detail") === "1" });
   localStorage.setItem("topoUi", JSON.stringify(ui));
 }
 
 // ?topoUi={"traffic":true,"cli":true,"interval":15}: preferencias de Topología al abrir (recuerda el tráfico).
 {
   const tu = new URLSearchParams(location.search).get("topoUi");
-  if (tu) localStorage.setItem("topoUi", JSON.stringify({ ver: 3, panel: true, ...JSON.parse(localStorage.getItem("topoUi") ?? "{}"), ...JSON.parse(tu) }));
+  if (tu) localStorage.setItem("topoUi", JSON.stringify({ ver: 4, panel: true, ...JSON.parse(localStorage.getItem("topoUi") ?? "{}"), ...JSON.parse(tu) }));
 }
 
 // ---- Modo video (?video=1, scripts/video): la terminal responde a lo que se escribe o envía,
@@ -1510,6 +1531,8 @@ Object.assign(scenes, {
   "topology-sources": async () => { await tool("Topología")(); await wait(300); },
   "topology-sources-off": async () => { await tool("Topología")(); await svgNode("rt-borde01"); },
   "topology-ospf": async () => { await tool("Topología")(); await svgNode("rt-borde01"); },
+  // Revisiones de enlaces: dúplex, VLAN nativa, trunk/access, agregado, CRC y asimetría sobre el mapa.
+  "topology-checks": async () => { await tool("Topología")(); await wait(300); },
   "topology-manual": async () => { await tool("Topología")(); await svgNode("ap-bodega"); },
   // Tablas MAC/ARP: enlace MAC/OUI confirmado, sugerencias por confianza y detalle por puerto.
   "topology-mac": async () => {

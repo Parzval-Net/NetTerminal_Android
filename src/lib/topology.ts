@@ -151,7 +151,8 @@ export const ADDRESS_COMMANDS: Record<TopoVendor, string | undefined> = {
 
 /** Comandos de estado de interfaces y agregados (opcionales, de solo lectura). */
 export const PORT_COMMANDS: Record<TopoVendor, string[]> = {
-  cisco: ["show interfaces status", "show etherchannel summary", "show interfaces counters errors"],
+  // "show interfaces trunk" trae la VLAN nativa de cada trunk propio (IOS/IOS-XE): sin ella solo se comparaba si ambos extremos estaban explorados.
+  cisco: ["show interfaces status", "show etherchannel summary", "show interfaces counters errors", "show interfaces trunk"],
   huawei: ["display interface brief", "display interface description", "display eth-trunk"],
   juniper: ["show interfaces descriptions"],
   fortinet: [],
@@ -748,6 +749,17 @@ export function parsePortInfo(outputs: string[]): Record<string, PortInfo> {
       }
       continue;
     }
+    // Cisco IOS/IOS-XE "show interfaces trunk": Port Mode Encapsulation Status Native vlan (primera tabla;
+    // las siguientes, "Vlans allowed", repiten el puerto con listas de VLAN).
+    hi = lines.findIndex((l) => /^Port\s+Mode\s+Encapsulation\s+Status\s+Native vlan/i.test(l));
+    if (hi >= 0) {
+      for (const l of lines.slice(hi + 1)) {
+        if (!l.trim() || /^Port\s/.test(l)) break;
+        const m = l.match(/^(\S+)\s+\S+\s+\S+\s+(\S+)\s+(\d{1,4})\s*$/);
+        if (m && /^trunking$/i.test(m[2])) put(m[1], { native: m[3], vlan: "trunk" });
+      }
+      continue;
+    }
     // Cisco "show interfaces counters errors" (IOS/IOS-XE/NX-OS): Port Align-Err FCS-Err Xmit-Err Rcv-Err ...
     hi = lines.findIndex((l) => /^Port\s+Align-Err\s+FCS-Err/.test(l));
     if (hi >= 0) {
@@ -1249,6 +1261,8 @@ export interface LinkTraffic {
   approx?: boolean;
   /** Momento de la lectura (ms). */
   ts: number;
+  /** De dónde salió la lectura: contadores SNMP (IF-MIB) o comando de consulta por consola. */
+  src?: "snmp" | "cli";
 }
 
 export type UtilLevel = "ok" | "warn" | "crit" | "none";
@@ -1325,7 +1339,7 @@ export function trafficLabel(lt: LinkTraffic, aName?: string): string {
 export type Pt = { x: number; y: number };
 
 /** Punto de una curva cuadrática A-C-B en t. */
-const quad = (a: Pt, c: Pt, b: Pt, t: number): Pt => ({
+export const quad = (a: Pt, c: Pt, b: Pt, t: number): Pt => ({
   x: (1 - t) ** 2 * a.x + 2 * (1 - t) * t * c.x + t ** 2 * b.x,
   y: (1 - t) ** 2 * a.y + 2 * (1 - t) * t * c.y + t ** 2 * b.y,
 });

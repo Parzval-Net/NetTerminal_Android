@@ -10,6 +10,31 @@ import { canonPort, isCliError, knownAddrs, nodeId } from "./topology";
 import type { TopoNode } from "./topology";
 import { OID } from "./topoSnmp";
 
+// ---------- Umbrales y estados del enlace ----------
+
+/**
+ * Umbrales de utilización del sentido más cargado: "alto" desde 70 % y "saturado" desde 90 %.
+ * Son los mismos que usa el color continuo de la vista detallada (UTIL_WARN y UTIL_CRIT de
+ * topology.ts, con prueba de igualdad). Constantes aparte para volverlos configurables.
+ */
+export const UTIL_HIGH = 0.7;
+export const UTIL_SATURATED = 0.9;
+
+/** Estado de carga de un enlace o de un sentido. Sin dato o sin velocidad conocida cuenta como normal. */
+export type TrafficLevel = "normal" | "high" | "saturated";
+/** Estado de un enlace en el mapa: a los de carga se suma "down" (puerto caído en algún extremo, incluye err-disabled). */
+export type LinkLevel = TrafficLevel | "down";
+
+export const trafficLevel = (util: number | undefined): TrafficLevel =>
+  util === undefined || !Number.isFinite(util) ? "normal" : util >= UTIL_SATURATED ? "saturated" : util >= UTIL_HIGH ? "high" : "normal";
+
+/** Estado de un sentido: su tasa contra la velocidad del enlace. */
+export const dirLevel = (bps: number | null | undefined, speed: number | undefined): TrafficLevel =>
+  bps == null || !speed || speed <= 0 ? "normal" : trafficLevel(bps / speed);
+
+/** Orden de severidad para listas y para elegir el peor enlace de un par: caído y saturado primero. */
+export const LEVEL_RANK: Record<LinkLevel | "issues", number> = { down: 3, saturated: 3, high: 2, issues: 1, normal: 0 };
+
 /** Lectura de contadores de una interfaz. */
 export interface CounterSample {
   inOctets: bigint;
@@ -22,6 +47,8 @@ export interface CounterSample {
   approx?: boolean;
   /** Momento de la lectura (ms). */
   ts: number;
+  /** Origen de la lectura. */
+  src?: "snmp" | "cli";
 }
 
 /** Tasa de una interfaz en bits/s; null si no se puede calcular (primera lectura o reinicio). */
@@ -31,6 +58,7 @@ export interface PortRate {
   speed?: number;
   approx?: boolean;
   ts: number;
+  src?: "snmp" | "cli";
 }
 
 const TWO32 = 1n << 32n;
@@ -66,7 +94,8 @@ export function rateBps(prev: bigint, cur: bigint, bits: 32 | 64, seconds: numbe
 export function portRate(prev: CounterSample | undefined, cur: CounterSample): PortRate {
   const speed = cur.speed && cur.speed > 0 ? cur.speed : undefined;
   const approx = speed && cur.approx ? { approx: true as const } : {};
-  if (!prev || prev.bits !== cur.bits) return { inBps: null, outBps: null, speed, ...approx, ts: cur.ts };
+  const src = cur.src ? { src: cur.src } : {};
+  if (!prev || prev.bits !== cur.bits) return { inBps: null, outBps: null, speed, ...approx, ...src, ts: cur.ts };
   const secs = (cur.ts - prev.ts) / 1000;
   // Con el BW configurado la velocidad puede ser menor que la real: no se descarta por 1,5x.
   const limit = cur.approx ? undefined : speed;
@@ -75,6 +104,7 @@ export function portRate(prev: CounterSample | undefined, cur: CounterSample): P
     outBps: rateBps(prev.outOctets, cur.outOctets, cur.bits, secs, limit),
     speed,
     ...approx,
+    ...src,
     ts: cur.ts,
   };
 }
@@ -97,6 +127,8 @@ export function linkTraffic(l: TopoLink, rates: Map<string, Map<string, PortRate
   const speed = pool.length ? Math.min(...pool.map((r) => r.speed!)) : undefined;
   const approx = !exact.length && known.length > 0;
   const util = speed ? Math.max(ab ?? 0, ba ?? 0) / speed : undefined;
+  // El origen es el de la lectura más reciente de los extremos.
+  const src = (ra && rb ? (rb.ts > ra.ts ? rb : ra) : (ra ?? rb))?.src;
   return {
     ab,
     ba,
@@ -104,6 +136,7 @@ export function linkTraffic(l: TopoLink, rates: Map<string, Map<string, PortRate
     ...(util !== undefined ? { util } : {}),
     ...(approx ? { approx: true } : {}),
     ts: Math.max(ra?.ts ?? 0, rb?.ts ?? 0),
+    ...(src ? { src } : {}),
   };
 }
 
@@ -154,7 +187,7 @@ export function parseCounterGets(rows: GetRow[], ifIndexes: number[], hc: boolea
     const sp = Number(val.get(`${cs}.${i}`));
     // ifHighSpeed en Mb/s; ifSpeed en b/s (tope 4.294.967.295: sobre eso informa ifHighSpeed).
     const speed = Number.isFinite(sp) && sp > 0 ? (hc ? sp * 1e6 : sp) : undefined;
-    samples.set(i, { inOctets: inO, outOctets: outO, bits: hc ? 64 : 32, speed, ts });
+    samples.set(i, { inOctets: inO, outOctets: outO, bits: hc ? 64 : 32, speed, ts, src: "snmp" });
   }
   return { samples, hcMissing: hc && samples.size === 0 && ifIndexes.length > 0 };
 }
@@ -218,6 +251,13 @@ export interface CliCounters {
   speed?: number;
   /** La velocidad salió de "BW N Kbit" (configurable con "bandwidth"), no de la física. */
   speedApprox?: true;
+  /** Estado de la interfaz según su encabezado: el motivo entre paréntesis (connected, notconnect, err-disabled) o "up/down". */
+  status?: string;
+  /** Dúplex negociado ("full" o "half") que informa Cisco junto a la velocidad. */
+  duplex?: string;
+  /** Errores CRC y de entrada acumulados (Cisco: "N input errors, N CRC"). */
+  crc?: string;
+  inErr?: string;
 }
 
 const HEADER = /^(?:(\S+) is (?:administratively )?(?:up|down|deleted)\b|(\S+) current state\s*:|Physical interface:\s*([^,\s]+),)/;
@@ -249,6 +289,24 @@ function speedOf(block: string): { speed: number; approx?: true } | undefined {
   const jn = block.match(/\bSpeed\s*:\s*(\d{1,6}(?:\.\d{1,3})?)\s*([kmgt])bps/i);
   if (jn) return { speed: Number(jn[1]) * UNIT[jn[2].toLowerCase() as keyof typeof UNIT] };
   return undefined;
+}
+
+/**
+ * Estado, dúplex y errores de un bloque de "show interfaces" (Cisco IOS/IOS-XE, NX-OS). Encabezado:
+ * "Gi1/0/5 is down, line protocol is down (err-disabled)"; "Full-duplex, 1000Mb/s"; "N input errors, N CRC".
+ * Otros fabricantes quedan sin estos datos (solo se lee lo que el formato permite verificar).
+ */
+function stateOf(block: string): Pick<CliCounters, "status" | "duplex" | "crc" | "inErr"> {
+  const out: Pick<CliCounters, "status" | "duplex" | "crc" | "inErr"> = {};
+  const h = block.match(/^\S+ is (administratively )?(up|down|deleted), line protocol is (up|down)(?: \(([A-Za-z][\w-]{0,30})\))?/m);
+  if (h) out.status = h[4] ?? (h[1] ? "administratively down" : `${h[2]}/${h[3]}`);
+  const d = block.match(/\b(full|half)[- ]duplex\b/i);
+  if (d) out.duplex = d[1].toLowerCase();
+  const crc = block.match(/\b(\d{1,15}) CRC\b/);
+  if (crc) out.crc = crc[1];
+  const ie = block.match(/\b(\d{1,15}) input errors?\b/i);
+  if (ie) out.inErr = ie[1];
+  return out;
 }
 
 function countersOf(block: string): [bigint, bigint] | null {
@@ -283,7 +341,7 @@ export function parseCliCounters(out: string): Map<string, CliCounters> {
       const block = buf.join("\n");
       const c = countersOf(block);
       const sp = speedOf(block);
-      if (c) res.set(canonPort(name), { name, inOctets: c[0], outOctets: c[1], speed: sp?.speed, ...(sp?.approx ? { speedApprox: true as const } : {}) });
+      if (c) res.set(canonPort(name), { name, inOctets: c[0], outOctets: c[1], speed: sp?.speed, ...(sp?.approx ? { speedApprox: true as const } : {}), ...stateOf(block) });
     }
     buf = [];
   };

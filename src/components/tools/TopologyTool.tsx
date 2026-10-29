@@ -1,4 +1,4 @@
-import { memo, useCallback, useEffect, useId, useLayoutEffect, useMemo, useRef, useState } from "react";
+import { memo, useCallback, useEffect, useId, useLayoutEffect, useMemo, useRef, useState, useSyncExternalStore } from "react";
 import { invoke } from "@tauri-apps/api/core";
 import { save } from "@tauri-apps/plugin-dialog";
 import { writeText } from "@tauri-apps/plugin-clipboard-manager";
@@ -45,6 +45,7 @@ import {
   PortInfo,
   PORT_COMMANDS,
   Pt,
+  quad,
   ROUTING_COMMANDS,
   SUGGESTERS,
   TOPO_SOURCES,
@@ -108,7 +109,6 @@ import {
   toSvg,
   shortName,
   trafficShort,
-  UTIL_WARN,
   updateManualLink,
   updateManualNode,
   utilLevel,
@@ -141,9 +141,9 @@ import {
   parseSnmpDiscovery,
   snmpDiscoveryPlan,
 } from "../../lib/topoSnmp";
-import { linkTraffic } from "../../lib/topoTraffic";
+import { LEVEL_RANK, LinkLevel, UTIL_HIGH, UTIL_SATURATED, linkTraffic } from "../../lib/topoTraffic";
 import {
-  ISSUE_LABEL,
+  LinkDetail,
   NO_FILTER,
   NO_SCOPE,
   NodeRole,
@@ -157,7 +157,13 @@ import {
   VENDOR_LABEL,
   filterActive,
   filterView,
+  ageText,
+  attentionRows,
+  checkCoverage,
   linkChecks,
+  linkDetail,
+  linkLevelOf,
+  markEnds,
   nodeRole,
   nodeState,
   nodeVendor,
@@ -211,7 +217,7 @@ type ManualForm =
   | { kind: "link"; edit?: TopoLink; a: string; aPort: string; b: string; bPort: string };
 
 /** Secciones del panel lateral. */
-type PanelSection = "fuentes" | "alcance" | "filtros" | "revisiones" | "trafico" | "sugerencias" | "detalle" | "ruta" | "manual" | "snapshots" | "leyenda" | "enlaces";
+type PanelSection = "fuentes" | "alcance" | "filtros" | "atencion" | "trafico" | "sugerencias" | "detalle" | "ruta" | "manual" | "snapshots" | "leyenda";
 type DiscoveryMode = "cli" | "snmp";
 /**
  * Estado visual de la herramienta (panel, secciones, modo de descubrimiento, intervalo y animación
@@ -233,8 +239,14 @@ interface TopoUi {
   arrows: boolean;
   /** Etiqueta de tasas (↑ ↓ y %) junto a cada enlace con tráfico. */
   rates: boolean;
-  /** Color y grosor del enlace según su utilización (verde, amarillo, rojo). */
+  /** Color y grosor del enlace según su utilización (verde, amarillo, rojo). Solo en la vista detallada. */
   color: boolean;
+  /**
+   * Vista detallada (para expertos): colores continuos, rótulo en cada enlace con tráfico, flechas y
+   * animación. Apagada, el mapa es por excepción: lo normal queda gris y solo se resalta lo alto,
+   * saturado o caído.
+   */
+  detail: boolean;
   /** Puertos activos sin vecino dibujados como "L2 desconocido" junto a su equipo. */
   l2: boolean;
   /** Alcance del descubrimiento: qué vecinos nuevos se incorporan. */
@@ -243,7 +255,7 @@ interface TopoUi {
 const UI_KEY = "topoUi";
 const UI_DEFAULT: TopoUi = {
   panel: true,
-  sec: { fuentes: false, trafico: false, sugerencias: false, detalle: true, ruta: true, manual: false, snapshots: false, leyenda: false },
+  sec: { fuentes: false, atencion: true, trafico: false, sugerencias: false, detalle: true, ruta: true, manual: false, snapshots: false, leyenda: false },
   mode: "cli",
   snmpProfile: "",
   interval: 30,
@@ -253,12 +265,13 @@ const UI_DEFAULT: TopoUi = {
   arrows: true,
   rates: true,
   color: true,
+  detail: false,
   l2: true,
   scope: NO_SCOPE,
 };
 
 /** Versión de las preferencias de estilo del tráfico guardadas en topoUi. */
-const UI_VERSION = 3;
+const UI_VERSION = 4;
 
 function loadUi(): TopoUi {
   try {
@@ -274,14 +287,15 @@ function loadUi(): TopoUi {
       mode: v.mode === "snmp" ? "snmp" : "cli",
       snmpProfile: typeof v.snmpProfile === "string" ? v.snmpProfile.slice(0, 64) : "",
       interval: TRAFFIC_INTERVALS.includes(v.interval as TrafficInterval) ? (v.interval as TrafficInterval) : 30,
-      // Lo guardado antes de la versión 3 (flechas, tasas, color y animación) era de diseños
-      // anteriores: se parte del estilo vigente (rótulos compactos y color, animación apagada).
+      // Lo guardado antes de la versión 4 (flechas, tasas, color y animación) era de diseños
+      // anteriores: se parte del estilo vigente (vista por excepción; el estilo previo es "Vista detallada").
       anim: ver >= UI_VERSION && v.anim === true,
       traffic: v.traffic === true,
       cli: v.cli === true,
       arrows: ver < UI_VERSION || v.arrows !== false,
       rates: ver < UI_VERSION || v.rates !== false,
       color: ver < UI_VERSION || v.color !== false,
+      detail: v.detail === true,
       l2: v.l2 !== false,
       scope: {
         skipEndpoints: v.scope?.skipEndpoints === true,
@@ -434,8 +448,6 @@ function LegendLine({ dash }: { dash?: string }) {
 /** Geometría de un enlace más su clave (linkKey), calculada una vez por enlace y no en cada redibujo. */
 type Geo = ReturnType<typeof linkGeometry>[number] & { k: string };
 
-/** Línea de "puerto: estado" para el tooltip de un extremo. */
-const infoLine = (port: string, info: string) => (info ? `${port}: ${info}` : "");
 /** Estado de un puerto para el tooltip del enlace (estado, velocidad, grupo y descripción). */
 const portLine = (n: TopoNode | undefined, port: string) => {
   const p = port ? portOf(n, port) : undefined;
@@ -457,123 +469,231 @@ const nodeSub = (n: TopoNode, ghost: boolean) =>
 
 interface TrafficRow {
   key: string;
-  a: string;
-  b: string;
-  aPort: string;
-  bPort: string;
   lt: LinkTraffic;
 }
 
 /** Máximo de enlaces animados a la vez (los más cargados): medido en una topología de 400 equipos. */
 const FLOW_MAX = 60;
 
-/** Filas a la vista antes de "Ver todos": las más cargadas, que son las que importan. */
-const TRAFFIC_TOP = 10;
+/** Bits por segundo con coma decimal ("9,7 Gb/s"). */
+const bpsEs = (bps: number | null | undefined) => fmtBps(bps).replace(".", ",");
+
+/** Color del tema por estado (normal: gris). El rojo es solo de saturado; caído va en gris oscuro punteado. */
+const LEVEL_COLOR: Record<TrafficLevelName, string> = { normal: "var(--muted)", high: "var(--warn)", saturated: "var(--danger)" };
+type TrafficLevelName = "normal" | "high" | "saturated";
+
+/** Tono de las píldoras: fondo tenue del color, borde del color y texto del mismo tono más oscuro. */
+const PILL_TONE: Record<"high" | "saturated" | "down", string> = { high: "var(--warn)", saturated: "var(--danger)", down: "var(--muted)" };
+const pillStyle = (tone: keyof typeof PILL_TONE): React.CSSProperties => ({
+  fill: `color-mix(in srgb, ${PILL_TONE[tone]} 16%, var(--panel))`,
+  stroke: PILL_TONE[tone],
+});
+const pillTextStyle = (tone: keyof typeof PILL_TONE): React.CSSProperties => ({
+  fill: `color-mix(in srgb, ${PILL_TONE[tone]} 40%, var(--text))`,
+  fontVariantNumeric: "tabular-nums",
+});
+
+// ---------- Ficha del enlace (al pasar el mouse o enfocar) ----------
+
+/** Qué enlaces muestra la ficha y dónde (coordenadas de pantalla del puntero, o del enlace enfocado). */
+interface TipState {
+  keys: string[];
+  x: number;
+  y: number;
+  focus: boolean;
+}
 
 /**
- * Tabla flotante de enlaces por carga (botón "Enlaces" junto a la leyenda). Memorizada: solo se
- * redibuja con una lectura nueva o al cambiar el enlace elegido, no al arrastrar equipos. Muestra
- * las 10 más cargadas; con más, busca por equipo o puerto y filtra las que pasan el 70 %.
+ * Estado de la ficha fuera de React: el puntero cambia de posición decenas de veces por segundo y
+ * solo la ficha (LinkTip) debe redibujarse, no la herramienta ni las capas del mapa.
  */
-const TrafficTable = memo(function TrafficTable({
-  id,
-  rows,
-  byUtil,
-  focus,
-  onPick,
-  onClose,
-}: {
-  id: string;
-  rows: TrafficRow[];
-  byUtil: boolean;
-  focus: string | null;
-  onPick: (r: TrafficRow) => void;
-  onClose: () => void;
-}) {
-  const [q, setQ] = useState("");
-  const [onlyHot, setOnlyHot] = useState(false);
-  const [all, setAll] = useState(false);
-  const needle = q.trim().toLowerCase();
-  const matched = rows.filter(
-    (r) => (!onlyHot || (r.lt.util ?? 0) >= UTIL_WARN) && (!needle || `${r.a} ${r.aPort} ${r.b} ${r.bPort}`.toLowerCase().includes(needle)),
+class TipStore {
+  private state: TipState | null = null;
+  private subs = new Set<() => void>();
+  /** Mientras se arrastra un equipo o el fondo no se muestra la ficha. */
+  blocked: () => boolean = () => false;
+  subscribe = (f: () => void) => {
+    this.subs.add(f);
+    return () => {
+      this.subs.delete(f);
+    };
+  };
+  get = () => this.state;
+  show = (keys: string[], x: number, y: number, focus = false) => {
+    if (this.blocked()) return this.hide();
+    const s = this.state;
+    if (s && s.x === x && s.y === y && s.focus === focus && s.keys.length === keys.length && s.keys.every((k, i) => k === keys[i])) return;
+    this.state = { keys, x, y, focus };
+    this.subs.forEach((f) => f());
+  };
+  hide = () => {
+    if (!this.state) return;
+    this.state = null;
+    this.subs.forEach((f) => f());
+  };
+}
+
+const LEVEL_LABEL: Record<LinkLevel, string> = { normal: "Normal", high: "Alto", saturated: "Saturado", down: "Caído" };
+
+/** Barra de uso de un sentido: su color sigue el estado de ese sentido (gris si es normal). */
+function DirBar({ d, approx }: { d: LinkDetail["dirs"][number]; approx?: boolean }) {
+  const pct = d.util === undefined ? undefined : Math.round(d.util * 100);
+  return (
+    <div className="mt-1.5">
+      <div className="flex items-baseline justify-between gap-2">
+        <span className="min-w-0 truncate">
+          <span className="font-semibold">{d.label}</span>
+          <span className="text-muted"> {d.from} → {d.to}</span>
+        </span>
+        <span className="shrink-0 tabular-nums">
+          <span className={d.level === "normal" ? "" : "font-semibold"} style={d.level === "normal" ? undefined : { color: `color-mix(in srgb, ${LEVEL_COLOR[d.level]} 55%, var(--text))` }}>
+            {pct === undefined ? "?" : `${approx ? "≈" : ""}${pct} %`}
+          </span>
+          <span className="text-[10.5px] text-muted"> {bpsEs(d.bps)}</span>
+        </span>
+      </div>
+      <div className="mt-0.5 h-1.5 rounded-full bg-line overflow-hidden" aria-hidden>
+        <div className="h-full rounded-full" style={{ width: `${Math.min(100, pct ?? 0)}%`, background: d.level === "normal" ? "var(--muted)" : LEVEL_COLOR[d.level], opacity: d.level === "normal" ? 0.55 : 1 }} />
+      </div>
+    </div>
   );
-  const list = all || needle || onlyHot ? matched : matched.slice(0, TRAFFIC_TOP);
-  const big = rows.length > TRAFFIC_TOP;
+}
+
+/** Cuerpo de la ficha de un enlace (título, interfaces, barras Baja y Sube, hallazgos y fuente). */
+function LinkTipBody({ d, now }: { d: LinkDetail; now: number }) {
+  const chip = d.level === "normal" ? null : LEVEL_LABEL[d.level];
+  const chipColor = d.level === "down" ? "var(--muted)" : LEVEL_COLOR[d.level];
+  return (
+    <div>
+      <div className="flex items-baseline gap-1.5">
+        <span className="min-w-0 truncate text-[12px] font-semibold">
+          {d.aName} → {d.bName}
+        </span>
+        <span className="shrink-0 text-[10.5px] text-muted">{d.proto}</span>
+        {chip && (
+          <span className="ml-auto shrink-0 rounded-full px-1.5 text-[10.5px] font-semibold" style={{ background: `color-mix(in srgb, ${chipColor} 18%, var(--panel))`, color: `color-mix(in srgb, ${chipColor} 40%, var(--text))` }}>
+            {chip}
+          </span>
+        )}
+        {d.state && <span className="ml-auto shrink-0 text-[10.5px] text-muted">{d.state === "removed" ? "ya no aparece" : "nuevo"}</span>}
+      </div>
+      {d.ends.map((e, i) => (
+        <p key={i} className="mt-0.5 text-muted [overflow-wrap:anywhere]">
+          {e.name && <span className="text-fg">{e.name} </span>}
+          <span className="font-mono text-[11px]">{e.text}</span>
+        </p>
+      ))}
+      {d.group && (
+        <p className="mt-0.5 text-muted [overflow-wrap:anywhere]">
+          <span className="font-medium text-accent">
+            {d.group} ×{d.members.length}
+          </span>{" "}
+          {d.members.map((m) => `${m.aPort}${m.lag ? ` (${m.lag})` : ""}`).join(", ")}
+        </p>
+      )}
+      {d.dirs.length ? (
+        <>
+          {d.dirs.map((x) => (
+            <DirBar key={x.label} d={x} approx={d.approx} />
+          ))}
+          {d.approx && <p className="mt-0.5 text-[10.5px] text-muted">≈ velocidad del BW configurado (aproximada)</p>}
+          {!d.speed && <p className="mt-0.5 text-[10.5px] text-muted">Velocidad del enlace desconocida: sin % de uso.</p>}
+        </>
+      ) : (
+        <p className="mt-1.5 text-muted">Sin lectura de tráfico</p>
+      )}
+      <div className="mt-1.5 space-y-0.5">
+        {d.findings.length ? (
+          d.findings.map((f, i) => (
+            <p key={i} className="flex items-start gap-1.5">
+              <span className="mt-[1px] grid h-3.5 w-3.5 shrink-0 place-items-center rounded-full text-[9.5px] font-bold" style={{ background: "var(--warn)", color: "var(--panel)" }} aria-hidden>
+                !
+              </span>
+              <span className="[overflow-wrap:anywhere]">{f.text}</span>
+            </p>
+          ))
+        ) : (
+          <p className="text-muted">{d.hasPortData ? "Sin errores" : "Sin datos de interfaz (lee el estado de puertos)"}</p>
+        )}
+      </div>
+      {d.ts && d.source && (
+        <p className="mt-1 text-[10.5px] text-muted">
+          {d.source} · {ageText(d.ts, now)}
+        </p>
+      )}
+    </div>
+  );
+}
+
+/**
+ * Ficha propia del enlace: aparece al pasar el mouse sobre el trazo o su píldora, o al enfocarlo con
+ * el teclado. Va dentro del mapa (sin salirse de él), no captura el puntero y se oculta con Escape,
+ * al mover el mapa o al hacer zoom.
+ */
+const LinkTip = memo(function LinkTip({ store, box, detailsFor }: { store: TipStore; box: React.RefObject<HTMLDivElement | null>; detailsFor: (keys: string[]) => LinkDetail[] }) {
+  const tip = useSyncExternalStore(store.subscribe, store.get);
+  const ref = useRef<HTMLDivElement>(null);
+  const keyId = tip?.keys.join("\n") ?? "";
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  const details = useMemo(() => (tip ? detailsFor(tip.keys) : []), [keyId, detailsFor]);
+  useEffect(() => {
+    if (!tip) return;
+    const hide = () => store.hide();
+    const onKey = (e: KeyboardEvent) => e.key === "Escape" && store.hide();
+    const el = box.current;
+    window.addEventListener("keydown", onKey);
+    el?.addEventListener("wheel", hide, { passive: true });
+    el?.addEventListener("scroll", hide, { capture: true, passive: true });
+    return () => {
+      window.removeEventListener("keydown", onKey);
+      el?.removeEventListener("wheel", hide);
+      el?.removeEventListener("scroll", hide, { capture: true });
+    };
+  }, [!!tip, store, box]);
+  useLayoutEffect(() => {
+    const el = ref.current;
+    const b = box.current;
+    if (!tip || !el || !b) return;
+    const r = b.getBoundingClientRect();
+    const w = el.offsetWidth;
+    const h = el.offsetHeight;
+    const m = 6;
+    let x = tip.x - r.left + 14;
+    let y = tip.y - r.top + 16;
+    // Sin espacio a la derecha o abajo, pasa al otro lado del puntero; siempre dentro del mapa.
+    if (x + w > r.width - m) x = tip.x - r.left - w - 14;
+    if (y + h > r.height - m) y = tip.y - r.top - h - 14;
+    x = Math.max(m, Math.min(x, r.width - w - m));
+    y = Math.max(m, Math.min(y, r.height - h - m));
+    el.style.transform = `translate(${Math.round(x)}px, ${Math.round(y)}px)`;
+  }, [tip, details, box]);
+  if (!tip || !details.length) return null;
+  const now = Date.now();
   return (
     <div
-      id={id}
-      role="group"
-      aria-label="Enlaces por carga"
-      className="w-[340px] max-w-full flex flex-col rounded-lg border border-line bg-panel shadow-pop text-[12px]"
-      style={{ maxHeight: "min(360px, 60vh)" }}
-      onKeyDown={(e) => e.key === "Escape" && onClose()}
+      ref={ref}
+      role="tooltip"
+      data-link-tip
+      className="absolute left-0 top-0 z-30 w-[300px] max-w-[calc(100%-12px)] max-h-[calc(100%-12px)] overflow-hidden pointer-events-none rounded-lg border border-line bg-panel shadow-pop px-3 py-2 text-[11.5px] leading-snug text-fg"
     >
-      <div className="flex items-center gap-1.5 px-2.5 pt-2 pb-1.5 border-b border-line">
-        <span className="font-medium flex-1">Enlaces por carga</span>
-        <button
-          type="button"
-          aria-pressed={onlyHot}
-          onClick={() => setOnlyHot((v) => !v)}
-          className={`h-6 px-2 rounded-md border text-[11px] ${onlyHot ? "border-[var(--accent)] text-accent bg-[var(--selected)]" : "border-line text-muted hover:bg-hover"}`}
-        >
-          ≥ 70 %
-        </button>
-        <button type="button" aria-label="Cerrar" onClick={onClose} className="h-6 w-6 grid place-items-center rounded-md text-muted hover:text-fg hover:bg-hover">
-          <X size={13} />
-        </button>
-      </div>
-      {big && (
-        <div className="px-2.5 py-1.5 border-b border-line">
-          <input className="field !h-7 !text-[12px] w-full" placeholder="Buscar equipo o puerto" value={q} onChange={(e) => setQ(e.target.value)} aria-label="Buscar enlace" />
+      {details.slice(0, 3).map((d, i) => (
+        <div key={d.key} className={i ? "mt-2 border-t border-line pt-2" : ""}>
+          <LinkTipBody d={d} now={now} />
         </div>
-      )}
-      <ul className="min-h-0 overflow-auto py-1">
-        {list.map((r) => {
-          const c = byUtil ? UTIL_VAR[utilLevel(r.lt.util)] : "var(--text)";
-          const on = focus === r.key;
-          return (
-            <li key={r.key}>
-              <button
-                type="button"
-                aria-pressed={on}
-                title={`${r.a} ${r.aPort || "?"} → ${r.b}: ${fmtBps(r.lt.ab)}\n${r.b} ${r.bPort || "?"} → ${r.a}: ${fmtBps(r.lt.ba)}${r.lt.speed ? `\nEnlace de ${fmtBps(r.lt.speed)}` : ""}\nClic para ubicarlo en el mapa`}
-                onClick={() => onPick(r)}
-                className={`w-full flex items-center gap-2 px-2.5 h-7 text-left hover:bg-hover ${on ? "bg-selected" : ""}`}
-              >
-                <span className="flex-1 min-w-0 truncate">
-                  {shortName(r.a)} <span className="text-muted">{r.aPort}</span> ↔ {shortName(r.b)}
-                </span>
-                {r.lt.util !== undefined && (
-                  <span className="w-10 h-1 shrink-0 rounded-full bg-line overflow-hidden" aria-hidden>
-                    <span className="block h-full rounded-full" style={{ width: `${Math.min(100, Math.round(r.lt.util * 100))}%`, background: c }} />
-                  </span>
-                )}
-                <span className="w-14 shrink-0 text-right font-semibold tabular-nums" style={{ color: c }}>
-                  {trafficShort(r.lt)}
-                </span>
-              </button>
-            </li>
-          );
-        })}
-        {!list.length && <li className="px-2.5 py-2 text-muted">{onlyHot ? "Ningún enlace sobre 70 %." : "Sin coincidencias."}</li>}
-      </ul>
-      {big && !all && !needle && !onlyHot && (
-        <button type="button" onClick={() => setAll(true)} className="h-7 border-t border-line text-[11.5px] text-accent hover:bg-hover rounded-b-lg">
-          Ver todos ({rows.length})
-        </button>
-      )}
+      ))}
+      {details.length > 3 && <p className="mt-2 text-muted">y {details.length - 3} más</p>}
     </div>
   );
 });
 
 /**
  * Un enlace del diagrama. Memorizado: al arrastrar un equipo solo se redibujan sus enlaces (los
- * demás conservan la misma geometría y props).
+ * demás conservan la misma geometría y props). El detalle (interfaces, tráfico, hallazgos) sale en la
+ * ficha propia (LinkTip) y no en un <title>: el tooltip nativo del SVG depende del webview, tarda
+ * y desaparece con cada redibujo del mapa.
  */
 const LinkView = memo(function LinkView({
   g,
-  a,
-  b,
   aName,
   bName,
   ga,
@@ -583,17 +703,16 @@ const LinkView = memo(function LinkView({
   hot,
   dim,
   lt,
+  level,
+  nIssues,
+  detail,
   color: byUtil,
   arrows,
   animate,
   noGroup,
-  issues,
-  onIssue,
+  tips,
 }: {
   g: Geo;
-  /** Extremos en el diagrama actual (sin los fantasma del snapshot): nombre y estado de puerto. */
-  a: TopoNode | undefined;
-  b: TopoNode | undefined;
   aName: string;
   bName: string;
   /** Extremos a la vista (con fantasma): el grupo (Port-channel) del enlace. */
@@ -604,65 +723,91 @@ const LinkView = memo(function LinkView({
   hot: boolean;
   dim: boolean;
   lt: LinkTraffic | undefined;
+  /** Estado del enlace: normal, alto, saturado o caído. */
+  level: LinkLevel;
+  nIssues: number;
+  /** Vista detallada: colores continuos por utilización, flechas y animación. */
+  detail: boolean;
   color: boolean;
   arrows: boolean;
   animate: boolean;
   /** El par lleva píldora de tráfico: su rótulo de agregado ("Po1 ×2") ya va dentro de ella. */
   noGroup: boolean;
-  issues: LinkIssue[] | undefined;
-  onIssue: (id: string) => void;
+  tips: TipStore;
 }) {
   // Textos por enlace aquí y no en el padre: con cientos de enlaces, cada redibujo del mapa solo
   // los rehace para los que cambiaron (al arrastrar un equipo, los suyos).
-  const aInfo = portLine(a, g.l.aPort);
-  const bInfo = portLine(b, g.l.bPort);
   const grp = noGroup ? undefined : (portOf(ga, g.l.aPort)?.group ?? portOf(gb, g.l.bPort)?.group);
-  const level = lt && byUtil ? utilLevel(lt.util) : undefined;
-  const color = state === "removed" ? "var(--danger)" : state === "added" ? "var(--ok)" : level ? UTIL_VAR[level] : hot ? "var(--accent)" : "var(--muted)";
-  const sev = worstSev(issues);
-  // Sin color por utilización, las flechas van en el tono neutro del texto.
-  const dirLevel = (bps: number | null) => (byUtil ? UTIL_VAR[lt?.speed && bps !== null ? utilLevel(bps / lt.speed) : "none"] : "var(--muted)");
-  const tip = [
-    `${aName} ${g.l.aPort || "?"} ↔ ${g.l.bPort || "?"} ${bName} (${protoLabel(g.l)})`,
-    lt &&
-      `Tráfico: ${aName} → ${bName} ${fmtBps(lt.ab)} · ${bName} → ${aName} ${fmtBps(lt.ba)}${lt.speed ? ` · enlace de ${fmtBps(lt.speed)}, ${lt.approx ? "≈" : ""}${Math.round((lt.util ?? 0) * 100)} %${lt.approx ? " (aproximada: velocidad desde el BW configurado)" : ""}` : " · velocidad desconocida"}`,
-    infoLine(g.l.aPort, aInfo),
-    infoLine(g.l.bPort, bInfo),
-    g.l.logical ? "Sesión lógica: no es un enlace físico" : "",
-    state === "removed" ? "Ya no aparece (respecto del snapshot)" : state === "added" ? "Nuevo (respecto del snapshot)" : "",
-    ...(issues ?? []).map((i) => `${i.sev === "crit" ? "✖" : "⚠"} ${ISSUE_LABEL[i.kind]}: ${i.text}`),
-  ]
-    .filter(Boolean)
-    .join("\n");
+  const [lit, setLit] = useState(false);
+  const detailLevel = detail && lt && byUtil ? utilLevel(lt.util) : undefined;
+  const down = level === "down" && !state;
+  const color = state === "removed" ? "var(--danger)" : state === "added" ? "var(--ok)" : down ? "var(--text)" : detail ? (detailLevel ? UTIL_VAR[detailLevel] : hot ? "var(--accent)" : "var(--muted)") : level === "saturated" ? "var(--danger)" : level === "high" ? "var(--warn)" : hot ? "var(--accent)" : "var(--muted)";
+  const base = g.l.logical ? 1.25 : 1.5;
+  const width = down ? 2 : detail ? (lt && byUtil ? 1.75 + 3 * Math.min(1, lt.util ?? 0) : hot || state ? 2.5 : base) : level === "saturated" ? 5 : level === "high" ? 4 : hot || state ? 2.5 : base;
+  const strokeWidth = isRoute ? Math.max(3.5, width) : width;
   const showGroup = grp && g.pair.length > 1 && g.pair.indexOf(g.l) === 0;
-  const dash = state === "removed" ? "6 5" : linkDash(g.l);
-  const midLabel = showGroup || isRoutingProto(g.l.proto) || g.l.proto === "MAC/OUI";
+  const dash = state === "removed" ? "6 5" : down ? "5 5" : linkDash(g.l);
+  // Sin color de utilización, las flechas van en el tono neutro del texto.
+  const dirColor = (bps: number | null) => (byUtil ? UTIL_VAR[lt?.speed && bps !== null ? utilLevel(bps / lt.speed) : "none"] : "var(--muted)");
+  const label = `${aName} ${g.l.aPort || "?"} a ${bName} ${g.l.bPort || "?"}, ${protoLabel(g.l)}${down ? ", caído" : level === "high" ? ", uso alto" : level === "saturated" ? ", saturado" : ""}${nIssues ? `, ${nIssues} ${nIssues === 1 ? "hallazgo" : "hallazgos"}` : ""}`;
+  const key = g.k;
   return (
-    <g opacity={dim ? 0.25 : 1}>
-      <title>{tip}</title>
+    <g
+      opacity={dim ? 0.25 : 1}
+      tabIndex={0}
+      role="group"
+      aria-label={label}
+      style={{ outline: "none" }}
+      onPointerEnter={() => setLit(true)}
+      onPointerMove={(e) => tips.show([key], e.clientX, e.clientY)}
+      onPointerLeave={() => {
+        setLit(false);
+        tips.hide();
+      }}
+      onFocus={(e) => {
+        // Solo con el teclado: un clic también enfoca el elemento y no debe abrir la ficha.
+        let kb = false;
+        try {
+          kb = e.currentTarget.matches(":focus-visible");
+        } catch {
+          kb = true;
+        }
+        if (!kb) return;
+        setLit(true);
+        const r = e.currentTarget.getBoundingClientRect();
+        tips.show([key], r.left + r.width / 2, r.top + r.height / 2, true);
+      }}
+      onBlur={() => {
+        setLit(false);
+        tips.hide();
+      }}
+      onKeyDown={(e) => e.key === "Escape" && tips.hide()}
+    >
+      {lit && <path d={g.d} fill="none" stroke={down || detailLevel || level !== "normal" ? color : "var(--accent)"} strokeOpacity={0.25} strokeWidth={strokeWidth + 8} strokeLinecap="round" />}
       <path
         d={g.d}
         fill="none"
         stroke={color}
-        strokeWidth={isRoute ? 3.5 : lt && byUtil ? 1.75 + 3 * Math.min(1, lt.util ?? 0) : hot || state ? 2.5 : g.l.logical ? 1.25 : 1.5}
+        strokeOpacity={down ? 0.65 : undefined}
+        strokeWidth={strokeWidth}
         strokeDasharray={dash}
         strokeLinecap={dash ? "round" : undefined}
       />
-      {lt && (
+      {detail && lt && (
         <>
           {/* Un carril por sentido (A→B y B→A): puntos en movimiento con animación, flechas fijas sin ella. */}
-          {animate && !!lt.ab && <FlowLane d={lanePath(g.a, g.c, g.b, 5)} color={dirLevel(lt.ab)} style={flowStyle(lt.ab, lt.speed)} />}
-          {animate && !!lt.ba && <FlowLane d={lanePath(g.a, g.c, g.b, -5)} color={dirLevel(lt.ba)} style={flowStyle(lt.ba, lt.speed)} reverse />}
+          {animate && !!lt.ab && <FlowLane d={lanePath(g.a, g.c, g.b, 5)} color={dirColor(lt.ab)} style={flowStyle(lt.ab, lt.speed)} />}
+          {animate && !!lt.ba && <FlowLane d={lanePath(g.a, g.c, g.b, -5)} color={dirColor(lt.ba)} style={flowStyle(lt.ba, lt.speed)} reverse />}
           {arrows && !animate && (
             <>
-              <polygon points={arrowHead(g.a, g.c, g.b, 0.4, true, 5)} fill={dirLevel(lt.ab)} stroke="var(--panel)" strokeWidth={0.75} />
-              <polygon points={arrowHead(g.a, g.c, g.b, 0.6, false, -5)} fill={dirLevel(lt.ba)} stroke="var(--panel)" strokeWidth={0.75} />
+              <polygon points={arrowHead(g.a, g.c, g.b, 0.4, true, 5)} fill={dirColor(lt.ab)} stroke="var(--panel)" strokeWidth={0.75} />
+              <polygon points={arrowHead(g.a, g.c, g.b, 0.6, false, -5)} fill={dirColor(lt.ba)} stroke="var(--panel)" strokeWidth={0.75} />
             </>
           )}
         </>
       )}
-      {/* Área de clic más ancha que la línea. */}
-      <path d={g.d} fill="none" stroke="transparent" strokeWidth={12} />
+      {/* Área de hover y clic más ancha que la línea: 14 px de pantalla a cualquier zoom. */}
+      <path d={g.d} fill="none" stroke="transparent" strokeWidth={14} vectorEffect="non-scaling-stroke" />
       {(
         [
           [g.pa, g.l.aPort],
@@ -685,14 +830,6 @@ const LinkView = memo(function LinkView({
             {protoLabel(g.l)}
           </text>
         )
-      )}
-      {sev && (
-        <g style={{ cursor: "pointer" }} onClick={() => onIssue(g.l.a)}>
-          <circle cx={g.mid.x} cy={g.mid.y - (midLabel ? 17 : 0)} r={8.5} fill={sev === "crit" ? "var(--danger)" : "var(--warn)"} stroke="var(--panel)" strokeWidth={2} />
-          <text x={g.mid.x} y={g.mid.y - (midLabel ? 17 : 0) + 4} fontSize={12} fontWeight={700} textAnchor="middle" fill="#fff" pointerEvents="none">
-            !
-          </text>
-        </g>
       )}
     </g>
   );
@@ -780,22 +917,36 @@ const NodeView = memo(function NodeView({
   );
 });
 
-/** Píldora de tráfico sobre un enlace (o el centro de un par de paralelos). */
+/** Píldora sobre un enlace (o el centro de un par de paralelos): % de uso o "caído". */
 interface Pill {
   key: string;
   x: number;
   y: number;
   text: string;
+  /** Color de la vista detallada (continuo por utilización). */
   color: string;
+  /** Estado resaltado de la vista por excepción: alto, saturado o caído. */
+  tone?: keyof typeof PILL_TONE;
   dim: boolean;
   keys: string[];
 }
 
+/** Marcador "!" de un problema de interfaz, en el extremo del puerto afectado. */
+interface Mark {
+  key: string;
+  k: string;
+  x: number;
+  y: number;
+  /** Equipo del extremo afectado (al hacer clic se elige y se abre el panel). */
+  node: string;
+  dim: boolean;
+}
+
 /**
- * Capas del mapa (enlaces, nodos L2, equipos y píldoras). Memorizadas: el zoom, el arrastre del
- * fondo, los mensajes y el panel cambian el estado de la herramienta sin tocar el diagrama, y con
- * cientos de equipos rehacer y comparar los elementos de cada enlace y equipo costaba decenas de ms
- * por redibujo.
+ * Capas del mapa (enlaces, nodos L2, equipos, píldoras y marcadores). Memorizadas: el zoom, el
+ * arrastre del fondo, los mensajes y el panel cambian el estado de la herramienta sin tocar el
+ * diagrama, y con cientos de equipos rehacer y comparar los elementos de cada enlace y equipo
+ * costaba decenas de ms por redibujo.
  */
 const TopoLayers = memo(function TopoLayers({
   geometry,
@@ -815,12 +966,14 @@ const TopoLayers = memo(function TopoLayers({
   selected,
   focusLink,
   linkRates,
+  detail,
   color,
   arrows,
   animate,
   animKeys,
   pillPairs,
   checks,
+  tips,
   onIssue,
   onNodeDown,
   onNodeMenu,
@@ -829,8 +982,8 @@ const TopoLayers = memo(function TopoLayers({
   geometry: Geo[];
   nodes: TopoNode[];
   l2Nodes: L2Geo[];
-  /** Píldoras de tráfico, o null con el rótulo apagado. */
-  pills: Pill[] | null;
+  /** Píldoras de los enlaces que lo merecen (alto, saturado, caído; en la vista detallada, todos con tráfico). */
+  pills: Pill[];
   byId: Map<string, TopoNode>;
   shownById: Map<string, TopoNode>;
   snapshot: TopoSnapshot | undefined;
@@ -844,12 +997,14 @@ const TopoLayers = memo(function TopoLayers({
   selected: string | null;
   focusLink: string | null;
   linkRates: Map<string, LinkTraffic>;
+  detail: boolean;
   color: boolean;
   arrows: boolean;
   animate: boolean;
   animKeys: Set<string>;
   pillPairs: Set<string>;
   checks: Map<string, LinkIssue[]>;
+  tips: TipStore;
   onIssue: (id: string) => void;
   onNodeDown: (e: React.PointerEvent<SVGGElement>, n: TopoNode) => void;
   onNodeMenu: (e: React.MouseEvent<SVGGElement>, n: TopoNode) => void;
@@ -857,6 +1012,21 @@ const TopoLayers = memo(function TopoLayers({
 }) {
   /** Nombre del equipo en el diagrama o en el snapshot (los ids son nombres normalizados en minúscula). */
   const anyName = (id: string) => byId.get(id)?.name ?? snapshot?.topo.nodes.find((n) => n.id === id)?.name ?? id;
+  // Marcadores "!" en el extremo del puerto afectado, a un tercio del trazo desde su equipo.
+  const marks = useMemo(() => {
+    const out: Mark[] = [];
+    for (const g of geometry) {
+      const k = g.k;
+      if (removed.has(k)) continue;
+      const m = markEnds(checks.get(k));
+      if (!m.a && !m.b) continue;
+      const t = g.pair.length > 1 ? 0.4 : 0.33;
+      const dim = hasRoute && !routeKeys.has(k);
+      if (m.a) out.push({ key: `${k}|a|${g.l.proto}`, k, ...quad(g.a, g.c, g.b, t), node: g.l.a, dim });
+      if (m.b) out.push({ key: `${k}|b|${g.l.proto}`, k, ...quad(g.a, g.c, g.b, 1 - t), node: g.l.b, dim });
+    }
+    return out;
+  }, [geometry, checks, removed, hasRoute, routeKeys]);
   return (
     <>
       {geometry.map((g) => {
@@ -865,12 +1035,12 @@ const TopoLayers = memo(function TopoLayers({
         const state = removed.has(k) ? "removed" : added.has(k) ? "added" : null;
         const a = byId.get(g.l.a);
         const b = byId.get(g.l.b);
+        const issues = state === "removed" ? undefined : checks.get(k);
+        const lt = state ? undefined : linkRates.get(k);
         return (
           <LinkView
             key={`${k}|${g.l.proto}`}
             g={g}
-            a={a}
-            b={b}
             aName={a?.name ?? anyName(g.l.a)}
             bName={b?.name ?? anyName(g.l.b)}
             ga={shownById.get(g.l.a)}
@@ -879,13 +1049,15 @@ const TopoLayers = memo(function TopoLayers({
             isRoute={isRoute}
             hot={isRoute || focusLink === k || selected === g.l.a || selected === g.l.b}
             dim={hasRoute && !isRoute}
-            lt={state ? undefined : linkRates.get(k)}
+            lt={lt}
+            level={linkLevelOf(issues, lt)}
+            nIssues={issues?.length ?? 0}
+            detail={detail}
             color={color}
             arrows={arrows}
             animate={animate && animKeys.has(k)}
             noGroup={pillPairs.has(k)}
-            issues={state === "removed" ? undefined : checks.get(k)}
-            onIssue={onIssue}
+            tips={tips}
           />
         );
       })}
@@ -909,19 +1081,97 @@ const TopoLayers = memo(function TopoLayers({
           />
         );
       })}
-      {/* Las píldoras van en una capa propia sobre los equipos: un enlace corto no las tapa. */}
-      {pills?.map((t) => {
+      {/* Las píldoras van en una capa propia sobre los equipos: un enlace corto no las tapa. Reciben el puntero para mostrar la ficha. */}
+      {pills.map((t) => {
         const w = t.text.length * 6.4 + 12;
         return (
-          <g key={t.key} opacity={t.dim ? 0.25 : 1} pointerEvents="none">
-            <rect x={t.x - w / 2} y={t.y - 9} width={w} height={18} rx={9} fill="var(--panel)" stroke={t.color} strokeWidth={1.25} />
-            <text x={t.x} y={t.y + 3.8} fontSize={11} fontWeight={600} textAnchor="middle" fill={t.color} style={{ fontVariantNumeric: "tabular-nums" }}>
+          <g
+            key={t.key}
+            opacity={t.dim ? 0.25 : 1}
+            onPointerMove={(e) => tips.show(t.keys, e.clientX, e.clientY)}
+            onPointerLeave={tips.hide}
+          >
+            <rect x={t.x - w / 2} y={t.y - 9} width={w} height={18} rx={9} fill="var(--panel)" stroke={t.color} strokeWidth={1.25} style={t.tone ? pillStyle(t.tone) : undefined} />
+            <text x={t.x} y={t.y + 3.8} fontSize={11} fontWeight={600} textAnchor="middle" fill={t.color} style={t.tone ? pillTextStyle(t.tone) : { fontVariantNumeric: "tabular-nums" }} pointerEvents="none">
               {t.text}
             </text>
           </g>
         );
       })}
+      {/* Marcadores de problemas de interfaz: sobre equipos y píldoras, en el extremo del puerto. */}
+      {marks.map((m) => (
+        <g
+          key={m.key}
+          style={{ cursor: "pointer" }}
+          opacity={m.dim ? 0.35 : 1}
+          onClick={() => onIssue(m.node)}
+          onPointerMove={(e) => tips.show([m.k], e.clientX, e.clientY)}
+          onPointerLeave={tips.hide}
+        >
+          <circle cx={m.x} cy={m.y} r={8.5} fill="var(--warn)" stroke="var(--panel)" strokeWidth={2} />
+          <text x={m.x} y={m.y + 4} fontSize={12} fontWeight={800} textAnchor="middle" fill="var(--panel)" pointerEvents="none">
+            !
+          </text>
+        </g>
+      ))}
     </>
+  );
+});
+
+/** Hora actual refrescada cada `ms` mientras `on`: el "hace N s" del encabezado envejece sin lecturas nuevas. */
+function useNow(ms: number, on: boolean): number {
+  const [now, setNow] = useState(() => Date.now());
+  useEffect(() => {
+    if (!on) return;
+    setNow(Date.now());
+    const t = window.setInterval(() => setNow(Date.now()), ms);
+    return () => window.clearInterval(t);
+  }, [ms, on]);
+  return now;
+}
+
+/**
+ * Resumen del mapa (arriba a la derecha): "Todo normal salvo N enlaces", de dónde y cuándo se leyó.
+ * Un clic abre "Requieren atención" en el panel.
+ */
+const MapSummary = memo(function MapSummary({
+  trafficOn,
+  visible,
+  last,
+  snmp,
+  cli,
+  count,
+  hasData,
+  onOpen,
+}: {
+  trafficOn: boolean;
+  visible: boolean;
+  last: number | undefined;
+  snmp: boolean;
+  cli: boolean;
+  count: number;
+  hasData: boolean;
+  onOpen: () => void;
+}) {
+  const now = useNow(5000, trafficOn && visible && !!last);
+  if (!trafficOn && !count) return null;
+  const src = snmp && cli ? "SNMP y consola" : snmp ? "SNMP" : cli ? "Consola" : "";
+  const head = trafficOn && !hasData ? (last ? "Sin tasas aún" : "Leyendo tráfico…") : count ? (trafficOn ? `Todo normal salvo ${plural(count, "enlace", "enlaces")}` : `${plural(count, "enlace requiere", "enlaces requieren")} atención`) : "Todo normal";
+  return (
+    <button
+      type="button"
+      onClick={onOpen}
+      title="Ver los enlaces que requieren atención"
+      className="absolute top-2 right-2 z-10 max-w-[calc(100%-1rem)] inline-flex items-center gap-2 rounded-lg border border-line bg-panel shadow-pop px-2.5 h-7 text-[11.5px] hover:bg-hover"
+    >
+      <span className="h-2 w-2 shrink-0 rounded-full" style={{ background: count ? "var(--warn)" : "var(--ok)" }} aria-hidden />
+      <span className="font-medium truncate">{head}</span>
+      {trafficOn && last && src && (
+        <span className="text-muted truncate">
+          {src} · {ageText(last, now)}
+        </span>
+      )}
+    </button>
   );
 });
 
@@ -1299,13 +1549,8 @@ export function TopologyTool({
   // Filtros: solo cambian lo que se dibuja; el diagrama guardado, las rutas y las exportaciones siguen completos.
   const shown = useMemo(() => filterView(view, filter), [view, filter]);
   const filtering = filterActive(filter);
-  const checks = useMemo(() => linkChecks(topoData), [topoData]);
-  const checkCount = useMemo(() => {
-    let crit = 0;
-    let warn = 0;
-    for (const list of checks.values()) for (const i of list) i.sev === "crit" ? crit++ : warn++;
-    return { crit, warn };
-  }, [checks]);
+  // Con la lectura de tráfico por consola, el estado de interfaz de "show interfaces" (dúplex, errores, estado) se suma al guardado.
+  const checks = useMemo(() => linkChecks(topoData, traffic.live), [topoData, traffic.live]);
   // Puertos activos sin vecino: un nodo virtual por equipo, del lado opuesto a sus vecinos.
   const l2 = useMemo(() => (ui.l2 ? unknownL2(topoData) : null), [ui.l2, topoData]);
   const l2Cache = useRef(new Map<string, L2Geo>());
@@ -1381,7 +1626,7 @@ export function TopologyTool({
   const shownById = useMemo(() => new Map(shown.nodes.map((n) => [n.id, n])), [shown.nodes]);
   const onIssue = useCallback((id: string) => {
     setSelected(id);
-    setUi((u) => ({ ...u, panel: true, sec: { ...u.sec, revisiones: true } }));
+    setUi((u) => ({ ...u, panel: true, sec: { ...u.sec, atencion: true } }));
   }, []);
   /** Copia al portapapeles y lo confirma en el mensaje de la herramienta. */
   const copyText = (text: string, what: string) =>
@@ -1427,72 +1672,77 @@ export function TopologyTool({
     }
     return m;
   }, [trafficOn, traffic.rates, topo.links]);
-  // La animación va en los carriles de cada sentido: sin flechas tampoco se anima.
-  const animate = ui.anim && ui.arrows && !reducedMotion && visible;
+  // Vista detallada (estilo previo): color continuo, flechas por sentido y animación en los carriles.
+  // La vista por defecto es por excepción y no anima ni dibuja flechas.
+  const detail = ui.detail;
+  const arrowsOn = detail && ui.arrows;
+  const animate = detail && ui.anim && ui.arrows && !reducedMotion && visible;
   /**
-   * Rótulos de tráfico del mapa: una píldora corta por enlace (% de uso, o la tasa si no se conoce la
-   * velocidad) sobre el centro de la línea, como las etiquetas de enlace de Weathermap o SolarWinds.
-   * Los enlaces paralelos entre el mismo par llevan una sola, con el agregado y el peor uso. El
-   * detalle por sentido queda en el tooltip y en la tabla del panel.
+   * Píldoras del mapa. Por excepción: solo los enlaces altos (70 a 89 %), saturados (90 % o más) o
+   * caídos llevan una sobre el centro de la línea, con el % de uso o "caído". En la vista detallada
+   * llevan una todos los enlaces con tráfico (si "Rótulo" está activo). Los paralelos entre el mismo
+   * par comparten una, con el agregado y el peor estado; el detalle por sentido va en la ficha.
    */
   const trafficPills = useMemo(() => {
-    if (!linkRates.size) return [];
     const pairKey = (l: TopoLink) => [l.a, l.b].sort().join("~");
-    // Una pasada: por par, los centros de todas sus curvas, sus claves y los enlaces con tráfico.
-    const pairs = new Map<string, { mids: Pt[]; keys: string[]; items: { g: Geo; lt: LinkTraffic }[] }>();
+    const pairs = new Map<string, { mids: Pt[]; keys: string[]; items: { g: Geo; lt?: LinkTraffic; level: LinkLevel }[] }>();
     for (const g of geometry) {
       const k = g.k;
       if (removed.has(k)) continue;
+      const lt = linkRates.get(k);
+      const level = linkLevelOf(checks.get(k), lt);
       const pk = pairKey(g.l);
       let e = pairs.get(pk);
       if (!e) pairs.set(pk, (e = { mids: [], keys: [], items: [] }));
       e.mids.push(g.mid);
       e.keys.push(k);
-      const lt = linkRates.get(k);
-      if (lt) e.items.push({ g, lt });
+      if (level === "down" || (detail ? !!lt && ui.rates : level !== "normal")) e.items.push({ g, lt, level });
     }
     const out: Pill[] = [];
     for (const [pk, { mids, keys, items }] of pairs) {
       if (!items.length) continue;
-      const worst = items.reduce((a, b) => ((b.lt.util ?? -1) > (a.lt.util ?? -1) ? b : a));
+      const worst = items.reduce((a, b) => (LEVEL_RANK[b.level] > LEVEL_RANK[a.level] || (LEVEL_RANK[b.level] === LEVEL_RANK[a.level] && (b.lt?.util ?? -1) > (a.lt?.util ?? -1)) ? b : a));
       const multi = items[0].g.pair.length > 1;
       const grp = multi ? linkGroup(shown, items[0].g.l, shownById) : undefined;
-      const short = trafficShort(worst.lt);
+      const short = worst.level === "down" ? "caído" : worst.lt ? trafficShort(worst.lt) : "";
+      const tone: Pill["tone"] = worst.level === "down" ? "down" : detail ? undefined : worst.level === "high" || worst.level === "saturated" ? worst.level : undefined;
       out.push({
         key: pk,
         x: mids.reduce((a, m) => a + m.x, 0) / mids.length,
         y: mids.reduce((a, m) => a + m.y, 0) / mids.length,
         text: multi ? `${grp ? `${grp} ×${items[0].g.pair.length}` : "máx"} · ${short}` : short,
-        color: ui.color ? UTIL_VAR[utilLevel(worst.lt.util)] : "var(--text)",
+        color: detail && ui.color && worst.lt ? UTIL_VAR[utilLevel(worst.lt.util)] : "var(--text)",
+        tone,
         dim: !!route && !keys.some((k) => routeKeys.has(k)),
         keys,
       });
     }
     return out;
-  }, [geometry, linkRates, removed, route, routeKeys, ui.color, shown, shownById]);
+  }, [geometry, linkRates, checks, removed, route, routeKeys, detail, ui.color, ui.rates, shown, shownById]);
   /** Pares con píldora (todos sus enlaces): su rótulo de agregado ("Po1 ×2") ya va dentro de ella. */
-  const pillPairs = useMemo(() => new Set(ui.rates ? trafficPills.flatMap((p) => p.keys) : []), [trafficPills, ui.rates]);
+  const pillPairs = useMemo(() => new Set(trafficPills.flatMap((p) => p.keys)), [trafficPills]);
 
-  /** Tabla del panel: cada enlace con tráfico, del más cargado al menos (sin velocidad, por tasa). */
-  // Sin posiciones: al arrastrar un equipo la geometría cambia en cada cuadro, pero las filas no, y
-  // se devuelve el mismo arreglo para que la tabla (memorizada) y la animación no se recalculen.
+  /**
+   * Enlaces con tráfico, del más cargado al menos, solo para la animación de la vista detallada.
+   * Sin posiciones: al arrastrar un equipo la geometría cambia en cada cuadro, pero las filas no, y
+   * se devuelve el mismo arreglo para que la animación no se recalcule.
+   */
   const rowsRef = useRef<TrafficRow[]>([]);
   const trafficRows = useMemo(() => {
     const rows: TrafficRow[] = [];
+    if (!animate) return rows;
     for (const g of geometry) {
-      const k = g.k;
-      const lt = linkRates.get(k);
-      if (!lt || removed.has(k)) continue;
-      rows.push({ key: k, a: node(g.l.a)?.name ?? anyName(g.l.a), b: node(g.l.b)?.name ?? anyName(g.l.b), aPort: g.l.aPort, bPort: g.l.bPort, lt });
+      const lt = linkRates.get(g.k);
+      if (lt && !removed.has(g.k)) rows.push({ key: g.k, lt });
     }
     const peak = (lt: LinkTraffic) => Math.max(lt.ab ?? 0, lt.ba ?? 0);
     rows.sort((x, y) => (y.lt.util ?? -1) - (x.lt.util ?? -1) || peak(y.lt) - peak(x.lt));
     const prev = rowsRef.current;
-    const same = prev.length === rows.length && prev.every((r, i) => r.key === rows[i].key && r.lt === rows[i].lt && r.a === rows[i].a && r.b === rows[i].b);
+    const same = prev.length === rows.length && prev.every((r, i) => r.key === rows[i].key && r.lt === rows[i].lt);
     if (!same) rowsRef.current = rows;
     return rowsRef.current;
-  }, [geometry, linkRates, removed]);
-  /** Geometría a la vista, para ubicar el enlace que se elige en la tabla (sin un índice por cuadro). */
+  }, [animate, geometry, linkRates, removed]);
+  /** Geometría a la vista, para ubicar el enlace que se elige en "Requieren atención" (sin un índice por cuadro). */
   const geometryRef = useRef(geometry);
   geometryRef.current = geometry;
   /**
@@ -1501,24 +1751,60 @@ export function TopologyTool({
    * el resto conserva las flechas fijas.
    */
   const animKeys = useMemo(() => new Set(animate ? trafficRows.slice(0, FLOW_MAX).map((r) => r.key) : []), [animate, trafficRows]);
-  const trafficHot = useMemo(() => trafficRows.filter((r) => (r.lt.util ?? 0) >= UTIL_WARN).length, [trafficRows]);
-  const linksId = useId();
-  const closeLinks = useCallback(() => setUi((u) => ({ ...u, sec: { ...u.sec, enlaces: false } })), []);
-  /** Clic en la tabla: resalta el enlace y lo centra (otro clic en el mismo lo suelta). */
+
+  /** Requieren atención: alto, saturado, caído o con problemas de interfaz, por severidad y luego uso. */
+  const attention = useMemo(() => attentionRows(topoData, checks, linkRates, removed), [topoData, checks, linkRates, removed]);
+  const attentionCount = useMemo(() => {
+    let down = 0;
+    let load = 0;
+    let issues = 0;
+    for (const r of attention) r.level === "down" ? down++ : r.level === "issues" ? issues++ : load++;
+    return { down, load, issues };
+  }, [attention]);
+  const coverage = useMemo(() => checkCoverage(topoData, traffic.live), [topoData, traffic.live]);
+
+  // Ficha del enlace: se arma solo para el enlace bajo el puntero (o enfocado). Las funciones leen
+  // datos vigentes sin cambiar de identidad en cada arrastre: la ficha no depende de posiciones.
+  const tips = useMemo(() => new TipStore(), []);
+  tips.blocked = () => !!drag.current || !!endPan.current;
+  useEffect(() => {
+    if (!visible) tips.hide();
+  }, [visible, tips]);
+  const mapBox = useRef<HTMLDivElement>(null);
+  const viewRef = useRef(view);
+  viewRef.current = view;
+  const detailsFor = useCallback(
+    (keys: string[]): LinkDetail[] => {
+      const v = viewRef.current;
+      const byId = new Map(v.nodes.map((n) => [n.id, n]));
+      const out: LinkDetail[] = [];
+      const want = new Set(keys);
+      for (const l of v.links) {
+        const k = linkKey(l);
+        if (!want.has(k)) continue;
+        const st = removed.has(k) ? "removed" : added.has(k) ? "added" : null;
+        out.push(linkDetail(v, l, { byId, lt: st ? undefined : linkRates.get(k), issues: st === "removed" ? undefined : checks.get(k), live: traffic.live, state: st }));
+      }
+      // Los peores primero (caído y saturado), como en la lista de atención.
+      return out.sort((x, y) => LEVEL_RANK[y.level] - LEVEL_RANK[x.level]);
+    },
+    [checks, linkRates, removed, added, traffic.live],
+  );
+  /** Clic en "Requieren atención": resalta el enlace y lo centra (otro clic en el mismo lo suelta). */
   const focusLinkRef = useRef(focusLink);
   focusLinkRef.current = focusLink;
-  const pickLink = useCallback((r: TrafficRow) => {
-    if (focusLinkRef.current === r.key) return setFocusLink(null);
-    setFocusLink(r.key);
-    const mid = geometryRef.current.find((g) => g.k === r.key)?.mid;
+  const pickLink = useCallback((key: string) => {
+    if (focusLinkRef.current === key) return setFocusLink(null);
+    setFocusLink(key);
+    const mid = geometryRef.current.find((g) => g.k === key)?.mid;
     if (!mid) return;
     setZoom((z) => Math.max(z, 1.4));
     setFocusReq(mid);
   }, []);
-  // El enlace elegido dejó de tener tráfico o de estar a la vista: se suelta el resaltado.
+  // El enlace elegido dejó de estar a la vista: se suelta el resaltado.
   useEffect(() => {
-    if (focusLink && !trafficRows.some((r) => r.key === focusLink)) setFocusLink(null);
-  }, [focusLink, trafficRows]);
+    if (focusLink && !geometry.some((g) => g.k === focusLink)) setFocusLink(null);
+  }, [focusLink, geometry]);
 
   // Sugerencias: se calculan del diagrama ya leído, sin comandos, y solo con su fuente activa.
   const suggestions = useMemo(() => collectSuggestions(topoData, sources, dismissed), [topoData, sources, dismissed]);
@@ -2092,14 +2378,8 @@ export function TopologyTool({
     [ui.scope.skipEndpoints && "sin teléfonos ni AP", ui.scope.cidrs.trim() && !scopeErr && ui.scope.cidrs.trim(), ui.scope.maxDepth && `hasta ${ui.scope.maxDepth} saltos`]
       .filter(Boolean)
       .join(" · ") || "Sin restricciones";
-  const issueList = useMemo(() => {
-    const byKey = new Map(topo.links.map((l) => [linkKey(l), l]));
-    return [...checks]
-      .flatMap(([k, list]) => (byKey.has(k) ? list.map((i) => ({ k, ...i, l: byKey.get(k)! })) : []))
-      .sort((x, y) => Number(y.sev === "crit") - Number(x.sev === "crit"));
-  }, [checks, topo.links]);
-  const showChecks = () => {
-    setUi((u) => ({ ...u, panel: true, sec: { ...u.sec, revisiones: true } }));
+  const showAttention = () => {
+    setUi((u) => ({ ...u, panel: true, sec: { ...u.sec, atencion: true } }));
   };
 
   // Leyenda solo con lo que hay en la vista y solo si hay algo más que CDP/LLDP.
@@ -2107,7 +2387,9 @@ export function TopologyTool({
   const hasPhysical = shown.links.some((l) => !linkDash(l));
   const hasTentative = shown.nodes.some((n) => n.manual || n.addrOnly);
   const hasTraffic = linkRates.size > 0;
-  const showLegend = legendKinds.length > 0 || hasTentative || hasTraffic;
+  // Leyenda de estados: con lecturas de tráfico, o cuando hay algo que resaltar (caído, problemas de interfaz).
+  const showStatusLegend = hasTraffic || attention.length > 0;
+  const showLegend = legendKinds.length > 0 || hasTentative || showStatusLegend;
 
   const activeSources = TOPO_SOURCES.filter((s) => sourceOn(sources, s.id)).length;
   const trafficSummary = !trafficOn
@@ -2308,10 +2590,10 @@ export function TopologyTool({
                 <ListFilter size={14} className="text-accent" aria-hidden /> <span className="@max-[860px]:sr-only">{shown.nodes.length} de {view.nodes.length}</span>
               </Btn>
             )}
-            {issueList.length > 0 && (
-              <Btn title="Ver las revisiones de enlaces en el panel" aria-label={`Ver ${issueList.length} revisiones de enlaces`} onClick={showChecks}>
-                <TriangleAlert size={14} className={checkCount.crit ? "text-danger" : "text-warn"} aria-hidden /> <span className="@max-[860px]:sr-only">Revisiones</span>{" "}
-                <CountBadge n={issueList.length} />
+            {attention.length > 0 && (
+              <Btn title="Ver los enlaces que requieren atención en el panel" aria-label={`Ver ${attention.length} enlaces que requieren atención`} onClick={showAttention}>
+                <TriangleAlert size={14} className={attentionCount.down + attentionCount.load ? "text-danger" : "text-warn"} aria-hidden />{" "}
+                <span className="@max-[860px]:sr-only">Atención</span> <CountBadge n={attention.length} />
               </Btn>
             )}
             {suggestions.length > 0 && (
@@ -2360,7 +2642,7 @@ export function TopologyTool({
       </section>
 
       <div className="relative flex-1 min-h-[240px] flex gap-3">
-        <div className="relative flex-1 min-w-0 rounded-xl border border-line bg-panel overflow-hidden">
+        <div ref={mapBox} className="relative flex-1 min-w-0 rounded-xl border border-line bg-panel overflow-hidden">
           <div ref={scroller} className="absolute inset-0 overflow-auto">
       {!view.nodes.length ? (
         <div className="h-full grid place-items-center text-[12.5px] text-muted p-6 text-center">
@@ -2386,7 +2668,7 @@ export function TopologyTool({
             geometry={geometry}
             nodes={shown.nodes}
             l2Nodes={l2Nodes}
-            pills={ui.rates ? trafficPills : null}
+            pills={trafficPills}
             byId={topoById}
             shownById={shownById}
             snapshot={snapshot}
@@ -2400,12 +2682,14 @@ export function TopologyTool({
             selected={selected}
             focusLink={focusLink}
             linkRates={linkRates}
+            detail={detail}
             color={ui.color}
-            arrows={ui.arrows}
+            arrows={arrowsOn}
             animate={animate}
             animKeys={animKeys}
             pillPairs={pillPairs}
             checks={checks}
+            tips={tips}
             onIssue={onIssue}
             onNodeDown={onNodeDown}
             onNodeMenu={onNodeMenu}
@@ -2427,19 +2711,20 @@ export function TopologyTool({
               </Btn>
             </div>
           )}
-          {(showLegend || trafficRows.length > 0) && (
+          <MapSummary
+            trafficOn={trafficOn}
+            visible={visible}
+            last={traffic.status.last}
+            snmp={traffic.status.snmp.length > 0}
+            cli={traffic.status.cli.length > 0}
+            count={attention.length}
+            hasData={linkRates.size > 0}
+            onOpen={showAttention}
+          />
+          <LinkTip store={tips} box={mapBox} detailsFor={detailsFor} />
+          {showLegend && (
             <div className="absolute bottom-2 left-2 flex flex-col items-start gap-1.5 max-w-[calc(100%-1rem)]">
-              {isOpen("enlaces") && trafficRows.length > 0 && (
-                <TrafficTable
-                  id={linksId}
-                  rows={trafficRows}
-                  byUtil={ui.color}
-                  focus={focusLink}
-                  onPick={pickLink}
-                  onClose={closeLinks}
-                />
-              )}
-              {showLegend && isOpen("leyenda") && (
+              {isOpen("leyenda") && (
                 <div
                   id={legendId}
                   className="flex flex-col gap-1 rounded-lg border border-line bg-panel shadow-pop px-3 py-2 text-[11.5px] text-muted"
@@ -2466,9 +2751,38 @@ export function TopologyTool({
                       Equipo manual o visto solo por ruteo
                     </span>
                   )}
-                  {hasTraffic && (
+                  {showStatusLegend && (
                     <>
-                      {ui.color && <span className="mt-1 font-medium text-fg">Tráfico (color y grosor por utilización)</span>}
+                      <span className="mt-1 font-medium text-fg">Estado del enlace (sentido más cargado)</span>
+                      {(
+                        [
+                          ["Normal (menos de 70 %)", "var(--muted)", 1.5],
+                          [`Alto (${Math.round(UTIL_HIGH * 100)} a ${Math.round(UTIL_SATURATED * 100) - 1} %)`, "var(--warn)", 4],
+                          [`Saturado (${Math.round(UTIL_SATURATED * 100)} % o más)`, "var(--danger)", 5],
+                        ] as [string, string, number][]
+                      ).map(([text, c, w]) => (
+                        <span key={text} className="inline-flex items-center gap-1.5">
+                          <svg width="34" height="8" aria-hidden className="shrink-0">
+                            <line x1="2" y1="4" x2="32" y2="4" stroke={c} strokeWidth={w} strokeLinecap="round" />
+                          </svg>
+                          {text}
+                        </span>
+                      ))}
+                      <span className="inline-flex items-center gap-1.5">
+                        <svg width="34" height="14" aria-hidden className="shrink-0">
+                          <line x1="2" y1="7" x2="22" y2="7" stroke="var(--text)" strokeOpacity={0.65} strokeWidth={2} strokeDasharray="5 5" strokeLinecap="round" />
+                          <circle cx="28" cy="7" r="5.5" fill="var(--warn)" stroke="var(--panel)" strokeWidth={1.5} />
+                          <text x="28" y="10.5" fontSize="9" fontWeight={800} textAnchor="middle" fill="var(--panel)">
+                            !
+                          </text>
+                        </svg>
+                        Caído (punteado) · ! problema de interfaz
+                      </span>
+                    </>
+                  )}
+                  {detail && hasTraffic && (
+                    <>
+                      {ui.color && <span className="mt-1 font-medium text-fg">Vista detallada: color y grosor por utilización</span>}
                       {ui.color && UTIL_LEGEND.map(([text, lv]) => (
                         <span key={lv} className="inline-flex items-center gap-1.5">
                           <svg width="34" height="8" aria-hidden className="shrink-0">
@@ -2489,46 +2803,23 @@ export function TopologyTool({
                           <polygon points="13,1.5 19,4.5 13,7.5" fill="var(--ok)" />
                           <polygon points="21,4.5 15,7.5 21,10.5" fill="var(--warn)" />
                         </svg>
-                        Una flecha por sentido · rótulo con el % de uso del sentido más cargado (≈: aproximada; detalle al pasar el mouse y en "Enlaces")
+                        Una flecha por sentido · rótulo con el % de uso del sentido más cargado (≈: aproximada)
                       </span>}
                     </>
                   )}
                 </div>
               )}
               <div className="flex items-center gap-1.5">
-                {showLegend && (
-                  <button
-                    type="button"
-                    aria-expanded={isOpen("leyenda")}
-                    aria-controls={legendId}
-                    onClick={() => setUi((u) => ({ ...u, sec: { ...u.sec, leyenda: !u.sec.leyenda, enlaces: false } }))}
-                    className="inline-flex items-center gap-1 h-7 px-2.5 rounded-md border border-line bg-panel text-[11.5px] text-muted hover:text-fg hover:bg-hover"
-                  >
-                    <ChevronUp size={13} aria-hidden className={`transition-transform ${isOpen("leyenda") ? "" : "rotate-180"}`} />
-                    Leyenda
-                  </button>
-                )}
-                {trafficRows.length > 0 && (
-                  // Una sola tarjeta abierta a la vez: la leyenda y la tabla comparten la esquina.
-                  <button
-                    type="button"
-                    aria-expanded={isOpen("enlaces")}
-                    aria-controls={linksId}
-                    title="Enlaces con tráfico, del más cargado al menos"
-                    onClick={() => setUi((u) => ({ ...u, sec: { ...u.sec, enlaces: !u.sec.enlaces, leyenda: false } }))}
-                    className={`inline-flex items-center gap-1 h-7 px-2.5 rounded-md border bg-panel text-[11.5px] hover:bg-hover ${isOpen("enlaces") ? "border-[var(--accent)] text-accent" : "border-line text-muted hover:text-fg"}`}
-                  >
-                    <ChevronUp size={13} aria-hidden className={`transition-transform ${isOpen("enlaces") ? "" : "rotate-180"}`} />
-                    Enlaces
-                    {trafficHot > 0 ? (
-                      <span className="ml-0.5 rounded-full px-1.5 text-[10.5px] font-semibold text-white" style={{ background: "var(--danger)" }} title={`${trafficHot} sobre 70 %`}>
-                        {trafficHot}
-                      </span>
-                    ) : (
-                      <span className="ml-0.5 tabular-nums">{trafficRows.length}</span>
-                    )}
-                  </button>
-                )}
+                <button
+                  type="button"
+                  aria-expanded={isOpen("leyenda")}
+                  aria-controls={legendId}
+                  onClick={() => setUi((u) => ({ ...u, sec: { ...u.sec, leyenda: !u.sec.leyenda } }))}
+                  className="inline-flex items-center gap-1 h-7 px-2.5 rounded-md border border-line bg-panel text-[11.5px] text-muted hover:text-fg hover:bg-hover"
+                >
+                  <ChevronUp size={13} aria-hidden className={`transition-transform ${isOpen("leyenda") ? "" : "rotate-180"}`} />
+                  Leyenda
+                </button>
               </div>
             </div>
           )}
@@ -2655,41 +2946,66 @@ export function TopologyTool({
             </Collapsible>
 
             <Collapsible
-              title="Revisiones de enlaces"
-              badge={issueList.length || undefined}
+              title="Requieren atención"
+              badge={attention.length || undefined}
               summary={
-                issueList.length
-                  ? [checkCount.crit && plural(checkCount.crit, "crítica", "críticas"), checkCount.warn && plural(checkCount.warn, "aviso", "avisos")].filter(Boolean).join(" · ")
-                  : "Sin hallazgos con lo leído"
+                attention.length
+                  ? [attentionCount.down && `${attentionCount.down} caído${attentionCount.down === 1 ? "" : "s"}`, attentionCount.load && `${attentionCount.load} por carga`, attentionCount.issues && plural(attentionCount.issues, "problema", "problemas")]
+                      .filter(Boolean)
+                      .join(" · ")
+                  : "Todo normal"
               }
-              open={isOpen("revisiones")}
-              onToggle={(v) => setOpen("revisiones", v)}
+              open={isOpen("atencion")}
+              onToggle={(v) => setOpen("atencion", v)}
             >
               <div className="space-y-2 text-[12px]">
-                <p className="text-[11px] text-muted leading-snug">
-                  Dúplex, velocidad, VLAN nativa, trunk contra access, miembros fuera del agregado, puertos caídos, errores CRC y enlaces que solo ve un lado. Usa lo leído con
-                  "Estado de puertos" y lo que anuncia el vecino por CDP/LLDP; los errores son acumulados desde el último clear counters.
-                </p>
-                {issueList.length > 0 && (
-                  <ul className="space-y-1 max-h-64 overflow-y-auto">
-                    {issueList.map((x, i) => (
-                      <li key={`${x.k}${x.kind}${i}`}>
-                        <button
-                          type="button"
-                          onClick={() => focusOn(x.l.a)}
-                          className="w-full flex items-start gap-1.5 text-left rounded-md px-1.5 py-1 hover:bg-hover"
-                          title="Ver en el diagrama"
-                        >
-                          <TriangleAlert size={13} className={`mt-0.5 shrink-0 ${x.sev === "crit" ? "text-danger" : "text-warn"}`} aria-label={x.sev === "crit" ? "Crítica" : "Aviso"} />
-                          <span className="min-w-0">
-                            <span className="font-medium">{ISSUE_LABEL[x.kind]}</span>
-                            <span className="block text-[11.5px] text-muted [overflow-wrap:anywhere]">{x.text}</span>
-                          </span>
-                        </button>
-                      </li>
-                    ))}
+                {attention.length > 0 ? (
+                  <ul className="space-y-0.5 max-h-72 overflow-y-auto">
+                    {attention.map((r) => {
+                      const pct = r.util === undefined ? undefined : Math.round(r.util * 100);
+                      const c = r.level === "down" ? "var(--muted)" : r.level === "saturated" ? "var(--danger)" : "var(--warn)";
+                      return (
+                        <li key={r.key}>
+                          <button
+                            type="button"
+                            onClick={() => pickLink(r.key)}
+                            aria-pressed={focusLink === r.key}
+                            className={`w-full text-left rounded-md px-1.5 py-1 hover:bg-hover ${focusLink === r.key ? "bg-selected" : ""}`}
+                            title="Ubicar y resaltar en el diagrama"
+                          >
+                            <span className="flex items-center gap-2">
+                              <span className="flex-1 min-w-0 truncate font-medium">
+                                {shortName(r.aName, 18)} <span className="text-muted">↔</span> {shortName(r.bName, 18)}
+                              </span>
+                              <span className="shrink-0 tabular-nums font-semibold" style={{ color: `color-mix(in srgb, ${c} 45%, var(--text))` }}>
+                                {r.level === "down" ? "caído" : pct === undefined ? "!" : `${pct} %`}
+                              </span>
+                            </span>
+                            {pct !== undefined && r.level !== "down" && (
+                              <span className="mt-0.5 block h-1 rounded-full bg-line overflow-hidden" aria-hidden>
+                                <span className="block h-full rounded-full" style={{ width: `${Math.min(100, pct)}%`, background: r.level === "issues" ? "var(--muted)" : c }} />
+                              </span>
+                            )}
+                            <span className="block text-[11.5px] text-muted [overflow-wrap:anywhere]">{r.phrase}</span>
+                          </button>
+                        </li>
+                      );
+                    })}
                   </ul>
+                ) : (
+                  <p className="text-muted">Todo normal{trafficOn ? "" : ": activa el tráfico para ver también la carga de los enlaces"}.</p>
                 )}
+                <p className="text-[11px] text-muted leading-snug">
+                  Alto desde {Math.round(UTIL_HIGH * 100)} %, saturado desde {Math.round(UTIL_SATURATED * 100)} % (sentido más cargado); caído es un puerto down o err-disabled en algún extremo. Los problemas de interfaz son dúplex o
+                  velocidad distintos, VLAN nativa, trunk contra access, miembros fuera del agregado, errores CRC y enlaces que solo ve un lado; los errores son acumulados desde el último clear counters.
+                </p>
+                <p className="text-[11px] text-muted leading-snug">
+                  {coverage.links
+                    ? `Revisados con datos de puertos: ${coverage.withData} de ${plural(coverage.links, "enlace físico", "enlaces físicos")} (${coverage.both} con ambos extremos).`
+                    : "Sin enlaces físicos que revisar."}
+                  {coverage.withData < coverage.links ? ' Activa "Estado de puertos" y explora también el otro extremo para completar la comparación.' : ""} Por SNMP solo se leen estado y velocidad; el dúplex, la VLAN nativa y los errores
+                  vienen de la consola y de lo que anuncia CDP.
+                </p>
               </div>
             </Collapsible>
 
@@ -2725,31 +3041,41 @@ export function TopologyTool({
                   <Toggle checked={trafficCli} onChange={setTrafficCli} label="También por consola" />
                   <p className="mt-0.5 pl-10 text-[11px] text-muted leading-snug">
                     Para equipos sin perfil SNMP: envía <span className="font-mono">show interfaces</span>, <span className="font-mono">display interface</span> o{" "}
-                    <span className="font-mono">show interfaces extensive</span> a su sesión conectada en cada lectura. Solo consulta, pero ocupa la sesión unos segundos.
+                    <span className="font-mono">show interfaces extensive</span> a su sesión conectada en cada lectura. Solo consulta, pero ocupa la sesión unos segundos. En Cisco la misma lectura trae el estado,
+                    el dúplex y los errores CRC de cada interfaz, que alimentan los problemas de interfaz.
                   </p>
                 </div>
                 <div>
-                  <Toggle checked={ui.color} onChange={(color) => setUi((u) => ({ ...u, color }))} label="Color por utilización" />
-                  <p className="mt-0.5 pl-10 text-[11px] text-muted leading-snug">Verde, amarillo desde 70 % y rojo desde 90 %, con grosor según la carga. Sin color, los enlaces se ven como en el diagrama normal.</p>
-                </div>
-                <div>
-                  <Toggle checked={ui.arrows} onChange={(arrows) => setUi((u) => ({ ...u, arrows }))} label="Flechas de dirección" />
-                  <p className="mt-0.5 pl-10 text-[11px] text-muted leading-snug">Una punta por sentido sobre cada enlace. Sin flechas, el color (si está activo) sigue indicando la utilización.</p>
-                </div>
-                <div>
-                  <Toggle checked={ui.rates} onChange={(rates) => setUi((u) => ({ ...u, rates }))} label="Rótulo en el enlace" />
+                  <Toggle checked={ui.detail} onChange={(d) => setUi((u) => ({ ...u, detail: d }))} label="Vista detallada" />
                   <p className="mt-0.5 pl-10 text-[11px] text-muted leading-snug">
-                    Una etiqueta corta sobre cada enlace con el % de uso (o la tasa, si no se conoce la velocidad). Las tasas por sentido están en "Enlaces", abajo a la izquierda del mapa, y al pasar el mouse.
+                    Para expertos. Por defecto el mapa es por excepción: lo normal (menos de {Math.round(UTIL_HIGH * 100)} %) queda en gris fino y solo se resaltan los enlaces altos, saturados o caídos. La vista detallada
+                    colorea todos los enlaces por utilización y agrega rótulos, flechas y animación.
                   </p>
                 </div>
-                <div>
-                  <Toggle checked={ui.anim && ui.arrows} onChange={(anim) => setUi((u) => ({ ...u, anim, arrows: anim || u.arrows }))} label="Animación" />
-                  <p className="mt-0.5 pl-10 text-[11px] text-muted leading-snug">
-                    Puntos que viajan por cada sentido del enlace, más rápido cuanto más carga (se pausa con la herramienta oculta). Con más de {FLOW_MAX} enlaces con
-                    tráfico se animan los {FLOW_MAX} más cargados y el resto mantiene sus flechas.
-                    {reducedMotion ? " El sistema pide reducir movimiento: queda desactivada." : ""}
-                  </p>
-                </div>
+                {ui.detail && (
+                  <div className="space-y-2.5 pl-4 border-l border-line">
+                    <div>
+                      <Toggle checked={ui.color} onChange={(color) => setUi((u) => ({ ...u, color }))} label="Color por utilización" />
+                      <p className="mt-0.5 pl-10 text-[11px] text-muted leading-snug">Verde, amarillo desde 70 % y rojo desde 90 %, con grosor según la carga.</p>
+                    </div>
+                    <div>
+                      <Toggle checked={ui.arrows} onChange={(arrows) => setUi((u) => ({ ...u, arrows }))} label="Flechas de dirección" />
+                      <p className="mt-0.5 pl-10 text-[11px] text-muted leading-snug">Una punta por sentido sobre cada enlace.</p>
+                    </div>
+                    <div>
+                      <Toggle checked={ui.rates} onChange={(rates) => setUi((u) => ({ ...u, rates }))} label="Rótulo en el enlace" />
+                      <p className="mt-0.5 pl-10 text-[11px] text-muted leading-snug">Una etiqueta corta sobre cada enlace con el % de uso (o la tasa, si no se conoce la velocidad).</p>
+                    </div>
+                    <div>
+                      <Toggle checked={ui.anim && ui.arrows} onChange={(anim) => setUi((u) => ({ ...u, anim, arrows: anim || u.arrows }))} label="Animación" />
+                      <p className="mt-0.5 pl-10 text-[11px] text-muted leading-snug">
+                        Puntos que viajan por cada sentido del enlace, más rápido cuanto más carga (se pausa con la herramienta oculta). Con más de {FLOW_MAX} enlaces con
+                        tráfico se animan los {FLOW_MAX} más cargados y el resto mantiene sus flechas.
+                        {reducedMotion ? " El sistema pide reducir movimiento: queda desactivada." : ""}
+                      </p>
+                    </div>
+                  </div>
+                )}
                 {trafficOn && (
                   <div className="rounded-md border border-line px-2 py-1.5 space-y-0.5 text-[11.5px]">
                     {!traffic.status.last && <p className="text-muted">Leyendo…</p>}

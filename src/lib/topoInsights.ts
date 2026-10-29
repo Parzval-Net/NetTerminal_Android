@@ -3,7 +3,9 @@
  * VLAN nativa, miembros de agregados, errores, asimetrías), rol y fabricante de cada equipo, filtros,
  * búsqueda, puertos activos sin vecino y reglas de alcance del descubrimiento.
  */
+import { LEVEL_RANK, type LinkLevel, type TrafficLevel, dirLevel, trafficLevel } from "./topoTraffic";
 import {
+  type LinkTraffic,
   type MacPort,
   type Neighbor,
   type PortInfo,
@@ -27,7 +29,12 @@ export type IssueSev = "warn" | "crit";
 export interface LinkIssue {
   kind: IssueKind;
   sev: IssueSev;
+  /** Frase completa, con el equipo y el puerto de cada extremo. */
   text: string;
+  /** Frase corta para la ficha y la lista de atención ("12 errores CRC en Gi1/0/48"). */
+  short: string;
+  /** Extremo afectado: "a" o "b" (un puerto) o "both" (algo que difiere entre ambos). */
+  end: "a" | "b" | "both";
 }
 
 export const ISSUE_LABEL: Record<IssueKind, string> = {
@@ -58,6 +65,13 @@ export function speedMbps(s: string | undefined): number | undefined {
   return unit === "G" ? v * 1000 : unit === "K" ? v / 1000 : v;
 }
 
+/** Velocidad corta: 1e9 -> "1G", 2.5e9 -> "2.5G", 100e6 -> "100M". */
+export function speedShort(bps: number): string {
+  if (bps >= 1e9) return `${+(bps / 1e9).toFixed(1)}G`;
+  if (bps >= 1e6) return `${+(bps / 1e6).toFixed(1)}M`;
+  return `${Math.round(bps / 1e3)}k`;
+}
+
 /** Miembro fuera del agregado: Cisco D (down), s (suspendido), I (individual), r (módulo fuera); Huawei Down o Unselect. */
 const LAG_OUT = /^(?:D|s|I|r)$/;
 const LAG_OUT_HUAWEI = /^(?:down|unselect(?:ed)?)$/i;
@@ -67,13 +81,29 @@ export const lagOut = (flag: string | undefined) => !!flag && (LAG_OUT.test(flag
 const DOWN = /^(?:notconnect|disabled|\*?down|admin(?:istratively)?[ -]?down|lowerlayerdown)/i;
 const ERRDIS = /^err-?disabled/i;
 
+/** Puerto caído según su estado: "err-disabled" (cuenta como caído), "down" o undefined. */
+export const portDown = (status: string | undefined): "err-disabled" | "down" | undefined =>
+  status && ERRDIS.test(status) ? "err-disabled" : status && DOWN.test(status) ? "down" : undefined;
+
 const num = (s: string | undefined) => (s && /^\d+$/.test(s) ? Number(s) : 0);
+
+/** Estado de interfaz leído en vivo (show interfaces de la lectura de tráfico): por equipo y puerto (canonPort). */
+export type LivePorts = Map<string, Map<string, PortInfo>>;
+
+/** Puerto guardado más lo leído en vivo (lo más reciente manda). */
+function portWithLive(n: TopoNode, port: string, live: LivePorts | undefined): PortInfo | undefined {
+  if (!port) return undefined;
+  const p = portOf(n, port);
+  const q = live?.get(n.id)?.get(canonPort(port));
+  return p && q ? { ...p, ...q } : (q ?? p);
+}
 
 /**
  * Revisiones por enlace (clave linkKey). Usa solo lo leído: estado de puertos de cada extremo y lo
- * que anunció el vecino por CDP/LLDP. Sin datos de un lado, esa revisión no se informa.
+ * que anunció el vecino por CDP/LLDP, más (si se pasa `live`) lo que informó "show interfaces" en la
+ * lectura de tráfico por consola. Sin datos de un lado, esa revisión no se informa.
  */
-export function linkChecks(t: Topology): Map<string, LinkIssue[]> {
+export function linkChecks(t: Topology, live?: LivePorts): Map<string, LinkIssue[]> {
   const byId = new Map(t.nodes.map((n) => [n.id, n]));
   const res = new Map<string, LinkIssue[]>();
   for (const l of t.links) {
@@ -81,41 +111,73 @@ export function linkChecks(t: Topology): Map<string, LinkIssue[]> {
     const a = byId.get(l.a);
     const b = byId.get(l.b);
     if (!a || !b) continue;
-    const pa = l.aPort ? portOf(a, l.aPort) : undefined;
-    const pb = l.bPort ? portOf(b, l.bPort) : undefined;
+    const pa = portWithLive(a, l.aPort, live);
+    const pb = portWithLive(b, l.bPort, live);
     const issues: LinkIssue[] = [];
     const end = (n: TopoNode, port: string) => `${n.name} ${port}`;
     const da = normDuplex(pa?.duplex);
     const db = normDuplex(pb?.duplex);
-    if (da && db && da !== db) issues.push({ kind: "duplex", sev: "crit", text: `Dúplex distinto: ${end(a, l.aPort)} ${da}, ${end(b, l.bPort)} ${db}` });
-    else if (da === "half" || db === "half")
-      issues.push({ kind: "duplex", sev: "warn", text: `Half dúplex en ${da === "half" ? end(a, l.aPort) : end(b, l.bPort)}` });
+    if (da && db && da !== db)
+      issues.push({ kind: "duplex", sev: "crit", end: "both", text: `Dúplex distinto: ${end(a, l.aPort)} ${da}, ${end(b, l.bPort)} ${db}`, short: `Dúplex distinto: ${da}/${db}` });
+    else if (da === "half" || db === "half") {
+      const half = da === "half" ? "a" : "b";
+      issues.push({ kind: "duplex", sev: "warn", end: half, text: `Half dúplex en ${half === "a" ? end(a, l.aPort) : end(b, l.bPort)}`, short: `Half dúplex en ${half === "a" ? l.aPort : l.bPort}` });
+    }
     const sa = speedMbps(pa?.speed);
     const sb = speedMbps(pb?.speed);
-    if (sa && sb && sa !== sb) issues.push({ kind: "speed", sev: "warn", text: `Velocidad distinta: ${end(a, l.aPort)} ${pa!.speed}, ${end(b, l.bPort)} ${pb!.speed}` });
+    if (sa && sb && sa !== sb)
+      issues.push({
+        kind: "speed",
+        sev: "warn",
+        end: "both",
+        text: `Velocidad distinta: ${end(a, l.aPort)} ${pa!.speed}, ${end(b, l.bPort)} ${pb!.speed}`,
+        short: `Velocidad distinta: ${pa!.speed}/${pb!.speed}`,
+      });
     if (pa?.native && pb?.native && pa.native !== pb.native)
-      issues.push({ kind: "native", sev: "warn", text: `VLAN nativa distinta: ${end(a, l.aPort)} ${pa.native}, ${end(b, l.bPort)} ${pb.native}` });
+      issues.push({
+        kind: "native",
+        sev: "warn",
+        end: "both",
+        text: `VLAN nativa distinta: ${end(a, l.aPort)} ${pa.native}, ${end(b, l.bPort)} ${pb.native}`,
+        short: `VLAN nativa distinta: ${pa.native}/${pb.native}`,
+      });
     const trunkA = pa?.vlan === "trunk";
     const trunkB = pb?.vlan === "trunk";
     if (pa?.vlan && pb?.vlan && trunkA !== trunkB && (/^\d+$/.test(pa.vlan) || /^\d+$/.test(pb.vlan)))
-      issues.push({ kind: "mode", sev: "warn", text: `Un extremo es trunk y el otro access: ${end(a, l.aPort)} ${pa.vlan}, ${end(b, l.bPort)} ${pb.vlan}` });
-    for (const [n, port, p] of [
-      [a, l.aPort, pa],
-      [b, l.bPort, pb],
-    ] as [TopoNode, string, PortInfo | undefined][]) {
+      issues.push({
+        kind: "mode",
+        sev: "warn",
+        end: "both",
+        text: `Un extremo es trunk y el otro access: ${end(a, l.aPort)} ${pa.vlan}, ${end(b, l.bPort)} ${pb.vlan}`,
+        short: "Trunk contra access",
+      });
+    for (const [n, port, p, side] of [
+      [a, l.aPort, pa, "a"],
+      [b, l.bPort, pb, "b"],
+    ] as [TopoNode, string, PortInfo | undefined, "a" | "b"][]) {
       if (!p) continue;
-      if (lagOut(p.lag)) issues.push({ kind: "lag", sev: "crit", text: `${end(n, port)} fuera de ${p.group ?? "su agregado"} (${p.lag})` });
-      if (p.status && ERRDIS.test(p.status)) issues.push({ kind: "down", sev: "crit", text: `${end(n, port)} en err-disabled` });
-      else if (p.status && DOWN.test(p.status)) issues.push({ kind: "down", sev: "warn", text: `${end(n, port)} caído (${p.status}); el vecino puede venir de la caché de CDP/LLDP` });
+      if (lagOut(p.lag))
+        issues.push({ kind: "lag", sev: "crit", end: side, text: `${end(n, port)} fuera de ${p.group ?? "su agregado"} (${p.lag})`, short: `${port} fuera de ${p.group ?? "su agregado"}` });
+      const down = portDown(p.status);
+      if (down === "err-disabled") issues.push({ kind: "down", sev: "crit", end: side, text: `${end(n, port)} en err-disabled`, short: `${port} err-disabled` });
+      else if (down) issues.push({ kind: "down", sev: "warn", end: side, text: `${end(n, port)} caído (${p.status}); el vecino puede venir de la caché de CDP/LLDP`, short: `${port} down` });
       const crc = num(p.crc);
       const inErr = num(p.inErr);
-      if (crc) issues.push({ kind: "errors", sev: "warn", text: `${end(n, port)}: ${crc.toLocaleString("es-CL")} errores CRC/FCS acumulados` });
-      else if (inErr) issues.push({ kind: "errors", sev: "warn", text: `${end(n, port)}: ${inErr.toLocaleString("es-CL")} errores de entrada acumulados` });
+      if (crc)
+        issues.push({ kind: "errors", sev: "warn", end: side, text: `${end(n, port)}: ${crc.toLocaleString("es-CL")} errores CRC/FCS acumulados`, short: `${crc.toLocaleString("es-CL")} errores CRC en ${port}` });
+      else if (inErr)
+        issues.push({ kind: "errors", sev: "warn", end: side, text: `${end(n, port)}: ${inErr.toLocaleString("es-CL")} errores de entrada acumulados`, short: `${inErr.toLocaleString("es-CL")} errores de entrada en ${port}` });
     }
     // Asimetría: ambos explorados por CDP/LLDP y solo uno informa el enlace.
     if (isPhysicalProto(l.proto) && a.explored && b.explored && l.seenBy?.length === 1) {
       const [who, other] = l.seenBy[0] === a.id ? [a, b] : [b, a];
-      issues.push({ kind: "asym", sev: "warn", text: `${who.name} ve a ${other.name}, pero ${other.name} no informa a ${who.name} (CDP/LLDP apagado en un puerto o solo recepción)` });
+      issues.push({
+        kind: "asym",
+        sev: "warn",
+        end: other === a ? "a" : "b",
+        text: `${who.name} ve a ${other.name}, pero ${other.name} no informa a ${who.name} (CDP/LLDP apagado en un puerto o solo recepción)`,
+        short: `${other.name} no informa el enlace`,
+      });
     }
     if (issues.length) res.set(linkKey(l), issues);
   }
@@ -124,6 +186,216 @@ export function linkChecks(t: Topology): Map<string, LinkIssue[]> {
 
 export const worstSev = (issues: LinkIssue[] | undefined): IssueSev | undefined =>
   !issues?.length ? undefined : issues.some((i) => i.sev === "crit") ? "crit" : "warn";
+
+/** Estado del enlace en el mapa: caído (algún extremo down o err-disabled) o el de su carga. */
+export function linkLevelOf(issues: LinkIssue[] | undefined, lt: LinkTraffic | undefined): LinkLevel {
+  return issues?.some((i) => i.kind === "down") ? "down" : trafficLevel(lt?.util);
+}
+
+/** Extremos con un problema que se marca con "!" en el mapa (el caído ya se ve en el trazo y la píldora). */
+export function markEnds(issues: LinkIssue[] | undefined): { a: boolean; b: boolean } {
+  const m = { a: false, b: false };
+  for (const i of issues ?? []) {
+    if (i.kind === "down") continue;
+    if (i.end === "a" || i.end === "both") m.a = true;
+    if (i.end === "b" || i.end === "both") m.b = true;
+  }
+  return m;
+}
+
+/** Cuántos enlaces físicos tienen datos de puertos para revisarse (y cuántos en ambos extremos). */
+export function checkCoverage(t: Topology, live?: LivePorts): { links: number; withData: number; both: number } {
+  const byId = new Map(t.nodes.map((n) => [n.id, n]));
+  let links = 0;
+  let withData = 0;
+  let both = 0;
+  for (const l of t.links) {
+    if (!isPhysicalProto(l.proto) && l.proto !== "manual") continue;
+    const a = byId.get(l.a);
+    const b = byId.get(l.b);
+    if (!a || !b) continue;
+    links++;
+    const pa = portWithLive(a, l.aPort, live);
+    const pb = portWithLive(b, l.bPort, live);
+    if (pa || pb) withData++;
+    if (pa && pb) both++;
+  }
+  return { links, withData, both };
+}
+
+/** "hace 8 s", "hace 3 min", "hace 2 h". */
+export function ageText(ts: number, now: number): string {
+  const s = Math.max(0, Math.round((now - ts) / 1000));
+  return s < 60 ? `hace ${s} s` : s < 3600 ? `hace ${Math.round(s / 60)} min` : `hace ${Math.round(s / 3600)} h`;
+}
+
+// ---------- Ficha de un enlace y lista de atención ----------
+
+export interface LinkDetail {
+  key: string;
+  aName: string;
+  bName: string;
+  aPort: string;
+  bPort: string;
+  proto: string;
+  level: LinkLevel;
+  /** Port-channel (o Eth-Trunk, ae) y sus miembros entre el mismo par, si el enlace es uno de varios. */
+  group?: string;
+  members: { aPort: string; bPort: string; lag?: string }[];
+  /** "puerto · velocidad · estado": una línea si ambos extremos coinciden, dos si difieren. */
+  ends: { name?: string; text: string }[];
+  /** Sentido A→B ("Baja") y B→A ("Sube") con su tasa, % de uso y estado. Vacío sin lectura de tráfico. */
+  dirs: { label: "Baja" | "Sube"; from: string; to: string; bps: number | null; util?: number; level: TrafficLevel }[];
+  speed?: number;
+  approx?: boolean;
+  findings: { sev: IssueSev; text: string }[];
+  /** Hay datos de interfaz de al menos un extremo (si no, "Sin errores" sería engañoso). */
+  hasPortData: boolean;
+  source?: "SNMP" | "Consola";
+  ts?: number;
+  state?: "removed" | "added";
+  logical?: boolean;
+}
+
+/**
+ * Datos de la ficha que se muestra al pasar el mouse o enfocar un enlace. Función pura: el mapa solo
+ * la llama para el enlace bajo el puntero.
+ */
+export function linkDetail(
+  t: Topology,
+  l: TopoLink,
+  o: { lt?: LinkTraffic; issues?: LinkIssue[]; live?: LivePorts; state?: "removed" | "added" | null; byId?: Map<string, TopoNode> } = {},
+): LinkDetail {
+  const byId = o.byId ?? new Map(t.nodes.map((n) => [n.id, n]));
+  const a = byId.get(l.a);
+  const b = byId.get(l.b);
+  const aName = a?.name ?? l.a;
+  const bName = b?.name ?? l.b;
+  const pa = a ? portWithLive(a, l.aPort, o.live) : undefined;
+  const pb = b ? portWithLive(b, l.bPort, o.live) : undefined;
+  const lt = o.lt;
+  const speedOf = (p: PortInfo | undefined) => {
+    const m = speedMbps(p?.speed);
+    return m ? speedShort(m * 1e6) : lt?.speed ? speedShort(lt.speed) : "";
+  };
+  const info = (p: PortInfo | undefined) => [speedOf(p), p?.status].filter(Boolean).join(" · ");
+  const ia = info(pa);
+  const ib = info(pb);
+  const ends =
+    ia === ib
+      ? [{ text: [`${l.aPort || "?"} ↔ ${l.bPort || "?"}`, ia].filter(Boolean).join(" · ") }]
+      : [
+          { name: aName, text: [l.aPort || "?", ia].filter(Boolean).join(" · ") },
+          { name: bName, text: [l.bPort || "?", ib].filter(Boolean).join(" · ") },
+        ];
+  const group = pa?.group ?? pb?.group;
+  const members: LinkDetail["members"] = [];
+  if (group) {
+    for (const m of t.links) {
+      if (!((m.a === l.a && m.b === l.b) || (m.a === l.b && m.b === l.a))) continue;
+      const fwd = m.a === l.a;
+      const ma = a && portWithLive(a, fwd ? m.aPort : m.bPort, o.live);
+      const mb = b && portWithLive(b, fwd ? m.bPort : m.aPort, o.live);
+      if ((ma?.group ?? mb?.group) !== group) continue;
+      members.push({ aPort: fwd ? m.aPort : m.bPort, bPort: fwd ? m.bPort : m.aPort, lag: ma?.lag ?? mb?.lag });
+    }
+  }
+  const dirs: LinkDetail["dirs"] = lt
+    ? [
+        { label: "Baja", from: aName, to: bName, bps: lt.ab, util: lt.speed && lt.ab != null ? lt.ab / lt.speed : undefined, level: dirLevel(lt.ab, lt.speed) },
+        { label: "Sube", from: bName, to: aName, bps: lt.ba, util: lt.speed && lt.ba != null ? lt.ba / lt.speed : undefined, level: dirLevel(lt.ba, lt.speed) },
+      ]
+    : [];
+  return {
+    key: linkKey(l),
+    aName,
+    bName,
+    aPort: l.aPort,
+    bPort: l.bPort,
+    proto: l.logical ? `${l.proto} lógica` : l.proto,
+    level: linkLevelOf(o.issues, lt),
+    ...(group && members.length > 1 ? { group } : {}),
+    members: group && members.length > 1 ? members : [],
+    ends,
+    dirs,
+    ...(lt?.speed ? { speed: lt.speed } : {}),
+    ...(lt?.approx ? { approx: true } : {}),
+    findings: (o.issues ?? []).map((i) => ({ sev: i.sev, text: i.short })),
+    hasPortData: !!(pa || pb),
+    ...(lt?.src ? { source: lt.src === "snmp" ? ("SNMP" as const) : ("Consola" as const) } : {}),
+    ...(lt?.ts ? { ts: lt.ts } : {}),
+    ...(o.state ? { state: o.state } : {}),
+    ...(l.logical ? { logical: true } : {}),
+  };
+}
+
+/** Una fila de "Requieren atención": enlace alto, saturado, caído o con problemas de interfaz. */
+export interface AttentionRow {
+  key: string;
+  l: TopoLink;
+  aName: string;
+  bName: string;
+  level: LinkLevel | "issues";
+  /** Utilización del sentido más cargado (si hay velocidad). */
+  util?: number;
+  speed?: number;
+  phrase: string;
+  rank: number;
+}
+
+/**
+ * Enlaces que requieren atención, por severidad (caído y saturado primero, luego alto y luego los
+ * que solo tienen problemas de interfaz) y, a igual severidad, por utilización. Lo normal no entra.
+ */
+export function attentionRows(
+  t: Topology,
+  checks: Map<string, LinkIssue[]>,
+  rates: Map<string, LinkTraffic>,
+  skip?: Set<string>,
+): AttentionRow[] {
+  const byId = new Map(t.nodes.map((n) => [n.id, n]));
+  const rows: AttentionRow[] = [];
+  for (const l of t.links) {
+    const key = linkKey(l);
+    if (skip?.has(key)) continue;
+    const issues = checks.get(key);
+    const lt = rates.get(key);
+    const traffic = trafficLevel(lt?.util);
+    const level: AttentionRow["level"] = issues?.some((i) => i.kind === "down") ? "down" : traffic !== "normal" ? traffic : issues?.length ? "issues" : "normal";
+    if (level === "normal") continue;
+    const word = traffic === "saturated" ? "Saturado" : "Alto";
+    const first = issues?.[0];
+    const more = issues && issues.length > 1 ? ` (+${issues.length - 1})` : "";
+    const dir = (lt?.ab ?? 0) >= (lt?.ba ?? 0) ? "bajando" : "subiendo";
+    const downIssue = issues?.find((i) => i.kind === "down");
+    const phrase =
+      level === "down"
+        ? `${downIssue!.short}${issues!.length > 1 ? ` (+${issues!.length - 1})` : ""}`
+        : level === "issues"
+          ? `${first!.short}${more}`
+          : first
+            ? `${word} · ${first.short}${more}`
+            : `${word} ${dir}${lt?.speed ? ` · ${speedShort(lt.speed)}` : ""}`;
+    rows.push({
+      key,
+      l,
+      aName: byId.get(l.a)?.name ?? l.a,
+      bName: byId.get(l.b)?.name ?? l.b,
+      level,
+      ...(lt?.util !== undefined ? { util: lt.util } : {}),
+      ...(lt?.speed ? { speed: lt.speed } : {}),
+      phrase,
+      rank: LEVEL_RANK[level],
+    });
+  }
+  return rows.sort(
+    (x, y) =>
+      y.rank - x.rank ||
+      Number(y.level === "down") - Number(x.level === "down") ||
+      (y.util ?? -1) - (x.util ?? -1) ||
+      `${x.aName}${x.bName}`.localeCompare(`${y.aName}${y.bName}`),
+  );
+}
 
 // ---------- Rol y fabricante ----------
 

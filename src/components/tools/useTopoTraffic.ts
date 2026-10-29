@@ -4,7 +4,7 @@ import { runOnDevice } from "../../lib/deviceRun";
 import { vendorFor } from "../../lib/commands";
 import { computeRisk } from "../../lib/packs";
 import { SnmpProfile, targetParams } from "../../lib/snmp";
-import { TopoNode, TopoVendor, Topology, canonPort, isCliError, knownAddrs, nodeId, promptName } from "../../lib/topology";
+import { PortInfo, TopoNode, TopoVendor, Topology, canonPort, isCliError, knownAddrs, nodeId, promptName } from "../../lib/topology";
 import { atPrompt } from "../../lib/cliText";
 import { OID, TopoRead, ifIndexByPort, ifNames } from "../../lib/topoSnmp";
 import {
@@ -93,6 +93,11 @@ export function useTopoTraffic({
 }) {
   const [rates, setRates] = useState<Map<string, Map<string, PortRate>>>(() => new Map());
   const [status, setStatus] = useState<TrafficStatus>(EMPTY);
+  /**
+   * Estado de interfaz que trae la misma lectura por consola (show interfaces: estado, dúplex, errores):
+   * se superpone al estado guardado para las revisiones de enlaces, sin escribirlo en el diagrama.
+   */
+  const [live, setLive] = useState<Map<string, Map<string, PortInfo>>>(() => new Map());
   const ctx = useRef({ topo, profiles, terminals, cli: opts.cli, via });
   ctx.current = { topo, profiles, terminals, cli: opts.cli, via };
   const prev = useRef(new Map<string, Map<string, CounterSample>>());
@@ -101,6 +106,8 @@ export function useTopoTraffic({
   /** Comando de contadores que respondió en cada equipo: no se reintentan los demás en cada ronda. */
   const cliCmd = useRef(new Map<string, string>());
   const ratesRef = useRef(rates);
+  const liveRef = useRef(live);
+  liveRef.current = live;
 
   /** El descubrimiento por SNMP ya leyó ifName: se reutiliza sin otra lectura. */
   const prime = useCallback((id: string, profile: string, byPort: Map<string, number>) => {
@@ -111,6 +118,7 @@ export function useTopoTraffic({
     if (!opts.on) {
       ratesRef.current = new Map();
       setRates(ratesRef.current);
+      setLive(new Map());
       setStatus(EMPTY);
       prev.current.clear();
     }
@@ -154,7 +162,7 @@ export function useTopoTraffic({
       return out;
     };
 
-    const readCli = async (n: TopoNode, term: TerminalRef, ports: string[]): Promise<Map<string, CounterSample>> => {
+    const readCli = async (n: TopoNode, term: TerminalRef, ports: string[], state: Map<string, PortInfo>): Promise<Map<string, CounterSample>> => {
       const h = term.highlight && term.highlight !== "off" ? (vendorFor(term.highlight) as TopoVendor) : undefined;
       // Nunca a ciegas: sin prompt en pantalla (paginador, contraseña, comando del usuario a medias)
       // el primer carácter se pierde y el comando llega mutilado.
@@ -183,7 +191,15 @@ export function useTopoTraffic({
       const res = new Map<string, CounterSample>();
       for (const k of ports) {
         const c = counters.get(k);
-        if (c) res.set(k, { inOctets: c.inOctets, outOctets: c.outOctets, bits: 64, speed: c.speed, ...(c.speedApprox ? { approx: true } : {}), ts });
+        if (!c) continue;
+        res.set(k, { inOctets: c.inOctets, outOctets: c.outOctets, bits: 64, speed: c.speed, ...(c.speedApprox ? { approx: true } : {}), ts, src: "cli" });
+        const info: PortInfo = {};
+        if (c.status) info.status = c.status;
+        if (c.duplex) info.duplex = c.duplex;
+        if (c.crc) info.crc = c.crc;
+        if (c.inErr) info.inErr = c.inErr;
+        if (c.speed && !c.speedApprox) info.speed = String(Math.round(c.speed / 1e6));
+        if (Object.keys(info).length) state.set(k, info);
       }
       return res;
     };
@@ -192,6 +208,7 @@ export function useTopoTraffic({
       if (document.visibilityState === "hidden") return;
       const { topo: t, profiles: ps, terminals: ts, cli, via: hopVia } = ctx.current;
       const st: TrafficStatus = { snmp: [], cli: [], none: [], errors: [], busy: [], last: Date.now() };
+      const liveNow = new Map<string, Map<string, PortInfo>>();
       const jobs = t.nodes
         .filter((n) => n.explored)
         .map(async (n): Promise<[string, Map<string, PortRate>] | null> => {
@@ -205,10 +222,16 @@ export function useTopoTraffic({
           }
           (p ? st.snmp : st.cli).push(n.name);
           // Una lectura en curso por equipo: si la anterior no terminó, se espera a la siguiente ronda.
-          if (inFlight.current.has(n.id)) return [n.id, ratesRef.current.get(n.id) ?? new Map()];
+          if (inFlight.current.has(n.id)) {
+            const keep = liveRef.current.get(n.id);
+            if (keep) liveNow.set(n.id, keep);
+            return [n.id, ratesRef.current.get(n.id) ?? new Map()];
+          }
           inFlight.current.add(n.id);
           try {
-            const samples = p ? await readSnmp(n, p, ports) : await readCli(n, term!, ports);
+            const state = new Map<string, PortInfo>();
+            const samples = p ? await readSnmp(n, p, ports) : await readCli(n, term!, ports, state);
+            if (state.size) liveNow.set(n.id, state);
             const before = prev.current.get(n.id) ?? new Map<string, CounterSample>();
             const out = new Map<string, PortRate>();
             for (const [k, s] of samples) out.set(k, portRate(before.get(k), s));
@@ -217,6 +240,8 @@ export function useTopoTraffic({
           } catch (e) {
             if (e instanceof BusyTab) {
               st.busy.push(n.name);
+              const keep = liveRef.current.get(n.id);
+              if (keep) liveNow.set(n.id, keep);
               return [n.id, ratesRef.current.get(n.id) ?? new Map()];
             }
             st.errors.push(`${n.name}: ${String(e).slice(0, 160)}`);
@@ -229,6 +254,7 @@ export function useTopoTraffic({
       if (!alive) return;
       ratesRef.current = new Map(done);
       setRates(ratesRef.current);
+      setLive(liveNow);
       setStatus(st);
     };
 
@@ -252,5 +278,5 @@ export function useTopoTraffic({
     };
   }, [opts.on, opts.cli, opts.interval, visible]);
 
-  return { rates, status, prime };
+  return { rates, status, prime, live };
 }

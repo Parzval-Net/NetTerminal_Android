@@ -189,6 +189,162 @@ sc = I.scopeNeighbors(t, "sw2", [{ name: "sw9", localPort: "Gi0/2", remotePort: 
 assert.deepEqual(sc.kept, []);
 assert.match(sc.skipped[0], /más de 1 saltos/);
 
+// ---------- Vista por excepción: marcadores, estado del enlace, ficha y lista de atención ----------
+{
+  const mk = (id, ports) => ({ id, name: id, explored: true, x: 1, y: 1, ports });
+  const topo = {
+    nodes: [
+      mk("core", {
+        "gi1/0/1": { status: "connected", speed: "a-1000", duplex: "a-full", vlan: "trunk", group: "Po1", lag: "P" },
+        "gi1/0/2": { status: "connected", speed: "a-1000", duplex: "a-full", vlan: "trunk", group: "Po1", lag: "s" },
+        "gi1/0/3": { status: "err-disabled", speed: "auto" },
+        "gi1/0/4": { status: "connected", speed: "a-1000", duplex: "a-full", crc: "12" },
+        "gi1/0/5": { status: "connected", speed: "a-1000", duplex: "a-full" },
+      }),
+      mk("dist", {
+        "gi1/0/48": { status: "connected", speed: "a-1000", duplex: "a-full", vlan: "trunk", group: "Po1", lag: "P" },
+        "gi1/0/47": { status: "connected", speed: "a-1000", duplex: "a-full", vlan: "trunk", group: "Po1", lag: "P" },
+        "gi1/0/24": { status: "connected", speed: "a-1000", duplex: "a-full" },
+      }),
+      mk("acc1", { "gi1/0/24": { status: "connected", speed: "a-1000", duplex: "a-full" } }),
+      mk("acc2", { "gi1/0/24": { duplex: "half" } }),
+      { id: "ghost", name: "ghost", explored: false, x: 1, y: 1 },
+    ],
+    links: [
+      { a: "core", aPort: "Gi1/0/1", b: "dist", bPort: "Gi1/0/48", proto: "CDP", seenBy: ["core", "dist"] },
+      { a: "core", aPort: "Gi1/0/2", b: "dist", bPort: "Gi1/0/47", proto: "CDP", seenBy: ["core", "dist"] },
+      { a: "core", aPort: "Gi1/0/3", b: "acc1", bPort: "Gi1/0/24", proto: "CDP", seenBy: ["core", "acc1"] },
+      { a: "core", aPort: "Gi1/0/4", b: "ghost", bPort: "", proto: "LLDP", seenBy: ["core"] },
+      { a: "dist", aPort: "Gi1/0/24", b: "acc2", bPort: "Gi1/0/24", proto: "CDP", seenBy: ["dist", "acc2"] },
+      { a: "core", aPort: "Gi1/0/5", b: "acc2", bPort: "Gi1/0/23", proto: "CDP", seenBy: ["core", "acc2"] },
+    ],
+  };
+  const key = (i) => T.linkKey(topo.links[i]);
+  const ck = I.linkChecks(topo);
+  // Cada hallazgo trae su frase corta y el extremo afectado.
+  const lag = ck.get(key(1)).find((i) => i.kind === "lag");
+  assert.equal(lag.end, "a");
+  assert.equal(lag.short, "Gi1/0/2 fuera de Po1");
+  const err = ck.get(key(2)).find((i) => i.kind === "down");
+  assert.deepEqual({ end: err.end, sev: err.sev, short: err.short }, { end: "a", sev: "crit", short: "Gi1/0/3 err-disabled" });
+  const crc = ck.get(key(3)).find((i) => i.kind === "errors");
+  assert.equal(crc.short, "12 errores CRC en Gi1/0/4");
+  assert.equal(crc.end, "a");
+  const dup = ck.get(key(4)).find((i) => i.kind === "duplex");
+  assert.deepEqual({ end: dup.end, short: dup.short }, { end: "both", short: "Dúplex distinto: full/half" });
+  // Marcadores: "!" en el extremo afectado; el caído se ve en el trazo y no lleva marcador.
+  assert.deepEqual(I.markEnds(ck.get(key(1))), { a: true, b: false });
+  assert.deepEqual(I.markEnds(ck.get(key(3))), { a: true, b: false });
+  assert.deepEqual(I.markEnds(ck.get(key(4))), { a: true, b: true });
+  assert.deepEqual(I.markEnds(ck.get(key(2))), { a: false, b: false });
+  assert.deepEqual(I.markEnds(undefined), { a: false, b: false });
+  // err-disabled y puerto caído cuentan como caído; el rojo no se usa para eso.
+  assert.equal(I.portDown("err-disabled"), "err-disabled");
+  assert.equal(I.portDown("notconnect"), "down");
+  assert.equal(I.portDown("administratively down"), "down");
+  assert.equal(I.portDown("connected"), undefined);
+  assert.equal(I.portDown("up/up"), undefined);
+  assert.equal(I.linkLevelOf(ck.get(key(2)), undefined), "down");
+  assert.equal(I.linkLevelOf(ck.get(key(2)), { ab: 1e9, ba: 0, speed: 1e9, util: 1, ts: 1 }), "down", "caído gana sobre la carga");
+  assert.equal(I.linkLevelOf(undefined, { ab: 0.8e9, ba: 0, speed: 1e9, util: 0.8, ts: 1 }), "high");
+  assert.equal(I.linkLevelOf(undefined, { ab: 0.95e9, ba: 0, speed: 1e9, util: 0.95, ts: 1 }), "saturated");
+  assert.equal(I.linkLevelOf(undefined, { ab: 0.5e9, ba: 0, speed: 1e9, util: 0.5, ts: 1 }), "normal");
+  assert.equal(I.linkLevelOf(ck.get(key(3)), undefined), "normal", "un problema de interfaz no cambia el trazo");
+  assert.equal(I.linkLevelOf(undefined, undefined), "normal");
+
+  // Estado leído en vivo (show interfaces): se suma al guardado y manda lo más reciente.
+  const live = new Map([["acc1", new Map([["gi1/0/24", { duplex: "half", crc: "7" }]])]]);
+  const ck2 = I.linkChecks(topo, live);
+  assert.deepEqual(ck2.get(key(2)).map((i) => i.kind).sort(), ["down", "duplex", "errors"]);
+  assert.equal(I.linkChecks(topo).get(key(2)).some((i) => i.kind === "duplex"), false, "sin lectura en vivo no cambia");
+  assert.equal(topo.nodes[2].ports["gi1/0/24"].duplex, "a-full", "no se escribe en el diagrama");
+
+  // Ficha del enlace.
+  const rates = new Map([
+    [key(0), { ab: 960e6, ba: 120e6, speed: 1e9, util: 0.96, ts: 1000, src: "snmp" }],
+    [key(1), { ab: 400e6, ba: 100e6, speed: 1e9, util: 0.4, ts: 1000, src: "snmp" }],
+    [key(4), { ab: 5e6, ba: 9e6, speed: 1e9, util: 0.009, ts: 2000, src: "cli" }],
+  ]);
+  const d0 = I.linkDetail(topo, topo.links[0], { lt: rates.get(key(0)), issues: ck.get(key(0)) });
+  assert.equal(d0.aName, "core");
+  assert.equal(d0.level, "saturated");
+  assert.equal(d0.group, "Po1");
+  assert.deepEqual(d0.members.map((m) => m.aPort), ["Gi1/0/1", "Gi1/0/2"]);
+  assert.equal(d0.members[1].lag, "s");
+  assert.deepEqual(d0.ends, [{ text: "Gi1/0/1 ↔ Gi1/0/48 · 1G · connected" }], "ambos extremos iguales: una línea");
+  assert.deepEqual(d0.dirs.map((x) => [x.label, x.from, x.to, x.level]), [["Baja", "core", "dist", "saturated"], ["Sube", "dist", "core", "normal"]]);
+  assert.equal(Math.round(d0.dirs[0].util * 100), 96);
+  assert.equal(d0.source, "SNMP");
+  assert.equal(d0.ts, 1000);
+  assert.deepEqual(d0.findings, []);
+  assert.equal(d0.hasPortData, true);
+  // Extremos distintos: dos líneas, con el equipo de cada una.
+  const d4 = I.linkDetail(topo, topo.links[4], { lt: rates.get(key(4)), issues: ck.get(key(4)) });
+  assert.equal(d4.ends.length, 2);
+  assert.equal(d4.ends[0].name, "dist");
+  assert.equal(d4.source, "Consola");
+  assert.deepEqual(d4.findings, [{ sev: "crit", text: "Dúplex distinto: full/half" }]);
+  assert.equal(d4.dirs[0].level, "normal");
+  assert.equal(d4.level, "normal");
+  // Sin lectura de tráfico: sin barras ni fuente; caído y hallazgos igual.
+  const d2 = I.linkDetail(topo, topo.links[2], { issues: ck.get(key(2)) });
+  assert.deepEqual(d2.dirs, []);
+  assert.equal(d2.source, undefined);
+  assert.equal(d2.level, "down");
+  assert.match(d2.findings[0].text, /Gi1\/0\/3 err-disabled/);
+  // Sin datos de puertos de ningún extremo no se puede decir "Sin errores".
+  const d3 = I.linkDetail({ nodes: [mk("p", undefined), mk("q", undefined)], links: [] }, { a: "p", aPort: "Gi1", b: "q", bPort: "Gi2", proto: "CDP" });
+  assert.equal(d3.hasPortData, false);
+  assert.equal(d3.proto, "CDP");
+  assert.equal(I.linkDetail(topo, { ...topo.links[0], logical: true }).proto, "CDP lógica");
+
+  // Lista "Requieren atención": solo alto, saturado, caído o con problemas; caído y saturado primero, luego por uso.
+  const rates2 = new Map([
+    ...rates,
+    [key(5), { ab: 780e6, ba: 100e6, speed: 1e9, util: 0.78, ts: 1000, src: "snmp" }],
+  ]);
+  const rows = I.attentionRows(topo, ck, rates2);
+  assert.deepEqual(rows.map((r) => [r.key === key(2) ? "err-disabled" : r.key === key(0) ? "po1-sat" : r.key === key(5) ? "alto" : r.key === key(1) ? "po1-miembro" : r.key === key(3) ? "crc" : "dup", r.level]), [
+    ["err-disabled", "down"],
+    ["po1-sat", "saturated"],
+    ["alto", "high"],
+    ["po1-miembro", "issues"],
+    ["dup", "issues"],
+    ["crc", "issues"],
+  ]);
+  assert.equal(rows[0].phrase, "Gi1/0/3 err-disabled");
+  assert.equal(rows[1].phrase, "Saturado bajando · 1G");
+  assert.equal(rows[2].phrase, "Alto bajando · 1G");
+  assert.equal(rows[3].phrase, "Gi1/0/2 fuera de Po1");
+  assert.equal(rows[4].phrase, "Dúplex distinto: full/half");
+  assert.equal(rows[5].phrase, "12 errores CRC en Gi1/0/4");
+  // Alto con un problema de interfaz: "Alto · 12 errores CRC en Gi1/0/4".
+  const hi = I.attentionRows(topo, ck, new Map([[key(3), { ab: 8e8, ba: 1e6, speed: 1e9, util: 0.8, ts: 1 }]]));
+  assert.equal(hi.find((r) => r.key === key(3)).phrase, "Alto · 12 errores CRC en Gi1/0/4");
+  // Lo normal no entra, y un enlace quitado (skip) tampoco.
+  assert.equal(I.attentionRows(topo, new Map(), new Map([[key(0), { ab: 1e8, ba: 1e8, speed: 1e9, util: 0.1, ts: 1 }]])).length, 0, "todo normal");
+  assert.equal(I.attentionRows(topo, new Map(), new Map([[key(0), { ab: 1e8, ba: 1e8, util: undefined, ts: 1 }]])).length, 0, "sin velocidad: como normal");
+  assert.equal(I.attentionRows(topo, ck, rates2, new Set([key(2)])).some((r) => r.key === key(2)), false);
+  // Entre dos saturados, el de más uso primero; entre dos caídos, orden por nombre.
+  const two = I.attentionRows(topo, new Map(), new Map([[key(0), { ab: 920e6, ba: 0, speed: 1e9, util: 0.92, ts: 1 }], [key(5), { ab: 990e6, ba: 0, speed: 1e9, util: 0.99, ts: 1 }]]));
+  assert.deepEqual(two.map((r) => r.key), [key(5), key(0)]);
+  // Cobertura: enlaces con datos de puertos (y en ambos extremos).
+  const cov = I.checkCoverage(topo);
+  assert.equal(cov.links, 6);
+  assert.equal(cov.withData, 6);
+  assert.equal(cov.both, 4, "dos enlaces tienen datos de un solo extremo");
+
+  // Textos auxiliares.
+  assert.equal(I.speedShort(1e9), "1G");
+  assert.equal(I.speedShort(10e9), "10G");
+  assert.equal(I.speedShort(2.5e9), "2.5G");
+  assert.equal(I.speedShort(100e6), "100M");
+  assert.equal(I.ageText(10_000, 18_000), "hace 8 s");
+  assert.equal(I.ageText(0, 150_000), "hace 3 min");
+  assert.equal(I.ageText(0, 7_300_000), "hace 2 h");
+  assert.equal(I.ageText(5000, 1000), "hace 0 s");
+}
+
 // ---------- Rendimiento: 2000 equipos y 4000 enlaces ----------
 const big = { nodes: [], links: [] };
 for (let i = 0; i < 2000; i++) {
