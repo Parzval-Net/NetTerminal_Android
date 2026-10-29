@@ -302,16 +302,18 @@ function useReducedMotion(): boolean {
   return reduced;
 }
 
-/** Desplaza una curva cuadrática en paralelo (un carril por sentido). */
 /**
- * Desplazamiento con dos dedos en un touchpad (no una rueda de mouse). Chromium y WebKit informan
- * wheelDeltaY: en la rueda son pasos de 120 y en el touchpad vale -3 × deltaY. Sin ese dato, el
- * movimiento horizontal o un delta en píxeles fino también delatan el touchpad.
+ * Desplazamiento con dos dedos en un touchpad (no una rueda de mouse). WebKit (macOS) entrega la
+ * rueda del mouse en múltiplos de 4.000244 px por paso (el mismo criterio que usa Mapbox GL);
+ * Chromium (WebView2 en Windows) informa wheelDeltaY en pasos de 120 para la rueda y otros valores
+ * para el touchpad. Sin esos datos, el movimiento horizontal o un delta fino delatan el touchpad.
  */
+const WEBKIT_WHEEL_STEP = 4.000244140625;
 function isTrackpadScroll(e: { deltaX: number; deltaY: number; deltaMode: number; wheelDeltaY?: number }): boolean {
   if (e.deltaMode !== 0) return false;
+  if (e.deltaY !== 0 && Math.abs(e.deltaY) % WEBKIT_WHEEL_STEP === 0) return false;
   const w = e.wheelDeltaY;
-  if (typeof w === "number" && w !== 0) return Math.abs(w) % 120 !== 0 && Math.abs(w + 3 * e.deltaY) < 1;
+  if (typeof w === "number" && w !== 0) return Math.abs(w) % 120 !== 0;
   return e.deltaX !== 0 || Math.abs(e.deltaY) < 40 || !Number.isInteger(e.deltaY);
 }
 
@@ -335,6 +337,7 @@ function flowStyle(bps: number | null, speed: number | undefined): React.CSSProp
   return { animationDuration: `${dur}s`, animationTimingFunction: `steps(${steps})` };
 }
 
+/** Desplaza una curva cuadrática en paralelo (un carril por sentido). */
 function lanePath(a: Pt, c: Pt, b: Pt, off: number): string {
   const dx = b.x - a.x;
   const dy = b.y - a.y;
@@ -431,7 +434,6 @@ interface TrafficRow {
   aPort: string;
   bPort: string;
   lt: LinkTraffic;
-  mid: Pt;
 }
 
 /** Máximo de enlaces animados a la vez (los más cargados): medido en una topología de 400 equipos. */
@@ -1238,20 +1240,25 @@ export function TopologyTool({
   const trafficPills = useMemo(() => {
     if (!linkRates.size) return [];
     const pairKey = (l: TopoLink) => [l.a, l.b].sort().join("~");
-    const pairs = new Map<string, { g: Geo; lt: LinkTraffic }[]>();
+    // Una pasada: por par, los centros de todas sus curvas, sus claves y los enlaces con tráfico.
+    const pairs = new Map<string, { mids: Pt[]; keys: string[]; items: { g: Geo; lt: LinkTraffic }[] }>();
     for (const g of geometry) {
       const k = linkKey(g.l);
-      const lt = linkRates.get(k);
-      if (!lt || removed.has(k)) continue;
+      if (removed.has(k)) continue;
       const pk = pairKey(g.l);
-      pairs.set(pk, [...(pairs.get(pk) ?? []), { g, lt }]);
+      let e = pairs.get(pk);
+      if (!e) pairs.set(pk, (e = { mids: [], keys: [], items: [] }));
+      e.mids.push(g.mid);
+      e.keys.push(k);
+      const lt = linkRates.get(k);
+      if (lt) e.items.push({ g, lt });
     }
     const out: { key: string; x: number; y: number; text: string; color: string; dim: boolean; keys: string[] }[] = [];
-    for (const [pk, items] of pairs) {
+    for (const [pk, { mids, keys, items }] of pairs) {
+      if (!items.length) continue;
       const worst = items.reduce((a, b) => ((b.lt.util ?? -1) > (a.lt.util ?? -1) ? b : a));
       const multi = items[0].g.pair.length > 1;
       const grp = multi ? linkGroup(shown, items[0].g.l, shownById) : undefined;
-      const mids = items[0].g.pair.length > 1 ? geometry.filter((g) => pairKey(g.l) === pk).map((g) => g.mid) : [items[0].g.mid];
       const short = trafficShort(worst.lt);
       out.push({
         key: pk,
@@ -1259,27 +1266,37 @@ export function TopologyTool({
         y: mids.reduce((a, m) => a + m.y, 0) / mids.length,
         text: multi ? `${grp ? `${grp} ×${items[0].g.pair.length}` : "máx"} · ${short}` : short,
         color: ui.color ? UTIL_VAR[utilLevel(worst.lt.util)] : "var(--text)",
-        dim: !!route && !items.some((i) => routeKeys.has(linkKey(i.g.l))),
-        keys: items.map((i) => linkKey(i.g.l)),
+        dim: !!route && !keys.some((k) => routeKeys.has(k)),
+        keys,
       });
     }
     return out;
   }, [geometry, linkRates, removed, route, routeKeys, ui.color, shown, shownById]);
-  /** Pares con píldora: su rótulo de agregado ("Po1 ×2") ya va dentro de ella. */
+  /** Pares con píldora (todos sus enlaces): su rótulo de agregado ("Po1 ×2") ya va dentro de ella. */
   const pillPairs = useMemo(() => new Set(ui.rates ? trafficPills.flatMap((p) => p.keys) : []), [trafficPills, ui.rates]);
 
   /** Tabla del panel: cada enlace con tráfico, del más cargado al menos (sin velocidad, por tasa). */
+  // Sin posiciones: al arrastrar un equipo la geometría cambia en cada cuadro, pero las filas no, y
+  // se devuelve el mismo arreglo para que la tabla (memorizada) y la animación no se recalculen.
+  const rowsRef = useRef<TrafficRow[]>([]);
   const trafficRows = useMemo(() => {
     const rows: TrafficRow[] = [];
     for (const g of geometry) {
       const k = linkKey(g.l);
       const lt = linkRates.get(k);
       if (!lt || removed.has(k)) continue;
-      rows.push({ key: k, a: node(g.l.a)?.name ?? anyName(g.l.a), b: node(g.l.b)?.name ?? anyName(g.l.b), aPort: g.l.aPort, bPort: g.l.bPort, lt, mid: g.mid });
+      rows.push({ key: k, a: node(g.l.a)?.name ?? anyName(g.l.a), b: node(g.l.b)?.name ?? anyName(g.l.b), aPort: g.l.aPort, bPort: g.l.bPort, lt });
     }
     const peak = (lt: LinkTraffic) => Math.max(lt.ab ?? 0, lt.ba ?? 0);
-    return rows.sort((x, y) => (y.lt.util ?? -1) - (x.lt.util ?? -1) || peak(y.lt) - peak(x.lt));
+    rows.sort((x, y) => (y.lt.util ?? -1) - (x.lt.util ?? -1) || peak(y.lt) - peak(x.lt));
+    const prev = rowsRef.current;
+    const same = prev.length === rows.length && prev.every((r, i) => r.key === rows[i].key && r.lt === rows[i].lt && r.a === rows[i].a && r.b === rows[i].b);
+    if (!same) rowsRef.current = rows;
+    return rowsRef.current;
   }, [geometry, linkRates, removed]);
+  /** Centro de cada enlace a la vista, para ubicar el que se elige en la tabla. */
+  const midsRef = useRef(new Map<string, Pt>());
+  midsRef.current = useMemo(() => new Map(geometry.map((g) => [linkKey(g.l), g.mid])), [geometry]);
   /**
    * Enlaces animados: solo los FLOW_MAX más cargados. Cada paso de la animación repinta el mapa, y
    * con cientos de enlaces animados una topología grande baja de 60 a pocos cuadros por segundo;
@@ -1290,14 +1307,20 @@ export function TopologyTool({
   const linksId = useId();
   const closeLinks = useCallback(() => setUi((u) => ({ ...u, sec: { ...u.sec, enlaces: false } })), []);
   /** Clic en la tabla: resalta el enlace y lo centra (otro clic en el mismo lo suelta). */
+  const focusLinkRef = useRef(focusLink);
+  focusLinkRef.current = focusLink;
   const pickLink = useCallback((r: TrafficRow) => {
-    setFocusLink((cur) => {
-      if (cur === r.key) return null;
-      setZoom((z) => Math.max(z, 1.4));
-      setFocusReq(r.mid);
-      return r.key;
-    });
+    if (focusLinkRef.current === r.key) return setFocusLink(null);
+    setFocusLink(r.key);
+    const mid = midsRef.current.get(r.key);
+    if (!mid) return;
+    setZoom((z) => Math.max(z, 1.4));
+    setFocusReq(mid);
   }, []);
+  // El enlace elegido dejó de tener tráfico o de estar a la vista: se suelta el resaltado.
+  useEffect(() => {
+    if (focusLink && !trafficRows.some((r) => r.key === focusLink)) setFocusLink(null);
+  }, [focusLink, trafficRows]);
 
   // Sugerencias: se calculan del diagrama ya leído, sin comandos, y solo con su fuente activa.
   const suggestions = useMemo(() => collectSuggestions(topoData, sources, dismissed), [topoData, sources, dismissed]);
@@ -1660,24 +1683,33 @@ export function TopologyTool({
   // Arrastrar el fondo (o con el botón del medio, en cualquier parte) mueve el mapa: con la rueda
   // dedicada al zoom, es la forma de desplazarse con mouse.
   const [panning, setPanning] = useState(false);
+  const endPan = useRef<(() => void) | null>(null);
+  // Si la herramienta se cierra a mitad de un arrastre, no quedan escuchas en la ventana.
+  useEffect(() => () => endPan.current?.(), []);
   const startPan = (e: React.PointerEvent<SVGSVGElement>) => {
     const el = scroller.current;
     const onBackground = e.button === 0 && e.target === e.currentTarget;
     if (!el || !(onBackground || e.button === 1)) return;
     e.preventDefault();
+    endPan.current?.();
     const start = { x: e.clientX, y: e.clientY, sl: el.scrollLeft, st: el.scrollTop };
     setPanning(true);
     const move = (ev: PointerEvent) => {
       el.scrollLeft = start.sl - (ev.clientX - start.x);
       el.scrollTop = start.st - (ev.clientY - start.y);
     };
+    // pointercancel: en pantallas táctiles el navegador puede quedarse con el gesto sin pointerup.
     const up = () => {
+      endPan.current = null;
       setPanning(false);
       window.removeEventListener("pointermove", move);
       window.removeEventListener("pointerup", up);
+      window.removeEventListener("pointercancel", up);
     };
+    endPan.current = up;
     window.addEventListener("pointermove", move);
     window.addEventListener("pointerup", up);
+    window.addEventListener("pointercancel", up);
   };
 
   // Ctrl/⌘+C con un equipo seleccionado en el mapa copia su IP, salvo que haya texto

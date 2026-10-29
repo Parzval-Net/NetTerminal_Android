@@ -1396,7 +1396,8 @@ export function toSvg(t: Topology, W = 170, H = 54, traffic?: Map<string, LinkTr
   const legendH = legendRows ? legendRows * 18 + 16 : 0;
   const minX = Math.min(...xs) - W / 2 - 40;
   const minY = Math.min(...ys) - H / 2 - 40;
-  const w = Math.max(...xs) - minX + W / 2 + 40;
+  // Ancho para la fila más larga de la tabla de enlaces (en mapas chicos no cabría).
+  const w = Math.max(Math.max(...xs) - minX + W / 2 + 40, 80 + Math.max(0, ...loadRows.map((r) => r.text.length)) * 6.2);
   const h = Math.max(...ys) - minY + H / 2 + 40 + legendH;
   const parts = [
     `<svg xmlns="http://www.w3.org/2000/svg" viewBox="${minX} ${minY} ${w} ${h}" width="${w}" height="${h}" font-family="Helvetica, Arial, sans-serif">`,
