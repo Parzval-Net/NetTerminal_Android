@@ -1,6 +1,6 @@
 import { memo, useCallback, useEffect, useState } from "react";
 import { invoke } from "@tauri-apps/api/core";
-import { ArchiveRestore, FileCode2, FileSearch, FolderOpen, Pencil, Plus, Square, Trash2, X } from "lucide-react";
+import { ArchiveRestore, FileCode2, FileSearch, FolderOpen, MousePointerClick, Pencil, Plus, Square, Trash2, X } from "lucide-react";
 import { Macro } from "../lib/settings";
 import { ContextMenu } from "./Sidebar";
 
@@ -111,7 +111,19 @@ export const ButtonBar = memo(function ButtonBar(p: Props) {
   };
 
   return (
-    <div className="h-8 shrink-0 flex items-center gap-1 px-2 bg-chrome border-t border-line overflow-x-auto [scrollbar-width:none]">
+    <div
+      role="toolbar"
+      aria-label="Barra de botones: comandos y scripts de un clic"
+      className="@container h-8 shrink-0 flex items-center gap-1 px-2 bg-chrome border-t border-line overflow-x-auto [scrollbar-width:none]"
+    >
+      {/* Rótulo discreto: distingue esta barra (comandos y scripts de un clic) de la de estado de abajo. */}
+      <span
+        className="shrink-0 flex items-center gap-1 pr-1.5 mr-0.5 border-r border-line text-[11px] text-muted select-none"
+        title="Barra de botones: comandos y scripts de un clic. El botón + crea uno nuevo; clic derecho sobre un botón: editar o eliminar"
+      >
+        <MousePointerClick size={13} aria-hidden />
+        <span className="hidden @[40rem]:inline">Botones</span>
+      </span>
       {p.macros.map((m) => (
         <button
           key={m.id}
@@ -138,33 +150,38 @@ export const ButtonBar = memo(function ButtonBar(p: Props) {
       <button
         onClick={() => p.onEdit(null)}
         title="Nuevo botón"
+        aria-label="Nuevo botón"
         className="shrink-0 w-6 h-6 grid place-items-center rounded-md text-muted hover:text-fg hover:bg-hover"
       >
         <Plus size={14} />
       </button>
-
-      <div className="ml-auto shrink-0 flex items-center gap-1 pl-2">
-        {p.running ? (
+      {/* Scripts junto al "+": ambos crean o lanzan acciones de la misma barra. Mientras corre un
+          script, "Detener" queda fijo a la derecha para no perderlo al desplazar la barra. */}
+      {!p.running && (
+        <button
+          onClick={openScripts}
+          title="Scripts: ejecutar, importar, abrir la carpeta o restaurar eliminados"
+          aria-haspopup="menu"
+          className="shrink-0 flex items-center gap-1.5 px-2 h-6 rounded-md text-[12px] text-muted hover:text-fg hover:bg-hover"
+        >
+          <FileCode2 size={13} />
+          Scripts
+        </button>
+      )}
+      {p.running && (
+        <div className="sticky right-0 ml-auto shrink-0 pl-2 bg-chrome">
           <button
             onClick={p.onStopScript}
             title={`Detener script${p.running.targets > 1 ? ` (${p.running.targets} sesiones)` : ""}`}
             aria-label={`Detener script ${p.running.script}`}
-            className="flex items-center gap-1.5 px-2 h-6 rounded-md text-[12px] text-warn hover:bg-hover"
+            className="whitespace-nowrap flex items-center gap-1.5 px-2 h-6 rounded-md text-[12px] text-warn hover:bg-hover"
           >
             <Square size={11} fill="currentColor" />
             Detener {p.running.script}
             {p.running.targets > 1 && <span className="text-muted">· {p.running.targets}</span>}
           </button>
-        ) : (
-          <button
-            onClick={openScripts}
-            className="flex items-center gap-1.5 px-2 h-6 rounded-md text-[12px] text-muted hover:text-fg hover:bg-hover"
-          >
-            <FileCode2 size={13} />
-            Scripts
-          </button>
-        )}
-      </div>
+        </div>
+      )}
       {menu && <ContextMenu menu={menu} onClose={closeMenu} />}
     </div>
   );

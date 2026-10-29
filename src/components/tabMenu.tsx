@@ -1,12 +1,13 @@
-import { ArrowDownToLine, ArrowRightToLine, ClipboardCopy, Columns2, Copy, CopyX, Eraser, LayoutGrid, ListX, PanelLeftDashed, PanelTop, Pencil, Plus, RefreshCcw, RotateCcw, Rows2, Save, Square, SquareTerminal, Undo2, Unplug, X, Zap } from "lucide-react";
+import { ArrowDownToLine, ArrowRightToLine, ClipboardCopy, Columns2, Copy, CopyX, Eraser, History, LayoutGrid, ListX, MousePointerClick, PanelLeftDashed, PanelTop, Pencil, Plus, RefreshCcw, RotateCcw, Rows2, Save, Search, Square, SquareTerminal, Undo2, Unplug, X, Zap } from "lucide-react";
 import type { ReactNode } from "react";
 import { SplitLayout, layoutLabel } from "../lib/split";
 import type { TabLayout } from "../lib/settings";
 import type { Tab, TabState } from "../types";
 import type { CloseScope } from "../lib/closeAll";
+import { modLabel } from "../lib/platform";
 
-/** [etiqueta, icono, acción, deshabilitado/marcado] — formato de ContextMenu. */
-export type MenuItem = [string, ReactNode, () => void, boolean?];
+/** [etiqueta, icono, acción, deshabilitado/marcado, atajo] — formato de ContextMenu. */
+export type MenuItem = [string, ReactNode, () => void, boolean?, string?];
 
 export interface TabMenuHandlers {
   onRename: (id: string, title: string | undefined) => void;
@@ -17,6 +18,10 @@ export interface TabMenuHandlers {
   onResetTerminal: (id: string) => void;
   onCopyAll: (id: string) => void;
   onClose: (id: string) => void;
+  /** Acciones de sesión que ya no están en la barra de estado: Break, buscar e historial de comandos. */
+  onBreak?: (id: string) => void;
+  onFind?: (id: string) => void;
+  onHistory?: (id: string) => void;
   onSaveAs?: (id: string) => void;
   /** Cierra varias pestañas (con un solo aviso): todas, las demás o las que siguen a `id`. */
   onCloseMany?: (scope: CloseScope, id: string) => void;
@@ -27,10 +32,12 @@ export interface TabMenuHandlers {
 }
 
 /** Menú del botón "+": terminal local, conexión rápida sin guardar y nueva sesión guardada. */
-export function newTabMenuItems(p: { onNew: () => void; onQuickConnect?: () => void; onNewSession?: () => void }): MenuItem[] {
-  const items: MenuItem[] = [["Terminal local", <SquareTerminal size={13} />, p.onNew]];
-  if (p.onQuickConnect) items.push(["Conexión rápida…", <Zap size={13} />, p.onQuickConnect]);
-  if (p.onNewSession) items.push(["Nueva sesión guardada…", <Plus size={13} />, p.onNewSession]);
+export function newTabMenuItems(p: { onNew: () => void; onQuickConnect?: () => void; onNewSession?: () => void; onNewButton?: () => void }): MenuItem[] {
+  const items: MenuItem[] = [["Terminal local", <SquareTerminal size={13} />, p.onNew, false, `${modLabel}T`]];
+  if (p.onQuickConnect) items.push(["Conexión rápida…", <Zap size={13} />, p.onQuickConnect, false, `${modLabel}O`]);
+  if (p.onNewSession) items.push(["Nueva sesión…", <Plus size={13} />, p.onNewSession, false, `${modLabel}N`]);
+  // La barra de botones se oculta sola sin botones: crear uno desde aquí la muestra.
+  if (p.onNewButton) items.push(["Nuevo botón de comando…", <MousePointerClick size={13} />, p.onNewButton]);
   return items;
 }
 
@@ -48,9 +55,17 @@ export function tabMenuItems(t: Tab, state: TabState | undefined, p: TabMenuHand
   return [
     ["Renombrar", <Pencil size={13} />, startRename],
     ["Restaurar nombre original", <Undo2 size={13} />, () => p.onRename(t.id, undefined), !t.title],
-    ["Duplicar", <Copy size={13} />, () => p.onDuplicate(t.id)],
+    ["Duplicar", <Copy size={13} />, () => p.onDuplicate(t.id), false, `${modLabel}D`],
     ["Reconectar", <RotateCcw size={13} />, () => p.onReconnect(t.id)],
     ["Desconectar", <Unplug size={13} />, () => p.onDisconnect(t.id), state?.status === "closed"],
+    ...(p.onFind ? ([["Buscar en la terminal", <Search size={13} />, () => p.onFind!(t.id), false, `${modLabel}F`]] as MenuItem[]) : []),
+    ...(p.onHistory && !t.session.scp
+      ? ([["Historial de comandos enviados…", <History size={13} />, () => p.onHistory!(t.id)]] as MenuItem[])
+      : []),
+    // Break solo existe en seriales y telnet (consolas): el resto no lo entiende.
+    ...(p.onBreak && (t.session.type === "serial" || t.session.type === "telnet")
+      ? ([["Enviar Break", <Zap size={13} />, () => p.onBreak!(t.id), state?.status !== "connected"]] as MenuItem[])
+      : []),
     ["Copiar toda la salida", <ClipboardCopy size={13} />, () => p.onCopyAll(t.id)],
     ["Limpiar historial", <Eraser size={13} />, () => p.onClearScrollback(t.id)],
     ["Reiniciar terminal", <RefreshCcw size={13} />, () => p.onResetTerminal(t.id)],

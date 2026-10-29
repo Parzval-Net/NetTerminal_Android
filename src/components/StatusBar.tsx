@@ -1,6 +1,5 @@
 import { memo, useEffect, useState } from "react";
-import { ArrowLeftRight, BookOpen, KeyRound, Bot, Circle, CircleDot, NotebookPen, RotateCcw, Search, Settings, ShieldAlert, ShieldCheck, SquareTerminal, Unplug, Zap } from "lucide-react";
-import { openLab, useLabRun } from "../lib/cliLab";
+import { ArrowLeftRight, KeyRound, Bot, Circle, CircleDot, RotateCcw, ShieldAlert, ShieldCheck, Unplug } from "lucide-react";
 import {
   DeviceInfo,
   LIFE_LABEL,
@@ -17,18 +16,15 @@ import {
   osDetail,
   osTarget,
 } from "../lib/lifecycle";
-import { Tab, TabState, historyKey, sessionTarget, tunnelLabel } from "../types";
-import { HistoryMenu } from "./HistoryMenu";
+import { Tab, TabState, sessionTarget, tunnelLabel } from "../types";
 import { BroadcastTargetPicker } from "./BroadcastTarget";
 import { QuickBolt, typeLabel } from "./SessionIcon";
 import { statusColor } from "./TabBar";
-import { isMac, modLabel } from "../lib/platform";
 
-/** Etiquetas de botones: con la barra angosta (ventana mínima o vista con barra lateral) solo
- *  queda el icono y el title; antes los últimos botones se salían de la ventana. */
+/** Etiquetas de los botones accionables: con la barra angosta (ventana mínima o vista con barra
+ *  lateral) solo queda el icono y el title. Comandos, Notas, CLI Lab y Ajustes viven en la barra
+ *  de actividad; Break, Buscar e Historial, en el menú de la pestaña y la paleta (⌘K). */
 const LBL = "hidden @[52rem]:inline";
-/** Herramientas (Comandos, Notas, CLI Lab): su texto se mantiene hasta ventanas más angostas. */
-const TOOL_LBL = "hidden @[44rem]:inline";
 
 const statusText = { connecting: "Conectando", connected: "Conectado", closed: "Desconectado" };
 
@@ -36,75 +32,45 @@ interface Props {
   tab: Tab | undefined;
   state: TabState | undefined;
   onToggleLog: () => void;
-  onBreak: () => void;
   onReconnect: () => void;
   onDisconnect: () => void;
-  onFind: () => void;
-  onSettings: () => void;
-  notesOpen: boolean;
-  onNotes: () => void;
-  commandsOpen: boolean;
-  onCommands: () => void;
   aiEnabled: boolean;
   onAi: () => void;
-  /** Reenvía un comando del historial (opcional: sin él no se muestra el historial). */
-  onResend?: (cmd: string) => void;
   /** Guarda la conexión rápida de la pestaña como sesión. */
   onSaveAs?: () => void;
   /** Modelo y versión leídos de la pantalla (show version): ciclo de vida del equipo. */
   device?: DeviceInfo;
 }
 
+/**
+ * Barra de estado: informa (estado, tipo, destino, túneles, ciclo de vida, contraseña) y solo
+ * deja como acciones el Log y Desconectar/Reconectar, que son indicadores con estado.
+ */
 export const StatusBar = memo(function StatusBar({
   tab,
   state,
   onToggleLog,
-  onBreak,
   onReconnect,
   onDisconnect,
-  onFind,
-  onSettings,
-  notesOpen,
-  onNotes,
-  commandsOpen,
-  onCommands,
   aiEnabled,
   onAi,
-  onResend,
   onSaveAs,
   device,
 }: Props) {
-  const gear = (
-    <>
-      {aiEnabled && (
-        <BarBtn onClick={onAi} title="Servidor MCP activo: los agentes de IA pueden conectarse" className="!text-accent">
-          <Bot size={12} />
-          <span className={LBL}>IA</span>
-        </BarBtn>
-      )}
-      <BarBtn onClick={onCommands} title={`Catálogo de comandos (${modLabel}L)`} className={commandsOpen ? "!text-accent" : ""}>
-        <BookOpen size={12} />
-        <span className={TOOL_LBL}>Comandos</span>
-      </BarBtn>
-      <BarBtn onClick={onNotes} title={`Notas (${modLabel}J)`} className={notesOpen ? "!text-accent" : ""}>
-        <NotebookPen size={12} />
-        <span className={TOOL_LBL}>Notas</span>
-      </BarBtn>
-      <LabBtn />
-      <BarBtn onClick={onSettings} title={`Ajustes (${isMac ? "⌘" : "Ctrl+"},)`}>
-        <Settings size={12} />
-      </BarBtn>
-    </>
+  const ai = aiEnabled && (
+    <BarBtn onClick={onAi} title="Servidor MCP activo: los agentes de IA pueden conectarse" className="!text-accent">
+      <Bot size={12} />
+      <span className={LBL}>IA</span>
+    </BarBtn>
   );
   if (!tab || !state)
     return (
       <div className="@container h-7 shrink-0 flex items-center justify-end px-3 bg-chrome border-t border-line text-[11.5px] text-muted">
-        {gear}
+        {ai}
       </div>
     );
   const { session } = tab;
   const logging = !!state.logPath;
-  const canBreak = session.type === "serial" || session.type === "telnet";
   const connected = state.status === "connected";
 
   return (
@@ -157,18 +123,6 @@ export const StatusBar = memo(function StatusBar({
           {logging ? <CircleDot size={12} /> : <Circle size={12} />}
           <span className={LBL}>{logging ? "Grabando" : "Log"}</span>
         </BarBtn>
-        {canBreak && (
-          <BarBtn onClick={onBreak} disabled={!connected} title="Enviar señal Break">
-            <Zap size={12} />
-            <span className={LBL}>Break</span>
-          </BarBtn>
-        )}
-        {onResend && !session.scp && (
-          <HistoryMenu historyKey={historyKey(session)} connected={connected} onResend={onResend} />
-        )}
-        <BarBtn onClick={onFind} title={`Buscar (${modLabel}F)`}>
-          <Search size={12} />
-        </BarBtn>
         {connected || state.status === "connecting" ? (
           <BarBtn onClick={onDisconnect} title="Desconectar (la pestaña queda abierta)">
             <Unplug size={12} />
@@ -180,36 +134,10 @@ export const StatusBar = memo(function StatusBar({
             <span className={LBL}>Reconectar</span>
           </BarBtn>
         )}
-        <span className="w-px h-3.5 mx-1 bg-line" />
-        {gear}
+        {ai && <span className="w-px h-3.5 mx-1 bg-line" />}
+        {ai}
       </div>
     </div>
-  );
-});
-
-/** CLI Lab: abre el editor de scripts; mientras ejecuta muestra el avance y reabre el resultado. */
-const LabBtn = memo(function LabBtn() {
-  const run = useLabRun();
-  const done = run ? run.items.filter((i) => i.status !== "pending" && i.status !== "running").length : 0;
-  const failed = run ? run.items.filter((i) => i.status === "error").length : 0;
-  const tone = run?.running ? "!text-warn" : failed ? "!text-danger" : run ? "!text-ok" : "";
-  return (
-    <BarBtn
-      onClick={() => openLab()}
-      title={
-        run?.running
-          ? `CLI Lab ejecutando: ${done}/${run.items.length} equipos terminados`
-          : run
-            ? `CLI Lab: ${run.items.length - failed} de ${run.items.length} equipos OK${failed ? `, ${failed} con error` : ""}`
-            : `CLI Lab (${modLabel}I): script de varias líneas en el destino elegido, leyendo cada respuesta`
-      }
-      className={tone}
-    >
-      <SquareTerminal size={12} className={run?.running ? "animate-pulse" : ""} />
-      <span className={TOOL_LBL}>CLI Lab</span>
-      {/* El avance se ve también cuando la barra solo muestra íconos. */}
-      {run?.running && <span className="tabular-nums">{done}/{run.items.length}</span>}
-    </BarBtn>
   );
 });
 

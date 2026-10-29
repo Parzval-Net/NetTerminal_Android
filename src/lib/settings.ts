@@ -79,6 +79,8 @@ export interface Settings {
   confirmSend: boolean;
   macros: Macro[];
   showButtonBar: boolean;
+  /** Con la barra de sesiones cerrada, el ícono Sesiones la abre superpuesta sin empujar la terminal. */
+  floatingSidebar: boolean;
   mcpEnabled: boolean;
   mcpPort: number;
   mcpToken: string;
@@ -169,6 +171,7 @@ export const defaultSettings: Settings = {
     { id: "m2", label: "Interfaces", kind: "send", text: "show ip interface brief" },
   ],
   showButtonBar: true,
+  floatingSidebar: false,
   mcpEnabled: false,
   mcpPort: 47821,
   mcpToken: "",
