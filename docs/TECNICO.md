@@ -174,7 +174,11 @@ Sigue el modelo de keyword highlighting de SecureCRT y de ChromaTerm: cada regla
 - Solo se procesan líneas sin secuencias de escape previas y nunca en pantallas completas (vim, top, less), para no alterar salidas que ya traen color.
 - Los logs se graban sin resaltado.
 - WatchGuard, Windows, macOS y Linux usan solo las reglas comunes: sus salidas no tienen nombres de interfaz o prompts propios que justifiquen un esquema.
-- Pruebas: `node scripts/tests/highlight.test.mjs` revisa líneas reales de cada fabricante.
+- Paleta por tema (`src/lib/hlPalette.ts`): los colores con nombre (rojo, verde, cian...) no se envían como ANSI crudo. `compile(reglas, tema)` los resuelve contra el tema activo a truecolor y los ajusta con el menor cambio posible (luminosidad y, si hace falta, tono en OKLCH) hasta cumplir contraste WCAG >= 4,5:1 contra el fondo (gris de comentarios >= 3:1), distancia OKLab (ΔE) >= 0,09 respecto del texto base (el blanco queda exento) y una diferencia de luminosidad OKLab >= 0,08 entre rojo y verde (daltonismo). La vista previa de Ajustes y Notas usan la misma paleta (`cssColor`).
+- Temas monocromos (todos los ANSI cerca del tono del texto, hoy Ámbar): `isMonochrome` los detecta y cada rol recupera un tono propio de baja saturación (rojo 27°, verde 145°, amarillo 100°, azul 255°, magenta 330°, cian 205° en OKLCH). Sin eso, "up" y "down" se leían como el mismo naranjo del texto (p. ej. verde ANSI con ΔE 0,05 y cian 0,06 respecto del texto).
+- Significado sin depender del color: lo malo (down, err-disabled, notconnect, errores, syslog 0-3, ACTIVE(!) de ClusterXL) va siempre en negrita, lo bueno nunca; las secciones usan negrita y las advertencias no.
+- Fuentes: contraste relativo de WCAG 2.x (W3C) y espacio OKLab (Ottosson, 2020). Los umbrales son criterio propio, no norma: 4,5:1 es AA para texto; ΔE 0,09 es holgadamente sobre el umbral perceptible (~0,02).
+- Pruebas: `node scripts/tests/highlight.test.mjs` revisa líneas reales de cada fabricante (con falsos positivos como `OK?` o "up a line") y, para los 17 temas, contraste, distancia al texto base, diferencia rojo/verde y que la vista previa y la terminal usen la misma paleta; incluye medición de tiempo con líneas largas (ReDoS).
 - "Personalizar" en un esquema copia sus reglas a tus reglas propias para cambiar colores.
 - Exportar/Importar copia las reglas como JSON, útil para compartir un estándar en el equipo.
 

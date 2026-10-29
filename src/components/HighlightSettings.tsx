@@ -30,6 +30,9 @@ Interface              IP-Address      OK? Method Status                Protocol
 GigabitEthernet0/0/0   10.10.0.1       YES NVRAM  up                    up
 GigabitEthernet0/0/2   unassigned      YES unset  administratively down down
 Te1/0/1                10.20.1.1       YES manual up                    down
+Gi1/0/1   uplink      connected    1     a-full  a-1000
+Gi1/0/2   user        notconnect   10    auto    auto
+Gi1/0/3   loop        err-disabled 10    auto    auto
 *Oct 13 12:30:45: %LINK-3-UPDOWN: Interface Gi0/0/2, changed state to down
      0 input errors, 12 CRC, 0 frame, 3 overrun
 interface Port-channel10
@@ -99,8 +102,9 @@ export function HighlightSettings({ settings: s, theme, onChange }: Props) {
     () =>
       compile(
         effectiveRules({ enabled: s.highlightEnabled, schemes: s.highlightSchemes, custom: rules }),
+        theme,
       ),
-    [s.highlightEnabled, s.highlightSchemes, rules],
+    [s.highlightEnabled, s.highlightSchemes, rules, theme],
   );
 
   return (
@@ -156,6 +160,7 @@ export function HighlightSettings({ settings: s, theme, onChange }: Props) {
           />
         )}
         <Preview text={sample} compiled={compiled} theme={theme} font={s.fontFamily} />
+        <Legend theme={theme} />
       </div>
 
       <div>
@@ -332,7 +337,7 @@ function Preview({
               key={k}
               style={{
                 color: cssColor(style.color, theme),
-                background: cssColor(style.bg, theme),
+                background: cssColor(style.bg, theme, true),
                 fontWeight: style.bold ? 700 : undefined,
                 fontStyle: style.italic ? "italic" : undefined,
                 textDecoration: style.underline ? "underline" : undefined,
@@ -347,6 +352,32 @@ function Preview({
         return <div key={li}>{parts.length ? parts : " "}</div>;
       })}
     </pre>
+  );
+}
+
+/** Roles del resaltado con el color que realmente toman en el tema activo (ver hlPalette.ts). */
+function Legend({ theme }: { theme: ITheme }) {
+  const roles: [string, string, boolean][] = [
+    ["Bueno", "green", false],
+    ["Malo", "red", true],
+    ["Advertencia", "yellow", false],
+    ["Interfaz", "cyan", false],
+    ["IP / MAC", "magenta", false],
+    ["Sección", "brightBlue", true],
+  ];
+  return (
+    <div className="mt-1.5 flex flex-wrap gap-x-3 gap-y-1 text-[11.5px]">
+      {roles.map(([label, color, bold]) => (
+        <span key={label} className="flex items-center gap-1">
+          <span
+            className="inline-block w-2.5 h-2.5 rounded-sm border border-line"
+            style={{ background: cssColor(color, theme) }}
+          />
+          <span className={bold ? "font-bold" : undefined}>{label}</span>
+        </span>
+      ))}
+      <span className="text-muted">Los colores se ajustan al tema para mantener contraste y distinguirse del texto.</span>
+    </div>
   );
 }
 

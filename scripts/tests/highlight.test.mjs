@@ -2,7 +2,22 @@
 // Cada caso es una línea real de salida y los tramos que deben quedar pintados, con el nombre de la
 // regla que los pinta (el esquema del fabricante va antes que el común, como en la app).
 import assert from "node:assert/strict";
+import { registerHooks } from "node:module";
 import { fastEnough } from "./timing.mjs";
+
+// highlight.ts importa ./hlPalette sin extensión (como lo resuelve Vite): se completa con .ts.
+registerHooks({
+  resolve(specifier, context, next) {
+    if (/^\.\.?\//.test(specifier) && !/\.[cm]?[jt]s$/.test(specifier) && context.parentURL?.endsWith(".ts")) {
+      try {
+        return next(`${specifier}.ts`, context);
+      } catch {
+        /* sigue con la resolución normal */
+      }
+    }
+    return next(specifier, context);
+  },
+});
 
 const { compile, effectiveRules, runs, schemes } = await import("../../src/lib/highlight.ts");
 
@@ -76,6 +91,69 @@ expectSpans("checkpoint", "1 (local)  192.0.2.1   100%   ACTIVE    gw-01", ["ACT
 expectSpans("checkpoint", "1 (local)  192.0.2.1   100%   ACTIVE(!)  gw-01", ["ACTIVE(!)"]);
 expectSpans("checkpoint", "2          192.0.2.2   0%     STANDBY   gw-02", ["STANDBY"]);
 expectSpans("checkpoint", "eth1-01  UP  10.1.1.1/24", ["eth1-01", "UP", "10.1.1.1/24"]);
+
+// ---------- Reglas: salidas típicas, falsos positivos y negativos ----------
+const styleOf = (id, line, text) => painted(line, rulesFor(id)).find(([t]) => t === text)?.[1];
+expectSpans("cisco", "Gi1/0/1  uplink  connected  1  a-full  a-1000  10/100/1000BaseTX", ["connected", "full"]);
+expectSpans("cisco", "Gi1/0/2  user    notconnect 10 auto   auto    10/100/1000BaseTX", ["notconnect"]);
+expectSpans("cisco", "Gi1/0/3  loop    err-disabled 10 auto auto", ["err-disabled"]);
+expectSpans("cisco", "Gi1/0/4  x       not connected 10", ["not connected"]);
+expectPlain("cisco", "Interface  IP-Address  OK? Method Status  Protocol", "OK?");
+expectSpans("cisco", "     12 CRC, 0 frame, 3 overrun, 0 ignored", ["12 CRC"]);
+expectPlain("cisco", "     0 input errors, 0 CRC, 0 frame, 0 overrun, 0 ignored", "0 CRC");
+expectSpans("cisco", "  Total output drops: 15", ["Total output drops: 15"]);
+expectPlain("cisco", "  Total output drops: 0", "Total output drops: 0");
+expectSpans("cisco", "RP/0/RSP0/CPU0:Oct 14 09:12:44 : ifmgr[225]: %PKT_INFRA-LINK-3-UPDOWN : Interface Gi0/0/0/1, changed state to Down", ["%PKT_INFRA-LINK-3-UPDOWN", "Down"]);
+expectPlain("cisco", "Press up a line to scroll", "up");
+expectPlain("cisco", "Uptime is 3 weeks", "Uptime");
+expectSpans("cisco", "Gi1/0/5  x  connected  1  half  100", ["half"]);
+expectSpans("juniper", "error: syntax error, expecting <command>", ["error: syntax error, expecting <command>"]);
+expectSpans("juniper", "ge-0/0/0  up  down", ["up", "down"]);
+expectSpans("huawei", "[~HUAWEI-GigabitEthernet0/0/1]", ["[~HUAWEI-GigabitEthernet0/0/1]"]);
+expectSpans("huawei", "[*HUAWEI]", ["[*HUAWEI]"]);
+expectSpans("huawei", "% Unrecognized command found at '^' position.", ["% Unrecognized command found at '^' position."]);
+expectSpans("fortinet", 'date=2026-10-14 action="login" status="failed" reason="passwd_invalid"', ["failed"]);
+expectSpans("fortinet", "Command fail. Return code -3", ["Command fail. Return code -3"]);
+
+// El estado malo siempre va en negrita (no depende solo del rojo) y el bueno no.
+for (const [id, line, bad, good] of [
+  ["cisco", "Gi1/0/1  connected   Gi1/0/2  notconnect", "notconnect", "connected"],
+  ["huawei", "GE0/0/1  up  up   GE0/0/2  down  down", "down", "up"],
+  ["aruba", "1/1/1  up   1/1/2  down", "down", "up"],
+]) {
+  assert.equal(styleOf(id, line, bad)?.bold, true, `${id}: "${bad}" debe ir en negrita`);
+  assert.ok(!styleOf(id, line, good)?.bold, `${id}: "${good}" no debe ir en negrita`);
+  assert.notEqual(styleOf(id, line, bad)?.color, styleOf(id, line, good)?.color);
+}
+
+// ---------- Paleta de resaltado por tema: contraste y distinción ----------
+const { presets } = await import("../../src/lib/theme.ts");
+const pal = await import("../../src/lib/hlPalette.ts");
+const { cssColor } = await import("../../src/lib/highlight.ts");
+const NAMES = ["red", "green", "yellow", "blue", "magenta", "cyan", "white", "gray", "brightRed", "brightGreen", "brightYellow", "brightBlue", "brightMagenta", "brightCyan"];
+for (const p of presets) {
+  const th = p.theme;
+  const pl = pal.resolvePalette(th);
+  for (const n of NAMES) {
+    const c = pl[n];
+    const min = n === "gray" ? pal.MIN_CONTRAST_MUTED : pal.MIN_CONTRAST;
+    assert.ok(pal.contrast(c, th.background) >= min - 0.01, `${p.id}: ${n} ${c} contraste ${pal.contrast(c, th.background).toFixed(2)} < ${min}`);
+    if (n !== "white") assert.ok(pal.deltaE(c, th.foreground) >= pal.MIN_DELTA_E - 0.005, `${p.id}: ${n} ${c} demasiado parecido al texto (ΔE ${pal.deltaE(c, th.foreground).toFixed(3)})`);
+    assert.equal(cssColor(n, th), c, `${p.id}: la vista previa y la terminal usan la misma paleta`);
+  }
+  for (const [r, g] of [["red", "green"], ["brightRed", "brightGreen"]]) {
+    assert.ok(Math.abs(pal.lightness(pl[r]) - pal.lightness(pl[g])) >= pal.MIN_RG_LIGHTNESS - 0.005, `${p.id}: ${r}/${g} solo se distinguen por tono`);
+  }
+  // Bueno, malo y advertencia distintos entre sí.
+  for (const [a, b] of [["red", "green"], ["red", "yellow"], ["green", "yellow"]]) {
+    assert.ok(pal.deltaE(pl[a], pl[b]) >= 0.07, `${p.id}: ${a} y ${b} se confunden (ΔE ${pal.deltaE(pl[a], pl[b]).toFixed(3)})`);
+  }
+  // Con tema, la salida lleva color real (truecolor) y no el ANSI crudo del tema.
+  const c = compile([{ id: "b0", name: "x", pattern: "down", style: { color: "red", bold: true } }], th);
+  assert.match(c[0].on, /38;2;\d+;\d+;\d+/, `${p.id}: el color con nombre debe resolverse contra el tema`);
+}
+assert.ok(pal.isMonochrome(presets.find((p) => p.id === "amber").theme), "el tema ámbar debe detectarse como monocromo");
+assert.ok(!pal.isMonochrome(presets.find((p) => p.id === "dracula").theme));
 
 // ---------- Todos los esquemas: patrones válidos y rápidos con líneas largas ----------
 for (const sc of schemes) {

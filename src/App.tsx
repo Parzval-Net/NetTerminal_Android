@@ -656,8 +656,8 @@ function Workspace({
           { enabled: settings.highlightEnabled, schemes: settings.highlightSchemes, custom: settings.customRules },
           activeTab?.session.highlight,
         ),
-      ]),
-    [settings.highlightEnabled, settings.highlightSchemes, settings.customRules, activeTab?.session.highlight],
+      ], preset.theme),
+    [settings.highlightEnabled, settings.highlightSchemes, settings.customRules, activeTab?.session.highlight, preset.theme],
   );
 
   /** Envía texto de Notas a la sesión activa, confirmando bloques en equipos remotos. */
