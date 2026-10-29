@@ -1197,6 +1197,11 @@ assert.equal(R.linkTraffic(lk, new Map([["core", new Map([["gi1/0/1", { inBps: 5
 assert.deepEqual([0, 0.69, 0.7, 0.899, 0.9, 1.2, undefined, NaN].map(T.utilLevel), ["ok", "ok", "warn", "warn", "crit", "crit", "none", "none"]);
 assert.deepEqual([0, 950, 999_499, 35e6, 120e6, 1.2e9, null, -1].map(T.fmtBps), ["0 b/s", "950 b/s", "999 kb/s", "35 Mb/s", "120 Mb/s", "1.2 Gb/s", "?", "?"]);
 assert.equal(T.trafficLabel({ ab: 120e6, ba: 35e6, speed: 1e9, util: 0.12, ts: 0 }), "→ 120 Mb/s · ← 35 Mb/s · 12 %");
+// Rótulo corto del mapa: % de uso; sin velocidad, la tasa mayor de los dos sentidos.
+assert.equal(T.trafficShort({ ab: 120e6, ba: 35e6, speed: 1e9, util: 0.12, ts: 0 }), "12 %");
+assert.equal(T.trafficShort({ ab: 120e6, ba: 35e6, speed: 1e9, util: 0.12, approx: true, ts: 0 }), "≈12 %");
+assert.equal(T.trafficShort({ ab: 12e6, ba: 45e6, ts: 0 }), "45 Mb/s");
+assert.equal(T.trafficShort({ ab: null, ba: null, ts: 0 }), "0 b/s");
 assert.equal(T.trafficLabel({ ab: 120e6, ba: null, ts: 0 }), "→ 120 Mb/s · ← ?");
 // Con el equipo A explícito (nombre largo recortado) y utilización aproximada.
 assert.equal(T.trafficLabel({ ab: 120e6, ba: 35e6, speed: 1e9, util: 0.12, ts: 0 }, "core-sw01"), "core-sw01 → 120 Mb/s · ← 35 Mb/s · 12 %");

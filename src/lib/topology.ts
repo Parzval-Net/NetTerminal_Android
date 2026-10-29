@@ -1306,6 +1306,15 @@ export const shortName = (name: string, max = 16) => (name.length > max ? `${nam
  * "→" es lo que sale de A hacia el otro extremo y "←" lo que llega a A. Con la utilización
  * aproximada (velocidad desde el BW configurado) el porcentaje lleva "≈".
  */
+/**
+ * Rótulo corto para el mapa: el % de uso del sentido más cargado, o la tasa mayor si no se conoce
+ * la velocidad del enlace. El detalle por sentido va en el tooltip y en la tabla del panel.
+ */
+export function trafficShort(lt: LinkTraffic): string {
+  if (lt.util !== undefined) return `${lt.approx ? "≈" : ""}${Math.round(lt.util * 100)} %`;
+  return fmtBps(Math.max(lt.ab ?? 0, lt.ba ?? 0));
+}
+
 export function trafficLabel(lt: LinkTraffic, aName?: string): string {
   const pct = lt.util === undefined ? "" : ` · ${lt.approx ? "≈" : ""}${Math.round(lt.util * 100)} %`;
   return `${aName ? `${shortName(aName)} ` : ""}→ ${fmtBps(lt.ab)} · ← ${fmtBps(lt.ba)}${pct}`;
