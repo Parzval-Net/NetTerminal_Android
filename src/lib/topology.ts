@@ -1255,16 +1255,20 @@ export type UtilLevel = "ok" | "warn" | "crit" | "none";
 /** Umbrales de utilización: amarillo desde 70 %, rojo desde 90 %. */
 export const UTIL_WARN = 0.7;
 export const UTIL_CRIT = 0.9;
+/** Distancia entre los puntos del flujo animado, en px (igual que el stroke-dasharray del CSS). */
+export const FLOW_GAP = 16;
+
 /**
- * Ritmo de la animación de un sentido del enlace: más tráfico, pulsos más rápidos. Con la velocidad
+ * Ritmo de la animación de un sentido del enlace: más tráfico, puntos más rápidos. Con la velocidad
  * del enlace se usa la utilización; sin ella, el volumen en escala logarítmica (1 kbps lento, 1 Gbps
- * rápido). Avanza en pasos de 20 por segundo (fluido a la vista, la mitad de repintados que a 60).
+ * rápido). Avanza en pasos de 30 por segundo (fluido a la vista, la mitad de repintados que a 60).
  */
 export function flowTiming(bps: number | null | undefined, speed?: number): { dur: number; steps: number } {
   const b = Math.max(0, bps ?? 0);
   const rate = speed && speed > 0 ? Math.min(1, b / speed) : Math.min(1, Math.max(0, (Math.log10(b + 1) - 3) / 6));
-  const dur = Math.round((2.6 - 2 * Math.sqrt(rate)) * 100) / 100;
-  return { dur, steps: Math.max(8, Math.round(dur * 20)) };
+  // Velocidad visual de 40 a 160 px/s sobre un ciclo de FLOW_GAP px (la distancia entre puntos).
+  const dur = Math.round((FLOW_GAP / (40 + 120 * Math.sqrt(rate))) * 100) / 100;
+  return { dur, steps: Math.max(3, Math.round(dur * 30)) };
 }
 
 export const utilLevel = (u: number | undefined): UtilLevel =>

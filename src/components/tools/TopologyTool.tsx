@@ -212,7 +212,6 @@ interface TopoUi {
   interval: TrafficInterval;
   anim: boolean;
   /** Versión de la preferencia de animación: hasta la 2 venía apagada por defecto y quedó guardada así. */
-  animV?: number;
   /** Puntas de flecha por sentido sobre cada enlace con tráfico. */
   arrows: boolean;
   /** Etiqueta de tasas (↑ ↓ y %) junto a cada enlace con tráfico. */
@@ -231,8 +230,7 @@ const UI_DEFAULT: TopoUi = {
   mode: "cli",
   snmpProfile: "",
   interval: 30,
-  anim: true,
-  animV: 2,
+  anim: false,
   arrows: true,
   rates: true,
   color: true,
@@ -254,8 +252,7 @@ function loadUi(): TopoUi {
       snmpProfile: typeof v.snmpProfile === "string" ? v.snmpProfile.slice(0, 64) : "",
       interval: TRAFFIC_INTERVALS.includes(v.interval as TrafficInterval) ? (v.interval as TrafficInterval) : 30,
       // Desde la versión 2 la animación parte encendida; lo guardado antes era el valor por defecto.
-      anim: v.animV === 2 ? v.anim !== false : true,
-      animV: 2,
+      anim: v.anim === true,
       arrows: v.arrows !== false,
       rates: v.rates !== false,
       color: v.color !== false,
@@ -316,13 +313,16 @@ function isTrackpadScroll(e: { deltaX: number; deltaY: number; deltaMode: number
   return e.deltaX !== 0 || Math.abs(e.deltaY) < 40 || !Number.isInteger(e.deltaY);
 }
 
-/** Un sentido del tráfico: pulsos de color con un halo del fondo para que se lean sobre cualquier línea. */
+/**
+ * Un sentido del tráfico: puntos que viajan junto al enlace (un trazo de largo cero con punta
+ * redonda es un círculo), con un borde del color del fondo para que se lean sobre cualquier línea.
+ */
 function FlowLane({ d, color, style, reverse }: { d: string; color: string; style: React.CSSProperties; reverse?: boolean }) {
   const cls = `topo-flow${reverse ? " topo-flow-rev" : ""}`;
   return (
     <>
-      <path className={cls} style={style} d={d} fill="none" stroke="var(--panel)" strokeWidth={5} strokeLinecap="round" />
-      <path className={cls} style={style} d={d} fill="none" stroke={color} strokeWidth={3} strokeLinecap="round" />
+      <path className={cls} style={style} d={d} fill="none" stroke="var(--panel)" strokeWidth={6} strokeLinecap="round" />
+      <path className={cls} style={style} d={d} fill="none" stroke={color} strokeWidth={4} strokeLinecap="round" />
     </>
   );
 }
@@ -491,16 +491,13 @@ const LinkView = memo(function LinkView({
         strokeWidth={isRoute ? 3.5 : lt && byUtil ? 1.75 + 3 * Math.min(1, lt.util ?? 0) : hot || state ? 2.5 : g.l.logical ? 1.25 : 1.5}
         strokeDasharray={dash}
         strokeLinecap={dash ? "round" : undefined}
-        // Con animación el enlace queda de fondo y resaltan los pulsos que se mueven sobre él.
-        strokeOpacity={animate && lt ? 0.3 : undefined}
       />
       {lt && (
         <>
-          {/* Un carril y una punta de flecha por sentido: A→B y B→A. */}
-          {/* Pulsos que avanzan en cada sentido, más rápidos cuanto más tráfico lleva. */}
-          {animate && !!lt.ab && <FlowLane d={lanePath(g.a, g.c, g.b, 4)} color={dirLevel(lt.ab)} style={flowStyle(lt.ab, lt.speed)} />}
-          {animate && !!lt.ba && <FlowLane d={lanePath(g.a, g.c, g.b, -4)} color={dirLevel(lt.ba)} style={flowStyle(lt.ba, lt.speed)} reverse />}
-          {arrows && (
+          {/* Un carril por sentido (A→B y B→A): puntos en movimiento con animación, flechas fijas sin ella. */}
+          {animate && !!lt.ab && <FlowLane d={lanePath(g.a, g.c, g.b, 5)} color={dirLevel(lt.ab)} style={flowStyle(lt.ab, lt.speed)} />}
+          {animate && !!lt.ba && <FlowLane d={lanePath(g.a, g.c, g.b, -5)} color={dirLevel(lt.ba)} style={flowStyle(lt.ba, lt.speed)} reverse />}
+          {arrows && !animate && (
             <>
               <polygon points={arrowHead(g.a, g.c, g.b, 0.4, true, 5)} fill={dirLevel(lt.ab)} stroke="var(--panel)" strokeWidth={0.75} />
               <polygon points={arrowHead(g.a, g.c, g.b, 0.6, false, -5)} fill={dirLevel(lt.ba)} stroke="var(--panel)" strokeWidth={0.75} />
