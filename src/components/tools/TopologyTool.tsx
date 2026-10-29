@@ -422,10 +422,29 @@ function LegendLine({ dash }: { dash?: string }) {
   );
 }
 
-type Geo = ReturnType<typeof linkGeometry>[number];
+/** Geometría de un enlace más su clave (linkKey), calculada una vez por enlace y no en cada redibujo. */
+type Geo = ReturnType<typeof linkGeometry>[number] & { k: string };
 
 /** Línea de "puerto: estado" para el tooltip de un extremo. */
 const infoLine = (port: string, info: string) => (info ? `${port}: ${info}` : "");
+/** Estado de un puerto para el tooltip del enlace (estado, velocidad, grupo y descripción). */
+const portLine = (n: TopoNode | undefined, port: string) => {
+  const p = port ? portOf(n, port) : undefined;
+  return p ? [p.status, p.speed, p.group, p.desc].filter(Boolean).join(" · ") : "";
+};
+/** Segunda línea del equipo en el mapa: IP de gestión o cómo se conoce. */
+const nodeSub = (n: TopoNode, ghost: boolean) =>
+  ghost
+    ? "ya no aparece"
+    : n.ip && n.ip !== n.name
+      ? n.ip
+      : n.addrOnly
+        ? "visto por ruteo"
+        : n.manual
+          ? "manual"
+          : n.explored
+            ? "explorado"
+            : "sin IP de gestión";
 
 interface TrafficRow {
   key: string;
@@ -544,10 +563,12 @@ const TrafficTable = memo(function TrafficTable({
  */
 const LinkView = memo(function LinkView({
   g,
+  a,
+  b,
   aName,
   bName,
-  aInfo,
-  bInfo,
+  ga,
+  gb,
   state,
   isRoute,
   hot,
@@ -556,15 +577,19 @@ const LinkView = memo(function LinkView({
   color: byUtil,
   arrows,
   animate,
-  grp,
+  noGroup,
   issues,
   onIssue,
 }: {
   g: Geo;
+  /** Extremos en el diagrama actual (sin los fantasma del snapshot): nombre y estado de puerto. */
+  a: TopoNode | undefined;
+  b: TopoNode | undefined;
   aName: string;
   bName: string;
-  aInfo: string;
-  bInfo: string;
+  /** Extremos a la vista (con fantasma): el grupo (Port-channel) del enlace. */
+  ga: TopoNode | undefined;
+  gb: TopoNode | undefined;
   state: "removed" | "added" | null;
   isRoute: boolean;
   hot: boolean;
@@ -573,10 +598,16 @@ const LinkView = memo(function LinkView({
   color: boolean;
   arrows: boolean;
   animate: boolean;
-  grp: string | undefined;
+  /** El par lleva píldora de tráfico: su rótulo de agregado ("Po1 ×2") ya va dentro de ella. */
+  noGroup: boolean;
   issues: LinkIssue[] | undefined;
   onIssue: (id: string) => void;
 }) {
+  // Textos por enlace aquí y no en el padre: con cientos de enlaces, cada redibujo del mapa solo
+  // los rehace para los que cambiaron (al arrastrar un equipo, los suyos).
+  const aInfo = portLine(a, g.l.aPort);
+  const bInfo = portLine(b, g.l.bPort);
+  const grp = noGroup ? undefined : (portOf(ga, g.l.aPort)?.group ?? portOf(gb, g.l.bPort)?.group);
   const level = lt && byUtil ? utilLevel(lt.util) : undefined;
   const color = state === "removed" ? "var(--danger)" : state === "added" ? "var(--ok)" : level ? UTIL_VAR[level] : hot ? "var(--accent)" : "var(--muted)";
   const sev = worstSev(issues);
@@ -696,7 +727,6 @@ const NodeView = memo(function NodeView({
   onRoute,
   selected,
   faded,
-  sub,
   onDown,
   onMenu,
 }: {
@@ -706,11 +736,11 @@ const NodeView = memo(function NodeView({
   onRoute: boolean;
   selected: boolean;
   faded: boolean;
-  sub: string;
   onDown: (e: React.PointerEvent<SVGGElement>, n: TopoNode) => void;
   onMenu: (e: React.MouseEvent<SVGGElement>, n: TopoNode) => void;
 }) {
   const tentative = n.manual || n.addrOnly;
+  const sub = nodeSub(n, ghost);
   return (
     <g style={{ cursor: ghost ? "default" : "grab" }} opacity={faded ? 0.35 : 1} onPointerDown={(e) => !ghost && e.button === 0 && onDown(e, n)}
       onContextMenu={(e) => {
@@ -738,6 +768,151 @@ const NodeView = memo(function NodeView({
         {sub}
       </text>
     </g>
+  );
+});
+
+/** Píldora de tráfico sobre un enlace (o el centro de un par de paralelos). */
+interface Pill {
+  key: string;
+  x: number;
+  y: number;
+  text: string;
+  color: string;
+  dim: boolean;
+  keys: string[];
+}
+
+/**
+ * Capas del mapa (enlaces, nodos L2, equipos y píldoras). Memorizadas: el zoom, el arrastre del
+ * fondo, los mensajes y el panel cambian el estado de la herramienta sin tocar el diagrama, y con
+ * cientos de equipos rehacer y comparar los elementos de cada enlace y equipo costaba decenas de ms
+ * por redibujo.
+ */
+const TopoLayers = memo(function TopoLayers({
+  geometry,
+  nodes,
+  l2Nodes,
+  pills,
+  byId,
+  shownById,
+  snapshot,
+  hasRoute,
+  routeKeys,
+  routeNodes,
+  removed,
+  added,
+  ghostIds,
+  newIds,
+  selected,
+  focusLink,
+  linkRates,
+  color,
+  arrows,
+  animate,
+  animKeys,
+  pillPairs,
+  checks,
+  onIssue,
+  onNodeDown,
+  onNodeMenu,
+  onPick,
+}: {
+  geometry: Geo[];
+  nodes: TopoNode[];
+  l2Nodes: L2Geo[];
+  /** Píldoras de tráfico, o null con el rótulo apagado. */
+  pills: Pill[] | null;
+  byId: Map<string, TopoNode>;
+  shownById: Map<string, TopoNode>;
+  snapshot: TopoSnapshot | undefined;
+  hasRoute: boolean;
+  routeKeys: Set<string>;
+  routeNodes: Set<string>;
+  removed: Set<string>;
+  added: Set<string>;
+  ghostIds: Set<string>;
+  newIds: Set<string>;
+  selected: string | null;
+  focusLink: string | null;
+  linkRates: Map<string, LinkTraffic>;
+  color: boolean;
+  arrows: boolean;
+  animate: boolean;
+  animKeys: Set<string>;
+  pillPairs: Set<string>;
+  checks: Map<string, LinkIssue[]>;
+  onIssue: (id: string) => void;
+  onNodeDown: (e: React.PointerEvent<SVGGElement>, n: TopoNode) => void;
+  onNodeMenu: (e: React.MouseEvent<SVGGElement>, n: TopoNode) => void;
+  onPick: (id: string) => void;
+}) {
+  /** Nombre del equipo en el diagrama o en el snapshot (los ids son nombres normalizados en minúscula). */
+  const anyName = (id: string) => byId.get(id)?.name ?? snapshot?.topo.nodes.find((n) => n.id === id)?.name ?? id;
+  return (
+    <>
+      {geometry.map((g) => {
+        const k = g.k;
+        const isRoute = routeKeys.has(k);
+        const state = removed.has(k) ? "removed" : added.has(k) ? "added" : null;
+        const a = byId.get(g.l.a);
+        const b = byId.get(g.l.b);
+        return (
+          <LinkView
+            key={`${k}|${g.l.proto}`}
+            g={g}
+            a={a}
+            b={b}
+            aName={a?.name ?? anyName(g.l.a)}
+            bName={b?.name ?? anyName(g.l.b)}
+            ga={shownById.get(g.l.a)}
+            gb={shownById.get(g.l.b)}
+            state={state}
+            isRoute={isRoute}
+            hot={isRoute || focusLink === k || selected === g.l.a || selected === g.l.b}
+            dim={hasRoute && !isRoute}
+            lt={state ? undefined : linkRates.get(k)}
+            color={color}
+            arrows={arrows}
+            animate={animate && animKeys.has(k)}
+            noGroup={pillPairs.has(k)}
+            issues={state === "removed" ? undefined : checks.get(k)}
+            onIssue={onIssue}
+          />
+        );
+      })}
+      {l2Nodes.map((v) => (
+        <L2View key={`l2:${v.id}`} v={v} faded={hasRoute && !routeNodes.has(v.id)} onPick={onPick} />
+      ))}
+      {nodes.map((n) => {
+        const ghost = ghostIds.has(n.id);
+        const onRoute = routeNodes.has(n.id);
+        return (
+          <NodeView
+            key={n.id}
+            n={n}
+            ghost={ghost}
+            isNew={newIds.has(n.id)}
+            onRoute={onRoute}
+            selected={selected === n.id}
+            faded={hasRoute && !onRoute && !ghost}
+            onDown={onNodeDown}
+            onMenu={onNodeMenu}
+          />
+        );
+      })}
+      {/* Las píldoras van en una capa propia sobre los equipos: un enlace corto no las tapa. */}
+      {pills?.map((t) => {
+        const w = t.text.length * 6.4 + 12;
+        return (
+          <g key={t.key} opacity={t.dim ? 0.25 : 1} pointerEvents="none">
+            <rect x={t.x - w / 2} y={t.y - 9} width={w} height={18} rx={9} fill="var(--panel)" stroke={t.color} strokeWidth={1.25} />
+            <text x={t.x} y={t.y + 3.8} fontSize={11} fontWeight={600} textAnchor="middle" fill={t.color} style={{ fontVariantNumeric: "tabular-nums" }}>
+              {t.text}
+            </text>
+          </g>
+        );
+      })}
+    </>
   );
 });
 
@@ -808,7 +983,7 @@ export function TopologyTool({
    */
   const [hops, setHops] = useState<Record<string, { name: string; ip: string }[]>>({});
   const [hopUser, setHopUser] = useState("");
-  const drag = useRef<{ id: string; sx: number; sy: number; x: number; y: number } | null>(null);
+  const drag = useRef<{ id: string; sx: number; sy: number; x: number; y: number; w: number; h: number } | null>(null);
   const [dragPos, setDragPos] = useState<{ id: string; x: number; y: number } | null>(null);
   const [ui, setUi] = useState<TopoUi>(loadUi);
   // El descubrimiento tarda segundos: el alcance se evalúa contra el diagrama vigente al terminar.
@@ -1175,8 +1350,12 @@ export function TopologyTool({
   const geometry = useMemo(() => {
     const prev = geoCache.current;
     const next = new Map<TopoLink, Geo>();
-    const out = linkGeometry(shown, shown.links, PARALLEL_GAP).map((g) => {
-      const p = prev.get(g.l);
+    const out = linkGeometry(shown, shown.links, PARALLEL_GAP).map((g0) => {
+      const p = prev.get(g0.l);
+      // La clave se conserva mientras el enlace sea el mismo con los mismos extremos: al arrastrar
+      // un equipo la geometría se rehace en cada cuadro y no hay que normalizar los puertos de nuevo.
+      const k = p && p.l.a === g0.l.a && p.l.b === g0.l.b && p.l.aPort === g0.l.aPort && p.l.bPort === g0.l.bPort ? p.k : linkKey(g0.l);
+      const g: Geo = Object.assign(g0, { k });
       const keep = p && p.d === g.d && p.pair.length === g.pair.length ? p : g;
       next.set(g.l, keep);
       return keep;
@@ -1214,8 +1393,12 @@ export function TopologyTool({
   };
   const onNodeMenu = useCallback((e: React.MouseEvent<SVGGElement>, n: TopoNode) => nodeMenuRef.current(e, n), []);
   const onNodeDown = useCallback((e: React.PointerEvent<SVGGElement>, n: TopoNode) => {
-    (e.currentTarget.ownerSVGElement as SVGSVGElement).setPointerCapture(e.pointerId);
-    drag.current = { id: n.id, sx: e.clientX, sy: e.clientY, x: n.x, y: n.y };
+    const svg = e.currentTarget.ownerSVGElement as SVGSVGElement;
+    svg.setPointerCapture(e.pointerId);
+    // El tamaño en px del SVG se toma una vez: medirlo en cada movimiento forzaba un layout extra
+    // del mapa por cuadro (el tamaño no cambia durante el arrastre; el viewBox sí puede).
+    const r = svg.getBoundingClientRect();
+    drag.current = { id: n.id, sx: e.clientX, sy: e.clientY, x: n.x, y: n.y, w: r.width, h: r.height };
     setSelected(n.id);
   }, []);
 
@@ -1243,7 +1426,7 @@ export function TopologyTool({
     // Una pasada: por par, los centros de todas sus curvas, sus claves y los enlaces con tráfico.
     const pairs = new Map<string, { mids: Pt[]; keys: string[]; items: { g: Geo; lt: LinkTraffic }[] }>();
     for (const g of geometry) {
-      const k = linkKey(g.l);
+      const k = g.k;
       if (removed.has(k)) continue;
       const pk = pairKey(g.l);
       let e = pairs.get(pk);
@@ -1253,7 +1436,7 @@ export function TopologyTool({
       const lt = linkRates.get(k);
       if (lt) e.items.push({ g, lt });
     }
-    const out: { key: string; x: number; y: number; text: string; color: string; dim: boolean; keys: string[] }[] = [];
+    const out: Pill[] = [];
     for (const [pk, { mids, keys, items }] of pairs) {
       if (!items.length) continue;
       const worst = items.reduce((a, b) => ((b.lt.util ?? -1) > (a.lt.util ?? -1) ? b : a));
@@ -1282,7 +1465,7 @@ export function TopologyTool({
   const trafficRows = useMemo(() => {
     const rows: TrafficRow[] = [];
     for (const g of geometry) {
-      const k = linkKey(g.l);
+      const k = g.k;
       const lt = linkRates.get(k);
       if (!lt || removed.has(k)) continue;
       rows.push({ key: k, a: node(g.l.a)?.name ?? anyName(g.l.a), b: node(g.l.b)?.name ?? anyName(g.l.b), aPort: g.l.aPort, bPort: g.l.bPort, lt });
@@ -1294,9 +1477,9 @@ export function TopologyTool({
     if (!same) rowsRef.current = rows;
     return rowsRef.current;
   }, [geometry, linkRates, removed]);
-  /** Centro de cada enlace a la vista, para ubicar el que se elige en la tabla. */
-  const midsRef = useRef(new Map<string, Pt>());
-  midsRef.current = useMemo(() => new Map(geometry.map((g) => [linkKey(g.l), g.mid])), [geometry]);
+  /** Geometría a la vista, para ubicar el enlace que se elige en la tabla (sin un índice por cuadro). */
+  const geometryRef = useRef(geometry);
+  geometryRef.current = geometry;
   /**
    * Enlaces animados: solo los FLOW_MAX más cargados. Cada paso de la animación repinta el mapa, y
    * con cientos de enlaces animados una topología grande baja de 60 a pocos cuadros por segundo;
@@ -1312,7 +1495,7 @@ export function TopologyTool({
   const pickLink = useCallback((r: TrafficRow) => {
     if (focusLinkRef.current === r.key) return setFocusLink(null);
     setFocusLink(r.key);
-    const mid = midsRef.current.get(r.key);
+    const mid = geometryRef.current.find((g) => g.k === r.key)?.mid;
     if (!mid) return;
     setZoom((z) => Math.max(z, 1.4));
     setFocusReq(mid);
@@ -1361,9 +1544,8 @@ export function TopologyTool({
   const onPointerMove = (e: React.PointerEvent<SVGSVGElement>) => {
     const d = drag.current;
     if (!d) return;
-    const svg = e.currentTarget.getBoundingClientRect();
     // El SVG se ajusta al contenedor manteniendo proporción: manda el eje más ajustado.
-    const scale = Math.max(box.w / svg.width, box.h / svg.height);
+    const scale = Math.max(box.w / d.w, box.h / d.h);
     const x = d.x + (e.clientX - d.sx) * scale;
     const y = d.y + (e.clientY - d.sy) * scale;
     setDragPos({ id: d.id, x, y });
@@ -1487,11 +1669,6 @@ export function TopologyTool({
     else save();
   };
 
-  const portLine = (n: TopoNode | undefined, port: string) => {
-    const p = port ? portOf(n, port) : undefined;
-    return p ? [p.status, p.speed, p.group, p.desc].filter(Boolean).join(" · ") : "";
-  };
-
   /** Aplica una edición manual: si falla, muestra el error en el formulario o en el mensaje. */
   const apply = (r: TopoResult, ok: string, onDone?: () => void) => {
     if (!r.topo) {
@@ -1526,19 +1703,6 @@ export function TopologyTool({
 
   const pathText = route ? pathToText(topo, route) : "";
   const nodesByName = useMemo(() => [...topo.nodes].sort((a, b) => a.name.localeCompare(b.name)), [topo.nodes]);
-  const nodeSub = (n: TopoNode, ghost: boolean) =>
-    ghost
-      ? "ya no aparece"
-      : n.ip && n.ip !== n.name
-        ? n.ip
-        : n.addrOnly
-          ? "visto por ruteo"
-          : n.manual
-            ? "manual"
-            : n.explored
-              ? "explorado"
-              : "sin IP de gestión";
-
 
   // Detalle a demanda: al seleccionar un equipo se abre su sección.
   useEffect(() => {
@@ -1600,8 +1764,13 @@ export function TopologyTool({
   }, [focusReq, shown, zoom, box, reducedMotion]);
 
   // Zoom con pellizco (touchpad) o Ctrl/⌘ + rueda, hacia el punto bajo el puntero.
+  // Un pellizco o la rueda entregan varios eventos por cuadro: se junta todo en un redibujo por
+  // cuadro (cada uno relayouta el mapa completo al cambiar el tamaño del SVG).
+  const zoomFrame = useRef(0);
+  useEffect(() => () => cancelAnimationFrame(zoomFrame.current), []);
   const zoomRef = useRef(zoom);
-  zoomRef.current = zoom;
+  // Con un redibujo pendiente, el valor que manda es el del último evento, no el del estado.
+  if (!zoomFrame.current) zoomRef.current = zoom;
   const zoomAnchor = useRef<{ cx: number; cy: number; sx: number; sy: number; from: number } | null>(null);
   const zoomAt = useCallback((next: number, cx: number, cy: number) => {
     const el = scroller.current;
@@ -1612,7 +1781,12 @@ export function TopologyTool({
     const pending = zoomAnchor.current;
     zoomAnchor.current = pending ? { ...pending, cx, cy } : { cx, cy, sx: el.scrollLeft, sy: el.scrollTop, from };
     zoomRef.current = to;
-    setZoom(to);
+    if (!zoomFrame.current) {
+      zoomFrame.current = requestAnimationFrame(() => {
+        zoomFrame.current = 0;
+        setZoom(zoomRef.current);
+      });
+    }
   }, []);
   // El dibujo crece en proporción al zoom: se corre el scroll para que el punto bajo el puntero no se mueva.
   useLayoutEffect(() => {
@@ -2065,68 +2239,35 @@ export function TopologyTool({
           onPointerUp={endDrag}
           onPointerLeave={endDrag}
         >
-          {geometry.map((g) => {
-            const k = linkKey(g.l);
-            const isRoute = routeKeys.has(k);
-            const state = removed.has(k) ? "removed" : added.has(k) ? "added" : null;
-            const a = node(g.l.a);
-            const b = node(g.l.b);
-            return (
-              <LinkView
-                key={`${k}|${g.l.proto}`}
-                g={g}
-                aName={a?.name ?? anyName(g.l.a)}
-                bName={b?.name ?? anyName(g.l.b)}
-                aInfo={portLine(a, g.l.aPort)}
-                bInfo={portLine(b, g.l.bPort)}
-                state={state}
-                isRoute={isRoute}
-                hot={isRoute || focusLink === k || selected === g.l.a || selected === g.l.b}
-                dim={!!route && !isRoute}
-                lt={state ? undefined : linkRates.get(k)}
-                color={ui.color}
-                arrows={ui.arrows}
-                animate={animate && animKeys.has(k)}
-                grp={pillPairs.has(k) ? undefined : linkGroup(shown, g.l, shownById)}
-                issues={state === "removed" ? undefined : checks.get(k)}
-                onIssue={onIssue}
-              />
-            );
-          })}
-          {l2Nodes.map((v) => (
-            <L2View key={`l2:${v.id}`} v={v} faded={!!route && !routeNodes.has(v.id)} onPick={setSelected} />
-          ))}
-          {shown.nodes.map((n) => {
-            const ghost = ghostIds.has(n.id);
-            const onRoute = routeNodes.has(n.id);
-            return (
-              <NodeView
-                key={n.id}
-                n={n}
-                ghost={ghost}
-                isNew={newIds.has(n.id)}
-                onRoute={onRoute}
-                selected={selected === n.id}
-                faded={!!route && !onRoute && !ghost}
-                sub={nodeSub(n, ghost)}
-                onDown={onNodeDown}
-                onMenu={onNodeMenu}
-              />
-            );
-          })}
-          {/* Las píldoras van en una capa propia sobre los equipos: un enlace corto no las tapa. */}
-          {ui.rates &&
-            trafficPills.map((t) => {
-              const w = t.text.length * 6.4 + 12;
-              return (
-                <g key={t.key} opacity={t.dim ? 0.25 : 1} pointerEvents="none">
-                  <rect x={t.x - w / 2} y={t.y - 9} width={w} height={18} rx={9} fill="var(--panel)" stroke={t.color} strokeWidth={1.25} />
-                  <text x={t.x} y={t.y + 3.8} fontSize={11} fontWeight={600} textAnchor="middle" fill={t.color} style={{ fontVariantNumeric: "tabular-nums" }}>
-                    {t.text}
-                  </text>
-                </g>
-              );
-            })}
+          <TopoLayers
+            geometry={geometry}
+            nodes={shown.nodes}
+            l2Nodes={l2Nodes}
+            pills={ui.rates ? trafficPills : null}
+            byId={topoById}
+            shownById={shownById}
+            snapshot={snapshot}
+            hasRoute={!!route}
+            routeKeys={routeKeys}
+            routeNodes={routeNodes}
+            removed={removed}
+            added={added}
+            ghostIds={ghostIds}
+            newIds={newIds}
+            selected={selected}
+            focusLink={focusLink}
+            linkRates={linkRates}
+            color={ui.color}
+            arrows={ui.arrows}
+            animate={animate}
+            animKeys={animKeys}
+            pillPairs={pillPairs}
+            checks={checks}
+            onIssue={onIssue}
+            onNodeDown={onNodeDown}
+            onNodeMenu={onNodeMenu}
+            onPick={setSelected}
+          />
         </svg>
       )}
           </div>
