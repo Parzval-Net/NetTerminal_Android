@@ -27,3 +27,25 @@ export function wheelFactor(e: Pick<WheelLike, "deltaY" | "deltaMode">, pinch: b
   const d = Math.max(-300, Math.min(300, e.deltaMode === 1 ? e.deltaY * 33 : e.deltaY));
   return Math.exp(-d * 0.0015);
 }
+
+/**
+ * Pantallas táctiles: zoom con dos dedos (Pointer Events). Con un dedo se arrastra el mapa como con
+ * el mouse. Aquí solo va la geometría; el estado de los punteros activos vive en el componente.
+ */
+export interface Pt {
+  x: number;
+  y: number;
+}
+
+export function pinchMetrics(a: Pt, b: Pt): { dist: number; mid: Pt } {
+  return { dist: Math.hypot(a.x - b.x, a.y - b.y), mid: { x: (a.x + b.x) / 2, y: (a.y + b.y) / 2 } };
+}
+
+/**
+ * Zoom objetivo de un gesto de dos dedos: el zoom inicial por la razón de distancias, con los topes
+ * dados. Una distancia inicial casi nula (dedos juntos) no produce zoom, para no dividir por cero.
+ */
+export function pinchZoom(base: number, startDist: number, dist: number, min: number, max: number): number {
+  if (!(startDist >= 8) || !Number.isFinite(dist)) return base;
+  return Math.max(min, Math.min(max, base * (dist / startDist)));
+}

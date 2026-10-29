@@ -2783,6 +2783,8 @@ dependencies = [
  "tauri-plugin-updater",
  "tiny_http",
  "uuid",
+ "webview2-com",
+ "windows-core",
  "zeroize",
  "zip",
 ]

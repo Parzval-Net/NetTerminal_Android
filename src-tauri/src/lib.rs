@@ -1085,6 +1085,37 @@ fn extend_path() {
     std::env::set_var("PATH", merge_path(&current, &extra));
 }
 
+/// WebView2 trae zoom propio: el pellizco del touchpad o de la pantalla táctil (`IsPinchZoomEnabled`,
+/// ICoreWebView2Settings5) y Ctrl + rueda (`IsZoomControlEnabled`) escalan toda la página y pueden
+/// consumir el gesto antes de que llegue como evento `wheel` o de puntero. Se apagan para que el
+/// mapa de Topología haga su propio zoom. Solo Windows; macOS y Linux no se tocan.
+#[cfg(windows)]
+fn disable_native_zoom(app: &tauri::AppHandle) {
+    use tauri::Manager;
+    use webview2_com::Microsoft::Web::WebView2::Win32::ICoreWebView2Settings5;
+    use windows_core::Interface;
+    for (label, window) in app.webview_windows() {
+        let name = label.clone();
+        let res = window.with_webview(move |wv| {
+            let run = || unsafe {
+                let settings = wv.controller().CoreWebView2().and_then(|c| c.Settings())?;
+                settings.SetIsZoomControlEnabled(false)?;
+                // Settings5 exige WebView2 Runtime 1.0.864.35 o superior; en uno anterior solo queda lo primero.
+                if let Ok(s5) = settings.cast::<ICoreWebView2Settings5>() {
+                    s5.SetIsPinchZoomEnabled(false)?;
+                }
+                Ok::<(), windows_core::Error>(())
+            };
+            if let Err(e) = run() {
+                eprintln!("NetTerminal: no se pudo apagar el zoom nativo de '{name}': {e}");
+            }
+        });
+        if let Err(e) = res {
+            eprintln!("NetTerminal: no se pudo ajustar el zoom nativo de '{label}': {e}");
+        }
+    }
+}
+
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
     extend_path();
@@ -1105,6 +1136,8 @@ pub fn run() {
             if let Err(e) = macos_menu(app.handle()).and_then(|m| app.set_menu(m)) {
                 eprintln!("NetTerminal: no se pudo crear el menú de macOS: {e}");
             }
+            #[cfg(windows)]
+            disable_native_zoom(app.handle());
             let (os_dir, warning) = config_dir_or_fallback(
                 app.path().app_config_dir().map_err(|e| e.to_string()),
                 std::env::var_os("HOME").or_else(|| std::env::var_os("USERPROFILE")),

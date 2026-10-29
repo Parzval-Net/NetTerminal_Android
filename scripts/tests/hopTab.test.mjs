@@ -183,6 +183,20 @@ assert.ok(Z.wheelFactor({ deltaY: -100, deltaMode: 0 }, false) > 1.15 && Z.wheel
 assert.ok(Z.wheelFactor({ deltaY: 100, deltaMode: 0 }, false) < 1);
 assert.ok(Z.wheelFactor({ deltaY: -1e6, deltaMode: 0 }, false) < 1.6, "con tope");
 assert.ok(Z.wheelFactor({ deltaY: -3, deltaMode: 1 }, false) > 1.1, "por líneas");
+// Pellizco de Windows (ctrl + rueda con pasos pequeños, deltaMode 0): suave, simétrico y acumulable.
+const pz = (d) => Z.wheelFactor({ deltaY: d, deltaMode: 0 }, true);
+assert.ok(pz(-1) > 1 && pz(-1) < 1.02 && pz(1) < 1 && pz(1) > 0.98, "un paso mínimo cambia ~1 %");
+assert.ok(Math.abs(pz(-4) * pz(4) - 1) < 1e-9, "abrir y cerrar se compensan");
+assert.ok(Math.abs(pz(-2) * pz(-2) - pz(-4)) < 1e-9, "los pasos se acumulan en proporción");
+assert.ok(pz(-1e6) <= Math.exp(0.5) + 1e-9, "con tope");
+// Dos dedos (pantalla táctil)
+assert.deepEqual(Z.pinchMetrics({ x: 0, y: 0 }, { x: 30, y: 40 }), { dist: 50, mid: { x: 15, y: 20 } });
+assert.equal(Z.pinchZoom(1, 100, 200, 0.4, 3), 2, "separar los dedos al doble duplica el zoom");
+assert.equal(Z.pinchZoom(2, 100, 50, 0.4, 3), 1, "juntarlos lo reduce a la mitad");
+assert.equal(Z.pinchZoom(1, 100, 1000, 0.4, 3), 3, "tope máximo");
+assert.equal(Z.pinchZoom(1, 100, 1, 0.4, 3), 0.4, "tope mínimo");
+assert.equal(Z.pinchZoom(1.5, 0, 100, 0.4, 3), 1.5, "dedos juntos al inicio: sin zoom");
+assert.equal(Z.pinchZoom(1.5, 100, NaN, 0.4, 3), 1.5, "distancia inválida: sin zoom");
 
 // ---------- Tráfico por consola: pestaña del equipo y prompt ----------
 
