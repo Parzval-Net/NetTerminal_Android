@@ -164,3 +164,11 @@ for (const sc of schemes) {
 }
 
 console.log("highlight: ok");
+
+// BGP: Active/Idle/Connect en el resumen de vecinos es una sesión caída; Active de HSRP no.
+expectSpans("cisco", "198.51.100.2    4 65002     120     118        0    0    0 00:03:12 Active", ["Active"]);
+expectSpans("cisco", "192.0.2.9       4 65001       0       0        0    0    0 never    Idle (Admin)", ["Idle (Admin)"]);
+assert.equal(styleOf("cisco", "198.51.100.2    4 65002     120     118        0    0    0 00:03:12 Active", "Active")?.bold, true);
+expectPlain("cisco", "Vl10        1    100 P Active  local           192.0.2.3       192.0.2.1", "Active");
+console.log("highlight bgp: ok");
+

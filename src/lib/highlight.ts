@@ -280,6 +280,10 @@ export const schemes: HlScheme[] = [
     description: "IPv4/IPv6, MAC, estados up/down, permit/deny y contadores de error",
     rules: [
       r("Contadores de error > 0", ERR_COUNTERS, { color: "red", bold: true }, { ignoreCase: true }),
+      // BGP: en el resumen de vecinos (línea que empieza con la IP del vecino), "Active", "Idle" o
+      // "Connect" en la columna de estado significan sesión NO establecida. Fuera de esa línea
+      // "Active" es normal (HSRP, VRRP), por eso no va en los estados generales.
+      r("Vecino BGP sin establecer", String.raw`(?<=^\s*(?:\d{1,3}\.){3}\d{1,3}\s+\d.*\s)(?:Active|Idle(?: \((?:Admin|PfxCt)\))?|Connect)\s*$`, { color: "red", bold: true }),
       r("Estado crítico", IF_STATE_BAD, { color: "red", bold: true }, { ignoreCase: true }),
       r("Estado transitorio", IF_STATE_WARN, { color: "yellow" }, { ignoreCase: true }),
       r("Estado OK", IF_STATE_OK, { color: "green" }, { ignoreCase: true }),
