@@ -115,7 +115,7 @@ import {
   utilLevel,
   flowTiming,
 } from "../../lib/topology";
-import { wheelFactor, wheelIntent } from "../../lib/mapZoom";
+import { pinchMetrics, pinchZoom, wheelFactor, wheelIntent } from "../../lib/mapZoom";
 import {
   HopAction,
   HopJob,
@@ -2562,12 +2562,54 @@ export function TopologyTool({
       e.preventDefault();
       gesturing = false;
     };
+    // Pantallas táctiles: dos dedos hacen zoom (distancia entre ellos) anclado al punto medio. Un dedo
+    // sigue siendo arrastrar el mapa (startPan). Los punteros "touch" se siguen aquí, en fase de captura.
+    const touches = new Map<number, { x: number; y: number }>();
+    let pinch: { dist: number; base: number } | null = null;
+    const pair = () => {
+      const [a, b] = [...touches.values()];
+      return pinchMetrics(a, b);
+    };
+    const onTouchDown = (e: PointerEvent) => {
+      if (e.pointerType !== "touch") return;
+      touches.set(e.pointerId, { x: e.clientX, y: e.clientY });
+      if (touches.size === 2) {
+        pinch = { dist: pair().dist, base: zoomRef.current };
+        // El segundo dedo cancela el arrastre del primero y no inicia otro (startPan no lo recibe).
+        endPan.current?.();
+      }
+      if (touches.size >= 2) e.stopPropagation();
+    };
+    const onTouchMove = (e: PointerEvent) => {
+      const t = touches.get(e.pointerId);
+      if (!t) return;
+      t.x = e.clientX;
+      t.y = e.clientY;
+      if (touches.size !== 2 || !pinch) return;
+      e.preventDefault();
+      const { dist, mid } = pair();
+      const [cx, cy] = local(mid.x, mid.y);
+      zoomAt(pinchZoom(pinch.base, pinch.dist, dist, ZOOM_MIN, ZOOM_MAX), cx, cy);
+    };
+    const onTouchUp = (e: PointerEvent) => {
+      if (!touches.delete(e.pointerId)) return;
+      pinch = null;
+      if (touches.size === 2) pinch = { dist: pair().dist, base: zoomRef.current };
+    };
+    el.addEventListener("pointerdown", onTouchDown, { capture: true });
+    el.addEventListener("pointermove", onTouchMove, { passive: false });
+    el.addEventListener("pointerup", onTouchUp);
+    el.addEventListener("pointercancel", onTouchUp);
     el.addEventListener("wheel", onWheel, { passive: false });
     el.addEventListener("pointermove", onMove);
     el.addEventListener("gesturestart", onGestureStart, { passive: false });
     el.addEventListener("gesturechange", onGestureChange, { passive: false });
     el.addEventListener("gestureend", onGestureEnd, { passive: false });
     return () => {
+      el.removeEventListener("pointerdown", onTouchDown, { capture: true });
+      el.removeEventListener("pointermove", onTouchMove);
+      el.removeEventListener("pointerup", onTouchUp);
+      el.removeEventListener("pointercancel", onTouchUp);
       el.removeEventListener("pointermove", onMove);
       el.removeEventListener("wheel", onWheel);
       el.removeEventListener("gesturestart", onGestureStart);
@@ -2964,7 +3006,7 @@ export function TopologyTool({
 
       <div className="relative flex-1 min-h-[240px] flex gap-3">
         <div ref={mapBox} className="relative flex-1 min-w-0 rounded-xl border border-line bg-panel overflow-hidden">
-          <div ref={scroller} className="absolute inset-0 overflow-auto">
+          <div ref={scroller} className="absolute inset-0 overflow-auto" style={{ touchAction: "none" }}>
       {!view.nodes.length ? (
         <div className="h-full grid place-items-center text-[12.5px] text-muted p-6 text-center">
           Conecta una sesión con un equipo y pulsa "Descubrir vecinos", o agrega equipos y enlaces a mano.
