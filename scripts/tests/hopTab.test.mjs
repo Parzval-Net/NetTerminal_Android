@@ -569,11 +569,13 @@ assert.match(pl.reason, /IP de gestión/);
 // El comando que no se puede armar (usuario inválido) descarta la ruta.
 pl = plan("acc-sw01", { directOk: false, cmdFor: () => null });
 assert.equal(pl.primary, undefined);
-// Tope de la ruta: más de MAX_ROUTE_STEPS saltos no se arman.
-const longNodes = Array.from({ length: 9 }, (_, i) => N(`n${i}`, `192.0.2.${i + 1}`));
+// Tope de la ruta: más de MAX_ROUTE_STEPS saltos no se arman, y se dice (no cae en silencio).
+assert.equal(H.MAX_ROUTE_STEPS, 8);
+const longNodes = Array.from({ length: 13 }, (_, i) => N(`n${i}`, `192.0.2.${i + 1}`));
 const longLinks = longNodes.slice(1).map((n, i) => ({ a: longNodes[i].id, b: n.id }));
-pl = H.planOpen({ ...base2, nodes: longNodes, links: longLinks, target: longNodes[8], directOk: false, tabs: [PT("t1", "n0", undefined, "n0#")] });
-assert.equal(pl.primary, undefined, "8 saltos superan el tope");
+pl = H.planOpen({ ...base2, nodes: longNodes, links: longLinks, target: longNodes[H.MAX_ROUTE_STEPS + 2], directOk: false, tabs: [PT("t1", "n0", undefined, "n0#")] });
+assert.equal(pl.primary, undefined, "más saltos que el tope no se arman");
+assert.match(pl.reason, /10 saltos y el tope es 8/);
 pl = H.planOpen({ ...base2, nodes: longNodes, links: longLinks, target: longNodes[H.MAX_ROUTE_STEPS], directOk: false, tabs: [PT("t1", "n0", undefined, "n0#")] });
 assert.equal(pl.primary.route.steps.length, H.MAX_ROUTE_STEPS);
 // La IP del vecino y el usuario solo entran validados: lo hace hopCommand, nunca el nombre CDP.
@@ -585,6 +587,123 @@ assert.equal(H.vendorOfPlatform("FortiGate-100F"), "fortinet");
 assert.equal(H.vendorOfPlatform("Juniper EX4300"), "juniper");
 assert.equal(H.vendorOfPlatform("MikroTik"), undefined);
 assert.ok(H.isNxos("Cisco Nexus9000 C93180") && !H.isNxos("cisco WS-C3850"));
+
+
+// ---------- Cadena de 6 equipos: cada salto parte del equipo anterior ----------
+// core › dist › agg › acc1 › acc2 › acc3 (solo cada uno alcanzable desde el anterior). Los nombres del diagrama llevan
+// dominio y mayúsculas (CDP) y los prompts van en minúsculas; hay enlaces redundantes que acortarían la ruta por BFS.
+{
+  const ids = ["core-sw01", "dist-sw01", "agg-sw01", "acc-sw01", "acc-sw02", "acc-sw03", "acc-sw04"];
+  const cdp = (i) => (i === 0 ? ids[0] : `${ids[i].toUpperCase()}.lab.ejemplo`);
+  const chainNodes = ids.map((id, i) => ({ id, name: cdp(i), ip: `192.0.2.${i + 1}` }));
+  const chainLinks = ids.slice(1).map((id, i) => ({ a: ids[i], b: id }));
+  const sess = { id: "s-core", name: "core-sw01", type: "ssh", host: "192.0.2.1", port: 22, username: "noc", save_password: true };
+  const chainCmd = (_f, to) => ({ cmd: `ssh -l noc ${to.ip}`, user: "noc" });
+  const tabAt = (k, route, extra = {}) => ({
+    tabId: `t${k}`,
+    name: ids[k],
+    session: sess,
+    status: "connected",
+    route,
+    device: H.tabDevice({ name: ids[k], screen: pane(`${ids[k]}#`) }, route),
+    free: true,
+    ...extra,
+  });
+  const common = { saved: new Map(), needsPivot: false, directOk: true, cmdFor: chainCmd };
+  let tabs = [tabAt(0, undefined)];
+  const cameFrom = new Map();
+  for (let k = 1; k <= 6; k++) {
+    // Descubierto desde la pestaña del equipo anterior (ruta = la de esa pestaña).
+    const parentTab = tabs[k - 1];
+    cameFrom.set(ids[k], { from: ids[k - 1], route: parentTab.route ?? { origin: ids[0], session: sess, steps: [] } });
+    const p = H.planOpen({ ...common, nodes: chainNodes.slice(0, k + 1), links: chainLinks.slice(0, k), target: chainNodes[k], tabs, cameFrom });
+    // Por defecto va por la ruta (un equipo descubierto desde un salto no se alcanza directo), el directo queda en el menú.
+    if (k > 1) assert.equal(p.primary.kind, "route", `salto ${k}: abre por la ruta heredada`);
+    const route = (p.primary.kind === "route" ? p.primary : p.alternatives.find((a) => a.kind === "route")).route;
+    assert.deepEqual(route.steps.length, k, `salto ${k}: ${k} pasos`);
+    assert.equal(route.session, sess);
+    // Exactamente la ruta de la pestaña que está en el equipo anterior más el paso nuevo.
+    assert.deepEqual(H.routeNames(route).slice(0, k).map(T.nodeId), ids.slice(0, k));
+    assert.equal(route.steps[k - 1].cmd, `ssh -l noc 192.0.2.${k + 1}`);
+    assert.equal(route.steps[k - 1].ip, `192.0.2.${k + 1}`);
+    if (k > 1) assert.ok(p.alternatives.some((a) => a.kind === "inplace" && a.tabId === `t${k - 1}`));
+    // La pestaña nueva queda en el equipo (prompt en minúsculas, nombre del diagrama con dominio).
+    tabs = [...tabs, tabAt(k, route)];
+  }
+  // 6 saltos (más que el antiguo tope de 5) siguen sin recalcularse ni quedar en silencio.
+  assert.equal(tabs[6].route.steps.length, 6);
+
+  // Enlaces redundantes (core ↔ acc-sw02, dist ↔ acc-sw02) acortarían la ruta por BFS: no se usan.
+  const mesh = [...chainLinks, { a: "core-sw01", b: "acc-sw02" }, { a: "dist-sw01", b: "acc-sw02" }];
+  const tabs5 = tabs.slice(0, 4);
+  const cf = new Map([["acc-sw02", { from: "acc-sw01", route: tabs5[3].route }]]);
+  let q = H.planOpen({ ...common, nodes: chainNodes, links: mesh, target: chainNodes[4], tabs: tabs5, cameFrom: cf });
+  assert.deepEqual(H.routeNames(q.primary.route).map(T.nodeId), ids.slice(0, 5), "herencia: core › dist › agg › acc1 › acc2");
+  const sh = q.alternatives.find((a) => a.kind === "shortest");
+  assert.ok(sh, "la ruta más corta se ofrece, solo en el menú");
+  assert.deepEqual(H.routeNames(sh.route).map(T.nodeId), ["core-sw01", "acc-sw02"]);
+  // Sin procedencia (equipo agregado a mano) se mantiene la más corta de siempre.
+  q = H.planOpen({ ...common, nodes: chainNodes, links: mesh, target: chainNodes[4], tabs: tabs5, needsPivot: true });
+  assert.deepEqual(H.routeNames(q.primary.route).map(T.nodeId), ["core-sw01", "acc-sw02"]);
+  // Si la pestaña del equipo anterior se cerró, se usa la ruta que tenía al descubrirlo.
+  q = H.planOpen({ ...common, nodes: chainNodes, links: chainLinks, target: chainNodes[4], tabs: [tabs5[0]], cameFrom: cf });
+  assert.deepEqual(H.routeNames(q.primary.route).map(T.nodeId), ids.slice(0, 5));
+  assert.ok(!q.alternatives.some((a) => a.kind === "inplace"), "sin pestaña no se salta en ella");
+  // Con dos pestañas en el equipo anterior se usa la de la ruta con que se descubrió.
+  const otherRoute = { origin: "core-sw01", session: sess, steps: [{ name: "acc-sw01", ip: "192.0.2.4", cmd: "ssh -l noc 192.0.2.4", user: "noc" }] };
+  const dup = { ...tabAt(3, otherRoute), tabId: "tx" };
+  q = H.planOpen({ ...common, nodes: chainNodes, links: mesh, target: chainNodes[4], tabs: [dup, ...tabs5], cameFrom: cf });
+  assert.deepEqual(H.routeNames(q.primary.route).map(T.nodeId), ids.slice(0, 5));
+  assert.equal(q.alternatives.find((a) => a.kind === "inplace")?.tabId, "t3");
+
+  // Sobre el tope: se avisa, no cae en una ruta distinta ni en directo en silencio.
+  const deepIds = Array.from({ length: 11 }, (_, i) => `h${i}`);
+  const deepNodes = deepIds.map((id, i) => ({ id, name: id, ip: `192.0.2.${i + 1}` }));
+  const deepLinks = deepIds.slice(1).map((id, i) => ({ a: deepIds[i], b: id }));
+  const deepRoute = { origin: "h0", session: sess, steps: deepIds.slice(1, 9).map((id, i) => ({ name: id, ip: `192.0.2.${i + 2}`, cmd: `ssh -l noc 192.0.2.${i + 2}`, user: "noc" })) };
+  const deepTab = { ...tabAt(0, deepRoute), tabId: "td", name: "h8", device: H.tabDevice({ name: "h8", screen: pane("h8#") }, deepRoute) };
+  const far = H.planOpen({ ...common, directOk: false, nodes: deepNodes, links: deepLinks, target: deepNodes[9], tabs: [deepTab], cameFrom: new Map([["h9", { from: "h8", route: deepRoute }]]) });
+  assert.equal(far.primary, undefined);
+  assert.match(far.reason, /9 saltos y el tope es 8/);
+}
+
+// Prompt distinto del nombre del diagrama (guion bajo, otro dominio): misma ruta y misma pestaña.
+{
+  const sess = { id: "s", name: "core-sw01", type: "ssh", host: "192.0.2.1", port: 22, username: "noc" };
+  const route = {
+    origin: "core-sw01",
+    session: sess,
+    steps: [
+      { name: "ACC-SW01.lab.ejemplo", ip: "192.0.2.4", cmd: "ssh -l noc 192.0.2.4", user: "noc", prompt: "ACC_SW01" },
+      { name: "Acc-Sw02.lab.ejemplo", ip: "192.0.2.5", cmd: "ssh -l noc 192.0.2.5", user: "noc" },
+    ],
+  };
+  assert.deepEqual(H.routePrompts(route), ["core-sw01", "ACC_SW01", "Acc-Sw02.lab.ejemplo"]);
+  assert.equal(H.routePosition(route, "ACC_SW01#"), 1, "el prompt con guion bajo ubica el equipo");
+  assert.equal(H.routePosition(route, "acc-sw01#"), 1, "y su nombre de diagrama también");
+  assert.equal(H.routePosition(route, "acc_sw02#"), 2, "guion bajo y guion son lo mismo");
+  assert.equal(H.routePosition(route, "otro-sw#"), -1);
+  const d = H.tabDevice({ name: "t", screen: pane("ACC_SW01#") }, route);
+  assert.equal(d.name, "ACC-SW01.lab.ejemplo", "el equipo es el del diagrama");
+  assert.equal(d.index, 1);
+  assert.equal(H.tabAtDevice("acc-sw01", ["192.0.2.4"], [{ name: "t", tabId: "t1", screen: pane("ACC_SW01#") }], { t1: route })?.verified, true);
+  // El salto encadenado espera el prompt del alias, no el nombre del diagrama.
+  const job = H.newHopChain({
+    steps: [
+      { cmd: "ssh -l noc 192.0.2.4", to: "ACC_SW01" },
+      { cmd: "ssh -l noc 192.0.2.5", to: "Acc-Sw02.lab.ejemplo" },
+    ],
+    pivot: "core-sw01",
+    now: 0,
+  });
+  let r = H.stepHop(job, "core-sw01#", 0);
+  r = H.stepHop(r.job, "core-sw01#", 1_000);
+  assert.equal(r.actions[0].kind, "send");
+  r = H.stepHop({ ...r.job, tail: "" }, "core-sw01#ssh -l noc 192.0.2.4\r\nACC_SW01#", 2_000);
+  r = H.stepHop(r.job, "core-sw01#ssh -l noc 192.0.2.4\r\nACC_SW01#", 4_000);
+  assert.ok(r.actions.some((a) => a.kind === "step"), "llega al intermedio con prompt distinto del diagrama y sigue");
+  assert.equal(r.job.phase, "await-prompt");
+}
 
 console.log("hopTab: ok");
 

@@ -1,5 +1,5 @@
 import { useEffect, useState } from "react";
-import { ChevronDown, KeyRound, SquareTerminal, TriangleAlert, X } from "lucide-react";
+import { ChevronDown, KeyRound, Radar, SquareTerminal, TriangleAlert, X } from "lucide-react";
 import type { HopWaiting, OpenChoice, OpenPlan } from "../../lib/hopTab";
 import { hopCredKey } from "../../lib/hopCred";
 import { CredStatus, needsUnlock } from "../../lib/credentials";
@@ -63,6 +63,7 @@ export function HopCards({
   alerts,
   offers,
   onView,
+  onDiscover,
   onDismiss,
   onUpdate,
   onAlertDone,
@@ -73,6 +74,8 @@ export function HopCards({
   alerts: CredAlert[];
   offers: SaveOffer[];
   onView: (tabId: string) => void;
+  /** Descubre los vecinos del equipo alcanzado con su pestaña. */
+  onDiscover: (tabId: string) => void;
   onDismiss: (tabId: string) => void;
   onUpdate: (a: CredAlert) => void;
   onAlertDone: (a: CredAlert) => void;
@@ -97,6 +100,11 @@ export function HopCards({
             </span>
             {v.text && v.status !== "done" && <span className={`min-w-0 basis-full text-[11.5px] ${v.status === "failed" ? "text-danger" : "text-muted"}`}>{v.text}</span>}
             <span className="ml-auto flex items-center gap-1">
+              {v.status === "done" && (
+                <Btn kind="primary" className="!h-6 !px-2 !text-[11.5px]" onClick={() => onDiscover(v.tabId)} title={`Lee los vecinos de ${v.target} con su pestaña y los agrega al diagrama (comandos de consulta)`}>
+                  <Radar size={12} /> Descubrir vecinos
+                </Btn>
+              )}
               {go ? (
                 <Btn kind="primary" className="!h-6 !px-2 !text-[11.5px]" onClick={() => onView(v.tabId)}>
                   <KeyRound size={12} /> {go}
@@ -183,6 +191,8 @@ export function ConnectPanel({
   crumb,
   onRun,
   onFocus,
+  onDiscover,
+  canDiscover,
   onMenu,
   hopping,
   proto,
@@ -204,6 +214,9 @@ export function ConnectPanel({
   crumb: (name: string) => { state: "connected" | "down" | "none"; tabId?: string };
   onRun: (c: OpenChoice, n: TopoNode) => void;
   onFocus: (tabId: string) => void;
+  /** Descubrir los vecinos del equipo con la pestaña que está en él. */
+  onDiscover: (tabId: string) => void;
+  canDiscover: boolean;
   onMenu: (e: React.MouseEvent<HTMLButtonElement>, n: TopoNode) => void;
   hopping: boolean;
   proto: "ssh" | "telnet";
@@ -293,6 +306,12 @@ export function ConnectPanel({
         </Btn>
       </div>
       <p className="text-[11.5px] text-muted leading-snug">{primaryNote(plan)}</p>
+      {plan.notice && plan.primary && <p className="text-[11.5px] text-warn leading-snug">{plan.notice}</p>}
+      {canDiscover && plan.primary?.kind === "focus" && plan.primary.tabId && (
+        <Btn className="w-full" onClick={() => onDiscover(plan.primary!.tabId!)} title="Lee los vecinos (CDP/LLDP, ruteo y las fuentes activas) con la pestaña de este equipo y los agrega al diagrama. Solo comandos de consulta.">
+          <Radar size={13} aria-hidden /> Descubrir vecinos de {n.name}
+        </Btn>
+      )}
       {route && (
         <div className="space-y-1 text-[11.5px]">
           {savedOf.length > 0 && (

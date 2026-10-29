@@ -35,7 +35,7 @@ const sessions = [
 }));
 
 // ?nodist=1: dist-sw01 sin sesión guardada (solo se alcanza saltando desde core-sw01): la ruta es core-sw01 › dist-sw01 › sw-acceso-01.
-if (location.search.includes("nodist")) sessions.splice(sessions.findIndex((x) => x.name === "dist-sw01"), 1);
+if (location.search.includes("nodist") || new URLSearchParams(location.search).has("chain")) sessions.splice(sessions.findIndex((x) => x.name === "dist-sw01"), 1);
 
 const CISCO = `
 \x1b[2mUltimo acceso: hace 2 horas desde 192.0.2.250\x1b[0m
@@ -386,6 +386,8 @@ const TOPO_SCENES = {
   "topology-mac": [topoMac, { routing: true, descriptions: true, mac: true }],
   "topology-checks": [topoChecks, {}],
   "topology-big": [topoBig(), {}],
+  // Cadena de 6 equipos (?chain=1): parte sin diagrama, se descubre desde core-sw01 y se salta de a uno.
+  "topology-hop-chain": [{ nodes: [], links: [] }, {}],
 };
 if (TOPO_SCENES[topoScene]) [settings.topology, settings.topoSources] = TOPO_SCENES[topoScene];
 // Estado visual de Topología (panel y secciones) para cada captura, sin arrastrar el de la anterior:
@@ -954,6 +956,28 @@ if (new URLSearchParams(location.search).has("video")) {
   // 192.0.2.11 pide la llave (solo la primera vez por ssh), usuario (telnet y Huawei) y contraseña;
   // la contraseña "bad" falla; 192.0.2.99 rechaza la conexión y 192.0.2.98 y 192.0.2.22 no responden (?hoptimeout=ms); el resto, rechazo.
   const HOP_HOSTS = { "192.0.2.11": "dist-sw01", "192.0.2.2": "core-sw02", "192.0.2.21": "sw-acceso-01" };
+  // ?chain=1: cadena core-sw01 › dist-sw01 › agg-sw01 › acc-sw01 › acc-sw02 › acc-sw03 donde cada equipo solo se
+  // alcanza desde el anterior (el resto rechaza la conexión). El prompt va en minúsculas; el CDP de cada uno lista a su
+  // vecino anterior y al siguiente con dominio y mayúsculas distintas (Device ID "ACC-SW02.lab.ejemplo").
+  const CHAIN = [
+    { name: "core-sw01", ip: "192.0.2.1", cdp: "CORE-SW01.lab.ejemplo" },
+    { name: "dist-sw01", ip: "192.0.2.11", cdp: "Dist-SW01.lab.ejemplo" },
+    { name: "agg-sw01", ip: "192.0.2.12", cdp: "AGG-SW01.lab.ejemplo" },
+    { name: "acc-sw01", ip: "192.0.2.13", cdp: "ACC-SW01.lab.ejemplo" },
+    { name: "acc-sw02", ip: "192.0.2.14", cdp: "Acc-Sw02.lab.ejemplo" },
+    { name: "acc-sw03", ip: "192.0.2.15", cdp: "ACC-SW03.lab.ejemplo" },
+  ];
+  const chainOn = new URLSearchParams(location.search).has("chain");
+  if (chainOn) for (const c of CHAIN.slice(1)) HOP_HOSTS[c.ip] = c.name;
+  const chainAt = (id) => CHAIN.findIndex((c) => c.name === (hopOf(id).stack.at(-1) ?? devName(connSessions.get(id) ?? {})));
+  const chainCdp = (id) => {
+    const i = chainAt(id);
+    const blk = (c, local, remote) =>
+      `-------------------------\nDevice ID: ${c.cdp}\nEntry address(es): \n  IP address: ${c.ip}\nPlatform: cisco C9300-48P,  Capabilities: Router Switch IGMP\nInterface: ${local},  Port ID (outgoing port): ${remote}\nHoldtime : 150 sec\n`;
+    return [CHAIN[i - 1] && blk(CHAIN[i - 1], "GigabitEthernet1/0/1", "GigabitEthernet1/0/48"), CHAIN[i + 1] && blk(CHAIN[i + 1], "GigabitEthernet1/0/48", "GigabitEthernet1/0/1")]
+      .filter(Boolean)
+      .join("");
+  };
   const hopSt = new Map();
   const knownKeys = new Set();
   const hopOf = (id) => hopSt.get(id) ?? (hopSt.set(id, { stack: [], mode: null, target: null }), hopSt.get(id));
@@ -1000,7 +1024,7 @@ if (new URLSearchParams(location.search).has("video")) {
         }, Number(q0.get("hoptimeout") ?? 4000));
         return `Trying ${ip} ...`;
       }
-      if (!HOP_HOSTS[ip]) return "% Connection refused by remote host\r\n";
+      if (!HOP_HOSTS[ip] || (chainOn && CHAIN[chainAt(id) + 1]?.ip !== ip)) return "% Connection refused by remote host\r\n";
       st.target = HOP_HOSTS[ip];
       if (telnet) return ((st.mode = "username"), `Trying ${ip} ... Open\r\n\r\nUsername: `);
       if (!knownKeys.has(`${id}|${ip}`) && !hw) {
@@ -1066,6 +1090,8 @@ if (new URLSearchParams(location.search).has("video")) {
         .join("\n");
     }
     else if (/^sh(ow)? ip int(erface)? br/.test(c)) body = IPBRIEF;
+    else if (chainOn && /^sh(ow)? cdp nei\w* detail/.test(c)) body = chainCdp(id);
+    else if (chainOn && /^sh(ow)? lldp nei/.test(c)) body = "% LLDP is not enabled";
     else if (/^sh(ow)? (cdp|lldp) nei/.test(c)) body = "Device ID        Local Intrfce     Holdtme    Capability  Platform  Port ID\ncore-sw02        Ten 1/1/1         142             R S I  C9500-24Y Ten 1/1/1\ndist-sw01        Gig 1/0/1         131             R S I  C9300-48P Gig 1/0/48";
     else if (/^sh(ow)? int(erfaces?)? status/.test(c)) body = "Port      Name               Status       Vlan       Duplex  Speed Type\nGi1/0/1   UPLINK dist-sw01   connected    trunk      a-full a-1000 10/100/1000BaseTX\nGi1/0/3                      notconnect   10           auto   auto 10/100/1000BaseTX\nGi1/0/7   CAMARA PISO 2      connected    30         a-full a-1000 10/100/1000BaseTX";
     else if (/^conf(igure)? t/.test(c)) (body = "Enter configuration commands, one per line.  End with CNTL/Z."), modes.set(id, "config");
@@ -1221,6 +1247,8 @@ if (new URLSearchParams(location.search).has("video")) {
   // guardada a core-sw01 (credencial del pivote).
   const hopCreds = new Map();
   if (q0.has("hopcred")) hopCreds.set("192.0.2.21|admin", { pw: q0.has("badcred") ? "bad" : "Cl4ve-ficticia", used: null });
+  // ?chain=1&hopcred=1: contraseña guardada de cada equipo de la cadena (usuario admin).
+  if (chainOn && q0.has("hopcred")) for (const c of CHAIN.slice(1)) hopCreds.set(`${c.ip}|admin`, { pw: "Cl4ve-ficticia", used: null });
   if (q0.has("pivotpw")) {
     const pv = sessions.find((x) => x.name === "core-sw01");
     if (pv) pv.save_password = true;
@@ -1614,6 +1642,13 @@ Object.assign(scenes, {
     await tool("Topología")();
     await wait(400);
     await svgNode("dist-sw01");
+  },
+  // Cadena core › dist › agg › acc1 › acc2 › acc3 (?chain=1&hopcred=1): abre core-sw01 y Topología sin diagrama.
+  "topology-hop-chain": async () => {
+    await open("core-sw01");
+    await wait(900);
+    await tool("Topología")();
+    await wait(400);
   },
   "t-subnet": tool("Subredes"),
   "t-perf": tool("Velocidad"),

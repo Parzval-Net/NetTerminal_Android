@@ -31,8 +31,8 @@ export const PROMPT_STABLE_MS = 600;
 export const ERROR_SETTLE_MS = 1_500;
 /** El pedido de contraseña debe llevar este tiempo quieto antes de escribir la credencial guardada. */
 export const FILL_SETTLE_MS = 400;
-/** Tope de equipos en una ruta (pivote y hasta 5 saltos). */
-export const MAX_ROUTE_STEPS = 5;
+/** Tope de saltos de una ruta (el pivote no cuenta: pivote + hasta 8 saltos). Pasado el tope se avisa, no se calla. */
+export const MAX_ROUTE_STEPS = 8;
 
 /** Sesión de la pestaña de salto: la misma del pivote, sin reconectar sola ni repetir comandos de inicio. */
 export function hopTabSession(base: Session, title: string): Session {
@@ -140,6 +140,12 @@ export interface RouteStep {
   cmd: string;
   /** Usuario del comando (vacío en Telnet y Huawei, que lo piden en el equipo). */
   user?: string;
+  /**
+   * Nombre que mostró el prompt del equipo cuando difiere del del diagrama (dominio, guion bajo en lugar
+   * de guion, otro hostname que el CDP): `name` sigue siendo el del diagrama para que la ruta, la pestaña
+   * y los vecinos descubiertos apunten al mismo equipo.
+   */
+  prompt?: string;
 }
 
 /**
@@ -153,6 +159,8 @@ export interface TabRoute {
 }
 
 export const routeNames = (r: TabRoute): string[] => [r.origin, ...r.steps.map((s) => s.name)];
+/** Lo que mostraría el prompt de cada equipo de la ruta (su alias si el prompt no coincide con el diagrama). */
+export const routePrompts = (r: TabRoute): string[] => [r.origin, ...r.steps.map((s) => s.prompt ?? s.name)];
 export const routeHere = (r: TabRoute): string => (r.steps.length ? r.steps[r.steps.length - 1].name : r.origin);
 /** "pivote › h1 › … › N". */
 export const routeTooltip = (r: TabRoute): string => routeNames(r).join(" › ");
@@ -165,7 +173,9 @@ export const extendRoute = (r: TabRoute, step: RouteStep): TabRoute => ({ ...r, 
 /** La ruta hasta el equipo `idx` (0 = el pivote). */
 export const truncateRoute = (r: TabRoute, idx: number): TabRoute => (idx >= r.steps.length ? r : { ...r, steps: r.steps.slice(0, Math.max(0, idx)) });
 
-const samePrompt = (a: string, b: string) => nodeId(a) === nodeId(b);
+/** Mismo equipo por nombre: sin dominio ni mayúsculas, y con guion bajo y guion como lo mismo (un hostname "acc_sw01" y su CDP "acc-sw01"). */
+const looseId = (n: string) => nodeId(n).replace(/[_\s]+/g, "-");
+export const samePrompt = (a: string, b: string) => looseId(a) === looseId(b);
 
 /**
  * En qué equipo de la ruta está la pestaña según su pantalla: el índice (0 = pivote), `-1` si el
@@ -175,8 +185,9 @@ const samePrompt = (a: string, b: string) => nodeId(a) === nodeId(b);
 export function routePosition(r: TabRoute, screen: string): number | null {
   const s = classifyHopScreen(screen);
   if (s.kind !== "prompt") return null;
+  const shown = routePrompts(r);
   const names = routeNames(r);
-  for (let i = names.length - 1; i >= 0; i--) if (samePrompt(s.name, names[i])) return i;
+  for (let i = shown.length - 1; i >= 0; i--) if (samePrompt(s.name, shown[i]) || samePrompt(s.name, names[i])) return i;
   return -1;
 }
 
@@ -524,6 +535,12 @@ export interface PlanNode {
   platform?: string;
 }
 
+/** De dónde salió un equipo del diagrama: el equipo que lo descubrió (id) y la ruta de la pestaña que estaba en él. */
+export interface CameFrom {
+  from: string;
+  route: TabRoute;
+}
+
 export interface PlanInput {
   target: PlanNode;
   nodes: PlanNode[];
@@ -531,6 +548,11 @@ export interface PlanInput {
   tabs: PlanTab[];
   /** Sesión guardada de cada equipo (por id de equipo). */
   saved: Map<string, Session>;
+  /**
+   * Equipos descubiertos desde una pestaña, por id: el equipo desde el que se descubrió y la ruta de esa pestaña
+   * en ese momento. Saltar a N desde M usa esa ruta más el paso M → N, nunca otra por el diagrama.
+   */
+  cameFrom?: Map<string, CameFrom>;
   /** El usuario marcó que el equipo no se alcanza directo desde este PC. */
   needsPivot: boolean;
   /** Hay una sesión base y la IP del destino es válida: se puede conectar directo. */
@@ -542,7 +564,7 @@ export interface PlanInput {
   cmdFor: (from: PlanNode | undefined, to: PlanNode, session: Session) => { cmd: string; user?: string } | null;
 }
 
-export type OpenKind = "focus" | "direct" | "route" | "inplace" | "reconnect";
+export type OpenKind = "focus" | "direct" | "route" | "shortest" | "inplace" | "reconnect";
 export interface OpenChoice {
   kind: OpenKind;
   label: string;
@@ -562,6 +584,8 @@ export interface OpenPlan {
   names: string[];
   /** Por qué no hay acción principal. */
   reason?: string;
+  /** Aviso que no impide abrir (la ruta supera el tope y se ofrece otra forma). */
+  notice?: string;
 }
 
 /** Equipos vecinos por el diagrama (sin sesiones lógicas: no son un salto físico). */
@@ -577,7 +601,7 @@ function adjacency(links: PlanInput["links"]): Map<string, string[]> {
 }
 
 /** Ruta más corta hacia el destino desde una pestaña abierta o una sesión guardada, con el comando de cada salto nuevo. */
-export function planRoute(inp: PlanInput): { route: TabRoute; from?: PlanTab } | undefined {
+export function planRoute(inp: PlanInput, max = MAX_ROUTE_STEPS): { route: TabRoute; from?: PlanTab } | undefined {
   const { target } = inp;
   const byId = new Map(inp.nodes.map((n) => [n.id, n]));
   const adj = adjacency(inp.links);
@@ -587,7 +611,7 @@ export function planRoute(inp: PlanInput): { route: TabRoute; from?: PlanTab } |
   const queue = [target.id];
   for (let h = 0; h < queue.length; h++) {
     const cur = queue[h];
-    if ((dist.get(cur) ?? 0) >= MAX_ROUTE_STEPS) continue;
+    if ((dist.get(cur) ?? 0) >= max) continue;
     for (const nb of adj.get(cur) ?? []) {
       if (dist.has(nb)) continue;
       dist.set(nb, (dist.get(cur) ?? 0) + 1);
@@ -615,7 +639,7 @@ export function planRoute(inp: PlanInput): { route: TabRoute; from?: PlanTab } |
     .filter((s) => s.id !== target.id && dist.has(s.id))
     .sort((a, b) => (dist.get(a.id)! - dist.get(b.id)!) || (a.base.steps.length - b.base.steps.length) || (a.from ? 0 : 1) - (b.from ? 0 : 1));
   for (const src of options) {
-    if (src.base.steps.length + (dist.get(src.id) ?? 0) + 1 > MAX_ROUTE_STEPS + 1) continue;
+    if (src.base.steps.length + (dist.get(src.id) ?? 0) > max) continue;
     let route = src.base;
     let cur = src.id;
     let ok = true;
@@ -630,9 +654,34 @@ export function planRoute(inp: PlanInput): { route: TabRoute; from?: PlanTab } |
       route = extendRoute(route, { name: to.name, ip: to.ip, cmd: c.cmd, user: c.user });
       cur = nxt;
     }
-    if (ok && route.steps.length <= MAX_ROUTE_STEPS) return { route, from: src.from };
+    if (ok && route.steps.length <= max) return { route, from: src.from };
   }
   return undefined;
+}
+
+const sameRoute = (a: TabRoute, b: TabRoute) => routeNames(a).map(nodeId).join("\u0000") === routeNames(b).map(nodeId).join("\u0000");
+
+/**
+ * La ruta heredada: el equipo se descubrió desde una pestaña que estaba en M, así que se llega con la ruta de
+ * esa pestaña (la que está ahora en M; si ya no hay, la que tenía al descubrirlo) más el paso M → N. No se
+ * recalcula por el diagrama: otro camino más corto (un enlace redundante o de ruteo) sería otro pivote.
+ * `tooLong`: la ruta heredada supera el tope.
+ */
+function planHeritage(inp: PlanInput): { route: TabRoute; from?: PlanTab } | { tooLong: number } | undefined {
+  const cf = inp.cameFrom?.get(inp.target.id);
+  if (!cf) return undefined;
+  const parent = inp.nodes.find((n) => n.id === cf.from);
+  const target = inp.nodes.find((n) => n.id === inp.target.id) ?? inp.target;
+  if (!parent || !target.ip || !(adjacency(inp.links).get(cf.from) ?? []).includes(target.id)) return undefined;
+  const live = inp.tabs.filter((t) => t.status === "connected" && t.device && isReplayable(t.session) && nodeId(t.device.name) === cf.from);
+  const at = (t: PlanTab) => (t.route ? truncateRoute(t.route, t.device!.index) : ({ origin: t.device!.name, session: t.session, steps: [] } as TabRoute));
+  const tab = live.find((t) => sameRoute(at(t), cf.route)) ?? live.find((t) => t.device?.verified) ?? live[0];
+  const base = tab ? at(tab) : cf.route;
+  if (!isReplayable(base.session)) return undefined;
+  const c = inp.cmdFor(parent, target, base.session);
+  if (!c) return undefined;
+  const route = extendRoute(base, { name: target.name, ip: target.ip, cmd: c.cmd, user: c.user });
+  return route.steps.length > MAX_ROUTE_STEPS ? { tooLong: route.steps.length } : { route, from: tab };
 }
 
 const rank = (t: PlanTab) => (t.status === "connected" ? 0 : t.status === "connecting" ? 1 : 2) * 2 + (t.device?.verified ? 0 : 1);
@@ -648,12 +697,21 @@ export function planOpen(inp: PlanInput): OpenPlan {
   const here = inp.tabs.filter((t) => t.device && nodeId(t.device.name) === target.id).sort((a, b) => rank(a) - rank(b));
   const live = here.find((t) => t.status === "connected");
   const dead = here.find((t) => t.status === "closed");
-  const routed = planRoute(inp);
-  const via = routed && routed.route.steps.length ? routed.route.steps.length > 1 ? routed.route.steps[routed.route.steps.length - 2].name : routed.route.origin : undefined;
+  // Descubierto desde una pestaña: su ruta heredada. Si no, la más corta por el diagrama.
+  const heritage = planHeritage(inp);
+  const shortest = planRoute(inp);
+  const routed = heritage ? ("route" in heritage ? heritage : undefined) : shortest;
+  const viaOf = (r: TabRoute) => (r.steps.length > 1 ? r.steps[r.steps.length - 2].name : r.origin);
+  const via = routed?.route.steps.length ? viaOf(routed.route) : undefined;
   const direct: OpenChoice | undefined = inp.directOk ? { kind: "direct", label: "Conectar directo desde este PC", detail: target.ip } : undefined;
   const byRoute: OpenChoice | undefined =
     routed && via
       ? { kind: "route", label: `Abrir vía ${via}`, detail: routeTooltip(routed.route), route: routed.route, via }
+      : undefined;
+  // Otra forma de llegar (más corta por el diagrama): solo si el usuario la elige en el menú.
+  const other: OpenChoice | undefined =
+    heritage && shortest?.route.steps.length && !(routed && sameRoute(shortest.route, routed.route))
+      ? { kind: "shortest", label: `Abrir vía ${viaOf(shortest.route)} (ruta más corta)`, detail: routeTooltip(shortest.route), route: shortest.route, via: viaOf(shortest.route) }
       : undefined;
   // Saltar dentro de una pestaña que ya está en el equipo anterior, si está libre y a un solo paso.
   const inplace: OpenChoice | undefined =
@@ -668,21 +726,29 @@ export function planOpen(inp: PlanInput): OpenPlan {
         }
       : undefined;
   const reconnect: OpenChoice | undefined = !live && dead ? { kind: "reconnect", label: "Reconectar", detail: `Pestaña "${dead.name}"`, tabId: dead.tabId } : undefined;
+  // Un equipo descubierto desde una pestaña de salto no se alcanza directo por defecto: se llega por su ruta.
+  const needsPivot = inp.needsPivot || !!inp.cameFrom?.get(target.id)?.route.steps.length;
 
   let primary: OpenChoice | undefined;
   if (live) primary = { kind: "focus", label: "Abrir terminal", detail: `Ya hay una pestaña en ${target.name}`, tabId: live.tabId };
-  else if (inp.directOk && (!inp.needsPivot || !byRoute)) primary = direct;
+  else if (inp.directOk && (!needsPivot || !byRoute)) primary = direct;
   else if (byRoute) primary = byRoute;
 
-  const alternatives = [direct, byRoute, inplace, reconnect].filter((c): c is OpenChoice => !!c && c.kind !== primary?.kind);
+  const alternatives = [direct, byRoute, other, inplace, reconnect].filter((c): c is OpenChoice => !!c && c.kind !== primary?.kind);
   // La ruta del panel: la de la pestaña que ya está allí, o la que se abriría.
   const names = live?.route ? routeNames(live.route) : primary?.kind === "route" ? routeNames(primary.route!) : byRoute ? routeNames(byRoute.route!) : live ? [live.device!.name] : [];
+  // Sobre el tope se dice con claridad: nunca se cae en silencio a otra forma de llegar.
+  const long = heritage && "tooLong" in heritage ? heritage.tooLong : !routed ? planRoute(inp, 64)?.route.steps.length : undefined;
+  const notice =
+    long && long > MAX_ROUTE_STEPS && !live
+      ? `Llegar a ${target.name} por salto toma ${long} saltos y el tope es ${MAX_ROUTE_STEPS}. Conecta una sesión más cerca (guardada o por salto) y descubre desde ella.`
+      : undefined;
   const reason = primary
     ? undefined
     : !target.ip
       ? "El equipo no informó IP de gestión."
-      : "Sin sesión base ni ruta conocida: conecta el pivote primero.";
-  return { primary, alternatives, names, reason };
+      : (notice ?? "Sin sesión base ni ruta conocida: conecta el pivote primero.");
+  return { primary, alternatives, names, reason, notice };
 }
 
 /**
@@ -709,6 +775,48 @@ export function tabAtDevice<T extends { name: string; host?: string; screen?: (n
     if (!best || r <= best.r) best = { tab: t, verified: d.verified, r };
   }
   return best && { tab: best.tab, verified: best.verified };
+}
+
+
+// ---------- Descubrir vecinos desde una pestaña ----------
+
+/**
+ * Qué equipo es el que muestra la pestaña al descubrir vecinos: su nombre en el diagrama (el prompt puede traer
+ * otro dominio, guion bajo o mayúsculas), su IP (la del paso de la ruta, no la de la sesión del PC) y la ruta de
+ * la pestaña hasta él, que heredan los vecinos nuevos. `upto` undefined: el prompt es de un equipo que la ruta no conoce.
+ */
+export function discoveryIdentity(
+  tab: { name: string; host?: string; session: Session; hasTabId: boolean },
+  route: TabRoute | undefined,
+  prompt: string,
+): { name: string; ip: string | undefined; upto?: TabRoute; at: number } {
+  if (!route) return { name: prompt, ip: tab.host, upto: tab.hasTabId ? { origin: prompt, session: tab.session, steps: [] } : undefined, at: 0 };
+  const shown = routePrompts(route);
+  const names = routeNames(route);
+  let at = -1;
+  for (let i = shown.length - 1; i >= 0 && at < 0; i--) if (samePrompt(prompt, shown[i]) || samePrompt(prompt, names[i])) at = i;
+  const ip = route.steps.length ? (at > 0 ? route.steps[at - 1].ip : at === 0 ? route.session.host : undefined) : tab.host;
+  return at >= 0 ? { name: names[at], ip, upto: truncateRoute(route, at), at } : { name: prompt, ip, at };
+}
+
+/**
+ * Procedencia de los vecinos nuevos de un descubrimiento: los que aún no estaban en el diagrama (ni por IP) ni
+ * tienen procedencia. Saltar a ellos usa la ruta de la pestaña que los descubrió más un paso.
+ */
+export function newCameFrom(
+  known: { ids: Set<string>; addrs: string[] },
+  kept: { name: string; ip?: string }[],
+  from: string,
+  upto: TabRoute,
+  prev: Map<string, CameFrom>,
+): Map<string, CameFrom> {
+  const out = new Map<string, CameFrom>();
+  for (const nb of kept) {
+    const id = nodeId(nb.name);
+    if (known.ids.has(id) || id === from || prev.has(id) || (nb.ip && known.addrs.includes(nb.ip))) continue;
+    out.set(id, { from, route: upto });
+  }
+  return out;
 }
 
 /** El nodo como equipo del plan. */

@@ -19,6 +19,7 @@ registerHooks({
 });
 
 const T = await import("../../src/lib/topology.ts");
+const nodeId = T.nodeId;
 const { computeRisk } = await import("../../src/lib/packs.ts");
 
 // ---------- Parsers de ruteo ----------
@@ -1545,6 +1546,71 @@ assert.deepEqual(T.parseDismissed([1, 2]), {});
   assert.ok(T.flowTiming(1e3).dur > T.flowTiming(1e6).dur && T.flowTiming(1e6).dur > T.flowTiming(1e9).dur);
   assert.equal(T.flowTiming(1e9).dur, 0.1);
   assert.equal(T.flowTiming(null).dur, 0.4);
+}
+
+
+// ---------- Descubrir desde pestañas de salto (cadena core › dist › agg › acc1 › acc2 › acc3) ----------
+// El CDP de cada equipo trae nombres con dominio y mayúsculas; el prompt va en minúsculas. Cada descubrimiento se hace
+// con la pestaña del equipo alcanzado y debe sumar sus vecinos sin duplicar equipos, con la ruta heredada.
+{
+  const { discoveryIdentity, newCameFrom, routeNames, extendRoute, planOpen, tabDevice } = await import("../../src/lib/hopTab.ts");
+  const ids = ["core-sw01", "dist-sw01", "agg-sw01", "acc-sw01", "acc-sw02", "acc-sw03"];
+  const cdpName = (i) => `${ids[i].toUpperCase()}.lab.ejemplo`;
+  const cdpBlock = (i, local, remote) =>
+    `-------------------------\nDevice ID: ${cdpName(i)}\nEntry address(es): \n  IP address: 192.0.2.${i + 1}\nPlatform: cisco C9300-48P,  Capabilities: Router Switch IGMP\nInterface: ${local},  Port ID (outgoing port): ${remote}\nHoldtime : 150 sec\n`;
+  const cdpOf = (i) => [i > 0 && cdpBlock(i - 1, "GigabitEthernet1/0/1", "GigabitEthernet1/0/48"), i < ids.length - 1 && cdpBlock(i + 1, "GigabitEthernet1/0/48", "GigabitEthernet1/0/1")].filter(Boolean).join("");
+  const sess = { id: "s-core", name: "core-sw01", type: "ssh", host: "192.0.2.1", port: 22, username: "noc" };
+  const screenOf = (i) => () => `${ids[i]}#`;
+  let topo = { nodes: [], links: [] };
+  let route; // ruta de la pestaña del equipo actual (undefined: la pestaña del pivote)
+  const cameFrom = new Map();
+  const tabs = [];
+  for (let i = 0; i < ids.length; i++) {
+    const tabInfo = { name: `${ids[i]} vía x`, host: "192.0.2.1", session: sess, hasTabId: true };
+    const who = discoveryIdentity(tabInfo, route, ids[i]);
+    assert.equal(nodeId(who.name), ids[i]);
+    assert.equal(who.ip, `192.0.2.${i + 1}`, `salto ${i}: la IP es la del equipo de la ruta, no la de la sesión del PC`);
+    assert.deepEqual(routeNames(who.upto).map(nodeId), ids.slice(0, i + 1));
+    const nbs = T.parseCdp(cdpOf(i)).map((n) => ({ ...n }));
+    assert.equal(nbs.length, i === 0 || i === ids.length - 1 ? 1 : 2, `salto ${i}: CDP con vecinos`);
+    // Sin alcance: todos los vecinos del equipo se agregan, también en el salto 4, 5 y 6.
+    const fresh = newCameFrom({ ids: new Set(topo.nodes.map((n) => n.id)), addrs: topo.nodes.flatMap((n) => T.knownAddrs(n)) }, nbs, nodeId(who.name), who.upto, cameFrom);
+    for (const [id, cf] of fresh) cameFrom.set(id, cf);
+    topo = T.mergeNeighbors(topo, { name: who.name, ip: who.ip }, nbs);
+    assert.equal(topo.nodes.length, Math.min(i + 2, ids.length), `salto ${i}: sin equipos duplicados (${topo.nodes.map((n) => n.id).join(", ")})`);
+    if (i + 1 < ids.length) {
+      const next = ids[i + 1];
+      assert.deepEqual([...fresh.keys()], [next], `salto ${i}: solo el vecino de abajo es nuevo`);
+      assert.equal(cameFrom.get(next).from, ids[i]);
+      // Saltar a N desde M: la ruta de la pestaña de M más un paso.
+      const tab = { tabId: `t${i}`, name: ids[i], session: sess, status: "connected", route, device: tabDevice({ name: ids[i], screen: screenOf(i) }, route), free: true };
+      tabs.push(tab);
+      const target = topo.nodes.find((n) => n.id === next);
+      const p = planOpen({
+        target: { id: target.id, name: target.name, ip: target.ip },
+        nodes: topo.nodes.map((n) => ({ id: n.id, name: n.name, ip: n.ip })),
+        links: topo.links,
+        tabs,
+        saved: new Map(),
+        cameFrom,
+        needsPivot: false,
+        directOk: true,
+        cmdFor: (_f, to) => ({ cmd: `ssh -l noc ${to.ip}`, user: "noc" }),
+      });
+      const via = i === 0 ? p.alternatives.find((a) => a.kind === "route") : p.primary;
+      assert.deepEqual(routeNames(via.route).map(nodeId), ids.slice(0, i + 2), `salto ${i + 1}: la ruta parte del equipo anterior`);
+      route = via.route;
+      // La pestaña llega al equipo y su prompt (minúsculas) coincide con el nombre del diagrama (con dominio).
+      assert.equal(route.steps.at(-1).name, cdpName(i + 1));
+    }
+  }
+  // Un prompt que la ruta no conoce no se asigna a otro equipo.
+  assert.equal(discoveryIdentity({ name: "t", host: "192.0.2.1", session: sess, hasTabId: true }, route, "otro-sw").upto, undefined);
+  // Con alcance de profundidad, un vecino nuevo fuera de alcance se informa (no se descarta en silencio).
+  const I = await import("../../src/lib/topoInsights.ts");
+  const deep = I.scopeNeighbors(topo, "acc-sw02", [{ name: "NUEVO.lab.ejemplo", localPort: "Gi1/0/2", remotePort: "Gi1/0/1", proto: "CDP" }], { skipEndpoints: false, cidrs: "", maxDepth: 3 });
+  assert.equal(deep.kept.length, 0);
+  assert.match(deep.skipped[0], /más de 3 saltos/);
 }
 
 console.log("topology: ok");

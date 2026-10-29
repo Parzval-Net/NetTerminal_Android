@@ -124,13 +124,16 @@ import {
   PROMPT_WAIT_MS,
   PlanTab,
   TabRoute,
+  CameFrom,
   afterEcho,
   classifyHopScreen,
+  discoveryIdentity,
   hopCredResult,
   hopTabSession,
   hopWaiting,
   isNxos,
   isReplayable,
+  newCameFrom,
   newHopChain,
   planNode,
   planOpen,
@@ -1305,6 +1308,13 @@ export function TopologyTool({
   const [routes, setRoutes] = useState<Record<string, TabRoute>>({});
   const routesRef = useRef(routes);
   routesRef.current = routes;
+  /**
+   * De dónde salió cada equipo descubierto (id): el equipo que lo descubrió y la ruta de la pestaña que estaba en él.
+   * "Abrir terminal" salta con esa ruta más un paso, no con otra por el diagrama. No se persiste (las pestañas tampoco).
+   */
+  const cameFromRef = useRef(new Map<string, CameFrom>());
+  /** Pestaña con la que se descubre (la de "Equipo", o la de un equipo con "Descubrir vecinos de X"). */
+  const discConn = useRef("");
   const [hopUser, setHopUser] = useState("");
   /** Credencial del pivote en esta ruta: desmarcada por defecto y por cada salto (no se recuerda). */
   const [usePivotCred, setUsePivotCred] = useState(false);
@@ -1409,11 +1419,12 @@ export function TopologyTool({
   /** Ejecuta un comando; si el equipo no lo reconoce, prueba la sintaxis alternativa. */
   const run = async (cmd: string): Promise<string> => {
     setMsg(`Ejecutando: ${cmd}`);
-    const out = await runOnDevice(term!.connId, cmd, 60);
+    const conn = discConn.current || term!.connId;
+    const out = await runOnDevice(conn, cmd, 60);
     const alt = FALLBACK_COMMANDS[cmd];
     if (alt && isCliError(out)) {
       setMsg(`Ejecutando: ${alt}`);
-      return runOnDevice(term!.connId, alt, 60);
+      return runOnDevice(conn, alt, 60);
     }
     return out;
   };
@@ -1422,8 +1433,10 @@ export function TopologyTool({
   const macOn = sourceOn(sources, "mac");
 
   const selectedVendor = vendor;
-  const discover = async (forced?: TopoVendor): Promise<void> => {
-    if (!term) return;
+  const discover = async (forced?: TopoVendor, over?: TerminalRef): Promise<void> => {
+    const tab = over ?? term;
+    if (!tab) return;
+    discConn.current = tab.connId;
     const vendor = forced ?? selectedVendor;
     setBusy(true);
     setMsg("");
@@ -1436,7 +1449,7 @@ export function TopologyTool({
           const seen = vendorFromPrompt(out);
           if (seen && seen !== vendor) {
             setVendor(seen);
-            return await discover(seen);
+            return await discover(seen, over);
           }
         }
         outputs.push(out);
@@ -1490,19 +1503,22 @@ export function TopologyTool({
         outputs.push(...results.map((x) => x.out));
       }
       const last = [...outputs].reverse().find((o) => o.trim()) ?? "";
-      const name = promptName(last) ?? term.name;
+      const seenName = promptName(last) ?? tab.name;
       // Dentro de un salto la IP es la del equipo de la ruta donde está la pestaña, no la de la sesión del PC.
-      const route = term.tabId ? routesRef.current[term.tabId] : undefined;
-      let ip: string | undefined = term.host;
-      if (route?.steps.length) {
-        const names = routeNames(route);
-        let at = -1;
-        for (let i = names.length - 1; i >= 0; i--) if (nodeId(names[i]) === nodeId(name)) at = i;
-        // La ruta se ajusta a lo que dice el prompt (un "exit" tecleado a mano también cuenta).
-        if (at >= 0 && at < route.steps.length) setRoutes((m) => ({ ...m, [term.tabId!]: truncateRoute(route, at) }));
-        ip = at > 0 ? route.steps[at - 1].ip : at === 0 ? route.session.host : undefined;
+      const route = tab.tabId ? routesRef.current[tab.tabId] : undefined;
+      const who = discoveryIdentity({ name: tab.name, host: tab.host, session: tab.session, hasTabId: !!tab.tabId }, route, seenName);
+      // Con el nombre del diagrama (el prompt puede traer otro dominio, guion bajo o mayúsculas): sin equipos duplicados.
+      const { name, ip, upto } = who;
+      // La ruta se ajusta a lo que dice el prompt (un "exit" tecleado a mano también cuenta).
+      if (route && upto && who.at < route.steps.length) setRoutes((m) => ({ ...m, [tab.tabId!]: upto }));
+      const before = topoRef.current;
+      const sc = scopeNeighbors(before, name, [...neighbors, ...routing], ui.scope);
+      // Los equipos nuevos recuerdan desde dónde se descubrieron: saltar a ellos usa esa ruta más un paso.
+      if (upto) {
+        const fresh = newCameFrom({ ids: new Set(before.nodes.map((n) => n.id)), addrs: before.nodes.flatMap((n) => knownAddrs(n)) }, sc.kept, nodeId(name), upto, cameFromRef.current);
+        for (const [id, cf] of fresh) cameFromRef.current.set(id, cf);
+        while (cameFromRef.current.size > 5000) cameFromRef.current.delete(cameFromRef.current.keys().next().value!);
       }
-      const sc = scopeNeighbors(topoRef.current, name, [...neighbors, ...routing], ui.scope);
       onTopo((t) => mergeNeighbors(t, { name, ip, ports, addrs, macs }, sc.kept));
       setSelected(nodeId(name));
       const parts = [
@@ -1521,11 +1537,22 @@ export function TopologyTool({
         !neighbors.length && !routing.length && !routingOn && ROUTING_COMMANDS[vendor].length
           ? 'Activa "Vecinos de ruteo" en Fuentes de descubrimiento o agrega los enlaces a mano.'
           : "";
-      setMsg([`${name}: ${parts.join(", ")}.`, neighbors.length ? "" : l2Hint, routingHint].filter(Boolean).join(" "));
+      // Vecinos descartados por el alcance (profundidad, redes, teléfonos): se dice cómo traerlos, no queda en silencio.
+      const scopeHint = sc.skipped.length ? 'Cambia el "Alcance del descubrimiento" (panel) y vuelve a descubrir para traerlos.' : "";
+      setMsg([`${name}: ${parts.join(", ")}.`, neighbors.length ? "" : l2Hint, routingHint, scopeHint].filter(Boolean).join(" "));
     } catch (e) {
       setMsg(String(e));
     }
+    discConn.current = "";
     setBusy(false);
+  };
+
+  /** "Descubrir vecinos de X": con la pestaña que está en ese equipo (la deja elegida en "Equipo"). */
+  const discoverFromTab = (tabId: string) => {
+    const t = liveRef.current.terminals.find((x) => x.tabId === tabId);
+    if (!t) return setMsg("Esa pestaña ya no está conectada.");
+    setConnId(t.connId);
+    void discover(undefined, t);
   };
 
   /**
@@ -2047,7 +2074,7 @@ export function TopologyTool({
     }
     const pivotOk = full.session.save_password === true && !!full.session.id;
     const base = tab ? Math.max(0, full.steps.length - 1) : 0;
-    const steps = full.steps.slice(base).map((st) => ({ cmd: st.cmd, to: st.name, ip: st.ip, user: st.user, cred: credFor(st, pivotOk) }));
+    const steps = full.steps.slice(base).map((st) => ({ cmd: st.cmd, to: st.prompt ?? st.name, ip: st.ip, user: st.user, cred: credFor(st, pivotOk) }));
     let tabId = tab?.tabId;
     let pivot: string | undefined;
     if (tab) {
@@ -2110,7 +2137,11 @@ export function TopologyTool({
     const reached = (r: HopRun, a: { step: number; at: string }) =>
       setRoutes((m) => {
         const upto = truncateRoute(r.route, r.base + a.step + 1);
-        const steps = upto.steps.map((st, i) => (i === upto.steps.length - 1 ? { ...st, name: a.at } : st));
+        // Mismo equipo (dominio, mayúsculas): se registra con lo que mostró su prompt. Si el prompt no coincide con el
+        // diagrama (guion bajo, otro hostname), el nombre del diagrama se mantiene y el prompt queda como alias.
+        const steps = upto.steps.map((st, i) =>
+          i !== upto.steps.length - 1 ? st : nodeId(a.at) === nodeId(st.name) ? { ...st, name: a.at, prompt: undefined } : { ...st, prompt: a.at },
+        );
         return { ...m, [r.tabId]: { ...upto, steps } };
       });
     const apply = (r: HopRun, t: TerminalRef, a: HopAction) => {
@@ -2172,7 +2203,7 @@ export function TopologyTool({
         reached(r, { step: r.job.steps.length - 1, at: a.at });
         const last = r.route.steps[r.route.steps.length - 1];
         // Ya se llegó a este equipo saltando: la próxima vez "Abrir terminal" va por la ruta.
-        if (last) setUi((u) => ({ ...u, pivot: { ...u.pivot, [nodeId(a.at)]: true } }));
+        if (last) setUi((u) => ({ ...u, pivot: { ...u.pivot, [nodeId(last.name)]: true, [nodeId(a.at)]: true } }));
         setConnId(id);
         const note = a.mismatch ? ` ${a.mismatch}` : "";
         setMsg(`${a.at} conectado en la pestaña "${t.name}" y elegido en "Equipo": pulsa "Descubrir vecinos" para seguir la ruta.${note}`);
@@ -2306,6 +2337,7 @@ export function TopologyTool({
       links: topoRef.current.links,
       tabs: planTabs,
       saved,
+      cameFrom: cameFromRef.current,
       needsPivot: !!ui.pivot[n.id],
       directOk,
       cmdFor,
@@ -2319,7 +2351,7 @@ export function TopologyTool({
       setUi((u) => (u.pivot[n.id] ? { ...u, pivot: Object.fromEntries(Object.entries(u.pivot).filter(([k]) => k !== n.id)) } : u));
       return follow(n);
     }
-    if (c.kind === "route" && c.route) {
+    if ((c.kind === "route" || c.kind === "shortest") && c.route) {
       if (!isReplayable(c.route.session)) return setMsg("La sesión del pivote no es SSH ni Telnet: no se puede reproducir en otra pestaña.");
       return runHop(c.route);
     }
@@ -2979,6 +3011,7 @@ export function TopologyTool({
           alerts={credAlerts}
           offers={saveOffers}
           onView={(tabId) => onFocusTab(tabId)}
+          onDiscover={discoverFromTab}
           onDismiss={(tabId) => setHopViews((vs) => vs.filter((v) => v.tabId !== tabId))}
           onUpdate={(a) => setPwDialog({ to: a.to, ip: a.ip, user: a.user, update: true })}
           onAlertDone={(a) => setCredAlerts((l) => l.filter((x) => x !== a))}
@@ -3681,6 +3714,8 @@ export function TopologyTool({
                   crumb={crumbState}
                   onRun={runChoice}
                   onFocus={onFocusTab}
+                  onDiscover={discoverFromTab}
+                  canDiscover={mode === "cli" && !busy}
                   onMenu={(e, n) => {
                     const r = e.currentTarget.getBoundingClientRect();
                     setNodeMenu({ x: r.left, y: r.bottom + 4, items: openMenuItems(n) });
