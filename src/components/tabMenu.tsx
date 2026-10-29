@@ -4,10 +4,10 @@ import { SplitLayout, layoutLabel } from "../lib/split";
 import type { TabLayout } from "../lib/settings";
 import type { Tab, TabState } from "../types";
 import type { CloseScope } from "../lib/closeAll";
-import { modLabel } from "../lib/platform";
+import { historyLabel, modLabel } from "../lib/platform";
 
-/** [etiqueta, icono, acción, deshabilitado/marcado, atajo] — formato de ContextMenu. */
-export type MenuItem = [string, ReactNode, () => void, boolean?, string?];
+/** [etiqueta, icono, acción, deshabilitado/marcado, atajo, separador antes] — formato de ContextMenu. */
+export type MenuItem = [string, ReactNode, () => void, boolean?, string?, boolean?];
 
 export interface TabMenuHandlers {
   onRename: (id: string, title: string | undefined) => void;
@@ -60,7 +60,7 @@ export function tabMenuItems(t: Tab, state: TabState | undefined, p: TabMenuHand
     ["Desconectar", <Unplug size={13} />, () => p.onDisconnect(t.id), state?.status === "closed"],
     ...(p.onFind ? ([["Buscar en la terminal", <Search size={13} />, () => p.onFind!(t.id), false, `${modLabel}F`]] as MenuItem[]) : []),
     ...(p.onHistory && !t.session.scp
-      ? ([["Historial de comandos enviados…", <History size={13} />, () => p.onHistory!(t.id)]] as MenuItem[])
+      ? ([["Historial de comandos enviados…", <History size={13} />, () => p.onHistory!(t.id), false, historyLabel]] as MenuItem[])
       : []),
     // Break solo existe en seriales y telnet (consolas): el resto no lo entiende.
     ...(p.onBreak && (t.session.type === "serial" || t.session.type === "telnet")

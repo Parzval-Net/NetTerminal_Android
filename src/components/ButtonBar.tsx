@@ -3,6 +3,7 @@ import { invoke } from "@tauri-apps/api/core";
 import { ArchiveRestore, FileCode2, FileSearch, FolderOpen, MousePointerClick, Pencil, Plus, Square, Trash2, X } from "lucide-react";
 import { Macro } from "../lib/settings";
 import { ContextMenu } from "./Sidebar";
+import type { MenuItem } from "./tabMenu";
 
 interface Props {
   macros: Macro[];
@@ -19,7 +20,7 @@ interface Props {
   onDeleteMacros?: (ids: string[]) => void;
 }
 
-type MenuState = { x: number; y: number; items: [string, React.ReactNode, () => void, boolean?][] };
+type MenuState = { x: number; y: number; items: MenuItem[] };
 
 /** Barra de comandos rápidos (equivalente a la button bar de SecureCRT). */
 export const ButtonBar = memo(function ButtonBar(p: Props) {
@@ -102,7 +103,8 @@ export const ButtonBar = memo(function ButtonBar(p: Props) {
         ...list.map(
           (s) => [s, <FileCode2 size={13} />, () => p.onRunScript(s), !p.connected] as MenuState["items"][number],
         ),
-        ["Buscar en el equipo…", <FileSearch size={13} />, browse],
+        // Separador: arriba los scripts ejecutables; abajo, la administración de la carpeta.
+        ["Agregar script desde el equipo…", <FileSearch size={13} />, browse, false, undefined, list.length > 0],
         ["Abrir carpeta de scripts", <FolderOpen size={13} />, () => invoke("open_dir", { which: "scripts" })],
         ...(list.length ? [["Eliminar un script…", <Trash2 size={13} />, () => setTimeout(pickDelete)] as MenuState["items"][number]] : []),
         ["Restaurar eliminado…", <ArchiveRestore size={13} />, () => setTimeout(restore)],

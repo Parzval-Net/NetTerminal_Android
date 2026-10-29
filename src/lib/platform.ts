@@ -12,8 +12,17 @@ export const modLabel = isMac ? "⌘" : "Ctrl+Shift+";
 export const zoomLabel = isMac ? "⌘" : "Ctrl+Shift+";
 /** Atajo de "Cerrar todas las pestañas" para mostrar en la interfaz. */
 export const closeAllLabel = isMac ? "⌘⇧W" : "Ctrl+Shift+Alt+W";
-/** Atajo del modo foco. Ctrl+Shift+F ya es "Buscar" en Windows/Linux, por eso lleva Alt allí. */
-export const focusLabel = isMac ? "⌘⇧F" : "Ctrl+Shift+Alt+F";
+/**
+ * Atajos de 3 teclas y con la misma letra en todos los sistemas: ⌘⇧ + letra en macOS, Ctrl+Shift +
+ * letra en Windows/Linux. Letras libres en la app (en uso: B D E F I J K L N O P T W), en los
+ * sistemas (macOS: ⌘⇧3/4/5 capturas, ⌘⇧Q/A/H de Finder; Windows: Ctrl+Shift+Esc; GNOME/KDE sin
+ * atajos globales sobre estas) y en la terminal (Ctrl+Shift+C/V). ⌘M y ⌘H serían los de minimizar
+ * y ocultar en macOS, por eso van con Shift. ⌘⇧F vuelve a ser Buscar en macOS.
+ *  - Modo foco: M (de "modo"). Ctrl+Shift+M no la usa ni Windows ni GNOME/KDE.
+ *  - Historial de comandos: Y (como el historial de Chrome/Safari, ⌘Y). Ctrl+Shift+Y está libre.
+ */
+export const focusLabel = isMac ? "⌘⇧M" : "Ctrl+Shift+M";
+export const historyLabel = isMac ? "⌘Y" : "Ctrl+Shift+Y";
 
 export type AppAction =
   | "settings"
@@ -26,6 +35,7 @@ export type AppAction =
   | "closeTab"
   | "closeAll"
   | "focusMode"
+  | "history"
   | "newSession"
   | "quickConnect"
   | "cliLab"
@@ -63,11 +73,10 @@ export function shortcutFor(e: KeyboardEvent): AppAction | null {
   if (w && (isMac ? e.metaKey && e.shiftKey && !e.ctrlKey && !e.altKey : e.ctrlKey && e.shiftKey && e.altKey && !e.metaKey))
     return "closeAll";
 
-  // Modo foco: ⌘⇧F en macOS (⌘F sin Shift sigue siendo Buscar) y Ctrl+Shift+Alt+F en Windows/Linux,
-  // donde Ctrl+Shift+F es Buscar. Va antes de isMod, que no distingue Shift ni Alt.
-  const f = key === "f" || e.code === "KeyF";
-  if (f && (isMac ? e.metaKey && e.shiftKey && !e.ctrlKey && !e.altKey : e.ctrlKey && e.shiftKey && e.altKey && !e.metaKey))
-    return "focusMode";
+  // Modo foco (M): ⌘⇧M en macOS y Ctrl+Shift+M en Windows/Linux. Va antes de isMod, que en macOS
+  // no distingue el Shift (⌘M minimizaría la ventana, por eso aquí se exige Shift).
+  const sh = isMac ? e.metaKey && e.shiftKey && !e.ctrlKey && !e.altKey : e.ctrlKey && e.shiftKey && !e.altKey && !e.metaKey;
+  if (sh && (key === "m" || e.code === "KeyM")) return "focusMode";
 
   if (!isMod(e)) return null;
   switch (key) {
@@ -90,6 +99,8 @@ export function shortcutFor(e: KeyboardEvent): AppAction | null {
       return "duplicateTab";
     case "e":
       return "tools";
+    case "y":
+      return "history";
     case "l":
       return "commands";
     case "i":

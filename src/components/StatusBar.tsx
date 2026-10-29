@@ -1,5 +1,5 @@
 import { memo, useEffect, useState } from "react";
-import { ArrowLeftRight, KeyRound, Bot, Circle, CircleDot, RotateCcw, ShieldAlert, ShieldCheck, Unplug } from "lucide-react";
+import { ArrowLeftRight, KeyRound, Bot, Circle, CircleDot, History, RotateCcw, Search, ShieldAlert, ShieldCheck, Unplug } from "lucide-react";
 import {
   DeviceInfo,
   LIFE_LABEL,
@@ -20,10 +20,11 @@ import { Tab, TabState, sessionTarget, tunnelLabel } from "../types";
 import { BroadcastTargetPicker } from "./BroadcastTarget";
 import { QuickBolt, typeLabel } from "./SessionIcon";
 import { statusColor } from "./TabBar";
+import { historyLabel, modLabel } from "../lib/platform";
 
 /** Etiquetas de los botones accionables: con la barra angosta (ventana mínima o vista con barra
  *  lateral) solo queda el icono y el title. Comandos, Notas, CLI Lab y Ajustes viven en la barra
- *  de actividad; Break, Buscar e Historial, en el menú de la pestaña y la paleta (⌘K). */
+ *  de actividad; Buscar, Historial y Log quedan aquí; Break, en el menú de la pestaña y la paleta (⌘K). */
 const LBL = "hidden @[52rem]:inline";
 
 const statusText = { connecting: "Conectando", connected: "Conectado", closed: "Desconectado" };
@@ -38,6 +39,11 @@ interface Props {
   onAi: () => void;
   /** Guarda la conexión rápida de la pestaña como sesión. */
   onSaveAs?: () => void;
+  /** Abre la búsqueda de texto en la salida de la pestaña activa. */
+  onFind: () => void;
+  /** Abre el historial de comandos enviados (alterna: un segundo clic lo cierra). */
+  onHistory: () => void;
+  historyOpen: boolean;
   /** Modelo y versión leídos de la pantalla (show version): ciclo de vida del equipo. */
   device?: DeviceInfo;
 }
@@ -55,6 +61,9 @@ export const StatusBar = memo(function StatusBar({
   aiEnabled,
   onAi,
   onSaveAs,
+  onFind,
+  onHistory,
+  historyOpen,
   device,
 }: Props) {
   const ai = aiEnabled && (
@@ -114,6 +123,23 @@ export const StatusBar = memo(function StatusBar({
         {/* Destino único de Notas, catálogo, botones y scripts: siempre a la vista. */}
         <BroadcastTargetPicker />
         <span className="w-px h-3.5 mx-1 bg-line" />
+        <BarBtn onClick={onFind} title={`Buscar en la sesión (${modLabel}F)`} aria-label="Buscar en la sesión">
+          <Search size={12} />
+          <span className={LBL}>Buscar</span>
+        </BarBtn>
+        {!session.scp && (
+          <BarBtn
+            onClick={onHistory}
+            data-history-btn=""
+            title={`Historial de comandos enviados (${historyLabel})`}
+            aria-label="Historial de comandos enviados"
+            aria-pressed={historyOpen}
+            className={historyOpen ? "!text-accent" : ""}
+          >
+            <History size={12} />
+            <span className={LBL}>Historial</span>
+          </BarBtn>
+        )}
         <BarBtn
           onClick={onToggleLog}
           disabled={!connected && !logging}

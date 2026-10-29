@@ -18,7 +18,7 @@ interface Props {
 
 /**
  * Historial de comandos enviados desde Notas, catálogo y botones para el equipo activo.
- * Se abre desde el menú de la pestaña o la paleta; se lee solo al montarse (sin costo cerrado).
+ * Se abre desde la barra de estado, el menú de la pestaña, la paleta o el atajo; se lee solo al montarse (sin costo cerrado).
  */
 export function HistoryMenu({ historyKey, connected, onResend, onClose }: Props) {
   const [items, setItems] = useState<Entry[] | null>(null);
@@ -29,7 +29,9 @@ export function HistoryMenu({ historyKey, connected, onResend, onClose }: Props)
     invoke<Entry[]>("cmd_history", { key: historyKey })
       .then(setItems)
       .catch(() => setItems([]));
-    const onDown = (e: MouseEvent) => !box.current?.contains(e.target as Node) && onClose();
+    // El botón del historial en la barra de estado alterna el panel: no lo cierra aquí para que el clic no lo reabra.
+    const onDown = (e: MouseEvent) =>
+      !box.current?.contains(e.target as Node) && !(e.target as Element).closest?.("[data-history-btn]") && onClose();
     const onKey = (e: KeyboardEvent) => e.key === "Escape" && onClose();
     window.addEventListener("mousedown", onDown);
     window.addEventListener("keydown", onKey);

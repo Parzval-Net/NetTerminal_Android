@@ -85,7 +85,8 @@ Las capturas usan datos ficticios. Hay más en la [página del producto](https:/
 | CLI Lab | ⌘I | Ctrl+Shift+I |
 | Herramientas | ⌘E | Ctrl+Shift+E |
 | Buscar en la salida | ⌘F | Ctrl+Shift+F |
-| Modo foco (solo pestañas y terminal) | ⌘⇧F | Ctrl+Shift+Alt+F |
+| Modo foco (solo pestañas y terminal) | ⌘⇧M | Ctrl+Shift+M |
+| Historial de comandos enviados | ⌘Y | Ctrl+Shift+Y |
 | Copiar / pegar | ⌘C / ⌘V | Ctrl+Shift+C / Ctrl+Shift+V |
 
 En Windows y Linux los atajos usan Ctrl+Shift para no interferir con Ctrl+C o Ctrl+W dentro de la terminal. La lista completa está en la [documentación técnica](docs/TECNICO.md#atajos).

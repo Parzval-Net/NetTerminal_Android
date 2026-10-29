@@ -194,6 +194,8 @@ export const TerminalView = memo(function TerminalView({ id, session, active, vi
   /** Bloque multilínea pegado que espera confirmación antes de llegar al equipo. */
   const [pasteAsk, setPasteAsk] = useState<string | null>(null);
   const [query, setQuery] = useState("");
+  /** Coincidencias de la búsqueda (posición actual y total); el addon solo las cuenta con decoraciones. */
+  const [found, setFound] = useState<{ index: number; count: number } | null>(null);
   /** Bóveda bloqueada al conectar una sesión con contraseña guardada: desbloquear u omitir. */
   const [unlockAsk, setUnlockAsk] = useState(false);
   const unlockResolve = useRef<((ok: boolean) => void) | null>(null);
@@ -243,6 +245,7 @@ export const TerminalView = memo(function TerminalView({ id, session, active, vi
     termRef.current = term;
     fitRef.current = fit;
     searchRef.current = search;
+    search.onDidChangeResults((r) => setFound({ index: r.resultIndex, count: r.resultCount }));
 
     // Resaltado: se decodifica UTF-8 en streaming y se colorea por líneas. En pantallas
     // completas (vim, top, less) no se toca nada.
@@ -1123,6 +1126,7 @@ export const TerminalView = memo(function TerminalView({ id, session, active, vi
 
   const closeFind = () => {
     setFindOpen(false);
+    setFound(null);
     searchRef.current?.clearDecorations();
     termRef.current?.focus();
   };
@@ -1209,12 +1213,20 @@ export const TerminalView = memo(function TerminalView({ id, session, active, vi
             className="field !h-7 !w-56"
             placeholder="Buscar en la salida"
             value={query}
-            onChange={(e) => setQuery(e.target.value)}
+            onChange={(e) => {
+              setQuery(e.target.value);
+              if (!e.target.value) setFound(null);
+            }}
             onKeyDown={(e) => {
               if (e.key === "Enter") findNext(e.shiftKey);
               if (e.key === "Escape") closeFind();
             }}
           />
+          {query && found && (
+            <span className="min-w-12 text-center text-[11.5px] text-muted tabular-nums" aria-live="polite">
+              {found.count > 0 ? `${found.index + 1}/${found.count}` : "Sin resultados"}
+            </span>
+          )}
           <IconBtn title="Anterior (Shift+Enter)" onClick={() => findNext(true)}>
             <ChevronUp size={15} />
           </IconBtn>

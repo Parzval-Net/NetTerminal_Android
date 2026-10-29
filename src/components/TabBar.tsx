@@ -1,5 +1,5 @@
 import { memo, useCallback, useEffect, useRef, useState } from "react";
-import { Columns2, LayoutGrid, Maximize2, Minimize2, Plus, Rows2, Wrench, X } from "lucide-react";
+import { Columns2, LayoutGrid, Maximize2, Minimize2, Plus, Rows2, X } from "lucide-react";
 import { newTabMenuItems } from "./tabMenu";
 import { SplitLayout, layoutLabel } from "../lib/split";
 import type { TabLayout } from "../lib/settings";
@@ -34,12 +34,6 @@ export interface TabBarProps {
   onSaveAs?: (id: string) => void;
   /** Cerrar varias pestañas desde el menú contextual (con un solo aviso). */
   onCloseMany?: (scope: CloseScope, id: string) => void;
-  /** Herramientas ya abierta (sus módulos siguen vivos aunque se vea una terminal). */
-  toolsOpen: boolean;
-  /** Abre Herramientas o, si ya se ve, vuelve a la última terminal sin cerrarla (⌘E). */
-  onToggleTools: () => void;
-  /** Sondas caídas: se muestran junto al botón de Herramientas. */
-  alerts: number;
   onRename: (id: string, title: string | undefined) => void;
   onDuplicate: (id: string) => void;
   onReconnect: (id: string) => void;
@@ -101,8 +95,6 @@ export const TabBar = memo(function TabBar(props: TabBarProps) {
   activeId,
   onSelect,
   onClose,
-  onToggleTools,
-  alerts,
   onRename,
   activity,
   split = null,
@@ -273,35 +265,7 @@ export const TabBar = memo(function TabBar(props: TabBarProps) {
           {props.focusMode && "Salir del modo foco"}
         </button>
       )}
-      {/* En modo foco, Herramientas sigue en ⌘E y la paleta. */}
-      {!props.focusMode && <ToolsButton active={activeId === "tools"} alerts={alerts} onClick={onToggleTools} />}
     </div>
   );
 });
 
-/**
- * Botón de Herramientas, siempre visible: resalta cuando la vista está activa y avisa las
- * sondas caídas. El texto se oculta con la barra angosta (container query de la barra, como
- * en StatusBar): con ventana mínima o barra lateral abierta queda el icono, el title y el aviso.
- */
-function ToolsButton({ active, alerts, onClick }: { active: boolean; alerts: number; onClick: () => void }) {
-  return (
-    <button
-      onClick={onClick}
-      title={`Herramientas: monitoreo, diagnóstico, TFTP, syslog, plugins (${modLabel}E)${alerts > 0 ? `\n${alerts} sondas caídas` : ""}`}
-      aria-label={`Herramientas${alerts > 0 ? `, ${alerts} sondas caídas` : ""}`}
-      aria-pressed={active}
-      className={`mb-[5px] h-6 px-2 shrink-0 flex items-center gap-1.5 rounded-md text-[12.5px] ${
-        active ? "bg-selected text-fg font-medium" : "text-muted hover:text-fg hover:bg-hover"
-      }`}
-    >
-      <Wrench size={15} className={alerts > 0 ? "text-danger" : ""} />
-      <span className="hidden @[40rem]:inline">Herramientas</span>
-      {alerts > 0 && (
-        <span className="px-1.5 rounded-full bg-danger text-danger-fg text-[11px] font-semibold" title={`${alerts} sondas caídas`}>
-          ✕ {alerts}
-        </span>
-      )}
-    </button>
-  );
-}
