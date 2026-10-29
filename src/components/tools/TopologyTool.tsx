@@ -108,6 +108,7 @@ import {
   toSvg,
   shortName,
   trafficShort,
+  UTIL_WARN,
   updateManualLink,
   updateManualNode,
   utilLevel,
@@ -198,7 +199,7 @@ type ManualForm =
   | { kind: "link"; edit?: TopoLink; a: string; aPort: string; b: string; bPort: string };
 
 /** Secciones del panel lateral. */
-type PanelSection = "fuentes" | "alcance" | "filtros" | "revisiones" | "trafico" | "sugerencias" | "detalle" | "ruta" | "manual" | "snapshots" | "leyenda";
+type PanelSection = "fuentes" | "alcance" | "filtros" | "revisiones" | "trafico" | "sugerencias" | "detalle" | "ruta" | "manual" | "snapshots" | "leyenda" | "enlaces";
 type DiscoveryMode = "cli" | "snmp";
 /**
  * Estado visual de la herramienta (panel, secciones, modo de descubrimiento, intervalo y animación
@@ -422,6 +423,115 @@ type Geo = ReturnType<typeof linkGeometry>[number];
 
 /** Línea de "puerto: estado" para el tooltip de un extremo. */
 const infoLine = (port: string, info: string) => (info ? `${port}: ${info}` : "");
+
+interface TrafficRow {
+  key: string;
+  a: string;
+  b: string;
+  aPort: string;
+  bPort: string;
+  lt: LinkTraffic;
+  mid: Pt;
+}
+
+/** Filas a la vista antes de "Ver todos": las más cargadas, que son las que importan. */
+const TRAFFIC_TOP = 10;
+
+/**
+ * Tabla flotante de enlaces por carga (botón "Enlaces" junto a la leyenda). Memorizada: solo se
+ * redibuja con una lectura nueva o al cambiar el enlace elegido, no al arrastrar equipos. Muestra
+ * las 10 más cargadas; con más, busca por equipo o puerto y filtra las que pasan el 70 %.
+ */
+const TrafficTable = memo(function TrafficTable({
+  id,
+  rows,
+  byUtil,
+  focus,
+  onPick,
+  onClose,
+}: {
+  id: string;
+  rows: TrafficRow[];
+  byUtil: boolean;
+  focus: string | null;
+  onPick: (r: TrafficRow) => void;
+  onClose: () => void;
+}) {
+  const [q, setQ] = useState("");
+  const [onlyHot, setOnlyHot] = useState(false);
+  const [all, setAll] = useState(false);
+  const needle = q.trim().toLowerCase();
+  const matched = rows.filter(
+    (r) => (!onlyHot || (r.lt.util ?? 0) >= UTIL_WARN) && (!needle || `${r.a} ${r.aPort} ${r.b} ${r.bPort}`.toLowerCase().includes(needle)),
+  );
+  const list = all || needle || onlyHot ? matched : matched.slice(0, TRAFFIC_TOP);
+  const big = rows.length > TRAFFIC_TOP;
+  return (
+    <div
+      id={id}
+      role="group"
+      aria-label="Enlaces por carga"
+      className="w-[340px] max-w-full flex flex-col rounded-lg border border-line bg-panel shadow-pop text-[12px]"
+      style={{ maxHeight: "min(360px, 60vh)" }}
+      onKeyDown={(e) => e.key === "Escape" && onClose()}
+    >
+      <div className="flex items-center gap-1.5 px-2.5 pt-2 pb-1.5 border-b border-line">
+        <span className="font-medium flex-1">Enlaces por carga</span>
+        <button
+          type="button"
+          aria-pressed={onlyHot}
+          onClick={() => setOnlyHot((v) => !v)}
+          className={`h-6 px-2 rounded-md border text-[11px] ${onlyHot ? "border-[var(--accent)] text-accent bg-[var(--selected)]" : "border-line text-muted hover:bg-hover"}`}
+        >
+          ≥ 70 %
+        </button>
+        <button type="button" aria-label="Cerrar" onClick={onClose} className="h-6 w-6 grid place-items-center rounded-md text-muted hover:text-fg hover:bg-hover">
+          <X size={13} />
+        </button>
+      </div>
+      {big && (
+        <div className="px-2.5 py-1.5 border-b border-line">
+          <input className="field !h-7 !text-[12px] w-full" placeholder="Buscar equipo o puerto" value={q} onChange={(e) => setQ(e.target.value)} aria-label="Buscar enlace" />
+        </div>
+      )}
+      <ul className="min-h-0 overflow-auto py-1">
+        {list.map((r) => {
+          const c = byUtil ? UTIL_VAR[utilLevel(r.lt.util)] : "var(--text)";
+          const on = focus === r.key;
+          return (
+            <li key={r.key}>
+              <button
+                type="button"
+                aria-pressed={on}
+                title={`${r.a} ${r.aPort || "?"} → ${r.b}: ${fmtBps(r.lt.ab)}\n${r.b} ${r.bPort || "?"} → ${r.a}: ${fmtBps(r.lt.ba)}${r.lt.speed ? `\nEnlace de ${fmtBps(r.lt.speed)}` : ""}\nClic para ubicarlo en el mapa`}
+                onClick={() => onPick(r)}
+                className={`w-full flex items-center gap-2 px-2.5 h-7 text-left hover:bg-hover ${on ? "bg-selected" : ""}`}
+              >
+                <span className="flex-1 min-w-0 truncate">
+                  {shortName(r.a)} <span className="text-muted">{r.aPort}</span> ↔ {shortName(r.b)}
+                </span>
+                {r.lt.util !== undefined && (
+                  <span className="w-10 h-1 shrink-0 rounded-full bg-line overflow-hidden" aria-hidden>
+                    <span className="block h-full rounded-full" style={{ width: `${Math.min(100, Math.round(r.lt.util * 100))}%`, background: c }} />
+                  </span>
+                )}
+                <span className="w-14 shrink-0 text-right font-semibold tabular-nums" style={{ color: c }}>
+                  {trafficShort(r.lt)}
+                </span>
+              </button>
+            </li>
+          );
+        })}
+        {!list.length && <li className="px-2.5 py-2 text-muted">{onlyHot ? "Ningún enlace sobre 70 %." : "Sin coincidencias."}</li>}
+      </ul>
+      {big && !all && !needle && !onlyHot && (
+        <button type="button" onClick={() => setAll(true)} className="h-7 border-t border-line text-[11.5px] text-accent hover:bg-hover rounded-b-lg">
+          Ver todos ({rows.length})
+        </button>
+      )}
+    </div>
+  );
+});
 
 /**
  * Un enlace del diagrama. Memorizado: al arrastrar un equipo solo se redibujan sus enlaces (los
@@ -1157,7 +1267,7 @@ export function TopologyTool({
 
   /** Tabla del panel: cada enlace con tráfico, del más cargado al menos (sin velocidad, por tasa). */
   const trafficRows = useMemo(() => {
-    const rows: { key: string; a: string; b: string; aPort: string; bPort: string; lt: LinkTraffic; mid: Pt }[] = [];
+    const rows: TrafficRow[] = [];
     for (const g of geometry) {
       const k = linkKey(g.l);
       const lt = linkRates.get(k);
@@ -1167,6 +1277,18 @@ export function TopologyTool({
     const peak = (lt: LinkTraffic) => Math.max(lt.ab ?? 0, lt.ba ?? 0);
     return rows.sort((x, y) => (y.lt.util ?? -1) - (x.lt.util ?? -1) || peak(y.lt) - peak(x.lt));
   }, [geometry, linkRates, removed]);
+  const trafficHot = useMemo(() => trafficRows.filter((r) => (r.lt.util ?? 0) >= UTIL_WARN).length, [trafficRows]);
+  const linksId = useId();
+  const closeLinks = useCallback(() => setUi((u) => ({ ...u, sec: { ...u.sec, enlaces: false } })), []);
+  /** Clic en la tabla: resalta el enlace y lo centra (otro clic en el mismo lo suelta). */
+  const pickLink = useCallback((r: TrafficRow) => {
+    setFocusLink((cur) => {
+      if (cur === r.key) return null;
+      setZoom((z) => Math.max(z, 1.4));
+      setFocusReq(r.mid);
+      return r.key;
+    });
+  }, []);
 
   // Sugerencias: se calculan del diagrama ya leído, sin comandos, y solo con su fuente activa.
   const suggestions = useMemo(() => collectSuggestions(topoData, sources, dismissed), [topoData, sources, dismissed]);
@@ -1980,9 +2102,19 @@ export function TopologyTool({
               </Btn>
             </div>
           )}
-          {showLegend && (
+          {(showLegend || trafficRows.length > 0) && (
             <div className="absolute bottom-2 left-2 flex flex-col items-start gap-1.5 max-w-[calc(100%-1rem)]">
-              {isOpen("leyenda") && (
+              {isOpen("enlaces") && trafficRows.length > 0 && (
+                <TrafficTable
+                  id={linksId}
+                  rows={trafficRows}
+                  byUtil={ui.color}
+                  focus={focusLink}
+                  onPick={pickLink}
+                  onClose={closeLinks}
+                />
+              )}
+              {showLegend && isOpen("leyenda") && (
                 <div
                   id={legendId}
                   className="flex flex-col gap-1 rounded-lg border border-line bg-panel shadow-pop px-3 py-2 text-[11.5px] text-muted"
@@ -2032,22 +2164,47 @@ export function TopologyTool({
                           <polygon points="13,1.5 19,4.5 13,7.5" fill="var(--ok)" />
                           <polygon points="21,4.5 15,7.5 21,10.5" fill="var(--warn)" />
                         </svg>
-                        Una flecha por sentido · rótulo "equipo A → sale de A · ← llega a A" (≈: aproximada; detalle al pasar el mouse)
+                        Una flecha por sentido · rótulo con el % de uso del sentido más cargado (≈: aproximada; detalle al pasar el mouse y en "Enlaces")
                       </span>}
                     </>
                   )}
                 </div>
               )}
-              <button
-                type="button"
-                aria-expanded={isOpen("leyenda")}
-                aria-controls={legendId}
-                onClick={() => setOpen("leyenda", !isOpen("leyenda"))}
-                className="inline-flex items-center gap-1 h-7 px-2.5 rounded-md border border-line bg-panel text-[11.5px] text-muted hover:text-fg hover:bg-hover"
-              >
-                <ChevronUp size={13} aria-hidden className={`transition-transform ${isOpen("leyenda") ? "" : "rotate-180"}`} />
-                Leyenda
-              </button>
+              <div className="flex items-center gap-1.5">
+                {showLegend && (
+                  <button
+                    type="button"
+                    aria-expanded={isOpen("leyenda")}
+                    aria-controls={legendId}
+                    onClick={() => setUi((u) => ({ ...u, sec: { ...u.sec, leyenda: !u.sec.leyenda, enlaces: false } }))}
+                    className="inline-flex items-center gap-1 h-7 px-2.5 rounded-md border border-line bg-panel text-[11.5px] text-muted hover:text-fg hover:bg-hover"
+                  >
+                    <ChevronUp size={13} aria-hidden className={`transition-transform ${isOpen("leyenda") ? "" : "rotate-180"}`} />
+                    Leyenda
+                  </button>
+                )}
+                {trafficRows.length > 0 && (
+                  // Una sola tarjeta abierta a la vez: la leyenda y la tabla comparten la esquina.
+                  <button
+                    type="button"
+                    aria-expanded={isOpen("enlaces")}
+                    aria-controls={linksId}
+                    title="Enlaces con tráfico, del más cargado al menos"
+                    onClick={() => setUi((u) => ({ ...u, sec: { ...u.sec, enlaces: !u.sec.enlaces, leyenda: false } }))}
+                    className={`inline-flex items-center gap-1 h-7 px-2.5 rounded-md border bg-panel text-[11.5px] hover:bg-hover ${isOpen("enlaces") ? "border-[var(--accent)] text-accent" : "border-line text-muted hover:text-fg"}`}
+                  >
+                    <ChevronUp size={13} aria-hidden className={`transition-transform ${isOpen("enlaces") ? "" : "rotate-180"}`} />
+                    Enlaces
+                    {trafficHot > 0 ? (
+                      <span className="ml-0.5 rounded-full px-1.5 text-[10.5px] font-semibold text-white" style={{ background: "var(--danger)" }} title={`${trafficHot} sobre 70 %`}>
+                        {trafficHot}
+                      </span>
+                    ) : (
+                      <span className="ml-0.5 tabular-nums">{trafficRows.length}</span>
+                    )}
+                  </button>
+                )}
+              </div>
             </div>
           )}
         </div>
@@ -2257,7 +2414,7 @@ export function TopologyTool({
                 <div>
                   <Toggle checked={ui.rates} onChange={(rates) => setUi((u) => ({ ...u, rates }))} label="Rótulo en el enlace" />
                   <p className="mt-0.5 pl-10 text-[11px] text-muted leading-snug">
-                    Una etiqueta corta sobre cada enlace con el % de uso (o la tasa, si no se conoce la velocidad). Las tasas por sentido están en la tabla de abajo y al pasar el mouse.
+                    Una etiqueta corta sobre cada enlace con el % de uso (o la tasa, si no se conoce la velocidad). Las tasas por sentido están en "Enlaces", abajo a la izquierda del mapa, y al pasar el mouse.
                   </p>
                 </div>
                 <div>
@@ -2267,58 +2424,6 @@ export function TopologyTool({
                     {reducedMotion ? " El sistema pide reducir movimiento: queda desactivada." : ""}
                   </p>
                 </div>
-                {trafficRows.length > 0 && (
-                  <div className="rounded-md border border-line overflow-hidden">
-                    <div className="flex items-center justify-between px-2 py-1 bg-chrome text-[11px] text-muted">
-                      <span>Enlaces por carga</span>
-                      <span>{trafficRows.length}</span>
-                    </div>
-                    <ul className="max-h-64 overflow-auto divide-y divide-line">
-                      {trafficRows.map((r) => {
-                        const c = ui.color ? UTIL_VAR[utilLevel(r.lt.util)] : "var(--text)";
-                        const on = focusLink === r.key;
-                        return (
-                          <li key={r.key}>
-                            <button
-                              type="button"
-                              className={`w-full text-left px-2 py-1.5 hover:bg-hover ${on ? "bg-selected" : ""}`}
-                              aria-pressed={on}
-                              title="Ubicar en el mapa"
-                              onClick={() => {
-                                if (on) return setFocusLink(null);
-                                setFocusLink(r.key);
-                                setZoom((z) => Math.max(z, 1.4));
-                                setFocusReq(r.mid);
-                              }}
-                            >
-                              <div className="flex items-center gap-2">
-                                <span className="flex-1 min-w-0 truncate font-medium">
-                                  {shortName(r.a)} ↔ {shortName(r.b)}
-                                </span>
-                                <span className="shrink-0 font-semibold tabular-nums" style={{ color: c }}>
-                                  {trafficShort(r.lt)}
-                                </span>
-                              </div>
-                              {r.lt.util !== undefined && (
-                                <div className="mt-1 h-1 rounded-full bg-line overflow-hidden">
-                                  <div className="h-full rounded-full" style={{ width: `${Math.min(100, Math.round(r.lt.util * 100))}%`, background: c }} />
-                                </div>
-                              )}
-                              <div className="mt-0.5 flex gap-3 text-[11px] text-muted tabular-nums">
-                                <span className="truncate" title={`${r.a} ${r.aPort} → ${r.b}`}>
-                                  {r.aPort || "?"} → {fmtBps(r.lt.ab)}
-                                </span>
-                                <span className="truncate" title={`${r.b} ${r.bPort} → ${r.a}`}>
-                                  ← {fmtBps(r.lt.ba)}
-                                </span>
-                              </div>
-                            </button>
-                          </li>
-                        );
-                      })}
-                    </ul>
-                  </div>
-                )}
                 {trafficOn && (
                   <div className="rounded-md border border-line px-2 py-1.5 space-y-0.5 text-[11.5px]">
                     {!traffic.status.last && <p className="text-muted">Leyendo…</p>}
