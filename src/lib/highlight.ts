@@ -4,6 +4,7 @@
  * tema activo, así el resaltado se adapta a cualquier tema de terminal.
  */
 import type { ITheme } from "@xterm/xterm";
+import { baseColor, themedColor } from "./hlPalette";
 
 export const COLOR_NAMES = [
   "red",
@@ -95,11 +96,11 @@ const r = (name: string, pattern: string, style: HlStyle, opts: Partial<HlRule> 
   ...opts,
 });
 
-const IF_STATE_BAD = String.raw`\b(?:administratively down|err-disabled|notconnect|down|disabled|failed|failure|error|denied|deny|unreachable|timed? ?out|critical|alarm|inactive|discard(?:ed)?|rejected?|invalid)\b`;
+const IF_STATE_BAD = String.raw`\b(?:administratively down|err-?disabled|notconnect|not connected|sfp-config-mismatch|suspended|faulty|down|disabled|failed|failure|error|denied|deny|unreachable|timed? ?out|critical|alarm|inactive|discard(?:ed)?|rejected?|invalid)\b`;
 // "up" en prosa ("up to the cursor", "up a line") no es un estado.
-const IF_STATE_OK = String.raw`\b(?:up(?!\s+(?:to|a|an|the|one|from|by|with|for|and|of|in|on|at|until)\b)|connected|established|enabled|permit|accept(?:ed)?|ok|success(?:ful)?|forwarding|full|valid|reachable)\b`;
-const IF_STATE_WARN = String.raw`\b(?:warning|warn|blocking|learning|listening|idle|opensent|openconfirm|init|2-?way|exstart|exchange|loading|standby|pending|degraded|flapping)\b`;
-const ERR_COUNTERS = String.raw`\b[1-9]\d*\s+(?:input errors|output errors|CRC|frame|overrun|ignored|runts|giants|throttles|collisions|interface resets|late collision|output drops|input drops|drops|discards|errors)\b`;
+const IF_STATE_OK = String.raw`\b(?:up(?!\s+(?:to|a|an|the|one|from|by|with|for|and|of|in|on|at|until|time|since|days?|hours?)\b)|connected|established|enabled|permit|accept(?:ed)?|ok(?![?\w])|success(?:ful)?|forwarding|full|valid|reachable)\b`;
+const IF_STATE_WARN = String.raw`\b(?:warning|warn|a-half|half|half-duplex|blocking|learning|listening|idle|opensent|openconfirm|init|2-?way|exstart|exchange|loading|standby|pending|degraded|flapping)\b`;
+const ERR_COUNTERS = String.raw`\b[1-9]\d*\s+(?:input errors?|output errors?|CRC|frame|overrun|ignored|runts|giants|throttles|collisions|interface resets|late collision|output drops|input drops|drops|discards|errors)\b|\b(?:total output drops|output drops|input drops|CRC errors?|input errors?|output errors?)\s*[:=]\s*[1-9]\d*\b`;
 
 const IPV4 = String.raw`\b(?:(?:25[0-5]|2[0-4]\d|1?\d?\d)\.){3}(?:25[0-5]|2[0-4]\d|1?\d?\d)(?:\/(?:3[0-2]|[12]?\d))?\b`;
 const IPV6 = String.raw`(?<![\w:.])(?:(?:[0-9a-f]{1,4}:){7}[0-9a-f]{1,4}|(?:[0-9a-f]{1,4}:){1,7}:(?:[0-9a-f]{1,4}(?::[0-9a-f]{1,4}){0,6})?|::[0-9a-f]{1,4}(?::[0-9a-f]{1,4}){0,6}|::(?=\/0))(?:\/\d{1,3})?(?![\w:])`;
@@ -115,9 +116,9 @@ export const schemes: HlScheme[] = [
       r("Prompt", String.raw`^[\w.\-\/:]+(?:\([\w\-\/.]+\))?[#>]`, { bold: true }),
       r("Comentario", String.raw`(?<=^\s*)!.*$`, { color: "gray" }),
       r("Error de comando", String.raw`(?<=^\s*)% .*$`, { color: "red", bold: true }),
-      r("Syslog crítico (0-3)", String.raw`%[A-Z0-9_]+-[0-3]-[A-Z0-9_]+`, { color: "red", bold: true }),
-      r("Syslog warning (4)", String.raw`%[A-Z0-9_]+-4-[A-Z0-9_]+`, { color: "yellow", bold: true }),
-      r("Syslog info (5-7)", String.raw`%[A-Z0-9_]+-[5-7]-[A-Z0-9_]+`, { color: "cyan" }),
+      r("Syslog crítico (0-3)", String.raw`%[A-Z0-9_]+(?:-[A-Z0-9_]+)?-[0-3]-[A-Z0-9_]+`, { color: "red", bold: true }),
+      r("Syslog warning (4)", String.raw`%[A-Z0-9_]+(?:-[A-Z0-9_]+)?-4-[A-Z0-9_]+`, { color: "yellow", bold: true }),
+      r("Syslog info (5-7)", String.raw`%[A-Z0-9_]+(?:-[A-Z0-9_]+)?-[5-7]-[A-Z0-9_]+`, { color: "cyan" }),
       r("Descripción", String.raw`\bdescription\s+(.+)$`, { color: "brightYellow", italic: true }, { group: 1 }),
       r("no shutdown", String.raw`\bno shutdown\b`, { color: "green" }),
       r("shutdown", String.raw`(?<=^\s*)shutdown\b`, { color: "red", bold: true }),
@@ -142,6 +143,7 @@ export const schemes: HlScheme[] = [
       r("Prompt", String.raw`^[\w.\-]+@[\w.\-]+[>#%](?=\s|$)`, { bold: true }),
       r("Jerarquía", String.raw`^\[edit[^\]]*\]`, { color: "brightBlue", bold: true }),
       r("Comentario", String.raw`(?<=^\s*)(?:#|\/\*).*$`, { color: "gray" }),
+      r("Error de comando", String.raw`(?<=^\s*)(?:error: .*|syntax error\b.*|unknown command\b.*)$`, { color: "red", bold: true }),
       r("set", String.raw`(?<=^\s*)(?:set|activate)\b`, { color: "green", bold: true }),
       r("delete", String.raw`(?<=^\s*)(?:delete|deactivate)\b`, { color: "red", bold: true }),
       r("Descripción", String.raw`\bdescription\s+("[^"]*"|\S+)`, { color: "brightYellow", italic: true }, { group: 1 }),
@@ -158,9 +160,9 @@ export const schemes: HlScheme[] = [
     name: "Huawei / H3C",
     description: "VRP y Comware: undo, display, interfaces GE/XGE/Eth-Trunk, Vlanif, Bridge-Aggregation",
     rules: [
-      r("Prompt", String.raw`^[<\[][\w.\-~]+(?:-[\w\-\/.:]+)?[>\]]`, { bold: true }),
+      r("Prompt", String.raw`^[<\[][~*]?[\w.\-~]+(?:-[\w\-\/.:]+)?[>\]]`, { bold: true }),
       r("Separador", String.raw`(?<=^\s*)#\s*$`, { color: "gray" }),
-      r("Error de comando", String.raw`(?<=^\s*)Error:.*$`, { color: "red", bold: true }),
+      r("Error de comando", String.raw`(?<=^\s*)(?:Error:|%\s).*$`, { color: "red", bold: true }),
       // Huawei "%%01IFNET/4/LINK_STATE"; H3C "IFNET/3/PHY_UPDOWN:" (sin %% y seguido de ":").
       r("Syslog crítico", String.raw`%%\d+[A-Z0-9_]+\/[0-3]\/[A-Z0-9_]+|\b[A-Z][A-Z0-9_]*\/[0-3]\/[A-Z0-9_]+(?=:)`, { color: "red", bold: true }),
       r("Syslog warning", String.raw`%%\d+[A-Z0-9_]+\/4\/[A-Z0-9_]+|\b[A-Z][A-Z0-9_]*\/4\/[A-Z0-9_]+(?=:)`, { color: "yellow", bold: true }),
@@ -200,6 +202,9 @@ export const schemes: HlScheme[] = [
         String.raw`\b(?:port\d+|wan\d|dmz\d?|internal\d+|lan\d+|modem\d|lte\d|wwan\d?|x\d{1,2}|ha\d|mgmt\d?|fortilink|npu\d+_vlink\d+|ssl\.root)(?:\.\d+)?\b`,
         { color: "cyan" },
       ),
+      // El texto entre comillas se pinta completo; el resultado de un login o acción manda sobre él.
+      r("Resultado negativo", String.raw`(?<=\b(?:status|action|result)=")(?:fail(?:ed|ure)?|error|denied?|blocked?|dropped|timeout|reject(?:ed)?)(?=")`, { color: "red", bold: true }),
+      r("Error de comando", String.raw`(?<=^\s*)(?:Command fail|Unknown action|command parse error|Value parse error|node_check_object fail)\b.*$`, { color: "red", bold: true }),
       r("Texto", String.raw`"[^"]*"`, { color: "brightYellow" }),
     ],
   },
@@ -263,7 +268,7 @@ export const schemes: HlScheme[] = [
     rules: [
       r("Prompt", String.raw`^\[Expert@[\w.\-]+(?::\d+)?\]#|^[\w.\-]+:\d+>`, { bold: true }),
       // ClusterXL: "ACTIVE(!)" o "Active Attention" es un miembro activo con problemas.
-      r("Cluster con problema", String.raw`\bACTIVE\(!\S*\)|\bActive Attention\b|\bDOWN\b|\bLost\b`, { color: "red", bold: true }),
+      r("Cluster con problema", String.raw`\bACTIVE\(!\S*\)|\bActive Attention\b|\bDOWN\b|\bLost\b`, { color: "red", bold: true, underline: true }),
       r("Cluster activo", String.raw`\bACTIVE\b|\bActive\b`, { color: "green", bold: true }),
       r("Cluster en espera", String.raw`\b(?:STANDBY|Standby|BACKUP|Backup|READY|Ready)\b`, { color: "yellow" }),
       r("Interfaz", String.raw`\b(?:eth\d+(?:-\d+)?|bond\d+|wrp\d+|Mgmt|Sync)(?:\.\d+)?\b`, { color: "cyan" }),
@@ -311,15 +316,16 @@ function sgrColor(value: string, bg: boolean): string | null {
   return `${bg ? 48 : 38};2;${parseInt(m[1], 16)};${parseInt(m[2], 16)};${parseInt(m[3], 16)}`;
 }
 
-function sgr(style: HlStyle): { on: string; off: string } {
+/** Con tema, los nombres ANSI salen como color real ya ajustado (ver hlPalette.ts). */
+function sgr(style: HlStyle, theme?: ITheme): { on: string; off: string } {
   const on: string[] = [];
   const off: string[] = [];
   if (style.bold) on.push("1"), off.push("22");
   if (style.italic) on.push("3"), off.push("23");
   if (style.underline) on.push("4"), off.push("24");
-  const fg = style.color && sgrColor(style.color, false);
+  const fg = style.color && sgrColor((theme && themedColor(style.color, theme)) || style.color, false);
   if (fg) on.push(fg), off.push("39");
-  const bg = style.bg && sgrColor(style.bg, true);
+  const bg = style.bg && sgrColor((theme && baseColor(theme, style.bg)) || style.bg, true);
   if (bg) on.push(bg), off.push("49");
   return { on: `\x1b[${on.join(";")}m`, off: `\x1b[${off.join(";")}m` };
 }
@@ -357,12 +363,13 @@ export function regexError(pattern: string): string | null {
   }
 }
 
-export function compile(rules: HlRule[]): Compiled[] {
+/** `theme`: tema de terminal activo; sin él los colores con nombre salen como ANSI y el terminal los resuelve. */
+export function compile(rules: HlRule[], theme?: ITheme): Compiled[] {
   const out: Compiled[] = [];
   for (const rule of rules) {
     if (rule.enabled === false || regexError(rule.pattern)) continue;
     if (!rule.id.startsWith("b") && riskyRegex(rule.pattern)) continue;
-    const { on, off } = sgr(rule.style);
+    const { on, off } = sgr(rule.style, theme);
     if (on === "\x1b[m") continue;
     out.push({
       // El flag "d" (índices de grupos) es caro en V8: solo para reglas que pintan un grupo.
@@ -530,9 +537,11 @@ export function effectiveRules(
 }
 
 /** Color CSS de un estilo según el tema, para la vista previa. */
-export function cssColor(value: string | undefined, theme: ITheme): string | undefined {
+export function cssColor(value: string | undefined, theme: ITheme, isBg = false): string | undefined {
   if (!value) return undefined;
   if (value.startsWith("#")) return value;
+  const themed = isBg ? baseColor(theme, value) : themedColor(value, theme);
+  if (themed) return themed;
   const key = value === "gray" ? "brightBlack" : value;
   return (theme as Record<string, string | undefined>)[key];
 }

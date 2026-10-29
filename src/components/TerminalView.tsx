@@ -185,8 +185,9 @@ export const TerminalView = memo(function TerminalView({ id, session, active, vi
           },
           session.highlight,
         ),
+        theme,
       ),
-    [settings.highlightEnabled, settings.highlightSchemes, settings.customRules, settings.alertRules, session.highlight, session.folder],
+    [settings.highlightEnabled, settings.highlightSchemes, settings.customRules, settings.alertRules, session.highlight, session.folder, theme],
   );
   const compiledRef = useRef(compiled);
   compiledRef.current = compiled;

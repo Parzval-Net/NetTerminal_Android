@@ -16,7 +16,7 @@ export function renderHighlighted(line: string, compiled: Compiled[], theme: ITh
         key={k}
         style={{
           color: cssColor(st.color, theme),
-          background: cssColor(st.bg, theme),
+          background: cssColor(st.bg, theme, true),
           fontWeight: st.bold ? 700 : undefined,
           fontStyle: st.italic ? "italic" : undefined,
           textDecoration: st.underline ? "underline" : undefined,
