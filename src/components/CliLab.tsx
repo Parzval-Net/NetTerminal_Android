@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useRef, useState } from "react";
+import { memo, useEffect, useMemo, useRef, useState } from "react";
 import type { ITheme } from "@xterm/xterm";
 import { writeText } from "@tauri-apps/plugin-clipboard-manager";
 import { Check, CircleAlert, CircleCheck, Copy, Play, Plus, Save, Square, Terminal, X } from "lucide-react";
@@ -10,7 +10,7 @@ import { BroadcastDialog } from "./BroadcastDialog";
 import { fillTemplate, templateVars } from "./TemplateDialog";
 import { Compiled } from "../lib/highlight";
 import { Resolved, isBroadcastRunning, targetLabel, useBroadcastTarget, useWorkspace } from "../lib/broadcast";
-import { LabItem, SAVE_COMMAND, clearLab, isLabRunning, labReport, runLab, scriptLines, splitStep, stopLab, useLabRun } from "../lib/cliLab";
+import { LabItem, LabStep, SAVE_COMMAND, clearLab, isLabRunning, labReport, runLab, scriptLines, splitStep, stopLab, useLabRun } from "../lib/cliLab";
 import { runOnDeviceResult } from "../lib/deviceRun";
 import { isSecretVar } from "../lib/templateSecrets";
 import { useDragResize } from "../lib/useDragResize";
@@ -47,11 +47,11 @@ interface Props {
 }
 
 /**
- * Jerarquía de botones (una sola acción principal por vista: Ejecutar). Todas las áreas de clic
- * miden 28 px o más (WCAG 2.2, 2.5.8 pide 24 px).
+ * Jerarquía de botones con las mismas medidas que el resto de la app (una sola acción principal
+ * por vista: Ejecutar, h-8). Todas las áreas de clic miden 28 px o más (WCAG 2.2, 2.5.8 pide 24 px).
  */
 const BTN_SECONDARY =
-  "flex items-center gap-1.5 px-2.5 h-7 rounded-md border border-line text-[12px] hover:bg-hover disabled:opacity-40 disabled:hover:bg-transparent";
+  "flex items-center gap-1.5 px-3 h-7 rounded-md border border-line text-[12px] hover:bg-hover disabled:opacity-40 disabled:hover:bg-transparent";
 const BTN_GHOST =
   "flex items-center gap-1.5 px-2 h-7 rounded-md text-[12px] text-muted hover:text-fg hover:bg-hover disabled:opacity-40 disabled:hover:bg-transparent disabled:hover:text-muted";
 const BTN_ICON = "w-7 h-7 shrink-0 grid place-items-center rounded-md text-muted hover:text-fg hover:bg-hover";
@@ -215,7 +215,7 @@ export function CliLab(p: Props) {
         role="dialog"
         aria-label="CLI Lab"
       >
-        <header {...win.handle} className="shrink-0 flex items-center gap-2 px-4 h-12 border-b border-line select-none">
+        <header {...win.handle} className="shrink-0 flex items-center gap-2 px-5 h-12 border-b border-line select-none">
           <Terminal size={16} className="text-accent" />
           <h2 className="text-[14px] font-semibold mr-2">CLI Lab</h2>
           <select
@@ -379,46 +379,7 @@ export function CliLab(p: Props) {
                     ))}
                   </ul>
                 </div>
-                {/* Salida como la consola del equipo: prompt y comando, ✓ o ✗, y lo que respondió. */}
-                <div
-                  className="flex-1 min-w-0 overflow-auto py-1.5"
-                  style={{ background: p.theme.background, color: p.theme.foreground, fontFamily: fontStack(p.font), fontSize: Math.max(11, p.fontSize - 1) }}
-                >
-                  {!shown && <p className="font-sans text-[12px] text-muted p-3">Elige un equipo para ver la respuesta de cada comando.</p>}
-                  {shown && shown.reason && <p className="font-sans text-[12px] text-danger px-3 pb-1.5">{shown.reason}</p>}
-                  {shown?.steps.map((s, k) => {
-                    const { prompt, body } = splitStep(s.output, s.cmd);
-                    const first = !s.ok && shown.steps.findIndex((x) => !x.ok) === k;
-                    return (
-                      <div
-                        key={k}
-                        ref={first ? failRef : undefined}
-                        className={`px-3 py-1 leading-[1.55] ${s.ok ? "hover:bg-hover" : "bg-[color-mix(in_srgb,var(--danger)_10%,transparent)]"}`}
-                      >
-                        <div className="flex items-start gap-2 whitespace-pre">
-                          {s.ok ? <Check size={13} className="shrink-0 mt-[3px] text-ok" /> : <X size={13} className="shrink-0 mt-[3px] text-danger" />}
-                          <span className="min-w-0">
-                            {prompt && <span style={{ color: cssColor("gray", p.theme) }}>{prompt} </span>}
-                            {renderHighlighted(s.cmd.trim(), p.compiled, p.theme)}
-                          </span>
-                        </div>
-                        {(body.length > 0 || s.note) && (
-                          <div className="pl-[21px] pt-0.5 whitespace-pre">
-                            {body.map((l, i) => (
-                              <div key={i}>{renderHighlighted(l, p.compiled, p.theme)}</div>
-                            ))}
-                            {s.note && body.every((l) => !s.note!.includes(l.trim()) || !l.trim()) && (
-                              <div className="font-sans text-[12px] text-danger">{s.note}</div>
-                            )}
-                          </div>
-                        )}
-                      </div>
-                    );
-                  })}
-                  {shown && shown.status === "running" && (
-                    <div className="px-3 py-1 font-sans text-[12px] text-muted animate-pulse">Ejecutando línea {shown.steps.length + 1}…</div>
-                  )}
-                </div>
+                <LabOutput item={shown} compiled={p.compiled} theme={p.theme} font={p.font} fontSize={p.fontSize} failRef={failRef} />
               </section>
             )}
           </section>
@@ -461,7 +422,7 @@ export function CliLab(p: Props) {
                 {msg}
               </p>
               {running ? (
-                <button onClick={stopLab} className="w-full flex items-center justify-center gap-1.5 h-9 rounded-md bg-danger text-danger-fg font-medium hover:opacity-90">
+                <button onClick={stopLab} className="w-full flex items-center justify-center gap-1.5 h-8 rounded-md bg-danger text-danger-fg font-medium hover:opacity-90">
                   <Square size={11} fill="currentColor" /> Detener
                 </button>
               ) : (
@@ -469,10 +430,11 @@ export function CliLab(p: Props) {
                   onClick={execute}
                   disabled={!lines.length || n === 0}
                   title={!lines.length ? "Escribe al menos un comando" : n === 0 ? "Ninguna sesión conectada en el destino elegido" : undefined}
-                  className="w-full flex items-center justify-center gap-1.5 h-9 rounded-md bg-accent text-accent-fg font-medium hover:opacity-90 disabled:opacity-40"
+                  className="w-full flex items-center justify-center gap-1.5 h-8 rounded-md bg-accent text-accent-fg font-medium hover:opacity-90 disabled:opacity-40"
                 >
                   <Play size={13} /> Ejecutar en {plural(n, "equipo", "equipos")}
-                  <kbd className="ml-1 px-1 rounded bg-black/15 font-sans text-[10.5px] font-normal">{isMac ? "⌘↵" : "Ctrl+↵"}</kbd>
+                  {/* Atajo como en la paleta de comandos: texto, sin recuadro. */}
+                  <kbd className="ml-1 font-sans text-[11px] font-normal opacity-75">{isMac ? "⌘↵" : "Ctrl+↵"}</kbd>
                 </button>
               )}
             </div>
@@ -499,3 +461,80 @@ function StatusIcon({ item }: { item: LabItem }) {
   if (item.status === "error") return <CircleAlert size={13} className="text-danger shrink-0" />;
   return <span className={`w-[13px] h-[13px] shrink-0 rounded-full border ${item.status === "running" ? "border-accent animate-pulse" : "border-line"}`} />;
 }
+
+/** Líneas que se dibujan por comando antes de "Mostrar más" (un show tech puede traer miles). */
+const STEP_LINES = 200;
+
+interface OutputProps {
+  item: LabItem | null;
+  compiled: Compiled[];
+  theme: ITheme;
+  font: string;
+  fontSize: number;
+  failRef: React.RefObject<HTMLDivElement | null>;
+}
+
+/**
+ * Salida como la consola del equipo: prompt y comando, ✓ o ✗, y lo que respondió. Memorizada: al
+ * escribir en el editor no se vuelve a dibujar (con miles de líneas cada tecla costaba cientos de ms).
+ */
+const LabOutput = memo(function LabOutput({ item, compiled, theme, font, fontSize, failRef }: OutputProps) {
+  const firstFail = item ? item.steps.findIndex((x) => !x.ok) : -1;
+  return (
+    <div
+      className="flex-1 min-w-0 overflow-auto py-1.5"
+      style={{ background: theme.background, color: theme.foreground, fontFamily: fontStack(font), fontSize: Math.max(11, fontSize - 1) }}
+    >
+      {!item && <p className="font-sans text-[12px] text-muted p-3">Elige un equipo para ver la respuesta de cada comando.</p>}
+      {item?.reason && <p className="font-sans text-[12px] text-danger px-3 pb-1.5">{item.reason}</p>}
+      {item?.steps.map((s, k) => (
+        <StepRow key={k} step={s} compiled={compiled} theme={theme} rowRef={k === firstFail ? failRef : undefined} />
+      ))}
+      {item?.status === "running" && (
+        <div className="px-3 py-1 font-sans text-[12px] text-muted animate-pulse">Ejecutando línea {item.steps.length + 1}…</div>
+      )}
+    </div>
+  );
+});
+
+/** Un comando: los pasos ya terminados no cambian, así que cada fila se dibuja una sola vez. */
+const StepRow = memo(function StepRow({
+  step: s,
+  compiled,
+  theme,
+  rowRef,
+}: {
+  step: LabStep;
+  compiled: Compiled[];
+  theme: ITheme;
+  rowRef?: React.RefObject<HTMLDivElement | null>;
+}) {
+  const [all, setAll] = useState(false);
+  const { prompt, body } = useMemo(() => splitStep(s.output, s.cmd), [s.output, s.cmd]);
+  const visible = all ? body : body.slice(0, STEP_LINES);
+  const showNote = !!s.note && body.every((l) => !s.note!.includes(l.trim()) || !l.trim());
+  return (
+    <div ref={rowRef} className={`px-3 py-1 leading-[1.55] ${s.ok ? "hover:bg-hover" : "bg-[color-mix(in_srgb,var(--danger)_10%,transparent)]"}`}>
+      <div className="flex items-start gap-2 whitespace-pre">
+        {s.ok ? <Check size={13} className="shrink-0 mt-[3px] text-ok" /> : <X size={13} className="shrink-0 mt-[3px] text-danger" />}
+        <span className="min-w-0">
+          {prompt && <span style={{ color: cssColor("gray", theme) }}>{prompt} </span>}
+          {renderHighlighted(s.cmd.trim(), compiled, theme)}
+        </span>
+      </div>
+      {(body.length > 0 || showNote) && (
+        <div className="pl-[21px] pt-0.5 whitespace-pre">
+          {visible.map((l, i) => (
+            <div key={i}>{renderHighlighted(l, compiled, theme)}</div>
+          ))}
+          {body.length > visible.length && (
+            <button onClick={() => setAll(true)} className="my-0.5 px-2 h-6 rounded-md font-sans text-[11.5px] text-accent hover:bg-hover">
+              Mostrar {body.length - visible.length} líneas más
+            </button>
+          )}
+          {showNote && <div className="font-sans text-[12px] text-danger">{s.note}</div>}
+        </div>
+      )}
+    </div>
+  );
+});

@@ -992,6 +992,18 @@ if (new URLSearchParams(location.search).has("video")) {
     const bad = huaweiBad || /^(sh(ow)? bogus|foo)/i.test(args.command.trim());
     const ask = /^reload/i.test(args.command.trim());
     const declined = ask && args.answer === false ? "Proceed with reload? [confirm]" : null;
+    // Medición del CLI Lab: "show tech" responde unas 3.000 líneas, como un equipo real.
+    if (/^show tech/i.test(args.command.trim())) {
+      const big = Array.from({ length: 3000 }, (_, i) =>
+        i % 3 === 0 ? `interface GigabitEthernet1/0/${i % 48} description UPLINK ${i}` : i % 3 === 1 ? ` ip address 10.${i % 255}.1.1 255.255.255.0` : " no shutdown",
+      ).join("\r\n");
+      const output = `${prompt}${args.command}\r\n${big}\r\n${prompt}`;
+      setTimeout(() => {
+        emit("tool-job", { job, kind: "result", text: "", data: { ok: true, output } });
+        emit("tool-job", { job, kind: "done", text: "" });
+      }, 300);
+      return job;
+    }
     const body = huaweiBad
       ? "                ^\r\nError: Unrecognized command found at '^' position.\r\n"
       : bad

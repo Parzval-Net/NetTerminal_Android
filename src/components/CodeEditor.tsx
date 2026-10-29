@@ -55,22 +55,34 @@ export const CodeEditor = forwardRef<HTMLTextAreaElement, Props>(function CodeEd
   const preRef = useRef<HTMLPreElement>(null);
   const gutterRef = useRef<HTMLDivElement>(null);
   const lineCount = gutter ? value.split("\n").length : 0;
+  // Los números solo cambian al agregar o quitar líneas, no en cada tecla.
+  const numbers = useMemo(() => Array.from({ length: lineCount }, (_, i) => <div key={i}>{i + 1}</div>), [lineCount]);
 
   // Caché por texto de línea: al teclear solo se vuelve a resaltar la línea que cambió.
   const cache = useMemo(() => new Map<string, React.ReactNode>(), [compiled, theme]);
 
+  // Elemento por posición y texto: React omite las líneas cuyo elemento es el mismo objeto que en el
+  // dibujo anterior, así que en un script de miles de líneas cada tecla solo toca la línea editada.
+  const rows = useMemo(() => new Map<string, React.ReactElement>(), [compiled, theme]);
+
   const highlighted = useMemo(() => {
     if (cache.size > 5000) cache.clear();
+    if (rows.size > 20000) rows.clear();
     return value.split("\n").map((line, li) => {
+      const key = `${li}\u0000${line}`;
+      let row = rows.get(key);
+      if (row) return row;
       let body = cache.get(line);
       if (body === undefined) {
         body = renderHighlighted(line, compiled, theme);
         cache.set(line, body);
       }
-      return <div key={li}>{body}</div>;
+      row = <div key={li}>{body}</div>;
+      rows.set(key, row);
+      return row;
     });
 
-  }, [value, cache, compiled, theme]);
+  }, [value, cache, rows, compiled, theme]);
 
   const shared: React.CSSProperties = {
     fontFamily: font,
@@ -135,11 +147,7 @@ export const CodeEditor = forwardRef<HTMLTextAreaElement, Props>(function CodeEd
           borderColor: "var(--border)",
         }}
       >
-        <div ref={gutterRef}>
-          {Array.from({ length: lineCount }, (_, i) => (
-            <div key={i}>{i + 1}</div>
-          ))}
-        </div>
+        <div ref={gutterRef}>{numbers}</div>
       </div>
       {editor}
     </div>
