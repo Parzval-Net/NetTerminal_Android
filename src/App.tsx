@@ -33,7 +33,7 @@ import { Sparkles, X as XIcon } from "lucide-react";
 import { listen } from "@tauri-apps/api/event";
 import { ConnStatus, Session, Tab, TabState, historyKey, tabTitle } from "./types";
 import { closeAllLabel, localOsVendor, modLabel, shortcutFor } from "./lib/platform";
-import { resolvePreset, useSystemDark } from "./lib/theme";
+import { presets, resolvePreset, useSystemDark } from "./lib/theme";
 import { Settings, logOptions, useSettings } from "./lib/settings";
 import { useAlerts } from "./lib/alerts";
 import { BroadcastBar, BroadcastDialog } from "./components/BroadcastDialog";
@@ -1587,9 +1587,11 @@ function Workspace({
       {labOpen && (
         <CliLab
           key={labOpen.n}
-          vendor={settings.catalogVendor}
+          // Comando de guardado según el fabricante de la pestaña activa (su resaltado), no el del catálogo.
+          vendor={activeTab && activeTab.session.highlight && activeTab.session.highlight !== "default" ? vendorFor(activeTab.session.highlight) : settings.catalogVendor}
           compiled={notesRules}
-          theme={preset.theme}
+          // Sigue el modo claro u oscuro de la app (no el tema de la terminal), como un editor.
+          theme={(presets.find((x) => x.id === (dark ? "nt-dark" : "nt-light")) ?? preset).theme}
           font={settings.fontFamily}
           fontSize={Math.max(11, settings.fontSize - 1)}
           resolve={h.labTargets}

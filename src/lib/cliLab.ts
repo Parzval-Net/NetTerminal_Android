@@ -5,7 +5,7 @@
  */
 import { useSyncExternalStore } from "react";
 import type { DeviceResult } from "./deviceRun";
-import { commandError } from "./cliText";
+import { commandError, isPrompt, plainCli } from "./cliText";
 import { pool } from "./backup";
 import { store } from "./store";
 
@@ -173,6 +173,22 @@ export async function runLab(targets: LabTarget[], lines: string[], opts: LabOpt
 }
 
 /** Texto plano de la ejecución, por equipo, para copiar o guardar. */
+/**
+ * Partes de la respuesta a un comando para mostrarla como en la consola: el prompt con que se
+ * escribió (del eco: "fw01 (port1) # set alias wan") y las líneas que respondió el equipo, sin el
+ * eco ni el prompt final.
+ */
+export function splitStep(output: string, cmd: string): { prompt: string; body: string[] } {
+  const lines = plainCli(output).split("\n");
+  const c = cmd.trim();
+  const echo = c ? lines.findIndex((l) => l.includes(c)) : -1;
+  const prompt = echo >= 0 ? lines[echo].slice(0, lines[echo].indexOf(c)).trimEnd() : "";
+  let body = lines.slice(echo + 1);
+  while (body.length && (!body[body.length - 1].trim() || isPrompt(body[body.length - 1].trim()))) body.pop();
+  while (body.length && !body[0].trim()) body.shift();
+  return { prompt, body };
+}
+
 export function labReport(run: LabRun): string {
   return run.items
     .map((i) => {

@@ -1,15 +1,16 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import type { ITheme } from "@xterm/xterm";
 import { writeText } from "@tauri-apps/plugin-clipboard-manager";
-import { CircleAlert, CircleCheck, Copy, Play, Save, Square, Terminal, X } from "lucide-react";
+import { Check, CircleAlert, CircleCheck, Copy, Play, Save, Square, Terminal, X } from "lucide-react";
 import { invoke } from "@tauri-apps/api/core";
-import { CodeEditor } from "./CodeEditor";
+import { CodeEditor, renderHighlighted } from "./CodeEditor";
+import { cssColor } from "../lib/highlight";
 import { TargetOptions } from "./BroadcastTarget";
 import { BroadcastDialog } from "./BroadcastDialog";
 import { fillTemplate, templateVars } from "./TemplateDialog";
 import { Compiled } from "../lib/highlight";
 import { Resolved, isBroadcastRunning, targetLabel, useBroadcastTarget, useWorkspace } from "../lib/broadcast";
-import { LabItem, SAVE_COMMAND, clearLab, isLabRunning, labReport, runLab, scriptLines, stopLab, useLabRun } from "../lib/cliLab";
+import { LabItem, SAVE_COMMAND, clearLab, isLabRunning, labReport, runLab, scriptLines, splitStep, stopLab, useLabRun } from "../lib/cliLab";
 import { runOnDeviceResult } from "../lib/deviceRun";
 import { isSecretVar } from "../lib/templateSecrets";
 import { useDragResize } from "../lib/useDragResize";
@@ -268,8 +269,20 @@ export function CliLab(p: Props) {
 
         <div className="flex-1 min-h-0 flex">
           <section className="flex-1 min-w-0 flex flex-col">
+            <div className="shrink-0 flex items-center gap-2 px-3 h-8 border-b border-line text-[12px]">
+              <span className="font-medium">Script CLI</span>
+              <span className="flex-1" />
+              <button
+                onClick={() => writeText(text).then(() => setMsg("Script copiado"))}
+                disabled={!text.trim()}
+                className="flex items-center gap-1 px-1.5 h-6 rounded text-muted hover:text-fg hover:bg-hover disabled:opacity-40"
+              >
+                <Copy size={12} /> Copiar
+              </button>
+            </div>
             <div className="flex-1 min-h-0 flex flex-col overflow-hidden border-b border-line">
               <CodeEditor
+                gutter
                 value={text}
                 onChange={setText}
                 compiled={p.compiled}
@@ -352,22 +365,45 @@ export function CliLab(p: Props) {
                     ))}
                   </ul>
                 </div>
-                <div className="flex-1 min-w-0 overflow-auto font-mono text-[11.5px] p-2">
-                  {!shown && <p className="font-sans text-[12px] text-muted p-2">Elige un equipo para ver la respuesta de cada comando.</p>}
-                  {shown && shown.reason && <p className="font-sans text-[12px] text-danger px-1 pb-1">{shown.reason}</p>}
-                  {shown?.steps.map((s, k) => (
-                    <div
-                      key={k}
-                      ref={!s.ok && shown.steps.findIndex((x) => !x.ok) === k ? failRef : undefined}
-                      className={`mb-1.5 rounded border-l-2 pl-2 ${s.ok ? "border-line" : "border-danger"}`}
-                    >
-                      <div className={`font-semibold ${s.ok ? "" : "text-danger"}`}>
-                        {k + 1}. {s.cmd}
+                {/* Salida como la consola del equipo: prompt y comando, ✓ o ✗, y lo que respondió. */}
+                <div
+                  className="flex-1 min-w-0 overflow-auto py-1.5"
+                  style={{ background: p.theme.background, color: p.theme.foreground, fontFamily: fontStack(p.font), fontSize: Math.max(11, p.fontSize - 1) }}
+                >
+                  {!shown && <p className="font-sans text-[12px] text-muted p-3">Elige un equipo para ver la respuesta de cada comando.</p>}
+                  {shown && shown.reason && <p className="font-sans text-[12px] text-danger px-3 pb-1.5">{shown.reason}</p>}
+                  {shown?.steps.map((s, k) => {
+                    const { prompt, body } = splitStep(s.output, s.cmd);
+                    const first = !s.ok && shown.steps.findIndex((x) => !x.ok) === k;
+                    return (
+                      <div
+                        key={k}
+                        ref={first ? failRef : undefined}
+                        className={`px-3 py-1 leading-[1.55] ${s.ok ? "hover:bg-hover" : "bg-[color-mix(in_srgb,var(--danger)_10%,transparent)]"}`}
+                      >
+                        <div className="flex items-start gap-2 whitespace-pre">
+                          {s.ok ? <Check size={13} className="shrink-0 mt-[3px] text-ok" /> : <X size={13} className="shrink-0 mt-[3px] text-danger" />}
+                          <span className="min-w-0">
+                            {prompt && <span style={{ color: cssColor("gray", p.theme) }}>{prompt} </span>}
+                            {renderHighlighted(s.cmd.trim(), p.compiled, p.theme)}
+                          </span>
+                        </div>
+                        {(body.length > 0 || s.note) && (
+                          <div className="pl-[21px] pt-0.5 whitespace-pre">
+                            {body.map((l, i) => (
+                              <div key={i}>{renderHighlighted(l, p.compiled, p.theme)}</div>
+                            ))}
+                            {s.note && body.every((l) => !s.note!.includes(l.trim()) || !l.trim()) && (
+                              <div className="font-sans text-[12px] text-danger">{s.note}</div>
+                            )}
+                          </div>
+                        )}
                       </div>
-                      {s.note && <div className="font-sans text-danger">{s.note}</div>}
-                      <pre className="whitespace-pre-wrap text-muted">{s.output.replace(/\r/g, "").trim()}</pre>
-                    </div>
-                  ))}
+                    );
+                  })}
+                  {shown && shown.status === "running" && (
+                    <div className="px-3 py-1 font-sans text-[12px] text-muted animate-pulse">Ejecutando línea {shown.steps.length + 1}…</div>
+                  )}
                 </div>
               </section>
             )}

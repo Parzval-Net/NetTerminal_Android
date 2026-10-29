@@ -94,4 +94,12 @@ await assert.rejects(async () => {
 assert.equal(L.maskSecrets("username noc secret Clave#2026\nR1(config)#", ["Clave#2026"]), "username noc secret ••••••\nR1(config)#");
 assert.equal(L.maskSecrets("ab ab", ["ab"]), "ab ab", "valores muy cortos no se reemplazan");
 
+// Respuesta como en la consola: prompt del eco y líneas del equipo, sin el prompt final.
+assert.deepEqual(L.splitStep("FGT901G (profile) # edit \"Block\"\r\nnew entry 'Block' added\r\n\r\nFGT901G (Block) # ", 'edit "Block"'), {
+  prompt: "FGT901G (profile) #",
+  body: ["new entry 'Block' added"],
+});
+assert.deepEqual(L.splitStep("sw01(config)#interface Gi1/0/7\r\nsw01(config-if)#", "interface Gi1/0/7"), { prompt: "sw01(config)#", body: [] });
+assert.deepEqual(L.splitStep("", "end"), { prompt: "", body: [] });
+
 console.log("cliLab: ok");
