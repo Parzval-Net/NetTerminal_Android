@@ -110,6 +110,7 @@ import {
   updateManualLink,
   updateManualNode,
   utilLevel,
+  flowTiming,
 } from "../../lib/topology";
 import {
   ARP_FALLBACK,
@@ -210,6 +211,8 @@ interface TopoUi {
   snmpProfile: string;
   interval: TrafficInterval;
   anim: boolean;
+  /** Versión de la preferencia de animación: hasta la 2 venía apagada por defecto y quedó guardada así. */
+  animV?: number;
   /** Puntas de flecha por sentido sobre cada enlace con tráfico. */
   arrows: boolean;
   /** Etiqueta de tasas (↑ ↓ y %) junto a cada enlace con tráfico. */
@@ -228,7 +231,8 @@ const UI_DEFAULT: TopoUi = {
   mode: "cli",
   snmpProfile: "",
   interval: 30,
-  anim: false,
+  anim: true,
+  animV: 2,
   arrows: true,
   rates: true,
   color: true,
@@ -249,7 +253,9 @@ function loadUi(): TopoUi {
       mode: v.mode === "snmp" ? "snmp" : "cli",
       snmpProfile: typeof v.snmpProfile === "string" ? v.snmpProfile.slice(0, 64) : "",
       interval: TRAFFIC_INTERVALS.includes(v.interval as TrafficInterval) ? (v.interval as TrafficInterval) : 30,
-      anim: v.anim === true,
+      // Desde la versión 2 la animación parte encendida; lo guardado antes era el valor por defecto.
+      anim: v.animV === 2 ? v.anim !== false : true,
+      animV: 2,
       arrows: v.arrows !== false,
       rates: v.rates !== false,
       color: v.color !== false,
@@ -298,6 +304,35 @@ function useReducedMotion(): boolean {
 }
 
 /** Desplaza una curva cuadrática en paralelo (un carril por sentido). */
+/**
+ * Desplazamiento con dos dedos en un touchpad (no una rueda de mouse). Chromium y WebKit informan
+ * wheelDeltaY: en la rueda son pasos de 120 y en el touchpad vale -3 × deltaY. Sin ese dato, el
+ * movimiento horizontal o un delta en píxeles fino también delatan el touchpad.
+ */
+function isTrackpadScroll(e: { deltaX: number; deltaY: number; deltaMode: number; wheelDeltaY?: number }): boolean {
+  if (e.deltaMode !== 0) return false;
+  const w = e.wheelDeltaY;
+  if (typeof w === "number" && w !== 0) return Math.abs(w) % 120 !== 0 && Math.abs(w + 3 * e.deltaY) < 1;
+  return e.deltaX !== 0 || Math.abs(e.deltaY) < 40 || !Number.isInteger(e.deltaY);
+}
+
+/** Un sentido del tráfico: pulsos de color con un halo del fondo para que se lean sobre cualquier línea. */
+function FlowLane({ d, color, style, reverse }: { d: string; color: string; style: React.CSSProperties; reverse?: boolean }) {
+  const cls = `topo-flow${reverse ? " topo-flow-rev" : ""}`;
+  return (
+    <>
+      <path className={cls} style={style} d={d} fill="none" stroke="var(--panel)" strokeWidth={5} strokeLinecap="round" />
+      <path className={cls} style={style} d={d} fill="none" stroke={color} strokeWidth={3} strokeLinecap="round" />
+    </>
+  );
+}
+
+/** Duración y pasos del carril animado (ver flowTiming). */
+function flowStyle(bps: number | null, speed: number | undefined): React.CSSProperties {
+  const { dur, steps } = flowTiming(bps, speed);
+  return { animationDuration: `${dur}s`, animationTimingFunction: `steps(${steps})` };
+}
+
 function lanePath(a: Pt, c: Pt, b: Pt, off: number): string {
   const dx = b.x - a.x;
   const dy = b.y - a.y;
@@ -456,12 +491,15 @@ const LinkView = memo(function LinkView({
         strokeWidth={isRoute ? 3.5 : lt && byUtil ? 1.75 + 3 * Math.min(1, lt.util ?? 0) : hot || state ? 2.5 : g.l.logical ? 1.25 : 1.5}
         strokeDasharray={dash}
         strokeLinecap={dash ? "round" : undefined}
+        // Con animación el enlace queda de fondo y resaltan los pulsos que se mueven sobre él.
+        strokeOpacity={animate && lt ? 0.3 : undefined}
       />
       {lt && (
         <>
           {/* Un carril y una punta de flecha por sentido: A→B y B→A. */}
-          {animate && !!lt.ab && <path className="topo-flow" d={lanePath(g.a, g.c, g.b, 4)} fill="none" stroke={dirLevel(lt.ab)} strokeWidth={1.5} strokeLinecap="round" />}
-          {animate && !!lt.ba && <path className="topo-flow topo-flow-rev" d={lanePath(g.a, g.c, g.b, -4)} fill="none" stroke={dirLevel(lt.ba)} strokeWidth={1.5} strokeLinecap="round" />}
+          {/* Pulsos que avanzan en cada sentido, más rápidos cuanto más tráfico lleva. */}
+          {animate && !!lt.ab && <FlowLane d={lanePath(g.a, g.c, g.b, 4)} color={dirLevel(lt.ab)} style={flowStyle(lt.ab, lt.speed)} />}
+          {animate && !!lt.ba && <FlowLane d={lanePath(g.a, g.c, g.b, -4)} color={dirLevel(lt.ba)} style={flowStyle(lt.ba, lt.speed)} reverse />}
           {arrows && (
             <>
               <polygon points={arrowHead(g.a, g.c, g.b, 0.4, true, 5)} fill={dirLevel(lt.ab)} stroke="var(--panel)" strokeWidth={0.75} />
@@ -1420,15 +1458,24 @@ export function TopologyTool({
       const r = el.getBoundingClientRect();
       return [x - r.left, y - r.top] as const;
     };
-    // Windows, Linux y Chromium: el pellizco llega como rueda con ctrlKey (igual que Ctrl + rueda).
+    // Rueda del mouse: zoom anclado al puntero, como un mapa. Pellizco del touchpad en Windows,
+    // Linux y Chromium: llega como rueda con ctrlKey. Dos dedos en el touchpad sin pellizco y
+    // Shift + rueda: desplazamiento normal (el mapa también se mueve arrastrando el fondo).
     let gesturing = false;
     const onWheel = (e: WheelEvent) => {
-      if (!e.ctrlKey && !e.metaKey) return; // dos dedos sin pellizco: desplazamiento normal
+      const pinch = e.ctrlKey || e.metaKey;
+      if (!pinch && (e.shiftKey || isTrackpadScroll(e as WheelEvent & { wheelDeltaY?: number }))) return;
       e.preventDefault();
       if (gesturing) return;
-      const d = Math.max(-50, Math.min(50, e.deltaMode === 1 ? e.deltaY * 16 : e.deltaY));
       const [cx, cy] = local(e.clientX, e.clientY);
-      zoomAt(zoomRef.current * Math.exp(-d * 0.01), cx, cy);
+      if (pinch) {
+        const d = Math.max(-50, Math.min(50, e.deltaMode === 1 ? e.deltaY * 16 : e.deltaY));
+        zoomAt(zoomRef.current * Math.exp(-d * 0.01), cx, cy);
+      } else {
+        // Un paso de rueda (100 px) acerca o aleja un 16 %.
+        const d = Math.max(-300, Math.min(300, e.deltaMode === 1 ? e.deltaY * 33 : e.deltaY));
+        zoomAt(zoomRef.current * Math.exp(-d * 0.0015), cx, cy);
+      }
     };
     // macOS (WebKit): el pellizco llega como gesto con su escala.
     let base = 1;
@@ -1459,6 +1506,29 @@ export function TopologyTool({
       el.removeEventListener("gestureend", onGestureEnd);
     };
   }, [zoomAt]);
+
+  // Arrastrar el fondo (o con el botón del medio, en cualquier parte) mueve el mapa: con la rueda
+  // dedicada al zoom, es la forma de desplazarse con mouse.
+  const [panning, setPanning] = useState(false);
+  const startPan = (e: React.PointerEvent<SVGSVGElement>) => {
+    const el = scroller.current;
+    const onBackground = e.button === 0 && e.target === e.currentTarget;
+    if (!el || !(onBackground || e.button === 1)) return;
+    e.preventDefault();
+    const start = { x: e.clientX, y: e.clientY, sl: el.scrollLeft, st: el.scrollTop };
+    setPanning(true);
+    const move = (ev: PointerEvent) => {
+      el.scrollLeft = start.sl - (ev.clientX - start.x);
+      el.scrollTop = start.st - (ev.clientY - start.y);
+    };
+    const up = () => {
+      setPanning(false);
+      window.removeEventListener("pointermove", move);
+      window.removeEventListener("pointerup", up);
+    };
+    window.addEventListener("pointermove", move);
+    window.addEventListener("pointerup", up);
+  };
 
   // Ctrl/⌘+C con un equipo seleccionado en el mapa copia su IP, salvo que haya texto
   // seleccionado o el foco esté en un campo (ahí manda la copia normal).
@@ -1634,10 +1704,10 @@ export function TopologyTool({
           </p>
         )}
         <div className="flex flex-wrap items-center gap-1 mt-2.5 @max-[860px]:[&_button]:px-2" role="toolbar" aria-label="Diagrama">
-          <Btn kind="ghost" title={`Acercar (o pellizca en el touchpad, o ${isMac ? "⌘" : "Ctrl"} + rueda sobre el mapa)`} onClick={() => setZoom((z) => Math.min(ZOOM_MAX, z + 0.2))}>
+          <Btn kind="ghost" title="Acercar (o rueda del mouse o pellizco del touchpad sobre el mapa; arrastra el fondo para moverlo)" onClick={() => setZoom((z) => Math.min(ZOOM_MAX, z + 0.2))}>
             <ZoomIn size={14} />
           </Btn>
-          <Btn kind="ghost" title={`Alejar (o pellizca en el touchpad, o ${isMac ? "⌘" : "Ctrl"} + rueda sobre el mapa)`} onClick={() => setZoom((z) => Math.max(ZOOM_MIN, z - 0.2))}>
+          <Btn kind="ghost" title="Alejar (o rueda del mouse o pellizco del touchpad sobre el mapa; arrastra el fondo para moverlo)" onClick={() => setZoom((z) => Math.max(ZOOM_MIN, z - 0.2))}>
             <ZoomOut size={14} />
           </Btn>
           <Btn kind="ghost" title="Ajustar a la vista" aria-label="Ajustar a la vista" onClick={fit}>
@@ -1807,7 +1877,8 @@ export function TopologyTool({
       ) : (
         <svg
           viewBox={`${box.x} ${box.y} ${box.w} ${box.h}`}
-          style={{ width: `${zoom * 100}%`, height: `${zoom * 100}%` }}
+          style={{ width: `${zoom * 100}%`, height: `${zoom * 100}%`, cursor: panning ? "grabbing" : "grab" }}
+          onPointerDown={startPan}
           onPointerMove={onPointerMove}
           onPointerUp={endDrag}
           onPointerLeave={endDrag}

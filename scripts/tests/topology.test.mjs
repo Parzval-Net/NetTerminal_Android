@@ -1446,4 +1446,21 @@ assert.deepEqual(T.parseDismissed([1, 2]), {});
     assert.equal(T.hopCommand(...args), null, JSON.stringify(args));
 }
 
+// Ritmo de la animación de tráfico: más tráfico, pulsos más rápidos; 20 pasos por segundo.
+{
+  const idle = T.flowTiming(0, 1e9);
+  const half = T.flowTiming(5e8, 1e9);
+  const full = T.flowTiming(1e9, 1e9);
+  assert.equal(idle.dur, 2.6);
+  assert.ok(half.dur < idle.dur && full.dur < half.dur, JSON.stringify({ idle, half, full }));
+  assert.equal(full.dur, 0.6);
+  assert.equal(T.flowTiming(2e9, 1e9).dur, 0.6, "sobre el 100 % no acelera más");
+  assert.equal(full.steps, 12);
+  assert.equal(idle.steps, 52);
+  // Sin velocidad del enlace: escala logarítmica del volumen (1 kbps lento, 1 Gbps rápido).
+  assert.ok(T.flowTiming(1e3).dur > T.flowTiming(1e6).dur && T.flowTiming(1e6).dur > T.flowTiming(1e9).dur);
+  assert.equal(T.flowTiming(1e9).dur, 0.6);
+  assert.equal(T.flowTiming(null).dur, 2.6);
+}
+
 console.log("topology: ok");
