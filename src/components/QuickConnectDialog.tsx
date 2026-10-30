@@ -91,17 +91,17 @@ export function QuickConnectDialog({ onClose, onOpen }: Props) {
   };
 
   return (
-    <div className="fixed inset-0 z-50 grid place-items-center bg-black/25 p-4" onMouseDown={onClose}>
+    <div className="fixed inset-0 z-50 grid place-items-center bg-black/25 p-2 sm:p-4" onMouseDown={onClose}>
       <form
         {...win.box}
-        className="w-[440px] max-w-[96vw] max-h-[94vh] bg-panel border border-line rounded-xl shadow-pop overflow-hidden flex flex-col"
+        className="w-full sm:w-[440px] max-w-[calc(100vw-1rem)] sm:max-w-[96vw] max-h-[96vh] sm:max-h-[94vh] min-w-0 bg-panel border border-line rounded-xl shadow-pop overflow-hidden flex flex-col"
         onMouseDown={(e) => e.stopPropagation()}
         onSubmit={(e) => {
           e.preventDefault();
           submit();
         }}
       >
-        <header {...win.handle} className="flex items-center justify-between h-12 px-5 border-b border-line select-none">
+        <header {...win.handle} className="flex items-center justify-between h-12 px-3 sm:px-5 border-b border-line select-none">
           <h2 className="flex items-center gap-2 text-[14px] font-semibold">
             <Zap size={15} className="text-warn" />
             Conexión rápida
@@ -111,19 +111,21 @@ export function QuickConnectDialog({ onClose, onOpen }: Props) {
           </button>
         </header>
 
-        <div className="flex-1 min-h-0 overflow-y-auto p-5 space-y-4">
-          <div className="grid grid-cols-4 gap-1 p-1 rounded-lg bg-hover">
+        <div className="flex-1 min-h-0 overflow-y-auto p-3 sm:p-5 space-y-4">
+          <div className="grid grid-cols-4 gap-1 p-1 rounded-xl sm:rounded-lg bg-hover">
             {TYPES.map((t) => (
               <button
                 key={t}
                 type="button"
                 onClick={() => changeType(t)}
-                className={`flex items-center justify-center gap-1.5 h-8 rounded-md text-[12.5px] font-medium ${
+                className={`flex items-center justify-center gap-1.5 h-9 sm:h-8 rounded-lg sm:rounded-md text-[12px] sm:text-[12.5px] font-medium px-1 truncate touch-manipulation ${
                   s.type === t ? "bg-panel shadow-sm text-fg" : "text-muted hover:text-fg"
                 }`}
               >
-                <SessionIcon type={t} size={14} />
-                {typeLabel[t]}
+                <span className="hidden min-[360px]:inline-flex shrink-0">
+                  <SessionIcon type={t} size={14} />
+                </span>
+                <span className="truncate">{typeLabel[t]}</span>
               </button>
             ))}
           </div>
@@ -251,11 +253,11 @@ export function QuickConnectDialog({ onClose, onOpen }: Props) {
           </p>
         </div>
 
-        <footer className="flex justify-end gap-2 px-5 h-14 border-t border-line items-center">
-          <button type="button" onClick={onClose} className="px-3 h-8 rounded-md border border-line hover:bg-hover">
+        <footer className="flex flex-wrap justify-end gap-2 px-3 sm:px-5 py-2.5 sm:h-14 border-t border-line items-center">
+          <button type="button" onClick={onClose} className="px-4 sm:px-3 h-10 sm:h-8 rounded-xl sm:rounded-md border border-line hover:bg-hover font-medium sm:font-normal touch-manipulation">
             Cancelar
           </button>
-          <button type="submit" className="px-3 h-8 rounded-md bg-accent text-accent-fg font-medium hover:opacity-90">
+          <button type="submit" className="px-4 sm:px-3 h-10 sm:h-8 rounded-xl sm:rounded-md bg-accent text-accent-fg font-medium hover:opacity-90 touch-manipulation">
             Conectar
           </button>
         </footer>
@@ -265,8 +267,15 @@ export function QuickConnectDialog({ onClose, onOpen }: Props) {
 }
 
 function Row({ children, cols = "1fr 1fr" }: { children: React.ReactNode; cols?: string }) {
+  if (cols === "1fr 1fr 1fr 1fr") {
+    return (
+      <div className="grid grid-cols-2 sm:grid-cols-4 gap-2 sm:gap-3">
+        {children}
+      </div>
+    );
+  }
   return (
-    <div className="grid gap-3" style={{ gridTemplateColumns: cols }}>
+    <div className="grid gap-2 sm:gap-3" style={{ gridTemplateColumns: cols }}>
       {children}
     </div>
   );

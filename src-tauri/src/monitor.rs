@@ -159,7 +159,12 @@ fn icmp_probe(host: &str, timeout: Duration) -> (bool, Option<f64>, Option<Strin
         }
         c
     } else {
-        let mut c = command("ping");
+        let ping_bin = if cfg!(target_os = "android") && std::path::Path::new("/system/bin/ping").exists() {
+            "/system/bin/ping"
+        } else {
+            "ping"
+        };
+        let mut c = command(ping_bin);
         c.args(["-c", "1", "-W", &ms.div_ceil(1000).to_string()]);
         c
     };

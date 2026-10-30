@@ -25,9 +25,9 @@
     </filter>
   </defs>
 
-  <!-- Fondo (grilla de íconos de macOS: 824 px con margen de 100) -->
-  <rect x="100" y="100" width="824" height="824" rx="185" fill="url(#bg)"/>
-  <rect x="100" y="100" width="824" height="824" rx="185" fill="url(#gloss)"/>
+  <!-- Silueta de icono adaptativo de Android (superelipse/squircle M3 a tamaño completo 960x960) -->
+  <rect x="32" y="32" width="960" height="960" rx="310" fill="url(#bg)"/>
+  <rect x="32" y="32" width="960" height="960" rx="310" fill="url(#gloss)"/>
 
   <g filter="url(#shadow)">
     <!-- Pie -->

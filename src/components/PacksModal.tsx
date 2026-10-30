@@ -80,20 +80,20 @@ export function PacksModal({ packs, disabled, onToggle, onChanged, onClose }: Pr
   }, [preview]);
 
   return (
-    <div className="fixed inset-0 z-50 grid place-items-center bg-black/25 p-4" onMouseDown={onClose}>
+    <div className="fixed inset-0 z-50 grid place-items-center bg-black/25 p-2 sm:p-4" onMouseDown={onClose}>
       <div
         {...win.box}
-        className="w-[620px] h-[560px] bg-panel border border-line rounded-xl shadow-pop resize overflow-hidden flex flex-col min-w-[420px] min-h-[320px] max-w-[96vw] max-h-[94vh]"
+        className="w-full sm:w-[620px] h-full sm:h-[560px] bg-panel border border-line rounded-xl shadow-pop sm:resize overflow-hidden flex flex-col min-w-0 sm:min-w-[420px] min-h-0 sm:min-h-[320px] max-w-[calc(100vw-1rem)] sm:max-w-[96vw] max-h-[96vh] sm:max-h-[94vh]"
         onMouseDown={(e) => e.stopPropagation()}
       >
-        <header {...win.handle} className="shrink-0 flex items-center justify-between px-5 h-12 border-b border-line select-none">
+        <header {...win.handle} className="shrink-0 flex items-center justify-between px-3 sm:px-5 h-12 border-b border-line select-none">
           <h2 className="text-[14px] font-semibold">Packs de comandos</h2>
           <button onClick={onClose} aria-label="Cerrar" className="w-7 h-7 grid place-items-center rounded-md text-muted hover:text-fg hover:bg-hover">
             <X size={16} />
           </button>
         </header>
 
-        <div className="flex-1 min-h-0 overflow-y-auto p-5 space-y-4">
+        <div className="flex-1 min-h-0 overflow-y-auto p-3 sm:p-5 space-y-4">
           <p className="text-[12px] text-muted">
             Un pack es un archivo JSON con comandos y sus explicaciones. Es solo texto: nunca se ejecuta al importarlo. La app
             recalcula el riesgo de cada comando y no permite que un pack lo declare menor.
@@ -231,9 +231,9 @@ export function PacksModal({ packs, disabled, onToggle, onChanged, onClose }: Pr
           </p>
         </div>
 
-        <footer className="shrink-0 flex justify-between items-center px-5 py-3 border-t border-line">
-          <span className="text-[11.5px] text-muted">Formato: netterminal-commands v1 (ver documentación técnica, sección Packs de comandos)</span>
-          <button onClick={pick} className="shrink-0 whitespace-nowrap flex items-center gap-1.5 px-3.5 h-8 rounded-md bg-accent text-accent-fg font-medium hover:opacity-90">
+        <footer className="shrink-0 flex flex-wrap justify-between items-center gap-2 px-3 sm:px-5 py-2.5 sm:py-3 border-t border-line">
+          <span className="text-[11.5px] text-muted hidden sm:inline">Formato: netterminal-commands v1 (ver documentación técnica, sección Packs de comandos)</span>
+          <button onClick={pick} className="w-full sm:w-auto shrink-0 whitespace-nowrap flex items-center justify-center gap-1.5 px-3.5 h-10 sm:h-8 rounded-xl sm:rounded-md bg-accent text-accent-fg font-medium hover:opacity-90 touch-manipulation text-[13px] sm:text-[12.5px]">
             <Upload size={14} /> Importar pack
           </button>
         </footer>

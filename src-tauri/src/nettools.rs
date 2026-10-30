@@ -113,15 +113,35 @@ impl Jobs {
             c.args(["-d", "-w", "2000", "-h", "30", host]);
             c
         } else if which("traceroute") {
-            let mut c = command(if host.contains(':') && cfg!(target_os = "macos") { "traceroute6" } else { "traceroute" });
+            let bin = if cfg!(target_os = "android") && std::path::Path::new("/system/bin/traceroute").exists() {
+                "/system/bin/traceroute"
+            } else if cfg!(target_os = "android") && std::path::Path::new("/data/data/com.termux/files/usr/bin/traceroute").exists() {
+                "/data/data/com.termux/files/usr/bin/traceroute"
+            } else if host.contains(':') && cfg!(target_os = "macos") {
+                "traceroute6"
+            } else {
+                "traceroute"
+            };
+            let mut c = command(bin);
             c.args(["-n", "-w", "2", "-q", "1", "-m", "30", host]);
             c
         } else if which("tracepath") {
-            let mut c = command("tracepath");
+            let bin = if cfg!(target_os = "android") && std::path::Path::new("/system/bin/tracepath").exists() {
+                "/system/bin/tracepath"
+            } else if cfg!(target_os = "android") && std::path::Path::new("/data/data/com.termux/files/usr/bin/tracepath").exists() {
+                "/data/data/com.termux/files/usr/bin/tracepath"
+            } else {
+                "tracepath"
+            };
+            let mut c = command(bin);
             c.args(["-n", host]);
             c
         } else {
-            return Err("No se encontró traceroute ni tracepath en el sistema".into());
+            if cfg!(target_os = "android") {
+                return Err("No se encontró traceroute ni tracepath en Android. Puedes instalar traceroute mediante Termux (pkg install inetutils o traceroute).".into());
+            } else {
+                return Err("No se encontró traceroute ni tracepath en el sistema".into());
+            }
         };
         self.spawn(app, cmd, false)
     }
@@ -187,6 +207,16 @@ impl Jobs {
 }
 
 fn which(bin: &str) -> bool {
+    if cfg!(target_os = "android") {
+        let candidates = [
+            format!("/system/bin/{bin}"),
+            format!("/system/xbin/{bin}"),
+            format!("/data/data/com.termux/files/usr/bin/{bin}"),
+        ];
+        if candidates.iter().any(|p| std::path::Path::new(p).exists()) {
+            return true;
+        }
+    }
     command(bin).arg("--version").stdout(Stdio::null()).stderr(Stdio::null()).status().is_ok()
         || command("sh").args(["-c", &format!("command -v {bin}")]).output().map(|o| o.status.success()).unwrap_or(false)
 }

@@ -148,6 +148,13 @@ fn search_dirs(bin: &str) -> Vec<PathBuf> {
         let mut extra: Vec<PathBuf> = ["/opt/homebrew/bin", "/usr/local/bin", "/opt/local/bin", "/usr/bin", "/snap/bin", "/home/linuxbrew/.linuxbrew/bin"]
             .map(PathBuf::from)
             .to_vec();
+        if cfg!(target_os = "android") {
+            extra.extend([
+                PathBuf::from("/system/bin"),
+                PathBuf::from("/system/xbin"),
+                PathBuf::from("/data/data/com.termux/files/usr/bin"),
+            ]);
+        }
         if let Some(home) = env("HOME") {
             extra.push(home.join(".local/bin"));
             extra.push(home.join(".linuxbrew/bin"));

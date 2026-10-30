@@ -61,14 +61,14 @@ export function AlertSettings({ settings: s, folders, onChange }: Props) {
             <button
               onClick={() => setDraft({ ...r })}
               title="Editar"
-              className="w-7 h-7 grid place-items-center rounded-md text-muted hover:text-fg hover:bg-hover"
+              className="w-7 h-7 grid place-items-center rounded-md text-muted hover:text-fg hover:bg-hover shrink-0"
             >
               <Pencil size={13} />
             </button>
             <button
               onClick={() => save(rules.filter((x) => x.id !== r.id))}
               title="Eliminar"
-              className="w-7 h-7 grid place-items-center rounded-md text-muted hover:text-danger hover:bg-hover"
+              className="w-7 h-7 grid place-items-center rounded-md text-muted hover:text-danger hover:bg-hover shrink-0"
             >
               <Trash2 size={13} />
             </button>
@@ -88,7 +88,7 @@ export function AlertSettings({ settings: s, folders, onChange }: Props) {
 
       {draft && (
         <div className="rounded-lg border border-line p-3 space-y-2.5">
-          <div className="grid grid-cols-2 gap-2">
+          <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
             <label className="space-y-1">
               <span className="text-[12px] text-muted">Nombre</span>
               <input
@@ -154,7 +154,7 @@ export function AlertSettings({ settings: s, folders, onChange }: Props) {
               </p>
             )
           )}
-          <div className="flex justify-end gap-1.5">
+          <div className="flex flex-wrap justify-end gap-1.5">
             <button onClick={() => setDraft(null)} className="px-3 h-7 rounded-md hover:bg-hover">
               Cancelar
             </button>

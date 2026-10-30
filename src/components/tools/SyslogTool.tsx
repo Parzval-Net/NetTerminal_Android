@@ -6,6 +6,7 @@ import { Settings } from "../../lib/settings";
 import { Btn, CopyText, IpSelect, Label, Section, StatusPill, Toggle } from "./ui";
 import { useLocalIp } from "./useLocalIp";
 import { loghostCommands } from "../../lib/devicefs";
+import { isMobile } from "../../lib/platform";
 
 interface Msg {
   ts: number;
@@ -83,16 +84,18 @@ export function SyslogTool({
           <div className="pb-1.5">
             <Toggle checked={s.syslogSave} onChange={(v) => onChange({ syslogSave: v })} label="Guardar en archivo diario" />
           </div>
-          <Btn kind="ghost" title="Abrir carpeta de syslog" onClick={() => invoke("open_dir", { which: "syslog" })}>
-            <FolderOpen size={14} />
-          </Btn>
+          {!isMobile && (
+            <Btn kind="ghost" title="Abrir carpeta de syslog" onClick={() => invoke("open_dir", { which: "syslog" })}>
+              <FolderOpen size={14} />
+            </Btn>
+          )}
           <Btn kind={on ? "default" : "primary"} className="ml-auto" onClick={toggle}>
             {on ? "Detener" : "Iniciar"}
           </Btn>
         </div>
         {error && <p className="mt-2 text-[12px] text-danger">{error}</p>}
         <div className="mt-3 flex flex-wrap items-end gap-3">
-          <IpSelect ips={ips} ip={localIp} onChange={setIp} className="w-72" />
+          <IpSelect ips={ips} ip={localIp} onChange={setIp} className="w-full sm:w-72" />
           <div className="flex flex-wrap items-center gap-1.5 pb-1 text-[11.5px] text-muted">
             Configura el equipo: Cisco <CopyText text={cmds.cisco} /> Huawei <CopyText text={cmds.huawei} />
           </div>
@@ -111,9 +114,9 @@ export function SyslogTool({
       <Section
         title={`Mensajes (${shown.length}${shown.length !== msgs.length ? ` de ${msgs.length}` : ""})`}
         right={
-          <div className="flex items-center gap-2">
-            <input className="field !h-7 !w-48" placeholder="Filtrar texto o IP" value={filter} onChange={(e) => setFilter(e.target.value)} />
-            <select className="field !h-7 !w-36" value={minSev} onChange={(e) => setMinSev(Number(e.target.value))}>
+          <div className="flex flex-wrap items-center gap-2">
+            <input className="field !h-7 w-full sm:!w-44" placeholder="Filtrar texto o IP" value={filter} onChange={(e) => setFilter(e.target.value)} />
+            <select className="field !h-7 flex-1 sm:flex-initial sm:!w-32" value={minSev} onChange={(e) => setMinSev(Number(e.target.value))}>
               {SEV.map((l, i) => (
                 <option key={l} value={i}>
                   Hasta {l}
@@ -129,8 +132,8 @@ export function SyslogTool({
           </div>
         }
       >
-        <div className="max-h-[480px] overflow-y-auto">
-          <table className="w-full text-[12px]">
+        <div className="max-h-[480px] overflow-auto">
+          <table className="w-full text-[12px] min-w-[480px]">
             <tbody className="font-mono">
               {shown.slice(0, 1000).map((m, i) => (
                 <tr key={`${m.ts}-${i}`} className="border-t border-line align-top">

@@ -61,23 +61,23 @@ export function TemplateDialog({ text, onSubmit, onCancel }: Props) {
   };
 
   return (
-    <div className="fixed inset-0 z-50 grid place-items-center bg-black/25 p-4" onMouseDown={onCancel}>
+    <div className="fixed inset-0 z-50 grid place-items-center bg-black/25 p-2 sm:p-4" onMouseDown={onCancel}>
       <form
         {...win.box}
-        className="w-[440px] bg-panel border border-line rounded-xl shadow-pop resize overflow-hidden flex flex-col min-w-[360px] min-h-[260px] max-w-[96vw] max-h-[94vh]"
+        className="w-full sm:w-[440px] bg-panel border border-line rounded-xl shadow-pop sm:resize overflow-hidden flex flex-col min-w-0 sm:min-w-[360px] min-h-0 sm:min-h-[260px] max-w-[calc(100vw-1rem)] sm:max-w-[96vw] max-h-[96vh] sm:max-h-[94vh]"
         onMouseDown={(e) => e.stopPropagation()}
         onSubmit={(e) => {
           e.preventDefault();
           submit();
         }}
       >
-        <header {...win.handle} className="shrink-0 px-5 pt-4 pb-2 select-none">
+        <header {...win.handle} className="shrink-0 px-3 sm:px-5 pt-4 pb-2 select-none">
           <h2 className="text-[14px] font-semibold">Completar plantilla</h2>
           <p className="text-muted text-[12px]">Los valores se recuerdan para la próxima vez, salvo contraseñas y claves.</p>
         </header>
-        <div className="flex-1 min-h-0 px-5 py-2 space-y-2.5 overflow-y-auto">
+        <div className="flex-1 min-h-0 px-3 sm:px-5 py-2 space-y-2.5 overflow-y-auto">
           {names.map((n, i) => (
-            <label key={n} className="grid grid-cols-[140px_1fr] items-center gap-3">
+            <label key={n} className="grid grid-cols-1 sm:grid-cols-[140px_1fr] items-start sm:items-center gap-1 sm:gap-3">
               <span className="font-mono text-[12px] truncate" title={n}>
                 {n}
               </span>
@@ -92,17 +92,17 @@ export function TemplateDialog({ text, onSubmit, onCancel }: Props) {
             </label>
           ))}
         </div>
-        <pre className="mx-5 my-3 p-2.5 rounded-lg bg-hover text-[11.5px] font-mono whitespace-pre-wrap break-all max-h-32 overflow-y-auto select-text">
+        <pre className="mx-3 sm:mx-5 my-3 p-2.5 rounded-lg bg-hover text-[11.5px] font-mono whitespace-pre-wrap break-all max-h-32 overflow-y-auto select-text">
           {preview}
         </pre>
-        <footer className="flex justify-end gap-2 px-5 py-3 border-t border-line">
-          <button type="button" onClick={onCancel} className="px-3.5 h-8 rounded-md border border-line hover:bg-hover">
+        <footer className="flex flex-wrap justify-end gap-2 px-3 sm:px-5 py-3 border-t border-line">
+          <button type="button" onClick={onCancel} className="px-4 sm:px-3.5 h-10 sm:h-8 rounded-xl sm:rounded-md border border-line hover:bg-hover text-[13px] font-medium sm:font-normal touch-manipulation">
             Cancelar
           </button>
           <button
             type="submit"
             disabled={missing.length > 0}
-            className="px-3.5 h-8 rounded-md bg-accent text-accent-fg font-medium hover:opacity-90 disabled:opacity-40"
+            className="px-4 sm:px-3.5 h-10 sm:h-8 rounded-xl sm:rounded-md bg-accent text-accent-fg font-medium hover:opacity-90 disabled:opacity-40 text-[13px] touch-manipulation"
           >
             Continuar
           </button>

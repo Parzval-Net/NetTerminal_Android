@@ -64,11 +64,11 @@ export function MonitorTool({ targets, samples, status, onChange, onClear, onSil
   return (
     <div className="space-y-4">
       <div className="flex flex-wrap items-center justify-between gap-3">
-        <p className="flex-1 min-w-[16rem] text-[12px] text-muted">
+        <p className="flex-1 min-w-[200px] text-[12px] text-muted">
           Vigila que un equipo responda (ICMP) o que un acceso esté disponible (TCP: 22, 23, 443…). Suena una alarma al
           caer y otra al recuperarse, aunque estés en otra pestaña.
         </p>
-        <div className="flex items-center gap-2 shrink-0">
+        <div className="flex flex-wrap items-center gap-2 shrink-0">
           <div className="flex p-0.5 rounded-lg bg-hover">
             {WINDOWS.map(([label, ms]) => (
               <button
@@ -94,7 +94,7 @@ export function MonitorTool({ targets, samples, status, onChange, onClear, onSil
         </div>
       )}
 
-      <div className="grid gap-4 [grid-template-columns:repeat(auto-fill,minmax(420px,1fr))]">
+      <div className="grid gap-4 [grid-template-columns:repeat(auto-fill,minmax(min(340px,100%),1fr))]">
         {targets.map((t) => (
           <MonitorCard
             key={t.id}
@@ -168,7 +168,7 @@ const MonitorCard = memo(function MonitorCard(p: {
         </div>
       }
     >
-      <div className="grid grid-cols-5 gap-2 mb-3">
+      <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-5 gap-2 mb-3">
         <StatTile label="Actual" value={st.last?.ok ? fmtMs(st.last.rtt) : st.last ? "Sin resp." : "—"} tone={st.last && !st.last.ok ? "danger" : undefined} />
         <StatTile label="Promedio" value={fmtMs(st.avg)} />
         <StatTile label="Mín / máx" value={st.min == null ? "—" : `${st.min.toFixed(0)} / ${st.max!.toFixed(0)}`} />
@@ -209,7 +209,7 @@ function MonitorForm({ initial, onSave, onCancel }: { initial: MonitorTarget; on
           if (valid) onSave(t);
         }}
       >
-        <div className="grid grid-cols-[1fr_1fr_110px_90px] gap-3">
+        <div className="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-[1fr_1fr_110px_90px] gap-3">
           <Label text="Nombre">
             <input className="field" value={t.name} placeholder="Core SCL" onChange={(e) => set("name", e.target.value)} />
           </Label>
@@ -233,7 +233,7 @@ function MonitorForm({ initial, onSave, onCancel }: { initial: MonitorTarget; on
             />
           </Label>
         </div>
-        <div className="grid grid-cols-4 gap-3">
+        <div className="grid grid-cols-2 sm:grid-cols-4 gap-3">
           <Label text="Intervalo">
             <select className="field" value={t.intervalMs} onChange={(e) => set("intervalMs", Number(e.target.value))}>
               {[500, 1000, 2000, 5000, 10000, 30000, 60000].map((v) => (
@@ -272,9 +272,9 @@ function MonitorForm({ initial, onSave, onCancel }: { initial: MonitorTarget; on
             </select>
           </Label>
         </div>
-        <div className="flex items-center justify-between">
+        <div className="flex flex-wrap items-center justify-between gap-3">
           <Toggle checked={t.sound} onChange={(v) => set("sound", v)} label="Alarma sonora" />
-          <div className="flex gap-2">
+          <div className="flex items-center gap-2">
             <Btn type="button" onClick={onCancel}>
               Cancelar
             </Btn>

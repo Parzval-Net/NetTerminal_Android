@@ -163,8 +163,8 @@ function SnmpClient({ settings: s, running, onChange, refreshRunning, onConfirm 
         title="Destino SNMP"
         hint="Cliente de prueba de solo lectura (GET, GETNEXT, WALK, GETBULK). Los secretos no se guardan salvo que lo pidas, y entonces van a la bóveda cifrada."
         right={
-          <div className="flex items-center gap-2">
-            <select className="field !h-7 !w-52" value={known ? cur.id : ""} onChange={(e) => pick(e.target.value)}>
+          <div className="flex flex-wrap items-center gap-2">
+            <select className="field !h-7 w-full sm:!w-52" value={known ? cur.id : ""} onChange={(e) => pick(e.target.value)}>
               <option value="">Nuevo destino</option>
               {s.snmpProfiles.map((p) => (
                 <option key={p.id} value={p.id}>
@@ -180,7 +180,7 @@ function SnmpClient({ settings: s, running, onChange, refreshRunning, onConfirm 
           </div>
         }
       >
-        <div className="grid gap-3 grid-cols-2 @[40rem]:grid-cols-3 @[56rem]:[grid-template-columns:2fr_0.7fr_0.9fr_0.8fr_0.7fr_1.4fr]">
+        <div className="grid gap-3 grid-cols-1 sm:grid-cols-2 @[40rem]:grid-cols-3 @[56rem]:[grid-template-columns:2fr_0.7fr_0.9fr_0.8fr_0.7fr_1.4fr]">
           <Label text="Host o IP">
             <input className="field font-mono" value={cur.host} placeholder="192.0.2.1" onChange={(e) => set({ host: e.target.value })} />
           </Label>
@@ -220,7 +220,7 @@ function SnmpClient({ settings: s, running, onChange, refreshRunning, onConfirm 
             </Label>
           </div>
         ) : (
-          <div className="mt-3 grid gap-3 grid-cols-2 @[40rem]:grid-cols-3 @[64rem]:[grid-template-columns:1.2fr_1.1fr_1.3fr_1.3fr_1.4fr_1.3fr_1fr]">
+          <div className="mt-3 grid gap-3 grid-cols-1 sm:grid-cols-2 @[40rem]:grid-cols-3 @[64rem]:[grid-template-columns:1.2fr_1.1fr_1.3fr_1.3fr_1.4fr_1.3fr_1fr]">
             <Label text="Usuario">
               <input className="field font-mono" value={cur.user} autoComplete="off" onChange={(e) => set({ user: e.target.value })} />
             </Label>
@@ -396,7 +396,7 @@ function QuerySection({ target, profile }: { target: TargetFn; profile: SnmpProf
             </button>
           ))}
         </div>
-        <Label text={op === "walk" ? "OID raíz" : "OID (varios separados por espacio)"} className="flex-1 min-w-[260px]">
+        <Label text={op === "walk" ? "OID raíz" : "OID (varios separados por espacio)"} className="flex-1 min-w-[200px] w-full sm:w-auto">
           <input
             className="field font-mono"
             list="snmp-oids"
@@ -413,12 +413,12 @@ function QuerySection({ target, profile }: { target: TargetFn; profile: SnmpProf
           </datalist>
         </Label>
         {(op === "getbulk" || (op === "walk" && profile.version !== "1")) && (
-          <Label text="Max-repetitions" className="w-28">
+          <Label text="Max-repetitions" className="w-24 sm:w-28">
             <input className="field" type="number" min={1} max={100} value={maxRep} onChange={(e) => setMaxRep(Math.min(100, Math.max(1, Number(e.target.value) || 10)))} />
           </Label>
         )}
         {op === "walk" && (
-          <Label text="Máx. filas" className="w-28">
+          <Label text="Máx. filas" className="w-24 sm:w-28">
             <input className="field" type="number" min={1} max={100000} value={maxRows} onChange={(e) => setMaxRows(Math.min(100000, Math.max(1, Number(e.target.value) || 10000)))} />
           </Label>
         )}
@@ -451,9 +451,9 @@ function QuerySection({ target, profile }: { target: TargetFn; profile: SnmpProf
 
       {(rows.length > 0 || busy || status) && (
         <div className="mt-3">
-          <div className="flex items-center gap-2 mb-2">
+          <div className="flex flex-wrap items-center gap-2 mb-2">
             <span className="text-[12px] text-muted">{busy ? `${plural(rows.length, "fila", "filas")}…` : status}</span>
-            <input className="field !h-7 !w-56 ml-auto" placeholder="Filtrar OID, nombre o valor" value={filter} onChange={(e) => setFilter(e.target.value)} />
+            <input className="field !h-7 w-full sm:!w-56 ml-auto" placeholder="Filtrar OID, nombre o valor" value={filter} onChange={(e) => setFilter(e.target.value)} />
             <Btn kind="ghost" title="Copiar como CSV" disabled={!rows.length} onClick={() => writeText(rowsToCsv(shown))}>
               <ClipboardCopy size={13} />
             </Btn>
@@ -462,7 +462,7 @@ function QuerySection({ target, profile }: { target: TargetFn; profile: SnmpProf
             </Btn>
           </div>
           <div className="max-h-[420px] overflow-auto rounded-lg border border-line">
-            <table className="w-full text-[12px]">
+            <table className="w-full text-[12px] min-w-[480px]">
               <thead className="sticky top-0 bg-panel text-left text-muted">
                 <tr>
                   <th className="px-2 py-1.5 font-medium">OID</th>
@@ -632,7 +632,7 @@ function PresetsSection({ target, profile, onConfirm }: { target: TargetFn; prof
           )}
           {t && (
             <div className="max-h-[460px] overflow-auto rounded-lg border border-line">
-              <table className="w-full text-[12px]">
+              <table className="w-full text-[12px] min-w-[480px]">
                 <thead className="sticky top-0 bg-panel text-left text-muted">
                   <tr>
                     <th className="px-2 py-1.5 font-medium">Índice</th>
@@ -740,7 +740,7 @@ function TrapSection({
       right={<StatusPill state={on ? "running" : "stopped"} label={on ? `Activo · ${bind}:${s.snmpTrapPort}` : "Detenido"} />}
     >
       <div className="flex flex-wrap items-end gap-3">
-        <Label text="Escuchar en" className="w-64">
+        <Label text="Escuchar en" className="w-full sm:w-64">
           <select className="field" disabled={on} value={bind} onChange={(e) => onChange({ snmpTrapBind: e.target.value })}>
             <option value="127.0.0.1">127.0.0.1 (solo este PC)</option>
             {ips.map((i) => (
@@ -751,7 +751,7 @@ function TrapSection({
             <option value="0.0.0.0">0.0.0.0 (todas las interfaces)</option>
           </select>
         </Label>
-        <Label text="Puerto" className="w-24">
+        <Label text="Puerto" className="w-20 sm:w-24">
           <input className="field" type="number" disabled={on} value={s.snmpTrapPort} onChange={(e) => onChange({ snmpTrapPort: Number(e.target.value) || 162 })} />
         </Label>
         <div className="pb-1.5">
@@ -807,7 +807,7 @@ function TrapSection({
           const sum = trapSummary(t);
           return (
             <div key={`${t.ts}-${i}`} className="border-t border-line first:border-0 py-1.5 text-[12px]">
-              <button className="w-full flex items-center gap-3 text-left" onClick={() => setOpen(open === i ? null : i)}>
+              <button className="w-full flex flex-wrap items-center gap-x-3 gap-y-1 text-left" onClick={() => setOpen(open === i ? null : i)}>
                 <span className="text-muted whitespace-nowrap tabular-nums">{new Date(t.ts).toLocaleTimeString("es-CL")}</span>
                 <span className="font-mono whitespace-nowrap">{t.src}</span>
                 <span className="text-muted whitespace-nowrap">
@@ -815,7 +815,7 @@ function TrapSection({
                   {t.kind === "inform" ? " inform" : ""}
                 </span>
                 <span className={`font-medium whitespace-nowrap ${tone[sum.tone]}`}>{sum.title}</span>
-                <span className="text-muted truncate">{sum.detail || t.note || ""}</span>
+                <span className="text-muted truncate w-full sm:w-auto">{sum.detail || t.note || ""}</span>
               </button>
               {open === i && (
                 <div className="mt-1 ml-4 space-y-0.5 font-mono text-[11.5px] select-text">

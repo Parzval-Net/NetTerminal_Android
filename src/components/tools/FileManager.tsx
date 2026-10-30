@@ -3,8 +3,10 @@ import { invoke } from "@tauri-apps/api/core";
 import { listen } from "@tauri-apps/api/event";
 import { open } from "@tauri-apps/plugin-dialog";
 import {
+  ArrowDown,
   ArrowLeft,
   ArrowRight,
+  ArrowUp,
   ChevronDown,
   FilePlus,
   Folder,
@@ -22,6 +24,7 @@ import type { Session } from "../../types";
 import { Btn, Console, Label, fmtBytes } from "./ui";
 
 import { plural } from "../../lib/plural";
+import { isMobile } from "../../lib/platform";
 import { SCP_EXIT_EVENT, type ScpExit, type ScpJob, busyRetry, isBusyError, scpOutcome } from "../../lib/scpVerify";
 export interface TerminalRef {
   connId: string;
@@ -478,9 +481,9 @@ export function FileManager({ terminals, settings: s, refreshRunning, onConfirm,
 
   return (
     <div className="space-y-3">
-      <div className="grid gap-3 grid-cols-2 @[48rem]:[grid-template-columns:2fr_1.6fr_1fr_1.3fr_0.9fr]">
+      <div className="grid gap-3 grid-cols-1 sm:grid-cols-2 @[48rem]:[grid-template-columns:2fr_1.6fr_1fr_1.3fr_0.9fr]">
         <Label text="Equipo (sesión conectada)">
-          <select className="field" value={connId} onChange={(e) => setConnId(e.target.value)}>
+          <select className="field w-full" value={connId} onChange={(e) => setConnId(e.target.value)}>
             {terminals.length === 0 && <option value="">Sin sesiones conectadas</option>}
             {terminals.map((t) => (
               <option key={t.connId} value={t.connId}>
@@ -492,7 +495,7 @@ export function FileManager({ terminals, settings: s, refreshRunning, onConfirm,
         </Label>
         <Label text="Tipo de equipo">
           <select
-            className="field"
+            className="field w-full"
             value={profileId}
             onChange={(e) => {
               setProfileId(e.target.value);
@@ -508,10 +511,10 @@ export function FileManager({ terminals, settings: s, refreshRunning, onConfirm,
           </select>
         </Label>
         <Label text="Almacenamiento">
-          <input className="field font-mono !text-[12px]" value={fs} onChange={(e) => setFs(e.target.value.trim())} />
+          <input className="field font-mono !text-[12px] w-full" value={fs} onChange={(e) => setFs(e.target.value.trim())} />
         </Label>
         <Label text="IP de este PC">
-          <select className="field" value={ip} onChange={(e) => setIp(e.target.value)}>
+          <select className="field w-full" value={ip} onChange={(e) => setIp(e.target.value)}>
             {ip && !ips.some((i) => i.ip === ip) && <option value={ip}>{ip} (ruta al equipo)</option>}
             {ips.map((i) => (
               <option key={i.ip} value={i.ip}>
@@ -521,7 +524,7 @@ export function FileManager({ terminals, settings: s, refreshRunning, onConfirm,
           </select>
         </Label>
         <Label text="Protocolo">
-          <select className="field" value={proto} onChange={(e) => setProto(e.target.value as Proto)}>
+          <select className="field w-full" value={proto} onChange={(e) => setProto(e.target.value as Proto)}>
             <option value="tftp">TFTP</option>
             <option value="http" disabled={profileId === "huawei"}>
               HTTP (solo envío, rápido)
@@ -564,8 +567,8 @@ export function FileManager({ terminals, settings: s, refreshRunning, onConfirm,
         )}
       </div>
       {(profile.note || profileId === "nxos") && (
-        <div className="flex items-center gap-3 text-[11.5px] text-muted">
-          {profile.note}
+        <div className="flex flex-wrap items-center gap-3 text-[11.5px] text-muted">
+          {profile.note && <span>{profile.note}</span>}
           {profileId === "nxos" && (
             <input className="field !h-6 !w-40 !text-[11.5px]" placeholder="VRF (management)" value={extra} onChange={(e) => setExtra(e.target.value)} />
           )}
@@ -573,20 +576,22 @@ export function FileManager({ terminals, settings: s, refreshRunning, onConfirm,
       )}
       {error && <p className="text-[12px] text-danger">{error}</p>}
 
-      <div className="grid grid-cols-[1fr_auto_1fr] gap-3 items-stretch">
+      <div className="grid grid-cols-1 sm:grid-cols-[1fr_auto_1fr] gap-3 items-stretch">
         {/* Panel PC */}
         <Pane
           icon={<Monitor size={14} />}
-          title="Este PC · carpeta compartida"
+          title={isMobile ? "Este dispositivo · carpeta compartida" : "Este PC · carpeta compartida"}
           highlight={drop === "local"}
           actions={
             <>
               <Btn kind="ghost" className="!px-1.5 !h-7" title="Agregar archivos" onClick={addFiles}>
                 <FilePlus size={14} />
               </Btn>
-              <Btn kind="ghost" className="!px-1.5 !h-7" title="Abrir carpeta" onClick={() => invoke("open_dir", { which: "tftp" })}>
-                <FolderOpen size={14} />
-              </Btn>
+              {!isMobile && (
+                <Btn kind="ghost" className="!px-1.5 !h-7" title="Abrir carpeta" onClick={() => invoke("open_dir", { which: "tftp" })}>
+                  <FolderOpen size={14} />
+                </Btn>
+              )}
               <Btn kind="ghost" className="!px-1.5 !h-7" title="Actualizar" onClick={loadLocal}>
                 <RefreshCw size={13} />
               </Btn>
@@ -633,16 +638,21 @@ export function FileManager({ terminals, settings: s, refreshRunning, onConfirm,
         </Pane>
 
         {/* Acciones */}
-        <div className="flex flex-col justify-center gap-2">
-          <Btn kind="primary" disabled={!selLocal.size || !term} onClick={() => enqueue("send", [...selLocal])} title="El equipo descarga los archivos seleccionados">
-            Enviar <ArrowRight size={14} />
+        <div className="flex flex-row flex-wrap sm:flex-col justify-center items-center sm:items-stretch gap-2 py-1 sm:py-0">
+          <Btn kind="primary" disabled={!selLocal.size || !term} onClick={() => enqueue("send", [...selLocal])} title="El equipo descarga los archivos seleccionados" className="flex-1 sm:flex-initial">
+            <span>Enviar</span>
+            <ArrowRight size={14} className="hidden sm:inline" />
+            <ArrowDown size={14} className="sm:hidden" />
           </Btn>
           <Btn
             disabled={!selRemote.size || !term || !canPull}
             onClick={() => enqueue("pull", [...selRemote])}
             title={canPull ? "Trae los archivos seleccionados a este PC" : `No soportado por ${proto.toUpperCase()} en este equipo: usa SCP o SFTP`}
+            className="flex-1 sm:flex-initial"
           >
-            <ArrowLeft size={14} /> Traer
+            <ArrowLeft size={14} className="hidden sm:inline" />
+            <ArrowUp size={14} className="sm:hidden" />
+            <span>Traer</span>
           </Btn>
           <Btn
             kind="ghost"
@@ -815,7 +825,7 @@ function Pane({
         <span className="text-[12.5px] font-semibold truncate flex-1">{title}</span>
         {actions}
       </div>
-      <div className="h-[300px] overflow-y-auto p-1">{children}</div>
+      <div className="h-[260px] sm:h-[300px] overflow-y-auto p-1">{children}</div>
       <div className="px-3 h-7 flex items-center border-t border-line text-[11px] text-muted">{footer}</div>
     </div>
   );
@@ -857,10 +867,11 @@ function Row({
             e.stopPropagation();
             onDelete();
           }}
-          className="hidden group-hover:block text-muted hover:text-danger"
-          title="Eliminar del PC"
+          className={`${selected ? "block" : "hidden sm:group-hover:block"} p-1 text-muted hover:text-danger shrink-0`}
+          title="Eliminar de la carpeta compartida"
+          aria-label={`Eliminar ${name}`}
         >
-          <Trash2 size={12} />
+          <Trash2 size={13} />
         </button>
       )}
     </div>

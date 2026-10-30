@@ -10,7 +10,7 @@ import { runOnDevice } from "../../lib/deviceRun";
 import { BACKUP_PROFILES, backupLabel, cleanConfig, configProblem, guessBackupProfile, pool, profileById } from "../../lib/backup";
 import { diffLines, diffStats, markSecretChanges, splitLines, unifiedDiff, DiffRow, SecretMarks } from "../../lib/diff";
 import { isWithin, normPath } from "../../lib/folders";
-
+import { isMobile } from "../../lib/platform";
 import { plural } from "../../lib/plural";
 interface BackupFile {
   name: string;
@@ -166,9 +166,11 @@ export default function BackupTool({ terminals }: { terminals: TerminalRef[] }) 
         title="Respaldar configuración"
         hint={`Ejecuta solo comandos de consulta, hasta ${CONCURRENCY} equipos a la vez`}
         right={
-          <Btn kind="ghost" onClick={() => invoke("open_dir", { which: "backups" })} title="Abrir carpeta de respaldos">
-            <FolderOpen size={14} /> Carpeta
-          </Btn>
+          !isMobile ? (
+            <Btn kind="ghost" onClick={() => invoke("open_dir", { which: "backups" })} title="Abrir carpeta de respaldos">
+              <FolderOpen size={14} /> Carpeta
+            </Btn>
+          ) : undefined
         }
       >
         {devices.length === 0 ? (
@@ -184,7 +186,7 @@ export default function BackupTool({ terminals }: { terminals: TerminalRef[] }) 
               </Btn>
               {folders.length > 0 && (
                 <select
-                  className="field !h-8 !w-56"
+                  className="field !h-8 w-full sm:!w-56"
                   value=""
                   disabled={running}
                   onChange={(e) => e.target.value && pickFolder(e.target.value)}
@@ -201,11 +203,11 @@ export default function BackupTool({ terminals }: { terminals: TerminalRef[] }) 
               <span className="flex-1" />
               <Toggle checked={mask} onChange={setMask} label="Enmascarar secretos" />
             </div>
-            <div className="rounded-lg border border-line divide-y divide-[var(--border)]">
+            <div className="rounded-lg border border-line divide-y divide-[var(--border)] overflow-x-auto">
               {devices.map((t) => {
                 const j = jobs[t.connId];
                 return (
-                  <div key={t.connId} className="flex items-center gap-3 px-3 h-10 text-[12.5px]">
+                  <div key={t.connId} className="flex items-center gap-3 px-3 h-10 text-[12.5px] min-w-[540px]">
                     <label className="p-1 -m-1 grid place-items-center">
                       <input
                         type="checkbox"
@@ -283,13 +285,13 @@ export default function BackupTool({ terminals }: { terminals: TerminalRef[] }) 
         {list.length === 0 ? (
           <p className="text-[12.5px] text-muted">Aún no hay respaldos.</p>
         ) : (
-          <div className="rounded-lg border border-line divide-y divide-[var(--border)] max-h-72 overflow-y-auto">
+          <div className="rounded-lg border border-line divide-y divide-[var(--border)] max-h-72 overflow-auto">
             {list.map((d) =>
               d.files.map((f, i) => {
                 const isA = selA?.device === d.device && selA.file === f.name;
                 const isB = selB?.device === d.device && selB.file === f.name;
                 return (
-                  <div key={`${d.device}/${f.name}`} className="flex items-center gap-3 px-3 h-9 text-[12.5px]">
+                  <div key={`${d.device}/${f.name}`} className="flex items-center gap-3 px-3 h-9 text-[12.5px] min-w-[460px]">
                     <span className={`w-44 truncate ${i === 0 ? "font-medium" : "text-muted"}`}>{i === 0 ? d.device : ""}</span>
                     <span className="w-40 tabular-nums">{backupLabel(f.name)}</span>
                     <span className="w-20 text-muted tabular-nums">{fmtBytes(f.size)}</span>
@@ -330,11 +332,11 @@ export default function BackupTool({ terminals }: { terminals: TerminalRef[] }) 
       >
         {diff && stats ? (
           <>
-            <div className="flex items-center gap-4 mb-2 text-[12px]">
+            <div className="flex flex-wrap items-center gap-x-4 gap-y-1 mb-2 text-[12px]">
               <span className="text-ok font-medium">+{stats.added.toLocaleString("es-CL")} agregadas</span>
               <span className="text-danger font-medium">−{stats.removed.toLocaleString("es-CL")} quitadas</span>
               <span className="text-muted">{stats.same.toLocaleString("es-CL")} iguales</span>
-              <span className="text-muted truncate">
+              <span className="text-muted truncate w-full sm:w-auto">
                 A: {diff.nameA} · B: {diff.nameB}
               </span>
             </div>
@@ -354,7 +356,7 @@ function PickBtn({ on, onClick, label }: { on: boolean; onClick: () => void; lab
       onClick={onClick}
       aria-pressed={on}
       title={`Usar como ${label}`}
-      className={`w-7 h-7 rounded-md text-[12px] font-semibold border ${
+      className={`w-8 h-8 rounded-md text-[12px] font-semibold border touch-manipulation ${
         on ? "bg-accent text-accent-fg border-transparent" : "border-line text-muted hover:text-fg hover:bg-hover"
       }`}
     >

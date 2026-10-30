@@ -87,8 +87,8 @@ export function FtpServerSection({
       hint="Usuario nt y contraseña nueva en cada inicio. Solo lectura salvo que habilites subidas."
       right={<StatusPill state={on ? "running" : "stopped"} label={on ? `Activo · TCP ${s.ftpPort}${info?.write ? " · con subidas" : ""}` : "Detenido"} />}
     >
-      <div className="flex items-end gap-3 mb-3">
-        <Label text="Puerto" className="w-24">
+      <div className="flex flex-wrap items-end gap-3 mb-3">
+        <Label text="Puerto" className="w-20 sm:w-24">
           <input className="field" type="number" disabled={on} value={s.ftpPort} onChange={(e) => onChange({ ftpPort: Number(e.target.value) || 21 })} />
         </Label>
         <div className="pb-1.5">
@@ -103,7 +103,7 @@ export function FtpServerSection({
       </p>
       {error && <p className="mb-2 text-[12px] text-danger">{error}</p>}
       {on && info && (
-        <div className="mb-2 flex items-center gap-2 text-[12px]">
+        <div className="mb-2 flex flex-wrap items-center gap-2 text-[12px]">
           <span className="text-muted">Usuario</span> <CopyText text={info.user} />
           <span className="text-muted">Contraseña</span> <CopyText text={info.pass} />
         </div>
@@ -186,7 +186,7 @@ export function FtpClientSection({ files, onLocalChange }: { files: [string, num
 
   return (
     <Section title="Cliente FTP / FTPS" hint="Trae firmware o configuraciones de un servidor FTP a la carpeta compartida, o sube archivos desde ella.">
-      <div className="grid gap-3 [grid-template-columns:2fr_0.7fr_1.2fr_1.2fr_1.6fr]">
+      <div className="grid gap-3 grid-cols-1 sm:grid-cols-2 lg:[grid-template-columns:2fr_0.7fr_1.2fr_1.2fr_1.6fr]">
         <Label text="Servidor">
           <input className="field font-mono" value={host} placeholder="ftp.ejemplo.cl" onChange={(e) => setHost(e.target.value)} />
         </Label>
@@ -199,7 +199,7 @@ export function FtpClientSection({ files, onLocalChange }: { files: [string, num
         <Label text="Contraseña (no se guarda)">
           <input className="field" type="password" autoComplete="off" value={pass} onChange={(e) => setPass(e.target.value)} />
         </Label>
-        <Label text="Carpeta remota">
+        <Label text="Carpeta remota" className="sm:col-span-2 lg:col-span-1">
           <input className="field font-mono" value={path} placeholder="/" onChange={(e) => setPath(e.target.value)} onKeyDown={(e) => e.key === "Enter" && list()} />
         </Label>
       </div>
@@ -226,7 +226,7 @@ export function FtpClientSection({ files, onLocalChange }: { files: [string, num
       </div>
       {error && <p className="mt-2 text-[12px] text-danger">{error}</p>}
       {listing && (
-        <div className="mt-3 grid gap-3 [grid-template-columns:2fr_1fr]">
+        <div className="mt-3 grid gap-3 grid-cols-1 md:[grid-template-columns:2fr_1fr]">
           <div className="max-h-[320px] overflow-auto rounded-lg border border-line">
             <table className="w-full text-[12px]">
               <tbody>
@@ -240,12 +240,12 @@ export function FtpClientSection({ files, onLocalChange }: { files: [string, num
                 )}
                 {listing.entries.map((e) => (
                   <tr key={e.name} className="border-t border-line first:border-0 hover:bg-hover" onDoubleClick={() => e.dir && enter(e.name)}>
-                    <td className="px-2 py-1.5 font-mono truncate">
+                    <td className="px-2 py-1.5 font-mono truncate max-w-[140px] sm:max-w-none">
                       {e.dir ? <Folder size={13} className="inline mr-1.5 text-muted" /> : <FileText size={13} className="inline mr-1.5 text-muted" />}
                       {e.name}
                     </td>
                     <td className="px-2 text-right text-muted tabular-nums whitespace-nowrap">{e.dir ? "" : fmtBytes(e.size)}</td>
-                    <td className="px-2 text-muted whitespace-nowrap">{e.date}</td>
+                    <td className="px-2 text-muted whitespace-nowrap hidden sm:table-cell">{e.date}</td>
                     <td className="px-2 text-right">
                       {!e.dir && (
                         <Btn kind="ghost" className="!h-6 !px-1.5" title="Traer a la carpeta compartida" onClick={() => start("ftp_get", e.name)}>
@@ -261,7 +261,7 @@ export function FtpClientSection({ files, onLocalChange }: { files: [string, num
           </div>
           <div>
             <Label text="Subir desde la carpeta compartida">
-              <select className="field" value={upload} onChange={(e) => setUpload(e.target.value)}>
+              <select className="field w-full" value={upload} onChange={(e) => setUpload(e.target.value)}>
                 <option value="">Elegir archivo…</option>
                 {files.map(([n, size]) => (
                   <option key={n} value={n}>
@@ -270,7 +270,7 @@ export function FtpClientSection({ files, onLocalChange }: { files: [string, num
                 ))}
               </select>
             </Label>
-            <Btn className="mt-2" disabled={!upload} onClick={() => start("ftp_put", upload)}>
+            <Btn className="mt-2 w-full sm:w-auto" disabled={!upload} onClick={() => start("ftp_put", upload)}>
               <ArrowUpFromLine size={13} /> Subir a {listing.cwd || "/"}
             </Btn>
             <p className="mt-2 text-[11.5px] text-muted">El progreso aparece en Transferencias. Doble clic en una carpeta para entrar.</p>
@@ -311,9 +311,9 @@ export function SftpSection({ terminals, onScp }: { terminals: TerminalRef[]; on
       title="SFTP interactivo"
       hint="Abre sftp en una pestaña con el usuario, puerto, llave y jump host de la sesión. get y put trabajan en la carpeta compartida."
     >
-      <div className="flex items-end gap-3">
-        <Label text="Equipo (sesión conectada)" className="flex-1">
-          <select className="field" value={term?.connId ?? ""} onChange={(e) => setConn(e.target.value)}>
+      <div className="flex flex-wrap sm:flex-nowrap items-end gap-3">
+        <Label text="Equipo (sesión conectada)" className="flex-1 w-full sm:w-auto">
+          <select className="field w-full" value={term?.connId ?? ""} onChange={(e) => setConn(e.target.value)}>
             {ssh.length === 0 && <option value="">Sin sesiones de red conectadas</option>}
             {ssh.map((t) => (
               <option key={t.connId} value={t.connId}>
@@ -322,7 +322,7 @@ export function SftpSection({ terminals, onScp }: { terminals: TerminalRef[]; on
             ))}
           </select>
         </Label>
-        <Btn kind="primary" disabled={!term} onClick={openSftp}>
+        <Btn kind="primary" disabled={!term} onClick={openSftp} className="w-full sm:w-auto">
           <TerminalSquare size={14} /> Abrir SFTP
         </Btn>
       </div>

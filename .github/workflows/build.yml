@@ -272,6 +272,6 @@ jobs:
           REPO: ${{ github.repository }}
           GH_TOKEN: ${{ github.token }}
         run: |
-          mapfile -t files < <(find artefactos -type f \( -name '*.dmg' -o -name '*.exe' -o -name '*.AppImage' -o -name '*.deb' -o -name 'NetTerminal-portable.zip' -o -name 'NetTerminal_*_universal.app.tar.gz' -o -name 'latest.json' \))
+          mapfile -t files < <(find artefactos -type f \( -name '*.dmg' -o -name '*.exe' -o -name '*.AppImage' -o -name '*.deb' -o -name '*.apk' -o -name 'NetTerminal-portable.zip' -o -name 'NetTerminal_*_universal.app.tar.gz' -o -name 'latest.json' \))
           gh release create "$TAG" "${files[@]}" \
             --repo "$REPO" --title "NetTerminal $TAG" --notes-file notas.md --verify-tag

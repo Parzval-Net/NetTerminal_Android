@@ -7,14 +7,15 @@
 <p align="center">
   <a href="https://github.com/Parzval-Net/Net_Terminal/releases/latest"><b>Descargar la última versión</b></a> ·
   <a href="https://parzval-net.github.io/Net_Terminal/">Página del producto</a> ·
-  <a href="https://parzval-net.github.io/Net_Terminal/#como-usar">Tutoriales en video</a>
+  <a href="https://parzval-net.github.io/Net_Terminal/#como-usar">Tutoriales en video</a> ·
+  <a href="ANDROID.md"><b>Edición Android (APK)</b></a>
 </p>
 
-NetTerminal es un cliente de conexión liviano para el trabajo diario con equipos de red y servidores. Reúne **SSH, Telnet, Serial y terminal local** en una sola app, con sesiones guardadas en carpetas y pestañas, un catálogo de comandos verificados por fabricante y las herramientas de red que se usan en terreno y en la oficina. Está pensada para ingenieros y técnicos de redes que necesitan conectarse rápido, ejecutar comandos con seguridad y no perder tiempo configurando. Funciona en macOS, Windows y Linux, pesa unos 8 MB y no consume CPU cuando no la estás usando.
+NetTerminal es un cliente de conexión liviano para el trabajo diario con equipos de red y servidores. Reúne **SSH, Telnet, Serial y terminal local** en una sola app, con sesiones guardadas en carpetas y pestañas, un catálogo de comandos verificados por fabricante y las herramientas de red que se usan en terreno y en la oficina. Está pensada para ingenieros y técnicos de redes que necesitan conectarse rápido, ejecutar comandos con seguridad y no perder tiempo configurando. Funciona en macOS, Windows, Linux y Android, pesa unos 8 MB y no consume CPU cuando no la estás usando.
 
 ## Descargas
 
-Todos los archivos están en la [última versión publicada](https://github.com/Parzval-Net/Net_Terminal/releases/latest).
+Todos los archivos de escritorio están en la [última versión publicada de NetTerminal](https://github.com/Parzval-Net/Net_Terminal/releases/latest), y las versiones móviles para Android están disponibles en el fork oficial [Parzval-Net/NetTerminal_Android](https://github.com/Parzval-Net/NetTerminal_Android/releases).
 
 | Sistema | Archivo | Comentario |
 | --- | --- | --- |
@@ -22,6 +23,7 @@ Todos los archivos están en la [última versión publicada](https://github.com/
 | macOS (Intel y Apple Silicon) | `.dmg` universal | La primera vez ábrela con clic derecho › Abrir |
 | Linux | `.AppImage` o `.deb` | AppImage sin instalar (`chmod +x` y ejecutar); `.deb` se instala con apt |
 | Portable (los 3 sistemas) | `NetTerminal-portable.zip` | Una carpeta con los tres ejecutables y tus datos, ideal para un pendrive |
+| Android (Móviles y Tablets) | Instalador `.apk` | Paquete APK nativo (Universal, ARM64, ARMv7, x86_64) con barra de teclas de red (Esc, Tab, Ctrl, ?); ver [ANDROID.md](ANDROID.md) |
 
 - **Actualizaciones automáticas:** la app avisa cuando hay una versión nueva y se actualiza con un clic desde Ajustes › Acerca de, siempre con tu confirmación y verificando la firma del proyecto.
 - **Modo portable:** si junto al ejecutable hay un archivo llamado `portable`, todo se guarda en la carpeta `data` de al lado. En portable y en `.deb` la actualización es manual.
@@ -31,6 +33,7 @@ Todos los archivos están en la [última versión publicada](https://github.com/
 - **Windows:** WebView2, que ya viene en Windows 11 y en Windows 10 actualizado. Si falta, el instalador lo descarga.
 - **macOS:** la app no tiene firma de Apple, por eso la primera vez se abre con clic derecho › Abrir.
 - **Linux:** para usar el puerto serial tu usuario debe estar en el grupo `dialout` (o `uucp`). Agregarlo requiere administrador una sola vez.
+- **Android:** Android 8.0 (API 26) o superior. Permite instalar directamente el archivo `.apk` habilitando la opción "Instalar aplicaciones desconocidas" en el navegador o administrador de archivos de tu teléfono. Guía completa en [ANDROID.md](ANDROID.md).
 
 ## Qué puedes hacer
 
@@ -121,6 +124,8 @@ El detalle de cada control está en la [documentación técnica](docs/TECNICO.md
 
 ## Más información
 
+- [Edición y compilación para Android (APK)](ANDROID.md): características móviles, compilación gratuita con GitHub Actions, desarrollo local y firma de APKs.
+- [Repositorio del Fork Android](https://github.com/Parzval-Net/NetTerminal_Android): código fuente y versiones de NetTerminal para Android.
 - [Documentación técnica](docs/TECNICO.md): funciones completas, atajos, modo portable, packs de comandos, topología, API de scripts, plugins, publicación y desarrollo.
 - [Formato de packs de comandos](docs/TECNICO.md#packs-de-comandos) y [API de scripts Python](docs/TECNICO.md#scripts-python).
 - [Ejemplos](docs/ejemplos/README.md) de scripts, plugins, packs y plantillas.

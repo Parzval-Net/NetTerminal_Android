@@ -736,12 +736,74 @@ fn resumable_log(dir: &Path, path: &Path) -> Option<PathBuf> {
 
 // ---------- PTY (local y SSH) ----------
 
+fn is_dir_writable(path: &std::path::Path) -> bool {
+    if !path.is_dir() {
+        return false;
+    }
+    let test_file = path.join(".nt_wtest");
+    if let Ok(mut f) = std::fs::OpenOptions::new()
+        .write(true)
+        .create(true)
+        .truncate(true)
+        .open(&test_file)
+    {
+        use std::io::Write;
+        let _ = f.write_all(b"1");
+        drop(f);
+        let _ = std::fs::remove_file(test_file);
+        true
+    } else {
+        false
+    }
+}
+
 fn local_shell() -> CommandBuilder {
     if cfg!(windows) {
         let mut cmd = CommandBuilder::new("powershell.exe");
         cmd.arg("-NoLogo");
         if let Some(home) = std::env::var_os("USERPROFILE") {
             cmd.cwd(home);
+        }
+        cmd
+    } else if cfg!(target_os = "android") {
+        // En Android, CommandBuilder::new_default_prog() puede fallar si SHELL no está definido
+        // o apunta a /bin/sh. Busca primero $SHELL, luego Termux bash/sh, /system/bin/sh y /bin/sh.
+        let candidates = [
+            std::env::var("SHELL").ok(),
+            Some("/data/data/com.termux/files/usr/bin/bash".to_string()),
+            Some("/data/data/com.termux/files/usr/bin/sh".to_string()),
+            Some("/system/bin/sh".to_string()),
+            Some("/bin/sh".to_string()),
+        ];
+        let chosen_shell = candidates
+            .into_iter()
+            .flatten()
+            .find(|p| std::path::Path::new(p).exists())
+            .unwrap_or_else(|| "/system/bin/sh".to_string());
+
+        let mut cmd = CommandBuilder::new(chosen_shell);
+
+        let home_ok = std::env::var_os("HOME")
+            .map(std::path::PathBuf::from)
+            .is_some_and(|p| is_dir_writable(&p));
+
+        if !home_ok {
+            let data_dir = [
+                std::env::var_os("EXTERNAL_STORAGE").map(std::path::PathBuf::from),
+                std::env::var_os("ANDROID_DATA").map(|d| std::path::PathBuf::from(d).join("data/cl.netterminal.app/files")),
+                Some(std::path::PathBuf::from("/data/data/cl.netterminal.app/files")),
+                Some(std::path::PathBuf::from("/data/user/0/cl.netterminal.app/files")),
+                Some(std::path::PathBuf::from("/data/data/com.termux/files/home")),
+                Some(std::env::temp_dir()),
+                Some(std::path::PathBuf::from("/data/local/tmp")),
+            ]
+            .into_iter()
+            .flatten()
+            .find(|d| is_dir_writable(d) || std::fs::create_dir_all(d).is_ok_and(|_| is_dir_writable(d)))
+            .unwrap_or_else(std::env::temp_dir);
+
+            cmd.env("HOME", &data_dir);
+            cmd.cwd(&data_dir);
         }
         cmd
     } else {
@@ -906,9 +968,52 @@ pub(crate) fn tunnel_args(list: &[crate::models::Tunnel]) -> Result<Vec<String>,
     Ok(out)
 }
 
+/// Resuelve la ruta del binario requerido (ssh, scp, sftp).
+/// En Android busca en el PATH directo y en rutas habituales (/data/data/com.termux/files/usr/bin/ y /system/bin/).
+/// Si no se encuentra en Android, genera un mensaje claro para el usuario.
+fn resolve_bin(name: &str) -> Result<String, String> {
+    let bin_name = if cfg!(windows) {
+        if name.ends_with(".exe") { name.to_string() } else { format!("{name}.exe") }
+    } else {
+        name.to_string()
+    };
+
+    // En Android, verificar en el PATH directo y luego en rutas conocidas (/data/data/com.termux/files/usr/bin/, /system/bin/, /system/xbin/)
+    if cfg!(target_os = "android") {
+        if let Some(path_var) = std::env::var_os("PATH") {
+            for dir in std::env::split_paths(&path_var) {
+                let candidate = dir.join(&bin_name);
+                if candidate.is_file() {
+                    return Ok(candidate.to_string_lossy().into_owned());
+                }
+            }
+        }
+
+        let android_paths = [
+            format!("/data/data/com.termux/files/usr/bin/{bin_name}"),
+            format!("/system/bin/{bin_name}"),
+            format!("/system/xbin/{bin_name}"),
+        ];
+        for p in &android_paths {
+            if std::path::Path::new(p).is_file() {
+                return Ok(p.clone());
+            }
+        }
+
+        if name == "ssh" {
+            return Err("No se encontró el binario 'ssh' en Android. Para conectarte por SSH, instala OpenSSH en Termux (pkg install openssh) o utiliza sesiones Telnet o Raw.".to_string());
+        } else {
+            return Err(format!("No se encontró el binario '{name}' en Android. Instala OpenSSH en Termux (pkg install openssh) para usar esta funcionalidad."));
+        }
+    }
+
+    Ok(bin_name)
+}
+
 fn ssh_command(s: &Session) -> Result<CommandBuilder, String> {
     let host = safe_target(s.host.as_deref().unwrap_or(""), "el host")?;
-    let mut cmd = CommandBuilder::new(SSH_BIN);
+    let ssh_bin = resolve_bin("ssh")?;
+    let mut cmd = CommandBuilder::new(ssh_bin);
     cmd.args(["-o", "ServerAliveInterval=30", "-o", "ConnectTimeout=15"]);
     if let Some(port) = s.port.filter(|p| *p != 22) {
         cmd.args(["-p", &port.to_string()]);
@@ -941,13 +1046,13 @@ fn ssh_command(s: &Session) -> Result<CommandBuilder, String> {
     Ok(cmd)
 }
 
-const SSH_BIN: &str = if cfg!(windows) { "ssh.exe" } else { "ssh" };
 
 /// Versión (mayor, menor) del OpenSSH instalado.
 fn openssh_version() -> Option<(u32, u32)> {
     static V: std::sync::OnceLock<Option<(u32, u32)>> = std::sync::OnceLock::new();
     *V.get_or_init(|| {
-        let mut c = std::process::Command::new(SSH_BIN);
+        let bin = resolve_bin("ssh").ok()?;
+        let mut c = std::process::Command::new(bin);
         c.arg("-V");
         #[cfg(windows)]
         {
@@ -993,7 +1098,8 @@ fn scp_command(s: &Session) -> Result<CommandBuilder, String> {
         Ok(format!("{}{host}:{remote_dir}{sep}{file}", user.map(|u| format!("{u}@")).unwrap_or_default()))
     };
 
-    let mut cmd = CommandBuilder::new(if cfg!(windows) { "scp.exe" } else { "scp" });
+    let scp_bin = resolve_bin("scp")?;
+    let mut cmd = CommandBuilder::new(scp_bin);
     let version = openssh_version();
     match mode {
         // OpenSSH >= 9 usa SFTP por defecto; el servidor SCP de Cisco IOS solo habla SCP clásico.
@@ -1054,7 +1160,8 @@ fn sftp_shell(s: &Session, host: &str, user: Option<&str>, local_dir: &str) -> R
     if local_dir.is_empty() {
         return Err("Carpeta local no resuelta".into());
     }
-    let mut cmd = CommandBuilder::new(if cfg!(windows) { "sftp.exe" } else { "sftp" });
+    let sftp_bin = resolve_bin("sftp")?;
+    let mut cmd = CommandBuilder::new(sftp_bin);
     cmd.cwd(local_dir);
     cmd.args(["-o", "ConnectTimeout=15", "-o", "ServerAliveInterval=30"]);
     if let Some(port) = s.port.filter(|p| *p != 22 && *p != 23) {
@@ -1098,7 +1205,8 @@ fn legacy_options() -> &'static [String] {
         wanted
             .iter()
             .filter_map(|(opt, query, algs)| {
-                let mut q = std::process::Command::new(SSH_BIN);
+                let bin = resolve_bin("ssh").unwrap_or_else(|_| "ssh".to_string());
+                let mut q = std::process::Command::new(bin);
                 q.args(["-Q", query]);
                 #[cfg(windows)]
                 {
@@ -1373,6 +1481,20 @@ pub fn list_serial_ports() -> Vec<crate::models::SerialPortInfo> {
             port_name: p.port_name,
         })
         .collect();
+    #[cfg(target_os = "android")]
+    {
+        for prefix in ["/dev/ttyUSB", "/dev/ttyACM", "/dev/ttyS"] {
+            for i in 0..10 {
+                let path = format!("{prefix}{i}");
+                if std::path::Path::new(&path).exists() && !ports.iter().any(|p| p.port_name == path) {
+                    ports.push(crate::models::SerialPortInfo {
+                        port_type: "USB Serial".into(),
+                        port_name: path,
+                    });
+                }
+            }
+        }
+    }
     // Algunos drivers de adaptadores USB (CH340, PL2303, FTDI antiguos) no publican la interfaz
     // que lee serialport en Windows: el registro SERIALCOMM sí lista todos los COM activos.
     #[cfg(windows)]

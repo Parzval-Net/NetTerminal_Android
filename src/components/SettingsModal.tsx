@@ -1,12 +1,13 @@
-import { useEffect, useMemo, useState } from "react";
+import { Suspense, lazy, useEffect, useMemo, useState } from "react";
 import { invoke } from "@tauri-apps/api/core";
 import { ArrowLeftRight, BellRing, Blocks, Bot, Check, FolderOpen, Highlighter, Info, KeyRound, Palette, ScrollText, Search, SquareTerminal, X } from "lucide-react";
 import { openUrl } from "@tauri-apps/plugin-opener";
 import { open as openDialog } from "@tauri-apps/plugin-dialog";
 import logo from "../assets/logo.svg";
 import type { ModuleId } from "../lib/settings";
-import { AiSettings } from "./AiSettings";
 import { useDragResize } from "../lib/useDragResize";
+
+const AiSettings = lazy(() => import("./AiSettings").then((m) => ({ default: m.AiSettings })));
 import type { ITheme } from "@xterm/xterm";
 import { HighlightSettings } from "./HighlightSettings";
 import { AlertSettings } from "./AlertSettings";
@@ -16,7 +17,7 @@ import { readText } from "@tauri-apps/plugin-clipboard-manager";
 import { Settings, UpdateInfo, defaultSettings } from "../lib/settings";
 import { Session } from "../types";
 import { TermPreset, fontStack, presets } from "../lib/theme";
-import { zoomLabel } from "../lib/platform";
+import { isMobile, zoomLabel } from "../lib/platform";
 import { GHOST_COLORS, GHOST_STYLES, type GhostColor, type GhostStyle, LIST_KEYS, type ListKey, TIP_TIMES, clearUsage } from "../lib/suggest";
 
 import { plural } from "../lib/plural";
@@ -60,12 +61,12 @@ const MODULES: [ModuleId, string, string][] = [
  */
 const sections: { id: Section; label: string; Icon: typeof Palette; group: string; keywords: string }[] = [
   { id: "appearance", label: "Apariencia", Icon: Palette, group: "General", keywords: "interfaz claro oscuro sistema barra de sesiones flotante superpuesta pestañas verticales horizontales tema de terminal fuente tamaño interlineado cursor parpadeante colores" },
-  { id: "terminal", label: "Terminal", Icon: SquareTerminal, group: "General", keywords: "historial scrollback copiar al seleccionar pegar clic derecho confirmar al cerrar legacy ssh algoritmos antiguos ssh-rsa compatibilidad sugerencias de comandos autocompletar abreviaturas historial de sugerencias tecla de lista confirmar envío varias líneas barra de botones pausa entre líneas notas" },
+  { id: "terminal", label: "Terminal", Icon: SquareTerminal, group: "General", keywords: "historial scrollback copiar al seleccionar pegar clic derecho confirmar al cerrar legacy ssh algoritmos antiguos ssh-rsa compatibilidad sugerencias de comandos autocompletar abreviaturas historial de sugerencias tecla de lista confirmar envío varias líneas barra de botones pausa entre líneas notas barra de teclas tactiles táctiles android móvil virtual" },
   { id: "highlight", label: "Resaltado", Icon: Highlighter, group: "General", keywords: "resaltado sintaxis reglas regex esquemas fabricante cisco juniper huawei fortinet colores exportar importar" },
   { id: "data", label: "Logs", Icon: ScrollText, group: "Sesiones y datos", keywords: "logs grabar automáticamente hora en cada línea nombre del archivo patrón anexar rotación diaria ocultar secretos carpeta de logs" },
   { id: "credentials", label: "Credenciales", Icon: KeyRound, group: "Sesiones y datos", keywords: "contraseñas guardadas bóveda llavero contraseña maestra portable credenciales" },
   { id: "sessions", label: "Importar y exportar", Icon: ArrowLeftRight, group: "Sesiones y datos", keywords: "sesiones importar exportar portapapeles json putty securecrt mobaxterm ssh config csv carpeta de datos portable" },
-  { id: "modules", label: "Módulos", Icon: Blocks, group: "Herramientas", keywords: "módulos monitoreo diagnóstico topología subredes velocidad tftp http syslog plugins respaldos herramientas" },
+  { id: "modules", label: "Módulos", Icon: Blocks, group: "Herramientas", keywords: "módulos cli lab scripts automatización monitoreo diagnóstico topología subredes velocidad tftp http syslog plugins respaldos herramientas" },
   { id: "alerts", label: "Alertas", Icon: BellRing, group: "Herramientas", keywords: "alertas palabra clave reglas sonido aviso pestaña expresión regular" },
   { id: "ai", label: "Agentes IA", Icon: Bot, group: "Integraciones", keywords: "agentes ia mcp claude gemini codex puerto token aprobación solo lectura servidor" },
   { id: "about", label: "Acerca de", Icon: Info, group: "Acerca de", keywords: "versión actualizaciones buscar ahora github repositorio autor" },
@@ -117,13 +118,14 @@ export function SettingsModal({
     s.extraFolders.length && plural(s.extraFolders.length, "carpeta vacía", "carpetas vacías"),
     s.speedHistory.length && "el historial de velocidad",
     s.disabledPacks.length && plural(s.disabledPacks.length, "pack desactivado (vuelve a activarse)", "packs desactivados (vuelven a activarse)"),
-    s.mcpEnabled && "la configuración del servidor MCP (se apaga y su token se borra)",
+    !isMobile && s.mcpEnabled && "la configuración del servidor MCP (se apaga y su token se borra)",
   ].filter((x): x is string => !!x);
   const [query, setQuery] = useState("");
   const q = query.trim().toLowerCase();
+  const baseSections = useMemo(() => (isMobile ? sections.filter((x) => x.id !== "ai") : sections), []);
   const visible = useMemo(
-    () => (q ? sections.filter((x) => x.label.toLowerCase().includes(q) || x.keywords.includes(q)) : sections),
-    [q],
+    () => (q ? baseSections.filter((x) => x.label.toLowerCase().includes(q) || x.keywords.includes(q)) : baseSections),
+    [q, baseSections],
   );
   // Al buscar se muestra la primera sección que coincide.
   useEffect(() => {
@@ -173,17 +175,20 @@ export function SettingsModal({
   const autoPreset = presets[appDark ? 0 : 1];
 
   return (
-    <div className="fixed inset-0 z-50 grid place-items-center bg-black/25 p-4" onMouseDown={onClose}>
+    <div className="fixed inset-0 z-50 grid place-items-center bg-black/35 p-0 sm:p-4" onMouseDown={onClose}>
       <div
         {...win.box}
-        className="@container w-[800px] h-[600px] min-w-[420px] min-h-[340px] max-w-[96vw] max-h-[94vh] resize flex bg-panel border border-line rounded-xl shadow-pop overflow-hidden"
+        className="@container w-full h-full sm:w-[800px] sm:h-[600px] min-w-0 sm:min-w-[420px] min-h-0 sm:min-h-[340px] max-w-full sm:max-w-[96vw] max-h-full sm:max-h-[94vh] sm:resize flex bg-panel sm:border border-line rounded-none sm:rounded-xl shadow-pop overflow-hidden"
         onMouseDown={(e) => e.stopPropagation()}
       >
-        <nav className="w-12 @[640px]:w-44 shrink-0 bg-chrome border-r border-line p-2 space-y-0.5 overflow-y-auto">
-          <div {...win.handle} className="hidden @[640px]:block px-2 pt-1.5 pb-2 text-[14px] font-semibold select-none">
+        <nav
+          aria-label="Secciones de ajustes"
+          className="hidden @[640px]:block w-44 shrink-0 bg-chrome border-r border-line p-2 space-y-0.5 overflow-y-auto"
+        >
+          <div {...win.handle} className="px-2 pt-1.5 pb-2 text-[14px] font-semibold select-none">
             Ajustes
           </div>
-          <label className="hidden @[640px]:flex items-center gap-1.5 mx-1 mb-2 h-7 px-2 rounded-md border border-field-line bg-field focus-within:border-accent focus-within:ring-3 focus-within:ring-[var(--selected)]">
+          <label className="flex items-center gap-1.5 mx-1 mb-2 h-7 px-2 rounded-md border border-field-line bg-field focus-within:border-accent focus-within:ring-3 focus-within:ring-[var(--selected)]">
             <Search size={13} className="text-muted shrink-0" />
             <input
               className="flex-1 min-w-0 bg-transparent outline-none text-[12px] placeholder:text-muted"
@@ -196,19 +201,19 @@ export function SettingsModal({
           {groups.map((g) => (
             <div key={g.name} className="pb-1.5">
               {g.name !== "Acerca de" && (
-                <div className="hidden @[640px]:block px-2 pt-1.5 pb-1 text-[11px] font-semibold uppercase tracking-wide text-muted">{g.name}</div>
+                <div className="px-2 pt-1.5 pb-1 text-[11px] font-semibold uppercase tracking-wide text-muted">{g.name}</div>
               )}
               {g.items.map(({ id, label, Icon }) => (
                 <button
                   key={id}
                   onClick={() => setSection(id)}
                   title={label}
-                  className={`w-full flex items-center gap-2 px-2 h-8 rounded-md text-left ${
+                  className={`w-full flex items-center justify-start gap-2 px-2 h-8 rounded-md text-left ${
                     section === id ? "bg-selected text-fg" : "text-muted hover:text-fg hover:bg-hover"
                   }`}
                 >
                   <Icon size={15} className="shrink-0" />
-                  <span className="hidden @[640px]:inline truncate">{label}</span>
+                  <span className="truncate">{label}</span>
                 </button>
               ))}
             </div>
@@ -217,18 +222,58 @@ export function SettingsModal({
         </nav>
 
         <div className="flex-1 min-w-0 flex flex-col">
-          <header {...win.handle} className="flex items-center justify-between h-12 px-5 border-b border-line select-none">
-            <h2 className="text-[14px] font-semibold">{sections.find((x) => x.id === section)?.label}</h2>
-            <button
-              onClick={onClose}
-              aria-label="Cerrar"
-              className="w-7 h-7 grid place-items-center rounded-md text-muted hover:text-fg hover:bg-hover"
-            >
-              <X size={16} />
-            </button>
+          <header {...win.handle} className="shrink-0 flex items-center justify-between gap-2 h-12 px-3 sm:px-5 border-b border-line select-none">
+            <h2 className="text-[14.5px] sm:text-[14px] font-semibold truncate">{sections.find((x) => x.id === section)?.label}</h2>
+            <div className="flex items-center gap-1 shrink-0">
+              <button
+                type="button"
+                onClick={() => setSection("about")}
+                title="Acerca de NetTerminal"
+                aria-label="Acerca de"
+                className={`@[640px]:hidden flex items-center gap-1 px-2.5 h-8 rounded-full border text-[12px] font-medium transition-colors ${
+                  section === "about" ? "bg-selected text-accent border-accent/40" : "border-line text-muted hover:text-fg hover:bg-hover"
+                }`}
+              >
+                <Info size={14} />
+                <span className="hidden min-[360px]:inline">Acerca de</span>
+              </button>
+              <button
+                onClick={onClose}
+                aria-label="Cerrar"
+                className="w-8 h-8 sm:w-7 sm:h-7 grid place-items-center rounded-full sm:rounded-md text-muted hover:text-fg hover:bg-hover"
+              >
+                <X size={17} />
+              </button>
+            </div>
           </header>
 
-          <div className="flex-1 overflow-y-auto px-5 py-4 space-y-5">
+          {/* Barra horizontal deslizable de chips Material 3 en teléfonos y pantallas compactas (< 640px) */}
+          <nav
+            aria-label="Secciones de ajustes (móvil)"
+            className="flex @[640px]:hidden items-center gap-1.5 px-3 py-2 border-b border-line bg-chrome overflow-x-auto [scrollbar-width:none] [&::-webkit-scrollbar]:hidden shrink-0"
+          >
+            {baseSections.map(({ id, label, Icon }) => {
+              const isActive = section === id;
+              return (
+                <button
+                  key={id}
+                  type="button"
+                  onClick={() => setSection(id)}
+                  aria-current={isActive ? "page" : undefined}
+                  className={`shrink-0 flex items-center gap-1.5 px-3 h-8.5 rounded-full text-[12px] font-medium border transition-colors touch-manipulation ${
+                    isActive
+                      ? "bg-selected text-fg border-accent/40"
+                      : "bg-panel text-muted border-line hover:text-fg hover:bg-hover"
+                  }`}
+                >
+                  <Icon size={14} className={isActive ? "text-accent shrink-0" : "shrink-0"} />
+                  <span>{label}</span>
+                </button>
+              );
+            })}
+          </nav>
+
+          <div className="flex-1 overflow-y-auto px-3 sm:px-5 py-3 sm:py-4 space-y-4 sm:space-y-5">
             {section === "appearance" && (
               <>
                 <Item label="Interfaz">
@@ -243,27 +288,31 @@ export function SettingsModal({
                   />
                 </Item>
 
-                <Item label="Pestañas" hint="Verticales: en una columna a la izquierda">
-                  <Segmented
-                    value={s.tabLayout}
-                    onChange={(v) => onChange({ tabLayout: v })}
-                    options={[
-                      ["horizontal", "Horizontales"],
-                      ["vertical", "Verticales"],
-                    ]}
-                  />
-                </Item>
+                {!isMobile && (
+                  <>
+                    <Item label="Pestañas" hint="Verticales: en una columna a la izquierda">
+                      <Segmented
+                        value={s.tabLayout}
+                        onChange={(v) => onChange({ tabLayout: v })}
+                        options={[
+                          ["horizontal", "Horizontales"],
+                          ["vertical", "Verticales"],
+                        ]}
+                      />
+                    </Item>
 
-                <Item
-                  label="Barra de sesiones flotante"
-                  hint="Con la barra de sesiones cerrada, al pasar el mouse por Sesiones (barra de actividad) se abre sobre la terminal sin empujarla; se cierra al salir, elegir una sesión o con Esc, y «Fijar» la vuelve a acoplar"
-                >
-                  <Switch checked={s.floatingSidebar} onChange={(v) => onChange({ floatingSidebar: v })} />
-                </Item>
+                    <Item
+                      label="Barra de sesiones flotante"
+                      hint="Con la barra de sesiones cerrada, al pasar el mouse por Sesiones (barra de actividad) se abre sobre la terminal sin empujarla; se cierra al salir, elegir una sesión o con Esc, y «Fijar» la vuelve a acoplar"
+                    >
+                      <Switch checked={s.floatingSidebar} onChange={(v) => onChange({ floatingSidebar: v })} />
+                    </Item>
+                  </>
+                )}
 
                 <div>
                   <Label>Tema de terminal</Label>
-                  <div className="grid grid-cols-3 gap-2">
+                  <div className="grid grid-cols-1 @[330px]:grid-cols-2 @[520px]:grid-cols-3 gap-2">
                     <ThemeCard
                       preset={{ ...autoPreset, name: "Automático" }}
                       hint="Sigue la interfaz"
@@ -285,7 +334,7 @@ export function SettingsModal({
 
                 <Item label="Fuente">
                   <input
-                    className="field !w-52"
+                    className="field max-w-full w-full sm:!w-52"
                     list="font-list"
                     placeholder="Predeterminada del sistema"
                     value={s.fontFamily}
@@ -306,7 +355,7 @@ export function SettingsModal({
                       max={28}
                       value={s.fontSize}
                       onChange={(e) => onChange({ fontSize: Number(e.target.value) })}
-                      className="w-36 accent-[var(--accent)]"
+                      className="w-28 sm:w-36 accent-[var(--accent)]"
                     />
                     <span className="w-10 text-right tabular-nums">{s.fontSize}px</span>
                   </div>
@@ -314,7 +363,7 @@ export function SettingsModal({
 
                 <Item label="Interlineado">
                   <select
-                    className="field !w-28"
+                    className="field max-w-full w-full sm:!w-28"
                     value={s.lineHeight}
                     onChange={(e) => onChange({ lineHeight: Number(e.target.value) })}
                   >
@@ -351,9 +400,22 @@ export function SettingsModal({
             {section === "modules" && (
               <>
                 <p className="text-[12px] text-muted">
-                  Muestra u oculta herramientas en la pestaña Herramientas. Desactivar un módulo no borra su configuración.
+                  Muestra u oculta herramientas y vistas en la interfaz. Desactivar un módulo no borra su configuración ni sus datos.
                 </p>
-                {MODULES.map(([id, label, hint]) => (
+                <Item
+                  label="CLI Lab (scripts multilínea)"
+                  hint={
+                    isMobile
+                      ? "Automatización multilínea con variables para varias sesiones. Viene deshabilitada por defecto en móvil para mantener la navegación limpia; ideal si usas tablet con teclado físico."
+                      : "Editor y ejecución masiva de scripts multilínea con variables y lectura de respuestas comando a comando."
+                  }
+                >
+                  <Switch
+                    checked={s.cliLabEnabled}
+                    onChange={(v) => onChange({ cliLabEnabled: v })}
+                  />
+                </Item>
+                {MODULES.filter(([id]) => !isMobile || id !== "plugins").map(([id, label, hint]) => (
                   <Item key={id} label={label} hint={hint}>
                     <Switch
                       checked={s.modules[id] !== false}
@@ -364,13 +426,17 @@ export function SettingsModal({
               </>
             )}
 
-            {section === "ai" && <AiSettings settings={s} status={mcpStatus} onChange={onChange} />}
+            {section === "ai" && !isMobile && (
+              <Suspense fallback={null}>
+                <AiSettings settings={s} status={mcpStatus} onChange={onChange} />
+              </Suspense>
+            )}
 
             {section === "terminal" && (
               <>
                 <Item label="Historial (scrollback)" hint="Líneas por pestaña. Cada 1.000 líneas llenas ocupan unos 3 MB; el log en disco guarda todo">
                   <select
-                    className="field !w-32"
+                    className="field max-w-full w-full sm:!w-32"
                     value={s.scrollback}
                     onChange={(e) => onChange({ scrollback: Number(e.target.value) })}
                   >
@@ -384,8 +450,16 @@ export function SettingsModal({
                 <Item label="Copiar al seleccionar" hint="El texto seleccionado pasa al portapapeles">
                   <Switch checked={s.copyOnSelect} onChange={(v) => onChange({ copyOnSelect: v })} />
                 </Item>
-                <Item label="Pegar con clic derecho">
-                  <Switch checked={s.rightClickPaste} onChange={(v) => onChange({ rightClickPaste: v })} />
+                {!isMobile && (
+                  <Item label="Pegar con clic derecho">
+                    <Switch checked={s.rightClickPaste} onChange={(v) => onChange({ rightClickPaste: v })} />
+                  </Item>
+                )}
+                <Item
+                  label="Barra de teclas táctiles en terminal"
+                  hint="Muestra una barra de teclas rápidas (Esc, Tab, Ctrl, flechas, ?, |, pegar, buscar) optimizada para dispositivos Android y pantallas táctiles"
+                >
+                  <Switch checked={s.showMobileKeyBar} onChange={(v) => onChange({ showMobileKeyBar: v })} />
                 </Item>
                 <Item label="Confirmar al cerrar" hint="Pide confirmación antes de cortar una sesión remota activa">
                   <Switch checked={s.confirmClose} onChange={(v) => onChange({ confirmClose: v })} />
@@ -410,27 +484,31 @@ export function SettingsModal({
                 </Item>
                 {s.commandSuggest && (
                   <>
-                    <Item label="Tecla para abrir la lista" hint="Ctrl+Espacio choca con el cambio de fuente de entrada de macOS. En Linux con IBus, Ctrl+. puede abrir el selector de emojis: usa Alt+/ (tecla física de la barra en el teclado US, la del guion en el latinoamericano)">
-                      <select
-                        className="field !w-40"
-                        value={s.suggestListKey}
-                        onChange={(e) => onChange({ suggestListKey: e.target.value as ListKey })}
-                      >
-                        {(Object.keys(LIST_KEYS) as ListKey[]).map((k) => (
-                          <option key={k} value={k}>
-                            {LIST_KEYS[k]}
-                          </option>
-                        ))}
-                      </select>
-                    </Item>
-                    <Item
-                      label="Tab acepta la sugerencia"
-                      hint="Solo cuando hay una sugerencia visible. Sin sugerencia (en un marcador como {{interfaz}}, un nombre que no está en el catálogo o tras Esc), Tab va al equipo y funciona su autocompletado. Un segundo Tab dentro de 400 ms también va al equipo, para seguir con su autocompletado"
-                    >
-                      <Switch checked={s.suggestTabAccept} onChange={(v) => onChange({ suggestTabAccept: v })} />
-                    </Item>
+                    {!isMobile && (
+                      <>
+                        <Item label="Tecla para abrir la lista" hint="Ctrl+Espacio choca con el cambio de fuente de entrada de macOS. En Linux con IBus, Ctrl+. puede abrir el selector de emojis: usa Alt+/ (tecla física de la barra en el teclado US, la del guion en el latinoamericano)">
+                          <select
+                            className="field max-w-full w-full sm:!w-40"
+                            value={s.suggestListKey}
+                            onChange={(e) => onChange({ suggestListKey: e.target.value as ListKey })}
+                          >
+                            {(Object.keys(LIST_KEYS) as ListKey[]).map((k) => (
+                              <option key={k} value={k}>
+                                {LIST_KEYS[k]}
+                              </option>
+                            ))}
+                          </select>
+                        </Item>
+                        <Item
+                          label="Tab acepta la sugerencia"
+                          hint="Solo cuando hay una sugerencia visible. Sin sugerencia (en un marcador como {{interfaz}}, un nombre que no está en el catálogo o tras Esc), Tab va al equipo y funciona su autocompletado. Un segundo Tab dentro de 400 ms también va al equipo, para seguir con su autocompletado"
+                        >
+                          <Switch checked={s.suggestTabAccept} onChange={(v) => onChange({ suggestTabAccept: v })} />
+                        </Item>
+                      </>
+                    )}
                     <Item label="Color de la sugerencia" hint="Automático elige por tema un color con al menos 3:1 de contraste con el fondo, distinto del texto y del cursor. Un tono fijo se ajusta a cada tema para mantener ese contraste">
-                      <select className="field !w-40" value={s.suggestColor} onChange={(e) => onChange({ suggestColor: e.target.value as GhostColor })}>
+                      <select className="field max-w-full w-full sm:!w-40" value={s.suggestColor} onChange={(e) => onChange({ suggestColor: e.target.value as GhostColor })}>
                         {(Object.keys(GHOST_COLORS) as GhostColor[]).map((k) => (
                           <option key={k} value={k}>
                             {GHOST_COLORS[k]}
@@ -439,7 +517,7 @@ export function SettingsModal({
                       </select>
                     </Item>
                     <Item label="Estilo de la sugerencia" hint="Cursiva o subrayado punteado la distinguen aún más de la salida del equipo">
-                      <select className="field !w-40" value={s.suggestStyle} onChange={(e) => onChange({ suggestStyle: e.target.value as GhostStyle })}>
+                      <select className="field max-w-full w-full sm:!w-40" value={s.suggestStyle} onChange={(e) => onChange({ suggestStyle: e.target.value as GhostStyle })}>
                         {(Object.keys(GHOST_STYLES) as GhostStyle[]).map((k) => (
                           <option key={k} value={k}>
                             {GHOST_STYLES[k]}
@@ -460,12 +538,19 @@ export function SettingsModal({
                 <Item label="Confirmar envío de varias líneas" hint="Muestra un resumen antes de enviar o pegar un bloque en un equipo remoto">
                   <Switch checked={s.confirmSend} onChange={(v) => onChange({ confirmSend: v })} />
                 </Item>
-                <Item label="Barra de botones" hint="Comandos rápidos y scripts sobre la barra de estado. Se oculta sola si no hay botones; «Nuevo botón» y los scripts siguen en la paleta (⌘K)">
+                <Item
+                  label="Barra de botones"
+                  hint={
+                    isMobile
+                      ? "Comandos rápidos de un clic sobre la barra de estado. Se oculta sola si no hay botones"
+                      : "Comandos rápidos y scripts sobre la barra de estado. Se oculta sola si no hay botones; «Nuevo botón» y los scripts siguen en la paleta (⌘K)"
+                  }
+                >
                   <Switch checked={s.showButtonBar} onChange={(v) => onChange({ showButtonBar: v })} />
                 </Item>
                 <Item label="Pausa entre líneas" hint="Útil en consolas serial o equipos que pierden caracteres al pegar">
                   <select
-                    className="field !w-32"
+                    className="field max-w-full w-full sm:!w-32"
                     value={s.sendLineDelay}
                     onChange={(e) => onChange({ sendLineDelay: Number(e.target.value) })}
                   >
@@ -519,10 +604,10 @@ export function SettingsModal({
             {section === "sessions" && (
               <>
                 <Item label="Sesiones" hint="Comparte tu lista de equipos en XML o JSON, o importa desde otros clientes">
-                  <div className="flex gap-1.5">
+                  <div className="flex flex-wrap gap-1.5">
                     <button
                       onClick={importSessions}
-                      className="px-3 h-7 rounded-md border border-line hover:bg-hover"
+                      className="px-3 h-8 sm:h-7 rounded-lg sm:rounded-md border border-line hover:bg-hover"
                     >
                       Importar
                     </button>
@@ -530,7 +615,7 @@ export function SettingsModal({
                       <button
                         onClick={onImportFile}
                         title="PuTTY, SecureCRT, MobaXterm, ~/.ssh/config o CSV"
-                        className="px-3 h-7 rounded-md border border-line hover:bg-hover"
+                        className="px-3 h-8 sm:h-7 rounded-lg sm:rounded-md border border-line hover:bg-hover"
                       >
                         Desde archivo…
                       </button>
@@ -538,7 +623,7 @@ export function SettingsModal({
                     <button
                       onClick={onExportFile}
                       title="Elige qué sesiones: XML (compatible con SecureCRT) o JSON"
-                      className="px-3 h-7 rounded-md border border-line hover:bg-hover"
+                      className="px-3 h-8 sm:h-7 rounded-lg sm:rounded-md border border-line hover:bg-hover"
                     >
                       Exportar…
                     </button>
@@ -548,19 +633,21 @@ export function SettingsModal({
                 <Item label="Carpeta de datos" hint={dataDir}>
                   <OpenBtn which="data" />
                 </Item>
-                <p className="text-[11.5px] text-muted">
-                  Para modo portable, crea un archivo llamado <code>portable</code> junto al ejecutable: sesiones,
-                  ajustes y logs se guardarán en <code>./data</code>.
-                </p>
+                {!isMobile && (
+                  <p className="text-[11.5px] text-muted">
+                    Para modo portable, crea un archivo llamado <code>portable</code> junto al ejecutable: sesiones,
+                    ajustes y logs se guardarán en <code>./data</code>.
+                  </p>
+                )}
               </>
             )}
           </div>
 
-          <footer className="flex justify-between items-center px-5 h-12 border-t border-line">
+          <footer className="flex flex-wrap justify-between items-center gap-2 px-3 sm:px-5 min-h-12 py-1.5 border-t border-line">
             <button
               onClick={() => setConfirmReset(true)}
               title="Las reglas de resaltado personalizadas se conservan"
-              className="px-2.5 h-7 rounded-md border border-line text-[12px] text-muted hover:text-danger hover:border-danger"
+              className="px-3 h-8 sm:h-7 rounded-lg sm:rounded-md border border-line text-[12px] text-muted hover:text-danger hover:border-danger"
             >
               Restablecer valores
             </button>
@@ -629,7 +716,7 @@ function LogNaming({ settings: s, onChange }: { settings: Settings; onChange: (p
     <div className="space-y-1.5">
       <Item label="Nombre del archivo" hint="Variables: {session} {host} {folder} {date} {time}. {folder} crea subcarpetas">
         <input
-          className="field !w-56 font-mono !text-[12px]"
+          className="field max-w-full w-full sm:!w-56 font-mono !text-[12px]"
           value={s.logPattern}
           maxLength={200}
           placeholder={defaultSettings.logPattern}
@@ -736,20 +823,20 @@ function UpdateSettings({ settings: s, onChange }: { settings: Settings; onChang
     setBusy(false);
   };
   return (
-    <div className="rounded-lg border border-line p-3 space-y-2">
-      <div className="flex items-center justify-between gap-3">
-        <div className="min-w-0">
-          <div>Actualizaciones</div>
-          <div className="text-[11.5px] text-muted">
+    <div className="rounded-xl sm:rounded-lg border border-line p-3.5 sm:p-3 space-y-2">
+      <div className="flex flex-wrap items-center justify-between gap-3">
+        <div className="min-w-0 flex-1">
+          <div className="font-medium">Actualizaciones</div>
+          <div className="text-[11.5px] text-muted leading-snug">
             Versión instalada {version}. Revisa al abrir la app y cada 6 horas; instala con un clic y verifica la firma del
             proyecto antes de instalar.
           </div>
         </div>
-        <button onClick={check} disabled={busy} className="shrink-0 px-3 h-7 rounded-md border border-line hover:bg-hover disabled:opacity-40">
+        <button onClick={check} disabled={busy} className="shrink-0 px-3.5 h-8.5 sm:h-7 rounded-full sm:rounded-md border border-line hover:bg-hover disabled:opacity-40 text-[12.5px] sm:text-[12px] font-medium sm:font-normal">
           {busy ? "Buscando…" : "Buscar ahora"}
         </button>
       </div>
-      {repo && <p className="text-[11px] text-muted">Fuente: releases de github.com/{repo}</p>}
+      {repo && <p className="text-[11px] text-muted break-all">Fuente: releases de github.com/{repo}</p>}
       {status && <p className="text-[12px] text-accent">{status}</p>}
     </div>
   );
@@ -765,24 +852,29 @@ function About({ settings, onChange }: { settings: Settings; onChange: (p: Parti
   }, []);
   return (
     <div className="space-y-5">
-    <div className="flex flex-col items-center text-center gap-2 pt-4">
-      <img src={logo} alt="" className="w-16 h-16" />
-      <div className="text-[18px] font-semibold">NetTerminal</div>
-      <div className="text-[12px] text-muted">Versión {version}</div>
-      <p className="text-[13px] mt-2">
-        Creado por <span className="font-semibold">Nicolás Rivera</span>
-      </p>
-      <p className="text-[12px] text-muted">Desarrollado en conjunto con Claude</p>
-      <p className="text-[12px] text-muted max-w-sm mt-2">
-        Cliente SSH, Telnet, Serial y terminal local para el trabajo diario con equipos de red. Tauri 2, Rust y xterm.js.
-      </p>
-      {repo && (
-        <button onClick={() => openUrl(`https://github.com/${repo}`)} className="mt-2 px-3 h-7 rounded-md border border-line hover:bg-hover text-[12px]">
-          github.com/{repo}
-        </button>
-      )}
-    </div>
-    <UpdateSettings settings={settings} onChange={onChange} />
+      <div className="flex flex-col items-center text-center gap-2 pt-3 pb-2 px-3 rounded-2xl bg-chrome/60 border border-line/60">
+        <img src={logo} alt="Logo de NetTerminal" className="w-20 h-20 drop-shadow-sm" draggable={false} />
+        <div className="text-[19px] font-semibold tracking-tight">NetTerminal</div>
+        <div className="px-2.5 py-0.5 rounded-full bg-selected text-accent text-[11.5px] font-medium">
+          Versión {version || "0.9.19"}
+        </div>
+        <p className="text-[13px] mt-1.5">
+          Creado por <span className="font-semibold">Nicolás Rivera</span>
+        </p>
+        <p className="text-[12px] text-muted">Desarrollado en conjunto con Claude</p>
+        <p className="text-[12.5px] text-muted max-w-sm mt-1 leading-relaxed">
+          Cliente SSH, Telnet, Serial y terminal local para el trabajo diario con equipos de red. Tauri 2, Rust y xterm.js.
+        </p>
+        {repo && (
+          <button
+            onClick={() => openUrl(`https://github.com/${repo}`)}
+            className="mt-2 px-4 h-9 sm:h-7 rounded-full sm:rounded-md border border-line bg-panel hover:bg-hover text-[12.5px] sm:text-[12px] font-medium"
+          >
+            github.com/{repo}
+          </button>
+        )}
+      </div>
+      <UpdateSettings settings={settings} onChange={onChange} />
     </div>
   );
 }
@@ -802,7 +894,7 @@ function ClearSuggestHistory() {
           setDone(true);
         }}
         disabled={done}
-        className="px-3 h-7 rounded-md border border-line hover:bg-hover disabled:opacity-50 text-[12px]"
+        className="px-3 h-8 sm:h-7 rounded-lg sm:rounded-md border border-line hover:bg-hover disabled:opacity-50 text-[12px]"
       >
         {done ? "Historial borrado" : "Borrar historial de sugerencias"}
       </button>
@@ -812,12 +904,12 @@ function ClearSuggestHistory() {
 
 function Item({ label, hint, children }: { label: string; hint?: string; children: React.ReactNode }) {
   return (
-    <div className="flex items-center justify-between gap-4 min-h-8">
-      <div className="min-w-0">
-        <div>{label}</div>
-        {hint && <div className="text-[11.5px] text-muted truncate" title={hint}>{hint}</div>}
+    <div className="flex flex-wrap items-center justify-between gap-x-4 gap-y-2 min-h-10 sm:min-h-8 py-1 sm:py-0">
+      <div className="min-w-0 sm:min-w-[160px] flex-1">
+        <div className="font-medium sm:font-normal">{label}</div>
+        {hint && <div className="text-[11.5px] text-muted leading-snug sm:truncate mt-0.5" title={hint}>{hint}</div>}
       </div>
-      <div className="shrink-0">{children}</div>
+      <div className="shrink-0 max-w-full">{children}</div>
     </div>
   );
 }
@@ -828,11 +920,11 @@ function Switch({ checked, onChange }: { checked: boolean; onChange: (v: boolean
       role="switch"
       aria-checked={checked}
       onClick={() => onChange(!checked)}
-      className={`relative w-9 h-5 rounded-full transition-colors before:absolute before:-inset-[3px] before:content-[''] ${checked ? "bg-accent" : "bg-field-line"}`}
+      className={`relative w-11 h-6 sm:w-9 sm:h-5 rounded-full transition-colors touch-manipulation before:absolute before:-inset-[4px] before:content-[''] ${checked ? "bg-accent" : "bg-field-line"}`}
     >
       <span
-        className={`absolute top-0.5 left-0.5 w-4 h-4 rounded-full bg-white shadow transition-transform ${
-          checked ? "translate-x-4" : ""
+        className={`absolute top-0.5 left-0.5 w-5 h-5 sm:w-4 sm:h-4 rounded-full bg-white shadow transition-transform ${
+          checked ? "translate-x-5 sm:translate-x-4" : ""
         }`}
       />
     </button>
@@ -849,12 +941,12 @@ function Segmented<T extends string>({
   onChange: (v: T) => void;
 }) {
   return (
-    <div className="flex p-0.5 rounded-lg bg-hover">
+    <div className="flex flex-wrap p-0.5 rounded-xl sm:rounded-lg bg-hover">
       {options.map(([v, label]) => (
         <button
           key={v}
           onClick={() => onChange(v)}
-          className={`px-3 h-7 rounded-md text-[12.5px] ${
+          className={`px-3 h-8 sm:h-7 rounded-lg sm:rounded-md text-[12.5px] font-medium sm:font-normal touch-manipulation ${
             value === v ? "bg-panel shadow-sm text-fg" : "text-muted hover:text-fg"
           }`}
         >
@@ -910,6 +1002,7 @@ function ThemeCard({
 }
 
 function OpenBtn({ which }: { which: "logs" | "data" }) {
+  if (isMobile) return null;
   return (
     <button
       onClick={() => invoke("open_dir", { which }).catch(console.error)}

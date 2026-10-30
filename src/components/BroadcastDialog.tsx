@@ -60,15 +60,15 @@ export function BroadcastDialog({ text, resolved, declared, delayMs, verb, onCan
   }, [onCancel, onConfirm, needsCount, ok, delay]);
 
   return (
-    <div className="fixed inset-0 z-50 grid place-items-center bg-black/30 p-4" onMouseDown={onCancel}>
+    <div className="fixed inset-0 z-50 grid place-items-center bg-black/30 p-2 sm:p-4" onMouseDown={onCancel}>
       <div
         role="alertdialog"
         aria-modal="true"
         aria-labelledby="bc-title"
-        className="w-[620px] max-w-full max-h-[90vh] flex flex-col bg-panel border border-line rounded-xl shadow-pop"
+        className="w-full sm:w-[620px] max-w-[calc(100vw-1rem)] sm:max-w-[96vw] max-h-[96vh] sm:max-h-[90vh] flex flex-col bg-panel border border-line rounded-xl shadow-pop"
         onMouseDown={(e) => e.stopPropagation()}
       >
-        <header className="px-5 pt-4 pb-2">
+        <header className="px-3 sm:px-5 pt-4 pb-2">
           <h2 id="bc-title" className="text-[14px] font-semibold flex items-center gap-2">
             <Radio size={15} className={risk === "read" ? "text-accent" : riskColor[risk]} />
             {verb ? `${verb} en` : "Enviar a"} {n} {n === 1 ? "equipo" : "equipos"}
@@ -78,7 +78,7 @@ export function BroadcastDialog({ text, resolved, declared, delayMs, verb, onCan
             {risk === "disruptive" ? " en todos los equipos de la lista." : ""}
           </p>
         </header>
-        <div className="px-5 overflow-y-auto space-y-3 min-h-0">
+        <div className="px-3 sm:px-5 overflow-y-auto space-y-3 min-h-0">
           <div>
             <h3 className="text-[11.5px] font-medium text-muted mb-1">Destinos, en este orden</h3>
             <ol className="rounded-md border border-line divide-y divide-[var(--border)] max-h-40 overflow-y-auto text-[12px]">
@@ -110,7 +110,7 @@ export function BroadcastDialog({ text, resolved, declared, delayMs, verb, onCan
               ))}
             </div>
           </div>
-          <div className="flex flex-wrap items-end gap-4 pb-1">
+          <div className="flex flex-wrap items-end gap-3 pb-1">
             {!verb && <label className="text-[12px]">
               <span className="block text-[11.5px] font-medium text-muted mb-1">Pausa entre equipos</span>
               <span className="flex items-center gap-1.5">
@@ -127,7 +127,7 @@ export function BroadcastDialog({ text, resolved, declared, delayMs, verb, onCan
               </span>
             </label>}
             {needsCount && n > 0 && (
-              <label className="text-[12px] flex-1 min-w-[220px]">
+              <label className="text-[12px] flex-1 min-w-0 sm:min-w-[220px]">
                 <span className={`block text-[11.5px] font-medium mb-1 ${riskColor[risk]}`}>
                   Para confirmar, escribe la cantidad de equipos ({n})
                 </span>
@@ -136,15 +136,15 @@ export function BroadcastDialog({ text, resolved, declared, delayMs, verb, onCan
             )}
           </div>
         </div>
-        <footer className="flex justify-end gap-2 px-5 py-4">
-          <button onClick={onCancel} className="px-3.5 h-8 rounded-md border border-line hover:bg-hover">
+        <footer className="flex flex-wrap justify-end gap-2 px-3 sm:px-5 py-3 sm:py-4 border-t border-line">
+          <button onClick={onCancel} className="px-4 sm:px-3.5 h-10 sm:h-8 rounded-xl sm:rounded-md border border-line hover:bg-hover text-[13px] font-medium sm:font-normal touch-manipulation">
             Cancelar
           </button>
           <button
             autoFocus={!needsCount}
             disabled={!ok}
             onClick={() => onConfirm(delay)}
-            className={`px-3.5 h-8 rounded-md font-medium hover:opacity-90 disabled:opacity-40 ${
+            className={`px-4 sm:px-3.5 h-10 sm:h-8 rounded-xl sm:rounded-md font-medium hover:opacity-90 disabled:opacity-40 text-[13px] touch-manipulation ${
               risk === "disruptive" ? "bg-danger text-danger-fg" : risk === "change" ? "bg-warn text-accent-fg" : "bg-accent text-accent-fg"
             }`}
           >

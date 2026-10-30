@@ -67,6 +67,10 @@ export interface TermController {
   send: (text: string, lineDelayMs: number) => Promise<void>;
   /** Escribe texto en la sesión sin Enter (para completar antes de ejecutar). */
   type: (text: string) => void;
+  /** Pega texto desde el portapapeles en la sesión (respetando confirmación de varias líneas). */
+  paste?: () => Promise<void>;
+  /** Envía tecla especial o secuencia interactuando con autocompletado y sugerencias. */
+  sendKey?: (key: string) => void;
   /** Cierra la conexión dejando la pestaña abierta. */
   disconnect: () => void;
   clearScrollback: () => void;
@@ -118,6 +122,10 @@ interface Props {
   register: (id: string, ctrl: TermController | null) => void;
   /** Catálogo de comandos: fuente de las sugerencias. */
   catalog?: CatalogVendor[];
+  /** Modificador Ctrl activo en barra táctil (sticky Ctrl móvil). */
+  ctrlActive?: boolean;
+  /** Notifica que el modificador Ctrl fue consumido al enviar una tecla. */
+  onConsumeCtrl?: () => void;
 }
 
 /** Lista de sugerencias (Ctrl+. por defecto, configurable). */
@@ -156,7 +164,11 @@ const NOOP = () => {};
 
 const dim = (s: string) => `\x1b[2m${s}\x1b[0m`;
 
-export const TerminalView = memo(function TerminalView({ id, session, active, visible = active, rect, onFocusPane, settings, theme, onStatus, onLog, logPath, onActivity, onEnableLegacy, onScreenHint, register, catalog }: Props) {
+export const TerminalView = memo(function TerminalView({ id, session, active, visible = active, rect, onFocusPane, settings, theme, onStatus, onLog, logPath, onActivity, onEnableLegacy, onScreenHint, register, catalog, ctrlActive, onConsumeCtrl }: Props) {
+  const ctrlActiveRef = useRef(ctrlActive);
+  ctrlActiveRef.current = ctrlActive;
+  const onConsumeCtrlRef = useRef(onConsumeCtrl);
+  onConsumeCtrlRef.current = onConsumeCtrl;
   const screenHintRef = useRef(onScreenHint);
   screenHintRef.current = onScreenHint;
   // "Visible" decide WebGL y el aviso de actividad; "active" (foco) decide el teclado.
@@ -812,6 +824,21 @@ export const TerminalView = memo(function TerminalView({ id, session, active, vi
     term.onData((data) => {
       data = translateBackspace(data, backspaceKey);
       backspaceKey = null;
+
+      // Modificador sticky Ctrl táctil (Android/pantallas táctiles):
+      // Si Ctrl está activo y el usuario escribe una letra en el teclado virtual, se convierte en su código de control.
+      if (ctrlActiveRef.current && data.length > 0) {
+        const first = data[0];
+        if (/[a-zA-Z]/.test(first)) {
+          const code = first.toUpperCase().charCodeAt(0) - 64;
+          data = String.fromCharCode(code) + data.slice(1);
+          onConsumeCtrlRef.current?.();
+        } else if (/^[@\[\\\]^_]$/.test(first)) {
+          const code = first.charCodeAt(0) & 0x1f;
+          data = String.fromCharCode(code) + data.slice(1);
+          onConsumeCtrlRef.current?.();
+        }
+      }
       if (statusRef.current === "closed") {
         if (sessionRef.current.scp) return;
         if (legacyOffer && (data === "l" || data === "L")) {
@@ -954,6 +981,14 @@ export const TerminalView = memo(function TerminalView({ id, session, active, vi
     });
     observer.observe(hostRef.current!);
 
+    const onViewportResize = () => {
+      cancelAnimationFrame(frame);
+      frame = requestAnimationFrame(() => {
+        if (hostRef.current && hostRef.current.offsetWidth > 0) fit.fit();
+      });
+    };
+    window.visualViewport?.addEventListener("resize", onViewportResize);
+
     register(id, {
       connId: () => connIdRef.current,
       reconnect: () => {
@@ -979,7 +1014,105 @@ export const TerminalView = memo(function TerminalView({ id, session, active, vi
         }
       },
       type: (text) => {
-        if (statusRef.current === "connected") invoke("write", { id: connIdRef.current, data: text }).catch(() => {});
+        if (statusRef.current === "connected") {
+          sendInput(text);
+          if (tracking()) {
+            tracker.input(text);
+            scheduleSuggest();
+          }
+        }
+        term.focus();
+      },
+      paste: async () => {
+        await paste();
+        term.focus();
+      },
+      sendKey: (key: string) => {
+        if (statusRef.current === "closed") {
+          if (key === "Enter" || key === "\r") {
+            term.write("\r\n");
+            retries = 0;
+            connect();
+          }
+          return;
+        }
+        if (statusRef.current !== "connected") return;
+
+        if (key === "Tab" || key === "\t") {
+          const idx = tracker.active ? suggestIndex() : null;
+          const g = idx ? ghostFor(idx, tracker.buf) : null;
+          const canAccept = !!g?.insert && shown?.insert === g.insert && shown.buf === tracker.buf;
+          if (settingsRef.current.suggestTabAccept && canAccept && g?.insert && idx) {
+            typeInsert(g.insert);
+            remember(idx, g.entry);
+          } else {
+            sendInput("\t");
+          }
+          term.focus();
+          return;
+        }
+
+        if (key === "Escape" || key === "\x1b") {
+          const curList = listRef.current;
+          if (curList) {
+            closeList();
+            scheduleSuggest();
+          } else if (tracker.active && tracker.buf) {
+            tracker.dismissed = true;
+            scheduleSuggest();
+            sendInput("\x1b");
+          } else {
+            sendInput("\x1b");
+          }
+          term.focus();
+          return;
+        }
+
+        if (key === "ArrowUp") {
+          const curList = listRef.current;
+          if (curList) {
+            const n = curList.items.length;
+            setList({ ...curList, sel: (curList.sel + n - 1) % n });
+          } else {
+            sendInput("\x1b[A");
+          }
+          term.focus();
+          return;
+        }
+
+        if (key === "ArrowDown") {
+          const curList = listRef.current;
+          if (curList) {
+            const n = curList.items.length;
+            setList({ ...curList, sel: (curList.sel + 1) % n });
+          } else {
+            sendInput("\x1b[B");
+          }
+          term.focus();
+          return;
+        }
+
+        if (key === "ArrowLeft") {
+          sendInput("\x1b[D");
+          term.focus();
+          return;
+        }
+
+        if (key === "ArrowRight") {
+          const idx = tracker.active ? suggestIndex() : null;
+          const g = idx ? ghostFor(idx, tracker.buf) : null;
+          const canAccept = !!g?.insert && shown?.insert === g.insert && shown.buf === tracker.buf;
+          if (canAccept && g?.insert && idx) {
+            typeInsert(g.insert);
+            remember(idx, g.entry);
+          } else {
+            sendInput("\x1b[C");
+          }
+          term.focus();
+          return;
+        }
+
+        sendInput(key);
         term.focus();
       },
       disconnect,
@@ -1016,6 +1149,7 @@ export const TerminalView = memo(function TerminalView({ id, session, active, vi
       hl.dispose();
       register(id, null);
       observer.disconnect();
+      window.visualViewport?.removeEventListener("resize", onViewportResize);
       cancelAnimationFrame(frame);
       cancelAnimationFrame(suggestFrame);
       window.clearTimeout(hintTimer);

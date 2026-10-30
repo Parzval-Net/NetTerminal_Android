@@ -56,7 +56,7 @@ export default function SnmpConfigGen() {
   return (
     <div className="space-y-4">
       <Section title="Generador de configuración" hint="Configuración de agente SNMP de solo lectura para tus equipos. Se genera en este PC, no se envía a ningún lado.">
-        <div className="grid gap-3 [grid-template-columns:repeat(auto-fit,minmax(170px,1fr))]">
+        <div className="grid gap-3 [grid-template-columns:repeat(auto-fit,minmax(min(170px,100%),1fr))]">
           <Label text="Plataforma">
             <select className="field" value={inp.platform} onChange={(e) => set({ platform: e.target.value as GenInput["platform"] })}>
               {PLATFORMS.map((p) => (
@@ -114,7 +114,7 @@ export default function SnmpConfigGen() {
           )}
         </div>
 
-        <div className="mt-3 grid gap-3 [grid-template-columns:repeat(auto-fit,minmax(220px,1fr))]">
+        <div className="mt-3 grid gap-3 [grid-template-columns:repeat(auto-fit,minmax(min(220px,100%),1fr))]">
           <Label text="NMS autorizados (IPv4 o CIDR)">
             <input className={field("nms", "font-mono")} value={inp.nms} placeholder="192.0.2.10, 198.51.100.0/24" onChange={(e) => set({ nms: e.target.value })} />
             <Err f="nms" />
@@ -143,7 +143,7 @@ export default function SnmpConfigGen() {
           </Label>
         </div>
 
-        <div className="mt-3 grid gap-3 [grid-template-columns:repeat(auto-fit,minmax(220px,1fr))]">
+        <div className="mt-3 grid gap-3 [grid-template-columns:repeat(auto-fit,minmax(min(220px,100%),1fr))]">
           {v3 ? (
             <>
               {pass("authPass", "Contraseña auth", "<AUTH_PASS>", inp.platform === "vrp")}

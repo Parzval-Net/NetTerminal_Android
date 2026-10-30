@@ -77,14 +77,14 @@ export function CredentialSettings() {
 
       {!keychain && st.exists && st.unlocked && (
         <>
-          <div className="flex items-center justify-between gap-4">
-            <span>
+          <div className="flex flex-wrap items-center justify-between gap-3">
+            <span className="min-w-0 flex-1">
               Bloquear ahora
               <span className="block text-[11.5px] text-muted">Borra la llave de memoria. También se bloquea al cerrar la app.</span>
             </span>
             <button
               onClick={() => run("vault_lock", {}, "Bóveda bloqueada")}
-              className="flex items-center gap-1.5 px-3 h-7 rounded-md border border-line hover:bg-hover"
+              className="flex items-center gap-1.5 px-3 h-7 rounded-md border border-line hover:bg-hover shrink-0"
             >
               <Lock size={13} /> Bloquear
             </button>
@@ -98,8 +98,8 @@ export function CredentialSettings() {
       <HopCreds st={st} />
 
       {st.exists && (
-        <div className="pt-3 border-t border-line flex items-center justify-between gap-4">
-          <span>
+        <div className="pt-3 border-t border-line flex flex-wrap items-center justify-between gap-3">
+          <span className="min-w-0 flex-1">
             Restablecer bóveda
             <span className="block text-[11.5px] text-muted">
               Si olvidaste la contraseña maestra o cambiaste de equipo. Borra todas las contraseñas guardadas.
@@ -254,8 +254,8 @@ function HopCreds({ st }: { st: CredStatus }) {
   const canAdd = st.backend === "keychain" || st.exists;
   return (
     <div className="space-y-2 pt-3 border-t border-line">
-      <div className="flex items-center justify-between gap-3">
-        <span>
+      <div className="flex flex-wrap items-center justify-between gap-3">
+        <span className="min-w-0 flex-1">
           Vecinos (saltos)
           <span className="block text-[11.5px] text-muted">
             Contraseñas de equipos a los que Topología salta desde otro, por IP y usuario. Se escriben solas, una vez por salto, cuando el equipo
@@ -278,11 +278,11 @@ function HopCreds({ st }: { st: CredStatus }) {
       ) : list && list.length ? (
         <ul className="rounded-lg border border-line divide-y divide-[var(--border)]">
           {list.map((h) => (
-            <li key={`${h.ip}|${h.user}`} className="flex items-center gap-3 px-3 py-1.5 text-[12px]">
+            <li key={`${h.ip}|${h.user}`} className="flex flex-wrap items-center gap-2 sm:gap-3 px-3 py-2 text-[12px]">
               <span className="font-mono">{h.ip}</span>
               <span>{h.user}</span>
               <span className="text-muted text-[11.5px]">último uso: {lastUsedText(h.last_used)}</span>
-              <span className="ml-auto flex items-center gap-1.5">
+              <span className="w-full sm:w-auto sm:ml-auto flex items-center justify-end gap-1.5 pt-1 sm:pt-0">
                 {confirm?.ip === h.ip && confirm.user === h.user ? (
                   <>
                     <span className="text-[11.5px]">¿Eliminar?</span>

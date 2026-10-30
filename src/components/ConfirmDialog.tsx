@@ -34,26 +34,26 @@ export function ConfirmDialog({ title, message, confirmLabel, danger, defaultCan
   }, [onConfirm, onCancel, defaultCancel]);
 
   return (
-    <div className="fixed inset-0 z-50 grid place-items-center bg-black/25 p-4" onMouseDown={onCancel}>
+    <div className="fixed inset-0 z-50 grid place-items-center bg-black/25 p-2 sm:p-4" onMouseDown={onCancel}>
       <div
         role="alertdialog"
         {...win.box}
-        className="w-[400px] max-w-full bg-panel border border-line rounded-xl shadow-pop p-5"
+        className="w-full sm:w-[400px] max-w-[calc(100vw-1rem)] sm:max-w-[96vw] bg-panel border border-line rounded-xl shadow-pop p-4 sm:p-5"
         onMouseDown={(e) => e.stopPropagation()}
       >
         <h2 {...win.handle} className="text-[14px] font-semibold mb-1 select-none">
           {title}
         </h2>
         <div className="text-muted mb-5 whitespace-pre-wrap break-words max-h-[55vh] overflow-y-auto font-[inherit]">{message}</div>
-        <div className="flex justify-end gap-2">
-          <button ref={cancelRef} autoFocus={defaultCancel} onClick={onCancel} className="px-3.5 h-8 rounded-md border border-line hover:bg-hover">
+        <div className="flex flex-wrap justify-end gap-2">
+          <button ref={cancelRef} autoFocus={defaultCancel} onClick={onCancel} className="px-4 sm:px-3.5 h-10 sm:h-8 rounded-xl sm:rounded-md border border-line hover:bg-hover text-[13px] font-medium sm:font-normal touch-manipulation">
             Cancelar
           </button>
           <button
             autoFocus={!defaultCancel}
             ref={confirmRef}
             onClick={onConfirm}
-            className={`px-3.5 h-8 rounded-md font-medium hover:opacity-90 ${danger ? "bg-danger text-danger-fg" : "bg-accent text-accent-fg"}`}
+            className={`px-4 sm:px-3.5 h-10 sm:h-8 rounded-xl sm:rounded-md font-medium hover:opacity-90 text-[13px] touch-manipulation ${danger ? "bg-danger text-danger-fg" : "bg-accent text-accent-fg"}`}
           >
             {confirmLabel}
           </button>

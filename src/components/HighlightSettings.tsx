@@ -131,7 +131,7 @@ export function HighlightSettings({ settings: s, theme, onChange }: Props) {
               <button
                 onClick={() => customize(sc.id)}
                 title="Copiar estas reglas a personalizadas para cambiar colores"
-                className="flex items-center gap-1 px-2 h-6 rounded text-[11.5px] text-muted hover:text-fg hover:bg-hover"
+                className="flex items-center gap-1 px-2 h-6 rounded text-[11.5px] text-muted hover:text-fg hover:bg-hover shrink-0"
               >
                 <Copy size={12} />
                 Personalizar
@@ -145,7 +145,7 @@ export function HighlightSettings({ settings: s, theme, onChange }: Props) {
       </div>
 
       <div>
-        <div className="flex items-center justify-between mb-2">
+        <div className="flex flex-wrap items-center justify-between gap-1 mb-2">
           <Label inline>Vista previa</Label>
           <button onClick={() => setEditSample((v) => !v)} className="text-[11.5px] text-accent hover:underline">
             {editSample ? "Listo" : "Probar con mi salida"}
@@ -164,9 +164,9 @@ export function HighlightSettings({ settings: s, theme, onChange }: Props) {
       </div>
 
       <div>
-        <div className="flex items-center justify-between mb-2">
+        <div className="flex flex-wrap items-center justify-between gap-1 mb-2">
           <Label inline>Reglas personalizadas</Label>
-          <div className="flex gap-1">
+          <div className="flex flex-wrap items-center gap-1">
             <SmallBtn onClick={importRules} title="Importar reglas JSON desde el portapapeles">
               <ClipboardPaste size={12} /> Importar
             </SmallBtn>
@@ -208,7 +208,7 @@ export function HighlightSettings({ settings: s, theme, onChange }: Props) {
                     onChange={(e) => updateRule(rule.id, { enabled: e.target.checked })}
                   />
                   <input
-                    className="field !h-7 flex-1"
+                    className="field !h-7 flex-1 min-w-0"
                     value={rule.name}
                     placeholder="Nombre"
                     onChange={(e) => updateRule(rule.id, { name: e.target.value })}
@@ -216,7 +216,7 @@ export function HighlightSettings({ settings: s, theme, onChange }: Props) {
                   <button
                     title="Eliminar regla"
                     onClick={() => setRules(rules.filter((r) => r.id !== rule.id))}
-                    className="w-7 h-7 grid place-items-center rounded-md text-muted hover:text-danger hover:bg-hover"
+                    className="w-7 h-7 grid place-items-center rounded-md text-muted hover:text-danger hover:bg-hover shrink-0"
                   >
                     <Trash2 size={13} />
                   </button>
@@ -231,7 +231,7 @@ export function HighlightSettings({ settings: s, theme, onChange }: Props) {
                 {err && <p className="text-[11px] text-danger">{err}</p>}
                 <div className="flex flex-wrap items-center gap-1.5">
                   <select
-                    className="field !h-7 !w-36 !text-[12px]"
+                    className="field !h-7 flex-1 sm:flex-initial sm:!w-36 !text-[12px] min-w-[110px]"
                     value={custom ? "custom" : (rule.style.color ?? "")}
                     onChange={(e) =>
                       updateStyle(rule.id, {
@@ -250,14 +250,14 @@ export function HighlightSettings({ settings: s, theme, onChange }: Props) {
                   {custom && (
                     <input
                       type="color"
-                      className="w-7 h-7 rounded border border-line bg-transparent"
+                      className="w-7 h-7 rounded border border-line bg-transparent shrink-0"
                       value={rule.style.color}
                       onChange={(e) => updateStyle(rule.id, { color: e.target.value })}
                     />
                   )}
                   <select
                     title="Fondo"
-                    className="field !h-7 !w-32 !text-[12px]"
+                    className="field !h-7 flex-1 sm:flex-initial sm:!w-32 !text-[12px] min-w-[110px]"
                     value={rule.style.bg ?? ""}
                     onChange={(e) => updateStyle(rule.id, { bg: e.target.value || undefined })}
                   >

@@ -8,6 +8,7 @@ import { Btn, CopyText, IpSelect, Label, Section, StatusPill, Toggle, fmtBytes }
 import { useLocalIp } from "./useLocalIp";
 import { FileManager, ScpRequest, TerminalRef } from "./FileManager";
 import { FtpClientSection, FtpServerSection, SftpSection } from "./FtpPanels";
+import { isMobile } from "../../lib/platform";
 
 interface Transfer {
   id: string;
@@ -143,8 +144,8 @@ export function TransferTool({
       </Section>
 
       <div className="flex flex-wrap items-end gap-4">
-        <IpSelect ips={ips} ip={localIp} onChange={setIp} className="w-72" />
-        <p className="flex-1 min-w-[260px] text-[12px] text-muted">
+        <IpSelect ips={ips} ip={localIp} onChange={setIp} className="w-full sm:w-72" />
+        <p className="flex-1 min-w-[200px] text-[12px] text-muted">
           Servidores: el gestor de archivos usa el que ya esté activo; si no hay uno, lo inicia para la operación y lo detiene al
           terminar. Las subidas que necesita una extracción se habilitan en caliente, sin reiniciar ni cambiar la contraseña FTP,
           y se vuelven a quitar al final. Escuchan en la red solo mientras están activos; si el firewall del sistema pregunta,
@@ -153,10 +154,10 @@ export function TransferTool({
       </div>
       {error && <p className="text-[12px] text-danger">{error}</p>}
 
-      <div className="grid gap-4 [grid-template-columns:repeat(auto-fit,minmax(min(340px,100%),1fr))]">
+      <div className="grid gap-4 [grid-template-columns:repeat(auto-fit,minmax(min(280px,100%),1fr))]">
         <Section title="Servidor TFTP" right={<StatusPill state={tftpOn ? "running" : "stopped"} label={tftpOn ? `Activo · UDP ${s.tftpPort}` : "Detenido"} />}>
-          <div className="flex items-end gap-3 mb-3">
-            <Label text="Puerto" className="w-24">
+          <div className="flex flex-wrap items-end gap-3 mb-3">
+            <Label text="Puerto" className="w-20 sm:w-24">
               <input className="field" type="number" disabled={tftpOn} value={s.tftpPort} onChange={(e) => onChange({ tftpPort: Number(e.target.value) || 69 })} />
             </Label>
             <div className="pb-1.5">
@@ -180,8 +181,8 @@ export function TransferTool({
         </Section>
 
         <Section title="Servidor HTTP" hint="Solo lectura. Más rápido que TFTP para imágenes grandes." right={<StatusPill state={httpOn ? "running" : "stopped"} label={httpOn ? `Activo · TCP ${s.httpPort}` : "Detenido"} />}>
-          <div className="flex items-end gap-3 mb-3">
-            <Label text="Puerto" className="w-24">
+          <div className="flex flex-wrap items-end gap-3 mb-3">
+            <Label text="Puerto" className="w-20 sm:w-24">
               <input className="field" type="number" disabled={httpOn} value={s.httpPort} onChange={(e) => onChange({ httpPort: Number(e.target.value) || 8080 })} />
             </Label>
             <Btn kind={httpOn ? "default" : "primary"} className="ml-auto" onClick={() => toggle("http")}>
@@ -196,7 +197,7 @@ export function TransferTool({
         </Section>
       </div>
 
-      <div className="grid gap-4 [grid-template-columns:repeat(auto-fit,minmax(min(340px,100%),1fr))]">
+      <div className="grid gap-4 [grid-template-columns:repeat(auto-fit,minmax(min(280px,100%),1fr))]">
         <FtpServerSection settings={s} running={running} onChange={onChange} refreshRunning={refreshRunning} ip={ip} file={file} />
         <SftpSection terminals={terminals} onScp={onScp} />
       </div>
@@ -211,9 +212,11 @@ export function TransferTool({
             <Btn onClick={addFile}>
               <FilePlus size={14} /> Agregar
             </Btn>
-            <Btn kind="ghost" title="Abrir carpeta" onClick={() => invoke("open_dir", { which: "tftp" })}>
-              <FolderOpen size={14} />
-            </Btn>
+            {!isMobile && (
+              <Btn kind="ghost" title="Abrir carpeta" onClick={() => invoke("open_dir", { which: "tftp" })}>
+                <FolderOpen size={14} />
+              </Btn>
+            )}
             <Btn kind="ghost" title="Actualizar" onClick={loadFiles}>
               <RefreshCw size={13} />
             </Btn>
@@ -232,8 +235,8 @@ export function TransferTool({
                   onClick={() => setSelFile(name)}
                   className={`border-t border-line first:border-0 cursor-default ${name === file ? "bg-selected" : "hover:bg-hover"}`}
                 >
-                  <td className="py-1.5 px-1 font-mono">{name}</td>
-                  <td className="px-1 text-right text-muted tabular-nums">{fmtBytes(size)}</td>
+                  <td className="py-1.5 px-1 font-mono break-all">{name}</td>
+                  <td className="px-1 text-right text-muted tabular-nums whitespace-nowrap">{fmtBytes(size)}</td>
                 </tr>
               ))}
             </tbody>
@@ -248,8 +251,8 @@ export function TransferTool({
               const pct = t.total ? Math.min(100, (t.bytes / t.total) * 100) : t.done && !t.error ? 100 : null;
               return (
                 <div key={t.id}>
-                  <div className="flex justify-between text-[12px]">
-                    <span className="truncate">
+                  <div className="flex items-center justify-between gap-2 text-[12px]">
+                    <span className="truncate min-w-0">
                       <span className="font-mono">{t.file}</span>
                       <span className="text-muted">
                         {" "}

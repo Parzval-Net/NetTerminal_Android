@@ -1,5 +1,5 @@
 import { memo, useCallback, useEffect, useRef, useState } from "react";
-import { Columns2, LayoutGrid, Maximize2, Minimize2, Plus, Rows2, X } from "lucide-react";
+import { Columns2, LayoutGrid, Maximize2, Minimize2, MoreVertical, Plus, Rows2, X } from "lucide-react";
 import { newTabMenuItems } from "./tabMenu";
 import { SplitLayout, layoutLabel } from "../lib/split";
 import type { TabLayout } from "../lib/settings";
@@ -84,7 +84,7 @@ export const dotColor = (status: ConnStatus, active: boolean) =>
  * tema claro, o al revés, no contrasta). Siempre visible al enfocar con el teclado.
  */
 export const closeBtnClass = (active: boolean) =>
-  `hidden group-hover:grid focus-visible:grid w-5 h-5 shrink-0 place-items-center rounded outline-none focus-visible:ring-2 focus-visible:ring-accent ${
+  `${active ? "grid sm:hidden sm:group-hover:grid sm:focus-visible:grid" : "hidden group-hover:grid focus-visible:grid"} w-5 h-5 shrink-0 place-items-center rounded outline-none focus-visible:ring-2 focus-visible:ring-accent ${
     active ? "text-term-fg/70 hover:text-term-fg hover:bg-term-fg/15" : "text-muted hover:text-fg hover:bg-hover"
   }`;
 
@@ -126,11 +126,13 @@ export const TabBar = memo(function TabBar(props: TabBarProps) {
   // En vertical, las pestañas y sus controles (vista dividida, modo foco) viven en VerticalTabs.
   if (vertical) return null;
 
+  const activeTab = tabs.find((t) => t.id === activeId);
+
   return (
-    <div className="@container h-[34px] shrink-0 flex items-end gap-1 px-1.5 bg-chrome border-b border-line">
+    <div className="@container h-9 sm:h-[34px] shrink-0 flex items-center sm:items-end gap-1 px-1.5 bg-chrome border-b border-line">
       <div
         ref={stripRef}
-        className="flex-1 min-w-0 self-stretch flex items-end gap-0.5 overflow-x-auto [scrollbar-width:none]"
+        className="flex-1 min-w-0 self-stretch flex items-center sm:items-end gap-1 sm:gap-0.5 overflow-x-auto [scrollbar-width:none]"
         onContextMenu={(e) => {
           // Clic derecho en el espacio libre de la barra: alternar horizontal/vertical.
           if (e.target !== e.currentTarget || !props.onTabLayout) return;
@@ -165,11 +167,11 @@ export const TabBar = memo(function TabBar(props: TabBarProps) {
                 });
               }}
               title={`${tabTitle(t)}${t.title ? ` (${t.session.name})` : ""}\nArrastra para mover · doble clic: renombrar · clic derecho: opciones · clic medio: cerrar`}
-              className={`group relative flex items-center gap-2 h-7 pl-3 pr-1.5 min-w-[120px] max-w-[220px] rounded-t-lg text-[12.5px] ${
+              className={`group relative flex items-center gap-1.5 h-7.5 sm:h-7 px-2.5 sm:pl-3 sm:pr-1.5 min-w-[70px] sm:min-w-[120px] max-w-[160px] sm:max-w-[220px] rounded-lg sm:rounded-b-none sm:rounded-t-lg text-[12px] sm:text-[12.5px] transition-all select-none ${
                 drag.dragId === t.id ? "opacity-50" : ""
               } ${drag.target?.id === t.id ? dropMark(drag.target.after ? "right" : "left") : ""} ${
                 active
-                  ? "bg-term text-term-fg border border-line border-b-transparent -mb-px"
+                  ? "bg-panel sm:bg-term text-fg sm:text-term-fg border border-line sm:border-b-transparent sm:-mb-px shadow-xs sm:shadow-none font-medium"
                   : "text-muted hover:text-fg hover:bg-hover"
               }`}
             >
@@ -201,7 +203,7 @@ export const TabBar = memo(function TabBar(props: TabBarProps) {
                 </span>
               )}
               <span
-                className="w-1.5 h-1.5 rounded-full shrink-0 group-hover:hidden"
+                className={`w-1.5 h-1.5 rounded-full shrink-0 ${active ? "hidden sm:inline-block sm:group-hover:hidden" : "group-hover:hidden"}`}
                 style={{ background: dotColor(status, active) }}
               />
               <button
@@ -232,21 +234,44 @@ export const TabBar = memo(function TabBar(props: TabBarProps) {
             title={`Nueva pestaña: terminal local (${modLabel}T), conexión rápida (${modLabel}O) o nueva sesión`}
             aria-label="Nueva pestaña"
             aria-haspopup="menu"
-            className="mb-[5px] ml-1 w-7 h-6 shrink-0 grid place-items-center rounded-md text-muted hover:text-fg hover:bg-hover"
+            className="w-7 h-7 sm:h-6 sm:mb-[5px] ml-0.5 shrink-0 grid place-items-center rounded-lg sm:rounded-md text-muted hover:text-fg hover:bg-hover active:bg-hover select-none touch-manipulation"
           >
             <Plus size={16} />
           </button>
         )}
       </div>
+      {activeTab && (
+        <button
+          onMouseDown={(e) => e.stopPropagation()}
+          onClick={(e) => {
+            const r = e.currentTarget.getBoundingClientRect();
+            setMenu((m) =>
+              m
+                ? null
+                : {
+                    x: Math.max(8, r.right - 220),
+                    y: r.bottom + 4,
+                    items: tabMenuItems(activeTab, states[activeTab.id], props, () => setEditing(activeTab.id)),
+                  },
+            );
+          }}
+          title="Opciones de la pestaña activa (renombrar, duplicar, reconectar, buscar, historial, copiar todo…)"
+          aria-label="Opciones de la pestaña activa"
+          aria-haspopup="menu"
+          className="w-7 h-7 sm:h-6 sm:mb-[5px] shrink-0 grid place-items-center rounded-lg sm:rounded-md text-muted hover:text-fg hover:bg-hover active:bg-hover select-none touch-manipulation"
+        >
+          <MoreVertical size={15} />
+        </button>
+      )}
       {onSplit && (
         <button
           onClick={(e) => {
             const r = e.currentTarget.getBoundingClientRect();
-            setMenu({ x: r.right - 200, y: r.bottom + 4, items: splitMenuItems(split, onSplit) });
+            setMenu({ x: Math.max(8, r.right - 200), y: r.bottom + 4, items: splitMenuItems(split, onSplit) });
           }}
           title={split ? `Vista dividida: ${layoutLabel[split]}` : "Vista dividida: ver 2 o 4 pestañas a la vez"}
           aria-pressed={!!split}
-          className={`mb-[5px] w-7 h-6 shrink-0 grid place-items-center rounded-md hover:bg-hover ${split ? "text-accent" : "text-muted hover:text-fg"}`}
+          className={`hidden sm:grid mb-[5px] w-7 h-6.5 sm:h-6 shrink-0 place-items-center rounded-md hover:bg-hover active:bg-hover select-none touch-manipulation ${split ? "text-accent" : "text-muted hover:text-fg"}`}
         >
           {split === "rows" ? <Rows2 size={15} /> : split === "grid" ? <LayoutGrid size={15} /> : <Columns2 size={15} />}
         </button>
@@ -257,12 +282,12 @@ export const TabBar = memo(function TabBar(props: TabBarProps) {
           title={props.focusMode ? `Salir del modo foco (${focusLabel})` : `Modo foco: solo pestañas y terminal (${focusLabel})`}
           aria-label={props.focusMode ? "Salir del modo foco" : "Modo foco"}
           aria-pressed={!!props.focusMode}
-          className={`mb-[5px] h-6 shrink-0 flex items-center gap-1.5 rounded-md hover:bg-hover ${
+          className={`hidden sm:flex mb-[5px] h-6.5 sm:h-6 shrink-0 items-center gap-1.5 rounded-md hover:bg-hover active:bg-hover select-none touch-manipulation ${
             props.focusMode ? "px-2 text-[12px] text-accent" : "w-7 justify-center text-muted hover:text-fg"
           }`}
         >
           {props.focusMode ? <Minimize2 size={14} /> : <Maximize2 size={14} />}
-          {props.focusMode && "Salir del modo foco"}
+          {props.focusMode && <span className="hidden sm:inline">Salir del modo foco</span>}
         </button>
       )}
     </div>

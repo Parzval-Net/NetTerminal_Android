@@ -143,21 +143,21 @@ export function ImportDialog({ folders, sessions, onImport, onClose }: Props) {
   const count = selected.size;
 
   return (
-    <div className="fixed inset-0 z-[60] grid place-items-center bg-black/25 p-4" onMouseDown={onClose}>
+    <div className="fixed inset-0 z-[60] grid place-items-center bg-black/25 p-2 sm:p-4" onMouseDown={onClose}>
       <div
-        className="w-[680px] max-w-[96vw] max-h-[90vh] flex flex-col bg-panel border border-line rounded-xl shadow-pop overflow-hidden"
+        className="w-full sm:w-[680px] max-w-[calc(100vw-1rem)] sm:max-w-[96vw] max-h-[96vh] sm:max-h-[90vh] flex flex-col bg-panel border border-line rounded-xl shadow-pop overflow-hidden"
         onMouseDown={(e) => e.stopPropagation()}
       >
-        <header className="shrink-0 flex items-center justify-between px-5 h-12 border-b border-line">
-          <h2 className="text-[14px] font-semibold">Importar sesiones desde otro cliente</h2>
-          <button onClick={onClose} aria-label="Cerrar" className="w-7 h-7 grid place-items-center rounded-md text-muted hover:text-fg hover:bg-hover">
+        <header className="shrink-0 flex items-center justify-between px-3 sm:px-5 h-12 border-b border-line">
+          <h2 className="text-[14px] font-semibold truncate pr-2">Importar sesiones desde otro cliente</h2>
+          <button onClick={onClose} aria-label="Cerrar" className="w-7 h-7 shrink-0 grid place-items-center rounded-md text-muted hover:text-fg hover:bg-hover">
             <X size={16} />
           </button>
         </header>
 
-        <div className="flex-1 min-h-0 overflow-y-auto p-5 space-y-3">
-          <div className="flex items-center gap-2">
-            <select className="field !w-auto flex-1" value={format} onChange={(e) => setFormat(e.target.value)}>
+        <div className="flex-1 min-h-0 overflow-y-auto p-3 sm:p-5 space-y-3">
+          <div className="flex flex-wrap sm:flex-nowrap items-center gap-2">
+            <select className="field !w-auto flex-1 min-w-[140px]" value={format} onChange={(e) => setFormat(e.target.value)}>
               {FORMATS.map((f) => (
                 <option key={f.id} value={f.id}>
                   {f.label}
@@ -167,11 +167,11 @@ export function ImportDialog({ folders, sessions, onImport, onClose }: Props) {
             <button
               onClick={pick}
               disabled={busy}
-              className="flex items-center gap-1.5 px-3 h-8 rounded-md bg-accent text-accent-fg font-medium hover:opacity-90 disabled:opacity-50"
+              className="flex items-center gap-1.5 px-3 h-8 rounded-md bg-accent text-accent-fg font-medium hover:opacity-90 disabled:opacity-50 shrink-0"
             >
               <FileUp size={14} /> Elegir archivo…
             </button>
-            <button onClick={sshConfig} disabled={busy} className="px-3 h-8 rounded-md border border-line hover:bg-hover disabled:opacity-50">
+            <button onClick={sshConfig} disabled={busy} className="px-3 h-8 rounded-md border border-line hover:bg-hover disabled:opacity-50 shrink-0">
               Leer ~/.ssh/config
             </button>
           </div>
@@ -302,15 +302,15 @@ export function ImportDialog({ folders, sessions, onImport, onClose }: Props) {
           )}
         </div>
 
-        <footer className="shrink-0 flex justify-end gap-2 px-5 py-3 border-t border-line">
-          <button onClick={onClose} className="px-3.5 h-8 rounded-md border border-line hover:bg-hover">
+        <footer className="shrink-0 flex flex-wrap justify-end gap-2 px-3 sm:px-5 py-3 border-t border-line">
+          <button onClick={onClose} className="px-4 sm:px-3.5 h-10 sm:h-8 rounded-xl sm:rounded-md border border-line hover:bg-hover text-[13px] font-medium sm:font-normal touch-manipulation">
             {preview ? "Cancelar" : "Cerrar"}
           </button>
           {preview && preview.sessions.length > 0 && (
             <button
               onClick={doImport}
               disabled={busy || count === 0}
-              className="px-3.5 h-8 rounded-md bg-accent text-accent-fg font-medium hover:opacity-90 disabled:opacity-50"
+              className="px-4 sm:px-3.5 h-10 sm:h-8 rounded-xl sm:rounded-md bg-accent text-accent-fg font-medium hover:opacity-90 disabled:opacity-50 text-[13px] touch-manipulation"
             >
               Importar {count}
             </button>

@@ -35,14 +35,16 @@ export const BroadcastTargetPicker = memo(function BroadcastTargetPicker() {
 
   useEffect(() => {
     if (!open) return;
-    const close = (e: MouseEvent) => {
+    const close = (e: MouseEvent | TouchEvent) => {
       if (!ref.current?.contains(e.target as Node)) setOpen(null);
     };
     const esc = (e: KeyboardEvent) => e.key === "Escape" && setOpen(null);
     window.addEventListener("mousedown", close);
+    window.addEventListener("touchstart", close);
     window.addEventListener("keydown", esc);
     return () => {
       window.removeEventListener("mousedown", close);
+      window.removeEventListener("touchstart", close);
       window.removeEventListener("keydown", esc);
     };
   }, [open]);
@@ -56,11 +58,16 @@ export const BroadcastTargetPicker = memo(function BroadcastTargetPicker() {
       <button
         onClick={(e) => {
           const r = e.currentTarget.getBoundingClientRect();
-          setOpen((o) => (o ? null : { right: Math.max(8, window.innerWidth - r.right), bottom: window.innerHeight - r.top + 6 }));
+          const isMobileNav = window.innerWidth < 640;
+          const bottomMargin = isMobileNav ? 56 + 8 : 6;
+          const popoverW = Math.min(288, window.innerWidth - 16);
+          const idealRight = window.innerWidth - r.right;
+          const right = Math.max(8, Math.min(idealRight, window.innerWidth - popoverW - 8));
+          setOpen((o) => (o ? null : { right, bottom: window.innerHeight - r.top + bottomMargin }));
         }}
         title="Elegir a qué sesiones se envía"
         aria-label={multi ? `Destino: ${targetLabel(target, ws)}, ${count} conectadas` : "Destino: pestaña actual"}
-        className={`flex items-center gap-1 px-2 h-6 rounded-md text-[11.5px] border ${
+        className={`flex items-center gap-1 px-2 h-6 rounded-md text-[11.5px] border select-none touch-manipulation active:bg-hover ${
           multi ? "border-warn text-warn font-medium" : "border-transparent text-muted hover:text-fg hover:bg-hover"
         }`}
       >
@@ -80,7 +87,7 @@ export const BroadcastTargetPicker = memo(function BroadcastTargetPicker() {
       </button>
       {open && (
         <div
-          className="fixed z-40 w-72 bg-panel border border-line rounded-lg shadow-pop p-1.5 text-fg"
+          className="fixed z-40 w-72 max-w-[calc(100vw-1rem)] max-h-[calc(100vh-80px)] overflow-y-auto bg-panel border border-line rounded-lg shadow-pop p-1.5 text-fg"
           style={open}
           role="dialog"
           aria-label="Destino del envío"

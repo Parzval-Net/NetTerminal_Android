@@ -213,7 +213,7 @@ export const CommandsPanel = memo(function CommandsPanel(p: Props) {
         <div className="relative">
           <Search size={13} className="absolute left-2.5 top-1/2 -translate-y-1/2 text-muted" />
           <input
-            className="field !h-7 !pl-8 !text-[12px]"
+            className="field !h-7 !pl-8 !text-[12px] w-full min-w-0"
             placeholder="Buscar comando o tarea"
             title="Por comando o por tarea: vecinos, óptico, CPU, VLAN…"
             value={query}
@@ -221,19 +221,19 @@ export const CommandsPanel = memo(function CommandsPanel(p: Props) {
             onKeyDown={(e) => e.key === "Escape" && setQuery("")}
           />
         </div>
-        <div className="flex items-center gap-3 text-[11.5px] text-muted whitespace-nowrap">
-          <label className="flex items-center gap-1.5" title="Solo consultas: oculta lo que cambia configuración o puede cortar servicio">
+        <div className="flex flex-wrap items-center gap-2 @[19rem]:gap-3 text-[11.5px] text-muted">
+          <label className="flex items-center gap-1.5 shrink-0" title="Solo consultas: oculta lo que cambia configuración o puede cortar servicio">
             <input type="checkbox" className="accent-[var(--accent)]" checked={onlyRead} onChange={(e) => setOnlyRead(e.target.checked)} />
             <span className="@[19rem]:hidden">Consultas</span>
             <span className="hidden @[19rem]:inline">Solo consultas</span>
           </label>
-          <label className="flex items-center gap-1.5">
+          <label className="flex items-center gap-1.5 shrink-0">
             <input type="checkbox" className="accent-[var(--accent)]" checked={onlyFav} onChange={(e) => setOnlyFav(e.target.checked)} />
             Favoritos
           </label>
-          <span className="ml-auto">{total}</span>
+          <span className="ml-auto shrink-0 font-medium">{total}</span>
           {vendor && (
-            <button title="Agregar un comando propio" onClick={() => p.onAdd(vendor.id)} className="h-6 px-1 text-accent hover:underline flex items-center gap-0.5">
+            <button title="Agregar un comando propio" onClick={() => p.onAdd(vendor.id)} className="h-6 px-1 text-accent hover:underline flex items-center gap-0.5 shrink-0 select-none touch-manipulation active:opacity-80">
               <Plus size={12} /> Propio
             </button>
           )}
@@ -274,7 +274,7 @@ export const CommandsPanel = memo(function CommandsPanel(p: Props) {
         {total === 0 && <p className="p-4 text-center text-[12px] text-muted">Sin resultados</p>}
       </div>
 
-      <footer className="flex items-center gap-2 px-3 py-1.5 border-t border-line text-[11px] text-muted">
+      <footer className="shrink-0 flex items-center gap-2 px-3 py-1.5 border-t border-line text-[11px] text-muted min-h-6">
         <span
           className="flex-1 min-w-0 truncate"
           title={`${p.target ? `Destino: ${p.target}` : "Sin sesión conectada"}${platform ? ` · ${platLabel(platform)}` : ""} · verifica la sintaxis en tu versión`}
@@ -339,12 +339,12 @@ const CommandRow = memo(function CommandRow({
         <button
           title={fav ? "Quitar de favoritos" : "Agregar a favoritos"}
           onClick={() => actions.fav(favKey, fav)}
-          className={`shrink-0 mt-0.5 ${fav ? "text-warn" : "text-muted opacity-0 group-hover:opacity-100"}`}
+          className={`shrink-0 mt-0.5 p-1 -m-1 ${fav ? "text-warn" : "text-muted opacity-100 sm:opacity-0 sm:group-hover:opacity-100"}`}
         >
-          <Star size={13} fill={fav ? "currentColor" : "none"} />
+          <Star size={14} fill={fav ? "currentColor" : "none"} />
         </button>
       </div>
-      <div className="hidden group-hover:flex flex-wrap gap-1 mt-1.5">
+      <div className="flex sm:hidden sm:group-hover:flex flex-wrap gap-1.5 sm:gap-1 mt-2 sm:mt-1.5">
         <PanelBtn disabled={!target} onClick={() => actions.run(c, cmd)} title={target ? `Ejecutar en ${target}` : "Conecta una sesión"}>
           <Play size={11} /> Ejecutar
         </PanelBtn>
@@ -372,14 +372,14 @@ const CommandRow = memo(function CommandRow({
 });
 
 function HeadBtn(props: React.ButtonHTMLAttributes<HTMLButtonElement>) {
-  return <button {...props} className="w-7 h-7 shrink-0 grid place-items-center rounded-md text-muted hover:text-fg hover:bg-hover" />;
+  return <button {...props} className="w-8 h-8 sm:w-7 sm:h-7 shrink-0 grid place-items-center rounded-full sm:rounded-md text-muted hover:text-fg hover:bg-hover" />;
 }
 
 function PanelBtn(props: React.ButtonHTMLAttributes<HTMLButtonElement>) {
   return (
     <button
       {...props}
-      className="inline-flex items-center gap-1 px-2 h-6 rounded-md border border-line bg-panel text-[11.5px] hover:bg-hover disabled:opacity-40"
+      className="inline-flex items-center gap-1 px-2.5 sm:px-2 h-7 sm:h-6 rounded-full sm:rounded-md border border-line bg-panel text-[11.5px] font-medium sm:font-normal hover:bg-hover active:bg-selected disabled:opacity-40"
     />
   );
 }

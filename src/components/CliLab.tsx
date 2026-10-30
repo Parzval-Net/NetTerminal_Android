@@ -207,19 +207,19 @@ export function CliLab(p: Props) {
   }, [failKey]);
 
   return (
-    <div className="fixed inset-0 z-50 grid place-items-center bg-black/25 p-4" onMouseDown={p.onClose}>
+    <div className="fixed inset-0 z-50 grid place-items-center bg-black/25 p-2 sm:p-4" onMouseDown={p.onClose}>
       <div
         {...win.box}
-        className="@container w-[960px] h-[640px] bg-panel border border-line rounded-xl shadow-pop resize overflow-hidden flex flex-col min-w-[min(620px,calc(100vw-2rem))] min-h-[min(420px,calc(100vh-2rem))] max-w-[98vw] max-h-[96vh]"
+        className="@container w-full sm:w-[960px] h-full sm:h-[640px] bg-panel border border-line rounded-xl shadow-pop sm:resize overflow-hidden flex flex-col min-w-0 sm:min-w-[min(620px,calc(100vw-2rem))] min-h-0 sm:min-h-[min(420px,calc(100vh-2rem))] max-w-[calc(100vw-1rem)] sm:max-w-[98vw] max-h-[96vh]"
         onMouseDown={(e) => e.stopPropagation()}
         role="dialog"
         aria-label="CLI Lab"
       >
-        <header {...win.handle} className="shrink-0 flex items-center gap-2 px-5 h-12 border-b border-line select-none">
+        <header {...win.handle} className="shrink-0 flex items-center gap-1.5 sm:gap-2 px-3 sm:px-5 h-12 border-b border-line select-none overflow-x-auto [scrollbar-width:none]">
           <Terminal size={16} className="text-accent" />
-          <h2 className="text-[14px] font-semibold mr-2">CLI Lab</h2>
+          <h2 className="text-[14px] font-semibold mr-1 sm:mr-2">CLI Lab</h2>
           <select
-            className="field !h-7 !w-56 !text-[12px]"
+            className="field !h-7 !w-36 sm:!w-56 !text-[12px]"
             value={note?.name ?? ""}
             aria-label="Abrir una nota"
             title="Los scripts se guardan en Notas"
@@ -285,7 +285,7 @@ export function CliLab(p: Props) {
           </button>
         </header>
 
-        <div className="flex-1 min-h-0 flex">
+        <div className="flex-1 min-h-0 flex flex-col @[44rem]:flex-row">
           <section className="flex-1 min-w-0 flex flex-col">
             {/* Barra del editor: acciones sobre el texto del script (la ejecución va en el panel derecho). */}
             <div className="shrink-0 flex items-center gap-1 pl-3 pr-2 h-9 border-b border-line text-[12px]">
@@ -331,7 +331,7 @@ export function CliLab(p: Props) {
             {vars.length > 0 && (
               <div className="shrink-0 px-3 pt-2 pb-3 border-b border-line">
               <h3 className={SECTION}>Variables</h3>
-              <div className="grid gap-2" style={{ gridTemplateColumns: "repeat(auto-fill, minmax(180px, 1fr))" }}>
+              <div className="grid gap-2" style={{ gridTemplateColumns: "repeat(auto-fill, minmax(140px, 1fr))" }}>
                 {vars.map((v) => (
                   <label key={v} className="block text-[11.5px]">
                     <span className="block mb-1 font-mono text-muted">{`{{${v}}}`}</span>
@@ -348,8 +348,8 @@ export function CliLab(p: Props) {
               </div>
             )}
             {run && (
-              <section className="shrink-0 h-[48%] min-h-[150px] border-t border-line flex min-w-0">
-                <div className="w-56 shrink-0 border-r border-line flex flex-col">
+              <section className="shrink-0 h-[48%] min-h-[150px] border-t border-line flex flex-col sm:flex-row min-w-0">
+                <div className="w-full sm:w-56 shrink-0 border-b sm:border-b-0 sm:border-r border-line flex flex-col max-h-[140px] sm:max-h-none">
                   <div className="flex items-center gap-1 pl-3 pr-1 h-9 text-[12px] border-b border-line">
                     <span className="font-medium">{running ? "Ejecutando…" : "Resultado"}</span>
                     <span className="text-muted tabular-nums">
@@ -384,7 +384,7 @@ export function CliLab(p: Props) {
             )}
           </section>
 
-          <aside className="w-64 @[52rem]:w-72 shrink-0 border-l border-line flex flex-col min-h-0">
+          <aside className="w-full @[44rem]:w-64 @[52rem]:w-72 shrink-0 border-t @[44rem]:border-t-0 @[44rem]:border-l border-line flex flex-col min-h-0">
             {/* Opciones con scroll propio: el botón Ejecutar/Detener queda siempre visible abajo. */}
             <div className="flex-1 min-h-0 overflow-y-auto">
             <div className="p-2">

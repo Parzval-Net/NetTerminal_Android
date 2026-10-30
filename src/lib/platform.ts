@@ -1,4 +1,6 @@
-export const isMac = /Mac|iPhone|iPad/.test(navigator.userAgent);
+export const isAndroid = typeof navigator !== "undefined" && /Android/i.test(navigator.userAgent);
+export const isMobile = typeof navigator !== "undefined" && /Android|iPhone|iPad|Mobile/i.test(navigator.userAgent);
+export const isMac = typeof navigator !== "undefined" && /Mac|iPhone|iPad/.test(navigator.userAgent);
 
 /**
  * Modificador de la app. En macOS es Cmd; en Windows/Linux es Ctrl+Shift para no
@@ -114,4 +116,4 @@ export function shortcutFor(e: KeyboardEvent): AppAction | null {
 
 /** Catálogo de comandos del sistema donde corre la app (para la terminal local). */
 export const localOsVendor = (): string =>
-  isMac ? "macos" : /Windows/i.test(navigator.userAgent) ? "windows" : "linux";
+  isAndroid ? "linux" : isMac ? "macos" : typeof navigator !== "undefined" && /Windows/i.test(navigator.userAgent) ? "windows" : "linux";

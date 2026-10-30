@@ -2,6 +2,7 @@ import { memo, useCallback, useEffect, useState } from "react";
 import { invoke } from "@tauri-apps/api/core";
 import { ArchiveRestore, FileCode2, FileSearch, FolderOpen, MousePointerClick, Pencil, Plus, Square, Trash2, X } from "lucide-react";
 import { Macro } from "../lib/settings";
+import { isMobile } from "../lib/platform";
 import { ContextMenu } from "./Sidebar";
 import type { MenuItem } from "./tabMenu";
 
@@ -29,6 +30,7 @@ export const ButtonBar = memo(function ButtonBar(p: Props) {
   const [scripts, setScripts] = useState<string[]>([]);
 
   useEffect(() => {
+    if (isMobile) return;
     invoke<string[]>("list_scripts").then(setScripts).catch(() => {});
   }, []);
 
@@ -61,7 +63,7 @@ export const ButtonBar = memo(function ButtonBar(p: Props) {
     const r = (e.currentTarget as HTMLElement).getBoundingClientRect();
     const list = await invoke<string[]>("list_scripts").catch(() => scripts);
     setScripts(list);
-    const at = { x: r.left, y: r.bottom + 4 };
+    const at = { x: Math.max(8, r.left), y: r.bottom + 4 };
     // Confirmación en el mismo menú, con "Cancelar" primero para que un doble clic no elimine.
     const confirmDelete = (s: string) => {
       const used = p.macros.filter((m) => m.kind === "script" && m.script === s).map((m) => m.id);
@@ -141,8 +143,8 @@ export const ButtonBar = memo(function ButtonBar(p: Props) {
               ],
             });
           }}
-          title={`${m.kind === "script" ? `Script: ${m.script}\nAl ejecutarlo eliges los destinos y el modo` : m.text}\nClic derecho para editar`}
-          className="shrink-0 flex items-center gap-1.5 px-2.5 h-6 rounded-md border border-line text-[12px] hover:bg-hover disabled:opacity-40 disabled:hover:bg-transparent"
+          title={`${m.kind === "script" ? `Script: ${m.script}\nAl ejecutarlo eliges los destinos y el modo` : m.text}\nClic derecho o mantener pulsado para editar`}
+          className="shrink-0 flex items-center gap-1.5 px-2.5 h-6.5 sm:h-6 rounded-full sm:rounded-md border border-line text-[12px] hover:bg-hover active:bg-hover select-none touch-manipulation disabled:opacity-40 disabled:hover:bg-transparent"
         >
           {m.kind === "script" && <FileCode2 size={12} className="text-muted" />}
           {m.label}
@@ -152,18 +154,18 @@ export const ButtonBar = memo(function ButtonBar(p: Props) {
         onClick={() => p.onEdit(null)}
         title="Nuevo botón"
         aria-label="Nuevo botón"
-        className="shrink-0 w-6 h-6 grid place-items-center rounded-md text-muted hover:text-fg hover:bg-hover"
+        className="shrink-0 w-6.5 h-6.5 sm:w-6 sm:h-6 grid place-items-center rounded-md text-muted hover:text-fg hover:bg-hover active:bg-hover select-none touch-manipulation"
       >
         <Plus size={14} />
       </button>
       {/* Scripts junto al "+": ambos crean o lanzan acciones de la misma barra. Mientras corre un
           script, "Detener" queda fijo a la derecha para no perderlo al desplazar la barra. */}
-      {!p.running && (
+      {!isMobile && !p.running && (
         <button
           onClick={openScripts}
           title="Scripts: ejecutar, importar, abrir la carpeta o restaurar eliminados"
           aria-haspopup="menu"
-          className="shrink-0 flex items-center gap-1.5 px-2 h-6 rounded-md text-[12px] text-muted hover:text-fg hover:bg-hover"
+          className="shrink-0 flex items-center gap-1.5 px-2 h-6.5 sm:h-6 rounded-md text-[12px] text-muted hover:text-fg hover:bg-hover active:bg-hover select-none touch-manipulation"
         >
           <FileCode2 size={13} />
           Scripts
@@ -175,10 +177,10 @@ export const ButtonBar = memo(function ButtonBar(p: Props) {
             onClick={p.onStopScript}
             title={`Detener script${p.running.targets > 1 ? ` (${p.running.targets} sesiones)` : ""}`}
             aria-label={`Detener script ${p.running.script}`}
-            className="whitespace-nowrap flex items-center gap-1.5 px-2 h-6 rounded-md text-[12px] text-warn hover:bg-hover"
+            className="whitespace-nowrap flex items-center gap-1.5 px-2 h-6.5 sm:h-6 rounded-md text-[12px] text-warn hover:bg-hover active:bg-hover select-none touch-manipulation"
           >
             <Square size={11} fill="currentColor" />
-            Detener {p.running.script}
+            <span className="truncate max-w-[130px] sm:max-w-[200px]">Detener {p.running.script}</span>
             {p.running.targets > 1 && <span className="text-muted">· {p.running.targets}</span>}
           </button>
         </div>

@@ -11,15 +11,16 @@ import { SubnetTool } from "./SubnetTool";
 import { PerfTool } from "./PerfTool";
 import { TransferTool } from "./TransferTool";
 import { SyslogTool } from "./SyslogTool";
-import { PluginsTool } from "./PluginsTool";
 import type { ScpRequest, TabBrief, TerminalRef } from "./FileManager";
 import { persist, stored } from "../../lib/prefs";
-import { modLabel } from "../../lib/platform";
+import { isMobile, modLabel } from "../../lib/platform";
 
 // Respaldos y diff: se cargan al abrir el módulo.
 const BackupTool = lazy(() => import("./BackupTool"));
 // SNMP: cliente, conjuntos de OIDs y receptor de traps, también bajo demanda.
 const SnmpTool = lazy(() => import("./SnmpTool"));
+// Plugins en Python (exclusivo de escritorio): se carga bajo demanda para no incluirlo en móvil.
+const PluginsTool = lazy(() => import("./PluginsTool").then((m) => ({ default: m.PluginsTool })));
 
 const NAV: { id: ModuleId; label: string; Icon: typeof Activity }[] = [
   { id: "monitor", label: "Monitoreo", Icon: Activity },
@@ -77,7 +78,7 @@ interface Props {
  * vivo oculto, para no perder servidores, logs ni mediciones al cambiar de sección.
  */
 export const ToolsView = memo(function ToolsView({ active, onBack, onClose, settings, update, monitors, connId, terminals, tabs, sessions, onConfirm, onScp, onOpenSession, onFocusTab, onReconnectTab }: Props) {
-  const enabled = NAV.filter((n) => settings.modules[n.id] !== false);
+  const enabled = NAV.filter((n) => (!isMobile || n.id !== "plugins") && settings.modules[n.id] !== false);
   const [current, setCurrent] = useState<ModuleId>(() => {
     const last = stored<ModuleId | null>(LAST_KEY, null);
     return enabled.find((n) => n.id === last)?.id ?? enabled[0]?.id ?? "monitor";
@@ -162,7 +163,11 @@ export const ToolsView = memo(function ToolsView({ active, onBack, onClose, sett
       case "syslog":
         return <SyslogTool settings={settings} running={running} onChange={update} refreshRunning={refreshRunning} />;
       case "plugins":
-        return <PluginsTool connId={connId} onConfirm={onConfirm} />;
+        return (
+          <Suspense fallback={null}>
+            <PluginsTool connId={connId} onConfirm={onConfirm} />
+          </Suspense>
+        );
       case "snmp":
         return (
           <Suspense fallback={null}>
@@ -227,11 +232,40 @@ export const ToolsView = memo(function ToolsView({ active, onBack, onClose, sett
           <X size={14} />
         </button>
       </div>
+      {/* Barra horizontal de chips Material 3 en pantallas compactas (< 44rem): muestra ícono + nombre sin doble barra lateral */}
+      <nav
+        aria-label="Módulos de Herramientas (compacto)"
+        className="flex @[44rem]:hidden items-center gap-1.5 px-2.5 py-2 border-b border-line bg-chrome overflow-x-auto [scrollbar-width:none] [&::-webkit-scrollbar]:hidden shrink-0"
+      >
+        {enabled.map(({ id, label, Icon }) => {
+          const isRunning =
+            (id === "transfer" && (running.includes("tftp") || running.includes("http") || running.includes("ftp"))) ||
+            (id === "snmp" && running.includes("snmptrap")) ||
+            (id === "syslog" && running.includes("syslog"));
+          const isActive = current === id;
+          return (
+            <button
+              key={id}
+              onClick={() => go(id)}
+              aria-current={isActive ? "page" : undefined}
+              className={`shrink-0 flex items-center gap-1.5 px-3 h-8 rounded-full text-[12px] font-medium border transition-colors ${
+                isActive
+                  ? "bg-selected text-fg border-accent/40"
+                  : "bg-panel text-muted border-line hover:text-fg hover:bg-hover"
+              }`}
+            >
+              <Icon size={14} className={isActive ? "text-accent shrink-0" : "shrink-0"} />
+              <span>{label}</span>
+              {isRunning && <span className="w-1.5 h-1.5 rounded-full bg-ok shrink-0" title="Servidor activo" />}
+            </button>
+          );
+        })}
+      </nav>
       <div className="flex-1 min-h-0 flex">
-      {/* Ventana angosta: el menú queda solo con íconos para no quitarle espacio a la herramienta. */}
+      {/* En tablets/escritorio (>= 44rem): barra lateral vertical agrupada */}
       <nav
         aria-label="Módulos de Herramientas"
-        className="w-11 @[44rem]:w-44 shrink-0 border-r border-line bg-chrome p-1.5 @[44rem]:p-2 overflow-y-auto overflow-x-hidden [scrollbar-width:thin]"
+        className="hidden @[44rem]:block w-44 shrink-0 border-r border-line bg-chrome p-2 overflow-y-auto overflow-x-hidden [scrollbar-width:thin]"
       >
         {GROUPS.map((g, i) => {
           const ids = g.ids.filter((id) => enabled.some((n) => n.id === id));
@@ -247,7 +281,7 @@ export const ToolsView = memo(function ToolsView({ active, onBack, onClose, sett
       </nav>
       <div className="@container flex-1 min-w-0 overflow-y-auto">
         {/* Topología ocupa todo el ancho y alto disponibles; el resto mantiene el ancho de lectura. */}
-        <div className={current === "topology" ? "h-full p-4" : "max-w-[1200px] mx-auto p-5"}>
+        <div className={current === "topology" ? "h-full p-2 sm:p-4" : "max-w-[1200px] mx-auto p-2 sm:p-5"}>
           {enabled
             .filter((n) => visited.has(n.id))
             .map((n) => (

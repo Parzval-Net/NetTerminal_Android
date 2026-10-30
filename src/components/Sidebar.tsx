@@ -22,7 +22,7 @@ import {
 } from "lucide-react";
 import { ConnStatus, Session, sessionTarget } from "../types";
 import { SessionIcon } from "./SessionIcon";
-import { modLabel } from "../lib/platform";
+import { isMobile, modLabel } from "../lib/platform";
 import {
   FolderNode,
   SidebarOrder,
@@ -435,7 +435,7 @@ export const Sidebar = memo(function Sidebar(p: Props) {
             if (e.key === "Delete") deleteFolder(node.path);
           }}
           style={{ paddingLeft: 6 + depth * 14 }}
-          className={`group flex items-center gap-1.5 pr-1 h-7 rounded-md outline-none ${
+          className={`group flex items-center gap-1.5 pr-1 h-9 sm:h-7 rounded-lg sm:rounded-md outline-none ${
             hintClass({ kind: "folder", node }, parentOf(node.path)) || (isSel ? "bg-hover" : "hover:bg-hover")
           }`}
         >
@@ -465,8 +465,8 @@ export const Sidebar = memo(function Sidebar(p: Props) {
           ) : (
             <span className="truncate flex-1 font-medium text-[12.5px]">{node.name}</span>
           )}
-          <span className="text-[11px] text-muted group-hover:hidden">{node.total || ""}</span>
-          <RowBtn title="Más acciones" className="hidden group-hover:grid" onClick={(e) => folderMenu(e, node)}>
+          <span className="text-[11px] text-muted sm:group-hover:hidden">{node.total || ""}</span>
+          <RowBtn title="Más acciones" className="grid sm:hidden sm:group-hover:grid" onClick={(e) => folderMenu(e, node)}>
             <MoreHorizontal size={14} />
           </RowBtn>
         </div>
@@ -488,7 +488,10 @@ export const Sidebar = memo(function Sidebar(p: Props) {
         onDragEnd={endDrag}
         {...rowDropProps({ kind: "session", session: s }, normPath(s.folder))}
         tabIndex={0}
-        onClick={() => setSelected({ kind: "session", id: s.id })}
+        onClick={() => {
+          setSelected({ kind: "session", id: s.id });
+          if (isMobile) p.onOpen(s);
+        }}
         onDoubleClick={() => p.onOpen(s)}
         onContextMenu={(e) => sessionMenu(e, s)}
         onKeyDown={(e) => {
@@ -497,7 +500,7 @@ export const Sidebar = memo(function Sidebar(p: Props) {
         }}
         title={`${sessionTarget(s)}\nDoble clic para conectar · clic derecho para más opciones`}
         style={{ paddingLeft: 24 + depth * 14 }}
-        className={`group flex items-center gap-2 pr-1 h-7 rounded-md outline-none ${
+        className={`group flex items-center gap-2 pr-1 h-9 sm:h-7 rounded-lg sm:rounded-md outline-none ${
           hintClass({ kind: "session", session: s }, normPath(s.folder)) || (isSel ? "bg-selected" : "hover:bg-hover")
         }`}
       >
@@ -505,7 +508,7 @@ export const Sidebar = memo(function Sidebar(p: Props) {
         <span className="truncate flex-1 text-[13px]">{s.name}</span>
         {status && (
           <span
-            className="w-1.5 h-1.5 rounded-full shrink-0 group-hover:hidden"
+            className="w-1.5 h-1.5 rounded-full shrink-0 sm:group-hover:hidden"
             title="Pestaña abierta"
             style={{
               background:
@@ -513,7 +516,7 @@ export const Sidebar = memo(function Sidebar(p: Props) {
             }}
           />
         )}
-        <div className="hidden group-hover:flex items-center">
+        <div className="flex sm:hidden sm:group-hover:flex items-center">
           <RowBtn title="Editar" onClick={() => p.onEdit(s)}>
             <Pencil size={12} />
           </RowBtn>
@@ -585,13 +588,13 @@ export const Sidebar = memo(function Sidebar(p: Props) {
   return (
     <aside
       style={{ width: p.width }}
-      className="relative shrink-0 h-full flex flex-col bg-chrome border-r border-line"
+      className="relative shrink-0 h-full flex flex-col bg-chrome border-r border-line max-sm:!w-full max-w-full sm:max-w-[calc(100vw-44px)]"
     >
       <div className="flex items-center gap-0.5 px-2.5 pt-3 pb-2">
         <div className="relative flex-1 mr-1">
           <Search size={14} className="absolute left-2.5 top-1/2 -translate-y-1/2 text-muted" />
           <input
-            className="field !h-7 !pl-8 !text-[12px]"
+            className="field !h-8 sm:!h-7 !pl-8 !text-[12.5px] sm:!text-[12px]"
             placeholder="Filtrar…"
             title="Filtra por nombre, IP o carpeta"
             aria-label="Filtrar sesiones por nombre, IP o carpeta"
@@ -614,6 +617,22 @@ export const Sidebar = memo(function Sidebar(p: Props) {
         <HeadBtn title="Contraer todo" onClick={() => setCollapsed(Object.fromEntries(folders.map((f) => [f, true])))}>
           <ChevronsDownUp size={15} />
         </HeadBtn>
+        {(p.onImportFile || p.onExportFile) && (
+          <HeadBtn
+            title="Importar o exportar sesiones"
+            aria-label="Importar o exportar sesiones"
+            onClick={(e) =>
+              openMenu(e, [
+                ["Nueva sesión", <Plus size={13} />, () => p.onNew()],
+                ["Nueva carpeta", <FolderPlus size={13} />, () => createFolder("")],
+                ...(p.onImportFile ? [["Importar sesiones…", <FileUp size={13} />, p.onImportFile] as MenuItem] : []),
+                ...(p.onExportFile ? [["Exportar sesiones…", <FileDown size={13} />, () => p.onExportFile?.()] as MenuItem] : []),
+              ])
+            }
+          >
+            <MoreHorizontal size={15} />
+          </HeadBtn>
+        )}
       </div>
 
       {notice && <p className="px-3 pb-1 text-[11.5px] text-danger">{notice}</p>}
@@ -667,24 +686,30 @@ export function ContextMenu({ menu, onClose }: { menu: Menu; onClose: () => void
   const ref = useRef<HTMLDivElement>(null);
   const [pos, setPos] = useState({ x: menu.x, y: menu.y });
 
-  // Ajusta la posición para que el menú no se salga de la ventana.
+  // Ajusta la posición para que el menú no se salga de la ventana ni se oculte bajo MobileBottomNav.
   useLayoutEffect(() => {
     const r = ref.current?.getBoundingClientRect();
     if (!r) return;
+    const isMobileNav = window.innerWidth < 640;
+    const bottomNavH = isMobileNav ? 56 : 0;
+    const bottomMargin = bottomNavH + 8;
     setPos({
-      x: Math.min(menu.x, window.innerWidth - r.width - 8),
-      y: Math.min(menu.y, window.innerHeight - r.height - 8),
+      x: Math.max(8, Math.min(menu.x, window.innerWidth - r.width - 8)),
+      y: Math.max(8, Math.min(menu.y, window.innerHeight - r.height - bottomMargin)),
     });
   }, [menu]);
 
   useEffect(() => {
     const onMouse = (e: MouseEvent) => !ref.current?.contains(e.target as Node) && onClose();
+    const onTouch = (e: TouchEvent) => !ref.current?.contains(e.target as Node) && onClose();
     const onKey = (e: KeyboardEvent) => e.key === "Escape" && onClose();
     window.addEventListener("mousedown", onMouse);
+    window.addEventListener("touchstart", onTouch);
     window.addEventListener("keydown", onKey);
     window.addEventListener("blur", onClose);
     return () => {
       window.removeEventListener("mousedown", onMouse);
+      window.removeEventListener("touchstart", onTouch);
       window.removeEventListener("keydown", onKey);
       window.removeEventListener("blur", onClose);
     };
@@ -719,7 +744,7 @@ export function ContextMenu({ menu, onClose }: { menu: Menu; onClose: () => void
       ref={ref}
       role="menu"
       onKeyDown={onMenuKey}
-      className="fixed z-50 min-w-48 py-1 bg-panel border border-line rounded-lg shadow-pop"
+      className="fixed z-50 min-w-48 max-w-[calc(100vw-16px)] max-h-[calc(100vh-72px)] overflow-y-auto py-1 bg-panel border border-line rounded-lg shadow-pop"
       style={{ left: pos.x, top: pos.y }}
     >
       {menu.items.map(([label, icon, action, disabled, shortcut, separated]) => (
@@ -732,13 +757,13 @@ export function ContextMenu({ menu, onClose }: { menu: Menu; onClose: () => void
             onClose();
             action();
           }}
-          className={`w-full flex items-center gap-2.5 px-3 h-7 text-left text-[12.5px] hover:bg-hover focus-visible:bg-hover disabled:opacity-40 ${
+          className={`w-full flex items-center gap-2.5 px-3 h-8 sm:h-7 text-left text-[12.5px] hover:bg-hover active:bg-hover focus-visible:bg-hover disabled:opacity-40 select-none touch-manipulation ${
             label.startsWith("Eliminar") ? "text-danger" : ""
-          } ${separated ? "mt-1 border-t border-line pt-1 h-8 rounded-none" : ""}`}
+          } ${separated ? "mt-1 border-t border-line pt-1 h-9 sm:h-8 rounded-none" : ""}`}
         >
-          <span className="text-muted">{icon}</span>
-          <span className="flex-1">{label}</span>
-          {shortcut && <kbd className="ml-4 text-[11px] text-muted font-sans">{shortcut}</kbd>}
+          <span className="text-muted shrink-0">{icon}</span>
+          <span className="flex-1 min-w-0 truncate">{label}</span>
+          {shortcut && <kbd className="ml-3 shrink-0 text-[11px] text-muted font-sans">{shortcut}</kbd>}
         </button>
       ))}
     </div>

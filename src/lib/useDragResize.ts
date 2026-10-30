@@ -28,6 +28,13 @@ export function useDragResize<T extends HTMLElement = HTMLDivElement>(key: strin
   const [box, setBox] = useState<Box>(() => load(key));
   const drag = useRef<{ sx: number; sy: number; x: number; y: number } | null>(null);
   const sizeAtDown = useRef<{ w: number; h: number } | null>(null);
+  const [isMobileScreen, setIsMobileScreen] = useState(() => typeof window !== "undefined" && window.innerWidth < 640);
+
+  useEffect(() => {
+    const onResize = () => setIsMobileScreen(window.innerWidth < 640);
+    window.addEventListener("resize", onResize);
+    return () => window.removeEventListener("resize", onResize);
+  }, []);
 
   useEffect(() => {
     try {
@@ -39,7 +46,7 @@ export function useDragResize<T extends HTMLElement = HTMLDivElement>(key: strin
 
   // Detecta un redimensionado manual: tamaño distinto entre presionar y soltar el mouse.
   useEffect(() => {
-    if (!resizable) return;
+    if (!resizable || isMobileScreen) return;
     const up = () => {
       const el = ref.current;
       const before = sizeAtDown.current;
@@ -50,28 +57,28 @@ export function useDragResize<T extends HTMLElement = HTMLDivElement>(key: strin
     };
     window.addEventListener("pointerup", up);
     return () => window.removeEventListener("pointerup", up);
-  }, [resizable]);
+  }, [resizable, isMobileScreen]);
 
   const onPointerDown = useCallback(
     (e: React.PointerEvent) => {
-      if (e.button !== 0 || (e.target as HTMLElement).closest("button, input, select, textarea, a")) return;
+      if (isMobileScreen || e.button !== 0 || (e.target as HTMLElement).closest("button, input, select, textarea, a")) return;
       drag.current = { sx: e.clientX, sy: e.clientY, x: box.x, y: box.y };
       (e.currentTarget as HTMLElement).setPointerCapture(e.pointerId);
     },
-    [box.x, box.y],
+    [box.x, box.y, isMobileScreen],
   );
 
   const onPointerMove = useCallback((e: React.PointerEvent) => {
     const d = drag.current;
     const el = ref.current;
-    if (!d || !el) return;
+    if (!d || !el || isMobileScreen) return;
     // Siempre queda parte de la ventana visible para poder recuperarla.
     const maxX = window.innerWidth / 2 + el.offsetWidth / 2 - 80;
     const maxY = window.innerHeight / 2 + el.offsetHeight / 2 - 48;
     const x = Math.max(-maxX, Math.min(maxX, d.x + e.clientX - d.sx));
     const y = Math.max(-maxY, Math.min(maxY, d.y + e.clientY - d.sy));
     setBox((b) => ({ ...b, x, y }));
-  }, []);
+  }, [isMobileScreen]);
 
   const onPointerUp = useCallback(() => {
     drag.current = null;
@@ -84,13 +91,13 @@ export function useDragResize<T extends HTMLElement = HTMLDivElement>(key: strin
     box: {
       ref,
       style: {
-        transform: `translate(${box.x}px, ${box.y}px)`,
-        width: resizable && box.w ? box.w : undefined,
-        height: resizable && box.h ? box.h : undefined,
+        transform: isMobileScreen ? undefined : (box.x || box.y ? `translate(${box.x}px, ${box.y}px)` : undefined),
+        width: !isMobileScreen && resizable && box.w ? box.w : undefined,
+        height: !isMobileScreen && resizable && box.h ? box.h : undefined,
       } as React.CSSProperties,
       onPointerDownCapture: () => {
         const el = ref.current;
-        if (el && resizable) sizeAtDown.current = { w: el.offsetWidth, h: el.offsetHeight };
+        if (el && resizable && !isMobileScreen) sizeAtDown.current = { w: el.offsetWidth, h: el.offsetHeight };
       },
     },
     /** Props para la barra de título (asa de arrastre). */
@@ -98,9 +105,9 @@ export function useDragResize<T extends HTMLElement = HTMLDivElement>(key: strin
       onPointerDown,
       onPointerMove,
       onPointerUp,
-      onDoubleClick: reset,
-      style: { cursor: "move", touchAction: "none" } as React.CSSProperties,
-      title: "Arrastra para mover · doble clic para restaurar",
+      onDoubleClick: isMobileScreen ? undefined : reset,
+      style: { cursor: isMobileScreen ? "default" : "move", touchAction: isMobileScreen ? "auto" : "none" } as React.CSSProperties,
+      title: isMobileScreen ? undefined : "Arrastra para mover · doble clic para restaurar",
     },
   };
 }

@@ -7,6 +7,7 @@ import type { DeviceInfoMap } from "./lifecycle";
 import type { TopoSnapshot, TopoSources, Topology } from "./topology";
 import type { SnmpProfile } from "./snmp";
 import { type GhostColor, type GhostStyle, type ListKey, SUGGEST_DEFAULT, migrateSuggest } from "./suggest";
+import { isAndroid } from "./platform";
 
 export type ModuleId = "monitor" | "diag" | "topology" | "subnet" | "perf" | "transfer" | "syslog" | "plugins" | "backup" | "snmp";
 
@@ -79,6 +80,10 @@ export interface Settings {
   confirmSend: boolean;
   macros: Macro[];
   showButtonBar: boolean;
+  /** Barra de teclas táctiles para terminal en Android / pantalla táctil. */
+  showMobileKeyBar: boolean;
+  /** CLI Lab: scripts multilínea con variables y ejecución concurrente. Desactivado por defecto en móvil para no saturar la navegación; activable para tablets con teclado. */
+  cliLabEnabled: boolean;
   /** Con la barra de sesiones cerrada, el ícono Sesiones la abre superpuesta sin empujar la terminal. */
   floatingSidebar: boolean;
   mcpEnabled: boolean;
@@ -143,7 +148,7 @@ export const defaultSettings: Settings = {
   lineHeight: 1.15,
   cursorStyle: "block",
   cursorBlink: true,
-  scrollback: 5000,
+  scrollback: isAndroid ? 2000 : 5000,
   copyOnSelect: true,
   rightClickPaste: true,
   confirmClose: true,
@@ -171,13 +176,15 @@ export const defaultSettings: Settings = {
     { id: "m2", label: "Interfaces", kind: "send", text: "show ip interface brief" },
   ],
   showButtonBar: true,
+  showMobileKeyBar: isAndroid,
+  cliLabEnabled: !isAndroid,
   floatingSidebar: false,
   mcpEnabled: false,
   mcpPort: 47821,
   mcpToken: "",
   mcpApproval: true,
   mcpReadOnly: false,
-  modules: { monitor: true, diag: true, topology: true, subnet: true, perf: true, transfer: true, syslog: true, plugins: true, backup: true, snmp: true },
+  modules: { monitor: true, diag: true, topology: true, subnet: true, perf: true, transfer: true, syslog: true, plugins: !isAndroid, backup: true, snmp: true },
   monitors: [],
   tftpPort: 69,
   httpPort: 8080,

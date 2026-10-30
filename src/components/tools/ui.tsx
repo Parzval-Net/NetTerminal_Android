@@ -5,14 +5,14 @@ import { Check, ChevronRight, Copy } from "lucide-react";
 export function Section({ title, hint, children, right }: { title: string; hint?: string; children: React.ReactNode; right?: React.ReactNode }) {
   return (
     <section className="rounded-xl border border-line bg-panel">
-      <header className="flex items-center justify-between gap-3 px-4 pt-3 pb-2">
-        <div className="min-w-0">
+      <header className="flex flex-wrap items-center justify-between gap-2 sm:gap-3 px-3 sm:px-4 pt-3 pb-2">
+        <div className="min-w-0 flex-1">
           <h3 className="text-[13px] font-semibold truncate">{title}</h3>
           {hint && <p className="text-[11.5px] text-muted truncate" title={hint}>{hint}</p>}
         </div>
-        {right}
+        {right && <div className="shrink-0 flex items-center gap-1.5">{right}</div>}
       </header>
-      <div className="px-4 pb-4">{children}</div>
+      <div className="px-3 sm:px-4 pb-3 sm:pb-4">{children}</div>
     </section>
   );
 }
@@ -45,8 +45,8 @@ export function Collapsible({
   const bodyId = useId();
   return (
     <section className="rounded-xl border border-line bg-panel">
-      <header className="flex items-center gap-2 pr-2">
-        <h3 className="flex-1 min-w-0">
+      <header className="flex flex-wrap items-center justify-between gap-2 pr-2">
+        <h3 className="flex-1 min-w-[180px]">
           <button
             type="button"
             aria-expanded={open}
@@ -68,9 +68,9 @@ export function Collapsible({
             </span>
           </button>
         </h3>
-        {right}
+        {right && <div className="shrink-0 flex items-center gap-1.5 pl-3 sm:pl-0 pb-1 sm:pb-0">{right}</div>}
       </header>
-      <div id={bodyId} hidden={!open} className="px-4 pb-4">
+      <div id={bodyId} hidden={!open} className="px-3 sm:px-4 pb-3 sm:pb-4">
         {children}
       </div>
     </section>
@@ -100,7 +100,7 @@ export function Btn({
   return (
     <button
       {...props}
-      className={`shrink-0 whitespace-nowrap inline-flex items-center justify-center gap-1.5 px-3 h-8 rounded-md text-[12.5px] disabled:opacity-40 disabled:pointer-events-none ${styles} ${className}`}
+      className={`shrink-0 whitespace-nowrap inline-flex items-center justify-center gap-1.5 px-3 h-8 rounded-md text-[12.5px] touch-manipulation disabled:opacity-40 disabled:pointer-events-none ${styles} ${className}`}
     />
   );
 }
@@ -118,7 +118,7 @@ export function Label({ text, children, className = "" }: { text: string; childr
 export function IpSelect({ ips, ip, onChange, className = "" }: { ips: { name: string; ip: string; default?: boolean }[]; ip: string; onChange: (ip: string) => void; className?: string }) {
   return (
     <Label text="IP de este PC (para los comandos)" className={className}>
-      <select className="field" value={ip} disabled={!ips.length} onChange={(e) => onChange(e.target.value)}>
+      <select className="field w-full" value={ip} disabled={!ips.length} onChange={(e) => onChange(e.target.value)}>
         {!ips.length && <option value="">Sin interfaces activas</option>}
         {ips.map((i) => (
           <option key={`${i.name}-${i.ip}`} value={i.ip}>

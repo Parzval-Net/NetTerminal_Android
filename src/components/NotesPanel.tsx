@@ -8,7 +8,7 @@ import { CodeEditor } from "./CodeEditor";
 import { NoteSecurity, NoteUnlock } from "./NoteLock";
 import { Compiled } from "../lib/highlight";
 import { fontStack } from "../lib/theme";
-import { isMac, modLabel } from "../lib/platform";
+import { isMac, isMobile, modLabel } from "../lib/platform";
 import { PanelResize, panelClass } from "./PanelResize";
 
 interface NoteInfo {
@@ -85,12 +85,14 @@ export const NotesPanel = memo(function NotesPanel(p: Props) {
   const menuRef = useRef<HTMLDivElement>(null);
   useEffect(() => {
     if (!menuOpen) return setConfirmDelete(false);
-    const close = (e: MouseEvent) => !menuRef.current?.contains(e.target as Node) && setMenuOpen(false);
+    const close = (e: MouseEvent | TouchEvent) => !menuRef.current?.contains(e.target as Node) && setMenuOpen(false);
     const esc = (e: KeyboardEvent) => e.key === "Escape" && setMenuOpen(false);
     window.addEventListener("mousedown", close);
+    window.addEventListener("touchstart", close);
     window.addEventListener("keydown", esc);
     return () => {
       window.removeEventListener("mousedown", close);
+      window.removeEventListener("touchstart", close);
       window.removeEventListener("keydown", esc);
     };
   }, [menuOpen]);
@@ -509,7 +511,7 @@ export const NotesPanel = memo(function NotesPanel(p: Props) {
             <MoreHorizontal size={14} />
           </HeadBtn>
           {menuOpen && (
-            <div role="menu" className="absolute right-0 top-full mt-1 z-40 w-60 bg-panel border border-line rounded-lg shadow-pop p-1 text-[12.5px]">
+            <div role="menu" className="absolute right-0 top-full mt-1 z-40 w-60 max-w-[calc(100vw-1rem)] max-h-[calc(100vh-120px)] overflow-y-auto bg-panel border border-line rounded-lg shadow-pop p-1 text-[12.5px]">
               {/* Panel angosto: diagramas y búsqueda pasan del encabezado a este menú. */}
               <MenuItem
                 className={NARROW_ONLY}
@@ -546,7 +548,9 @@ export const NotesPanel = memo(function NotesPanel(p: Props) {
                 }}
               />
               <MenuItem icon={<Pencil size={13} />} label="Renombrar" onClick={() => { if (current) setRenaming(current); setMenuOpen(false); }} />
-              <MenuItem icon={<FolderOpen size={14} />} label="Abrir carpeta de notas" onClick={() => { invoke("open_dir", { which: "notes" }); setMenuOpen(false); }} />
+              {!isMobile && (
+                <MenuItem icon={<FolderOpen size={14} />} label="Abrir carpeta de notas" onClick={() => { invoke("open_dir", { which: "notes" }); setMenuOpen(false); }} />
+              )}
               <div className="my-1 border-t border-line" />
               <MenuItem
                 icon={<Trash2 size={13} />}
@@ -566,7 +570,7 @@ export const NotesPanel = memo(function NotesPanel(p: Props) {
         <div className="border-b border-line px-2 py-1.5 space-y-1">
           <input
             autoFocus
-            className="field !h-7 !text-[12px]"
+            className="field !h-7 !text-[12px] w-full min-w-0"
             placeholder="Buscar en todas las notas (mín. 2 caracteres)"
             value={query}
             onChange={(e) => setQuery(e.target.value)}
@@ -630,7 +634,7 @@ export const NotesPanel = memo(function NotesPanel(p: Props) {
           <div className="flex items-center gap-1">
             <input
               autoFocus
-              className="field !h-7 !text-[12px] flex-1"
+              className="field !h-7 !text-[12px] flex-1 min-w-0"
               placeholder="Buscar en esta nota"
               value={find}
               onChange={(e) => setFind(e.target.value)}
@@ -639,14 +643,14 @@ export const NotesPanel = memo(function NotesPanel(p: Props) {
             <button
               title="Distinguir mayúsculas"
               onClick={() => setMatchCase((v) => !v)}
-              className={`w-7 h-7 shrink-0 rounded-md text-[11px] font-semibold hover:bg-hover ${matchCase ? "text-accent bg-hover" : "text-muted"}`}
+              className={`w-7 h-7 shrink-0 rounded-md text-[11px] font-semibold hover:bg-hover active:bg-hover ${matchCase ? "text-accent bg-hover" : "text-muted"}`}
             >
               Aa
             </button>
           </div>
           <div className="flex items-center gap-1">
             <input
-              className="field !h-7 !text-[12px] flex-1"
+              className="field !h-7 !text-[12px] flex-1 min-w-0"
               placeholder="Reemplazar por"
               value={replaceWith}
               onChange={(e) => setReplaceWith(e.target.value)}
@@ -658,7 +662,7 @@ export const NotesPanel = memo(function NotesPanel(p: Props) {
             <button
               onClick={replaceAll}
               disabled={!hits.length}
-              className="px-2 h-7 shrink-0 rounded-md border border-line hover:bg-hover disabled:opacity-40"
+              className="px-2 h-7 shrink-0 rounded-md border border-line hover:bg-hover active:bg-hover disabled:opacity-40 text-xs whitespace-nowrap"
             >
               Reemplazar todo
             </button>
@@ -718,7 +722,7 @@ export const NotesPanel = memo(function NotesPanel(p: Props) {
             <ArrowDownToLine size={13} /> Capturar
           </FootBtn>
         </div>
-        <div className="flex items-center gap-2 text-[11px] text-muted h-6">
+        <div className="flex items-center gap-2 text-[11px] text-muted min-h-6">
           <span className="truncate flex-1 min-w-0" title={notice || (p.target ? `Destino: ${p.target}` : "Sin sesión conectada")}>
             {notice || (p.target ? `Destino: ${p.target}` : "Sin sesión conectada")}
           </span>
@@ -739,7 +743,7 @@ function HeadBtn({ className = "", ...props }: React.ButtonHTMLAttributes<HTMLBu
   return (
     <button
       {...props}
-      className={`w-7 h-7 shrink-0 grid place-items-center rounded-md text-muted hover:text-fg hover:bg-hover ${className}`}
+      className={`w-7 h-7 shrink-0 grid place-items-center rounded-md text-muted hover:text-fg hover:bg-hover active:bg-hover select-none touch-manipulation ${className}`}
     />
   );
 }
@@ -751,12 +755,12 @@ function MenuItem(p: { icon: React.ReactNode; label: string; hint?: string; onCl
       disabled={p.disabled}
       title={p.hint ?? p.label}
       onClick={p.onClick}
-      className={`w-full flex items-center gap-2 px-2 h-8 rounded-md text-left hover:bg-hover disabled:opacity-40 disabled:hover:bg-transparent ${
+      className={`w-full flex items-center gap-2 px-2 h-8.5 sm:h-8 rounded-md text-left hover:bg-hover active:bg-hover select-none touch-manipulation disabled:opacity-40 disabled:hover:bg-transparent ${
         p.danger ? "text-danger" : p.active ? "text-accent" : ""
       } ${p.className ?? ""}`}
     >
       <span className="w-4 grid place-items-center shrink-0">{p.icon}</span>
-      {p.label}
+      <span className="truncate flex-1 min-w-0">{p.label}</span>
     </button>
   );
 }
@@ -765,7 +769,7 @@ function FootBtn(props: React.ButtonHTMLAttributes<HTMLButtonElement>) {
   return (
     <button
       {...props}
-      className="shrink-0 whitespace-nowrap flex items-center gap-1.5 px-2 h-7 rounded-md text-[12px] text-muted hover:text-fg hover:bg-hover disabled:opacity-40 disabled:hover:bg-transparent"
+      className="shrink-0 whitespace-nowrap flex items-center gap-1.5 px-2 h-7.5 sm:h-7 rounded-md text-[12px] text-muted hover:text-fg hover:bg-hover active:bg-hover select-none touch-manipulation disabled:opacity-40 disabled:hover:bg-transparent"
     />
   );
 }

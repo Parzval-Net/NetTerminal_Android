@@ -148,17 +148,17 @@ export function SessionModal({ initial, title, defaultFolder, folders, onClose, 
   );
 
   return (
-    <div className="fixed inset-0 z-50 grid place-items-center bg-black/25 p-4" onMouseDown={onClose}>
+    <div className="fixed inset-0 z-50 grid place-items-center bg-black/25 p-2 sm:p-4" onMouseDown={onClose}>
       <form
         {...win.box}
-        className="w-[460px] bg-panel border border-line rounded-xl shadow-pop resize overflow-hidden flex flex-col min-w-[360px] min-h-[260px] max-w-[96vw] max-h-[94vh]"
+        className="w-full sm:w-[460px] bg-panel border border-line rounded-xl shadow-pop sm:resize overflow-hidden flex flex-col min-w-0 sm:min-w-[360px] min-h-0 sm:min-h-[260px] max-w-[calc(100vw-1rem)] sm:max-w-[96vw] max-h-[96vh] sm:max-h-[94vh]"
         onMouseDown={(e) => e.stopPropagation()}
         onSubmit={(e) => {
           e.preventDefault();
           submit(true);
         }}
       >
-        <header {...win.handle} className="shrink-0 flex items-center justify-between px-5 h-12 border-b border-line select-none">
+        <header {...win.handle} className="shrink-0 flex items-center justify-between px-3 sm:px-5 h-12 border-b border-line select-none">
           <h2 className="text-[14px] font-semibold">{title ?? (initial ? "Editar sesión" : "Nueva sesión")}</h2>
           <button
             type="button"
@@ -170,19 +170,21 @@ export function SessionModal({ initial, title, defaultFolder, folders, onClose, 
           </button>
         </header>
 
-        <div className="flex-1 min-h-0 overflow-y-auto p-5 space-y-4">
-          <div className="grid grid-cols-5 gap-1 p-1 rounded-lg bg-hover">
+        <div className="flex-1 min-h-0 overflow-y-auto p-3 sm:p-5 space-y-4">
+          <div className="grid grid-cols-5 gap-1 p-1 rounded-xl sm:rounded-lg bg-hover">
             {(["ssh", "telnet", "serial", "raw", "local"] as SessionType[]).map((t) => (
               <button
                 key={t}
                 type="button"
                 onClick={() => changeType(t)}
-                className={`flex items-center justify-center gap-1.5 h-8 rounded-md text-[12.5px] font-medium ${
+                className={`flex items-center justify-center gap-1 sm:gap-1.5 h-9 sm:h-8 rounded-lg sm:rounded-md text-[11.5px] sm:text-[12.5px] font-medium px-1 truncate touch-manipulation ${
                   s.type === t ? "bg-panel shadow-sm text-fg" : "text-muted hover:text-fg"
                 }`}
               >
-                <SessionIcon type={t} size={14} />
-                {typeLabel[t]}
+                <span className="hidden min-[380px]:inline-flex shrink-0">
+                  <SessionIcon type={t} size={14} />
+                </span>
+                <span className="truncate">{typeLabel[t]}</span>
               </button>
             ))}
           </div>
@@ -466,13 +468,13 @@ export function SessionModal({ initial, title, defaultFolder, folders, onClose, 
 
           {s.type !== "local" && (
             <div>
-              <label className="flex items-center justify-between gap-4">
-                <span>
+              <label className="flex flex-wrap items-center justify-between gap-2 sm:gap-4">
+                <span className="min-w-[160px] flex-1">
                   Resaltado de sintaxis
                   <span className="block text-[11.5px] text-muted">Colorea interfaces, IPs, estados y configuración</span>
                 </span>
                 <select
-                  className="field !w-48"
+                  className="field !w-full sm:!w-48"
                   value={s.highlight ?? "default"}
                   onChange={(e) => set("highlight", e.target.value === "default" ? undefined : e.target.value)}
                 >
@@ -489,16 +491,16 @@ export function SessionModal({ initial, title, defaultFolder, folders, onClose, 
           )}
         </div>
 
-        <footer className="shrink-0 flex items-center justify-end gap-2 px-5 py-3 border-t border-line">
-          {error && <span className="mr-auto text-[11.5px] text-danger truncate">{error}</span>}
+        <footer className="shrink-0 flex flex-wrap items-center justify-end gap-2 px-3 sm:px-5 py-3 border-t border-line">
+          {error && <span className="mr-auto text-[11.5px] text-danger truncate max-w-full">{error}</span>}
           <button
             type="button"
             onClick={() => submit(false)}
-            className="px-3.5 h-8 rounded-md border border-line hover:bg-hover"
+            className="px-4 sm:px-3.5 h-10 sm:h-8 rounded-xl sm:rounded-md border border-line hover:bg-hover text-[13px] font-medium sm:font-normal touch-manipulation"
           >
             Guardar
           </button>
-          <button type="submit" className="px-3.5 h-8 rounded-md bg-accent text-accent-fg font-medium hover:opacity-90">
+          <button type="submit" className="px-4 sm:px-3.5 h-10 sm:h-8 rounded-xl sm:rounded-md bg-accent text-accent-fg font-medium hover:opacity-90 text-[13px] touch-manipulation">
             Guardar y conectar
           </button>
         </footer>
@@ -599,8 +601,15 @@ function PasswordBlock(p: {
 }
 
 function Row({ children, cols = "1fr 1fr" }: { children: React.ReactNode; cols?: string }) {
+  if (cols === "1fr 1fr 1fr 1fr") {
+    return (
+      <div className="grid grid-cols-2 sm:grid-cols-4 gap-2 sm:gap-3">
+        {children}
+      </div>
+    );
+  }
   return (
-    <div className="grid gap-3" style={{ gridTemplateColumns: cols }}>
+    <div className="grid gap-2 sm:gap-3" style={{ gridTemplateColumns: cols }}>
       {children}
     </div>
   );
@@ -648,7 +657,7 @@ function TunnelsEditor({ tunnels, onChange }: { tunnels: Tunnel[]; onChange: (t:
       </summary>
       <div className="px-3 pb-3 space-y-1.5">
         {tunnels.map((t, i) => (
-          <div key={i} className="flex items-center gap-1 text-[12px]">
+          <div key={i} className="flex flex-wrap sm:flex-nowrap items-center gap-1.5 sm:gap-1 text-[12px] p-2 sm:p-0 rounded-md border sm:border-0 border-line/60">
             <select
               className="field !h-7 !w-[54px] !px-1 !text-[12px]"
               title="Local (-L): puerto del PC hacia un destino visto desde el servidor. Remoto (-R): puerto del servidor hacia tu PC. Dinámico (-D): proxy SOCKS."
@@ -700,7 +709,7 @@ function TunnelsEditor({ tunnels, onChange }: { tunnels: Tunnel[]; onChange: (t:
               type="button"
               title="Quitar túnel"
               onClick={() => onChange(tunnels.filter((_, k) => k !== i))}
-              className="w-7 h-7 shrink-0 grid place-items-center rounded-md text-muted hover:text-danger hover:bg-hover"
+              className="w-7 h-7 shrink-0 grid place-items-center rounded-md text-muted hover:text-danger hover:bg-hover ml-auto sm:ml-0"
             >
               <Trash2 size={13} />
             </button>

@@ -5,6 +5,13 @@
   "windows": [
     "main"
   ],
+  "platforms": [
+    "macOS",
+    "windows",
+    "linux",
+    "android",
+    "iOS"
+  ],
   "permissions": [
     "core:default",
     "opener:allow-open-url",

@@ -2769,7 +2769,7 @@ export function TopologyTool({
 
   return (
     <div className="@container h-full min-h-[480px] flex flex-col gap-3">
-      <section className="rounded-xl border border-line bg-panel px-4 pt-3 pb-3">
+      <section className="rounded-xl border border-line bg-panel px-3 sm:px-4 pt-3 pb-3">
         {/* En anchos chicos se oculta: el menú lateral ya dice Topología y el texto queda en el botón. */}
         <header className="flex items-baseline gap-2 min-w-0 mb-2 @max-[860px]:hidden">
           <h2 className="text-[13px] font-semibold shrink-0">Topología</h2>
@@ -2778,16 +2778,16 @@ export function TopologyTool({
           </p>
         </header>
         <div className="flex flex-wrap items-end gap-2">
-          <Label text="Descubrir con" className="w-36">
-            <select className="field" value={mode} onChange={(e) => setUi((u) => ({ ...u, mode: e.target.value as DiscoveryMode }))}>
+          <Label text="Descubrir con" className="w-full sm:w-36">
+            <select className="field w-full" value={mode} onChange={(e) => setUi((u) => ({ ...u, mode: e.target.value as DiscoveryMode }))}>
               <option value="cli">Consola (CLI)</option>
               <option value="snmp">SNMP (perfil)</option>
             </select>
           </Label>
           {mode === "cli" ? (
             <>
-              <Label text="Equipo (sesión conectada)" className="flex-1 min-w-40">
-                <select className="field" value={connId} onChange={(e) => setConnId(e.target.value)}>
+              <Label text="Equipo (sesión conectada)" className="w-full sm:flex-1 sm:min-w-40">
+                <select className="field w-full" value={connId} onChange={(e) => setConnId(e.target.value)}>
                   {!terminals.length && <option value="">Sin sesiones conectadas</option>}
                   {terminals.map((t) => (
                     <option key={t.connId} value={t.connId}>
@@ -2797,8 +2797,8 @@ export function TopologyTool({
                   ))}
                 </select>
               </Label>
-              <Label text="Fabricante" className="w-40">
-                <select className="field" value={vendor} onChange={(e) => setVendor(e.target.value as TopoVendor)}>
+              <Label text="Fabricante" className="w-full sm:w-40">
+                <select className="field w-full" value={vendor} onChange={(e) => setVendor(e.target.value as TopoVendor)}>
                   {VENDORS.map((v) => (
                     <option key={v.id} value={v.id}>
                       {v.label}
@@ -2808,8 +2808,8 @@ export function TopologyTool({
               </Label>
             </>
           ) : (
-            <Label text="Perfil SNMP del equipo (v2c o v3)" className="flex-1 min-w-48">
-              <select className="field" value={profile?.id ?? ""} onChange={(e) => setUi((u) => ({ ...u, snmpProfile: e.target.value }))}>
+            <Label text="Perfil SNMP del equipo (v2c o v3)" className="w-full sm:flex-1 sm:min-w-48">
+              <select className="field w-full" value={profile?.id ?? ""} onChange={(e) => setUi((u) => ({ ...u, snmpProfile: e.target.value }))}>
                 {!profiles.length && <option value="">Sin perfiles: créalos en Herramientas › SNMP</option>}
                 {profiles.map((p) => (
                   <option key={p.id} value={p.id}>
@@ -2868,7 +2868,7 @@ export function TopologyTool({
             <Search size={13} className="absolute left-2 top-1/2 -translate-y-1/2 text-muted pointer-events-none" aria-hidden />
             <input
               type="search"
-              className="field !h-8 !pl-7 !w-64 @max-[860px]:!w-48 !text-[12px]"
+              className="field !h-8 !pl-7 w-40 sm:!w-64 @max-[860px]:!w-44 !text-[12px]"
               placeholder="Buscar (nombre, IP, MAC, puerto)"
               title="Busca por nombre, IP, MAC, interfaz o descripción; Enter va al primero"
               aria-label="Buscar en el diagrama"
@@ -2886,7 +2886,7 @@ export function TopologyTool({
               }}
             />
             {searchOpen && query.trim().length >= 2 && (
-              <ul className="absolute z-20 left-0 top-full mt-1 w-72 max-h-72 overflow-y-auto rounded-lg border border-line bg-panel shadow-pop py-1 text-[12px]" role="listbox">
+              <ul className="absolute z-20 left-0 top-full mt-1 w-72 max-w-[calc(100vw-2.5rem)] max-h-72 overflow-y-auto rounded-lg border border-line bg-panel shadow-pop py-1 text-[12px]" role="listbox">
                 {hits.length ? (
                   hits.map((h, i) => (
                     <li key={`${h.id}${i}`}>
@@ -2942,7 +2942,7 @@ export function TopologyTool({
           </Btn>
           {exportMenu && <ContextMenu menu={exportMenu} onClose={() => setExportMenu(null)} />}
           {nodeMenu && <ContextMenu menu={nodeMenu} onClose={() => setNodeMenu(null)} />}
-          <div className="ml-auto flex items-center gap-1">
+          <div className="flex flex-wrap items-center gap-1 ml-auto">
             <Btn
               kind={trafficOn ? "default" : "ghost"}
               aria-pressed={trafficOn}

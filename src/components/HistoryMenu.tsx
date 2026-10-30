@@ -30,13 +30,15 @@ export function HistoryMenu({ historyKey, connected, onResend, onClose }: Props)
       .then(setItems)
       .catch(() => setItems([]));
     // El botón del historial en la barra de estado alterna el panel: no lo cierra aquí para que el clic no lo reabra.
-    const onDown = (e: MouseEvent) =>
+    const onDown = (e: MouseEvent | TouchEvent) =>
       !box.current?.contains(e.target as Node) && !(e.target as Element).closest?.("[data-history-btn]") && onClose();
     const onKey = (e: KeyboardEvent) => e.key === "Escape" && onClose();
     window.addEventListener("mousedown", onDown);
+    window.addEventListener("touchstart", onDown);
     window.addEventListener("keydown", onKey);
     return () => {
       window.removeEventListener("mousedown", onDown);
+      window.removeEventListener("touchstart", onDown);
       window.removeEventListener("keydown", onKey);
     };
   }, [historyKey, onClose]);
@@ -53,15 +55,17 @@ export function HistoryMenu({ historyKey, connected, onResend, onClose }: Props)
       ref={box}
       role="dialog"
       aria-label="Historial de comandos enviados"
-      className="fixed bottom-9 right-3 z-40 w-[420px] max-w-[calc(100vw-1.5rem)] bg-panel border border-line rounded-lg shadow-pop text-[12px] text-fg overflow-hidden"
+      className="fixed bottom-16 sm:bottom-9 right-2 sm:right-3 z-40 w-[420px] max-w-[calc(100vw-1rem)] bg-panel border border-line rounded-lg shadow-pop text-[12px] text-fg overflow-hidden"
     >
       <div className="flex items-center justify-between px-3 h-8 border-b border-line text-muted">
-        <span>Últimos comandos enviados (Notas, catálogo y botones)</span>
+        <span className="truncate pr-2 min-w-0" title="Últimos comandos enviados (Notas, catálogo y botones)">
+          Últimos comandos enviados
+        </span>
         {!!items?.length && (
           <button
             onClick={clear}
             onMouseLeave={() => setConfirmClear(false)}
-            className={`flex items-center gap-1 hover:text-danger ${confirmClear ? "text-danger" : ""}`}
+            className={`shrink-0 flex items-center gap-1 hover:text-danger active:text-danger ${confirmClear ? "text-danger" : ""}`}
             title="Borrar el historial de este equipo"
           >
             <Trash2 size={12} />
@@ -88,7 +92,7 @@ export function HistoryMenu({ historyKey, connected, onResend, onClose }: Props)
                   onClose();
                   onResend(e.cmd);
                 }}
-                className="group w-full flex items-center gap-2 px-2 h-7 rounded-md text-left hover:bg-hover disabled:opacity-60 disabled:hover:bg-transparent"
+                className="group w-full flex items-center gap-2 px-2 h-8 sm:h-7 rounded-md text-left hover:bg-hover active:bg-hover select-none touch-manipulation disabled:opacity-60 disabled:hover:bg-transparent"
               >
                 <span className="flex-1 min-w-0 truncate font-mono">
                   {lines[0]}

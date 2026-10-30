@@ -39,32 +39,34 @@ export function SubnetTool() {
       <Section title="Calculadora de subredes" hint="IPv4 con prefijo o máscara (10.0.0.1/24, 10.0.0.1 255.255.255.0) o IPv6 (2001:db8::1/64).">
         <input
           autoFocus
-          className="field font-mono mb-3"
+          className="field font-mono mb-3 w-full"
           value={input}
           onChange={(e) => setInput(e.target.value)}
           spellCheck={false}
         />
         {!r && input.trim() && <p className="text-[12px] text-danger">Dirección o máscara inválida</p>}
         {r && (
-          <table className="w-full text-[12.5px]">
-            <tbody>
-              {rows.map(([k, v]) => (
-                <tr key={k} className="border-t border-line first:border-0">
-                  <td className="py-1.5 pr-4 text-muted whitespace-nowrap w-28 @[36rem]:w-48">{k}</td>
-                  <td>
-                    <CopyText text={v} />
-                  </td>
-                </tr>
-              ))}
-            </tbody>
-          </table>
+          <div className="overflow-x-auto">
+            <table className="w-full text-[12.5px]">
+              <tbody>
+                {rows.map(([k, v]) => (
+                  <tr key={k} className="border-t border-line first:border-0">
+                    <td className="py-1.5 pr-2 sm:pr-4 text-muted whitespace-nowrap w-24 sm:w-28 @[36rem]:w-48">{k}</td>
+                    <td className="min-w-0">
+                      <CopyText text={v} />
+                    </td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
         )}
       </Section>
 
       {r?.version === 4 && r.prefix < 32 && (
         <Section title="Dividir en subredes">
-          <Label text="Nuevo prefijo" className="w-56 mb-3">
-            <select className="field" value={split} onChange={(e) => setSplit(Number(e.target.value))}>
+          <Label text="Nuevo prefijo" className="w-full sm:w-56 mb-3">
+            <select className="field w-full" value={split} onChange={(e) => setSplit(Number(e.target.value))}>
               <option value={0}>Selecciona</option>
               {Array.from({ length: 32 - r.prefix }, (_, i) => r.prefix + i + 1).map((p) => (
                 <option key={p} value={p}>
@@ -74,8 +76,8 @@ export function SubnetTool() {
             </select>
           </Label>
           {subnets.length > 0 && (
-            <div className="max-h-[300px] overflow-y-auto">
-              <table className="w-full text-[12px] font-mono">
+            <div className="max-h-[300px] overflow-auto">
+              <table className="w-full text-[12px] font-mono min-w-[280px]">
                 <thead className="text-muted text-left font-sans">
                   <tr>
                     <th className="font-medium py-1">Subred</th>

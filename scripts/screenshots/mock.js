@@ -162,6 +162,7 @@ const settings = {
 // Cada carga parte limpia.
 localStorage.clear();
 settings.appTheme = new URLSearchParams(location.search).get("theme") ?? "dark";
+settings.showMobileKeyBar = /Android/i.test(navigator.userAgent) || location.search.includes("keybar=1");
 if (location.search.includes("big=")) settings.confirmClose = false;
 if (location.search.includes("autolegacy=1")) settings.autoLegacySsh = true;
 // ?scene=suggest: sugerencias de comandos activas y core-sw01 con plataforma IOS-XE (con
@@ -774,6 +775,27 @@ const handlers = {
     }
     return null;
   },
+  write: ({ id, data }) => {
+    const ch = channels.get(id);
+    if (!ch) return null;
+    const send = (t) => cbs.get(ch.data)?.({ index: ch.index++, message: enc.encode(t).buffer });
+    if (data === "\x03") {
+      send("^C\r\ncore-sw01# ");
+    } else if (data === "\x1a") {
+      send("^Z\r\ncore-sw01# ");
+    } else if (data === "\r" || data === "\n" || data === "\r\n") {
+      send("\r\ncore-sw01# ");
+    } else if (data === "?") {
+      send("?\r\nExec commands:\r\n  show     Show running system information\r\n  ping     Send echo messages\r\n  traceroute Trace route to destination\r\ncore-sw01# ");
+    } else {
+      send(data);
+    }
+    return null;
+  },
+  resize: () => null,
+  python_status: () => "Python 3.12.2",
+  python_redetect: () => "Python 3.12.2",
+  monitor_running: () => [],
   // Como el backend real: al cerrar se suelta el canal y el frontend recibe "end".
   disconnect: ({ id }) => {
     const ch = channels.get(id);
@@ -1355,7 +1377,12 @@ window.__TAURI_EVENT_PLUGIN_INTERNALS__ = { unregisterListener() {} };
 const wait = (ms) => new Promise((r) => setTimeout(r, ms));
 function find(label) {
   const all = [...document.querySelectorAll("button, [role=button], [title], div, span, a, li")];
+  if (label.startsWith("Herramientas")) {
+    const mob = all.find((e) => e.getAttribute("aria-label") === "Red" || e.getAttribute("aria-label") === "Herramientas");
+    if (mob) return mob;
+  }
   return (
+    all.find((e) => e.getAttribute("aria-label") === label) ||
     all.find((e) => e.title === label || e.title?.startsWith(label + " (")) ||
     all.find((e) => e.textContent?.trim() === label && e.children.length <= 2)
   );

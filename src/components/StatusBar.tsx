@@ -20,7 +20,7 @@ import { Tab, TabState, sessionTarget, tunnelLabel } from "../types";
 import { BroadcastTargetPicker } from "./BroadcastTarget";
 import { QuickBolt, typeLabel } from "./SessionIcon";
 import { statusColor } from "./TabBar";
-import { historyLabel, modLabel } from "../lib/platform";
+import { historyLabel, isMobile, modLabel } from "../lib/platform";
 
 /** Etiquetas de los botones accionables: con la barra angosta (ventana mínima o vista con barra
  *  lateral) solo queda el icono y el title. Comandos, Notas, CLI Lab y Ajustes viven en la barra
@@ -66,7 +66,7 @@ export const StatusBar = memo(function StatusBar({
   historyOpen,
   device,
 }: Props) {
-  const ai = aiEnabled && (
+  const ai = aiEnabled && !isMobile && (
     <BarBtn onClick={onAi} title="Servidor MCP activo: los agentes de IA pueden conectarse" className="!text-accent">
       <Bot size={12} />
       <span className={LBL}>IA</span>
@@ -83,14 +83,14 @@ export const StatusBar = memo(function StatusBar({
   const connected = state.status === "connected";
 
   return (
-    <div className="@container h-7 shrink-0 flex items-center gap-2 @[40rem]:gap-3 px-3 bg-chrome border-t border-line text-[11.5px] text-muted">
+    <div className="@container h-7 shrink-0 flex items-center gap-2 @[40rem]:gap-3 px-3 bg-chrome border-t border-line text-[11.5px] text-muted overflow-x-auto [scrollbar-width:none] [&::-webkit-scrollbar]:hidden">
       <span className="flex items-center gap-1.5 shrink-0 whitespace-nowrap" title={statusText[state.status]}>
         <span className="w-1.5 h-1.5 rounded-full" style={{ background: statusColor[state.status] }} />
         {/* Barra muy angosta: queda el punto de color (el estado va en el tooltip). */}
         <span className="hidden @[34rem]:inline">{statusText[state.status]}</span>
       </span>
-      <span className="font-medium text-fg/80">{typeLabel[session.type]}</span>
-      <span className="truncate min-w-0">{sessionTarget(session)}</span>
+      <span className="font-medium text-fg/80 shrink-0 whitespace-nowrap">{typeLabel[session.type]}</span>
+      <span className="truncate min-w-0 max-w-[130px] @[36rem]:max-w-none">{sessionTarget(session)}</span>
       {session.type === "ssh" && !!session.tunnels?.length && (
         <span
           className="flex items-center gap-1 shrink-0 text-fg/80"
@@ -171,7 +171,7 @@ function BarBtn(props: React.ButtonHTMLAttributes<HTMLButtonElement>) {
   return (
     <button
       {...props}
-      className={`shrink-0 whitespace-nowrap flex items-center justify-center gap-1 h-6 min-w-6 px-1.5 rounded hover:bg-hover hover:text-fg disabled:opacity-40 disabled:hover:bg-transparent ${props.className ?? ""}`}
+      className={`shrink-0 whitespace-nowrap flex items-center justify-center gap-1 h-6 min-w-6 px-1.5 rounded hover:bg-hover active:bg-hover hover:text-fg select-none touch-manipulation disabled:opacity-40 disabled:hover:bg-transparent ${props.className ?? ""}`}
     />
   );
 }

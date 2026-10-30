@@ -473,7 +473,16 @@ fn open_dir(which: String, app: tauri::AppHandle, state: State<'_, AppState>) ->
     std::fs::create_dir_all(&dir).map_err(|e| e.to_string())?;
     app.opener()
         .open_path(dir.to_string_lossy(), None::<&str>)
-        .map_err(|e| e.to_string())
+        .map_err(|e| {
+            if cfg!(target_os = "android") {
+                format!(
+                    "No se pudo abrir la carpeta en Android: no hay un explorador de archivos disponible o faltan permisos ({e}). Ruta: {}",
+                    dir.display()
+                )
+            } else {
+                e.to_string()
+            }
+        })
 }
 
 #[tauri::command(async)]
@@ -1186,6 +1195,13 @@ fn extend_path() {
             extra.push(std::path::Path::new(&home).join(".local/bin"));
         }
     }
+    if cfg!(target_os = "android") {
+        extra.extend([
+            "/system/bin",
+            "/system/xbin",
+            "/data/data/com.termux/files/usr/bin",
+        ].map(Into::into));
+    }
     let extra: Vec<_> = extra.into_iter().filter(|d| d.is_dir()).collect();
     if extra.is_empty() {
         return;
@@ -1229,16 +1245,21 @@ fn disable_native_zoom(app: &tauri::AppHandle) {
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
     extend_path();
-    let app = tauri::Builder::default()
+    let builder = tauri::Builder::default()
         .plugin(tauri_plugin_opener::init())
         .plugin(tauri_plugin_clipboard_manager::init())
-        .plugin(tauri_plugin_dialog::init())
+        .plugin(tauri_plugin_dialog::init());
+
+    #[cfg(not(any(target_os = "android", target_os = "ios")))]
+    let builder = builder
         .plugin(tauri_plugin_updater::Builder::new().build())
         .on_menu_event(|app, event| {
             if event.id() == "settings" {
                 let _ = app.emit("open-settings", ());
             }
-        })
+        });
+
+    let app = builder
         .setup(|app| {
             // Un error de `setup` hace fallar `build` y, con panic=abort, la app se cerraba sin
             // aviso. Sin menú la app funciona igual: el error se registra y se sigue.

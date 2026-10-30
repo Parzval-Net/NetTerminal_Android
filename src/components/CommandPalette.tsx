@@ -3,6 +3,7 @@ import { invoke } from "@tauri-apps/api/core";
 import { History, ListX, Search } from "lucide-react";
 import { Session, sessionTarget } from "../types";
 import { QuickBolt, SessionIcon, typeLabel } from "./SessionIcon";
+import { isMobile } from "../lib/platform";
 
 /** Acción de la app en la paleta (p. ej. "Cerrar todas las sesiones"). */
 export interface PaletteAction {
@@ -118,12 +119,12 @@ export function CommandPalette({ sessions, onClose, onOpen, actions = [] }: Prop
   };
 
   return (
-    <div className="fixed inset-0 z-50 flex justify-center pt-[12vh] bg-black/25" onMouseDown={onClose}>
+    <div className="fixed inset-0 z-50 flex justify-center pt-[6vh] sm:pt-[12vh] px-2 sm:px-0 bg-black/25" onMouseDown={onClose}>
       <div
         role="dialog"
         aria-modal="true"
         aria-label="Buscar sesión o conexión rápida"
-        className="w-[520px] max-w-[92vw] h-fit bg-panel border border-line rounded-xl shadow-pop overflow-hidden"
+        className="w-full sm:w-[520px] max-w-[calc(100vw-1rem)] sm:max-w-[92vw] h-fit bg-panel border border-line rounded-xl shadow-pop overflow-hidden"
         onMouseDown={(e) => e.stopPropagation()}
         onKeyDown={(e) => {
           // Foco atrapado: Tab no debe salir a la barra lateral ni a la terminal de detrás.
@@ -135,12 +136,12 @@ export function CommandPalette({ sessions, onClose, onOpen, actions = [] }: Prop
           next?.focus();
         }}
       >
-        <div className="flex items-center gap-2.5 px-4 h-12 border-b border-line">
-          <Search size={16} className="text-muted" />
+        <div className="flex items-center gap-2.5 px-3 sm:px-4 h-12 border-b border-line">
+          <Search size={16} className="text-muted shrink-0" />
           <input
             autoFocus
-            className="flex-1 bg-transparent outline-none text-[14px] placeholder:text-muted"
-            placeholder="Buscar sesión o escribir user@host para conexión rápida"
+            className="flex-1 min-w-0 bg-transparent outline-none text-[13.5px] sm:text-[14px] placeholder:text-muted"
+            placeholder={isMobile ? "Buscar o escribir user@host…" : "Buscar sesión o escribir user@host para conexión rápida"}
             value={query}
             onChange={(e) => setQuery(e.target.value)}
             onKeyDown={(e) => {

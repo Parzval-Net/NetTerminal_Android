@@ -108,48 +108,50 @@ function SpeedTest({ history, onResult, onHistory }: SpeedProps) {
       {history.length > 0 && (
         <details className="mt-3">
           <summary className="text-[12px] text-muted cursor-default">Historial ({history.length})</summary>
-          <table className="w-full mt-2 text-[12px]">
-            <thead className="text-muted text-left">
-              <tr>
-                <th className="font-medium py-1">Fecha</th>
-                <th className="font-medium">Bajada</th>
-                <th className="font-medium">Subida</th>
-                <th className="font-medium">Latencia</th>
-                <th className="font-medium">Jitter</th>
-                <th className="font-medium">Servidor</th>
-                <th className="w-8" />
-              </tr>
-            </thead>
-            <tbody className="tabular-nums">
-              {history.map((h) => (
-                <tr key={h.ts} className="border-t border-line">
-                  <td className="py-1">{new Date(h.ts).toLocaleString("es-CL")}</td>
-                  <td>{mbps(h.download_mbps)}</td>
-                  <td>{mbps(h.upload_mbps)}</td>
-                  <td>{h.latency_ms.toFixed(1)} ms</td>
-                  <td>{h.jitter_ms != null ? `${h.jitter_ms.toFixed(1)} ms` : "—"}</td>
-                  <td>{h.server?.colo ?? ""}</td>
-                  <td className="text-right">
-                    <button
-                      title={armed === h.ts ? "Clic para confirmar" : "Eliminar esta medición"}
-                      aria-label="Eliminar esta medición"
-                      onMouseLeave={() => setArmed(null)}
-                      onClick={() => {
-                        if (armed !== h.ts) return setArmed(h.ts);
-                        onHistory(history.filter((x) => x.ts !== h.ts));
-                        setArmed(null);
-                      }}
-                      className={`w-6 h-6 inline-grid place-items-center rounded-md hover:bg-hover ${
-                        armed === h.ts ? "text-danger" : "text-muted hover:text-danger"
-                      }`}
-                    >
-                      <Trash2 size={13} />
-                    </button>
-                  </td>
+          <div className="overflow-x-auto">
+            <table className="w-full mt-2 text-[12px] min-w-[500px]">
+              <thead className="text-muted text-left">
+                <tr>
+                  <th className="font-medium py-1">Fecha</th>
+                  <th className="font-medium">Bajada</th>
+                  <th className="font-medium">Subida</th>
+                  <th className="font-medium">Latencia</th>
+                  <th className="font-medium">Jitter</th>
+                  <th className="font-medium">Servidor</th>
+                  <th className="w-8" />
                 </tr>
-              ))}
-            </tbody>
-          </table>
+              </thead>
+              <tbody className="tabular-nums">
+                {history.map((h) => (
+                  <tr key={h.ts} className="border-t border-line">
+                    <td className="py-1">{new Date(h.ts).toLocaleString("es-CL")}</td>
+                    <td>{mbps(h.download_mbps)}</td>
+                    <td>{mbps(h.upload_mbps)}</td>
+                    <td>{h.latency_ms.toFixed(1)} ms</td>
+                    <td>{h.jitter_ms != null ? `${h.jitter_ms.toFixed(1)} ms` : "—"}</td>
+                    <td>{h.server?.colo ?? ""}</td>
+                    <td className="text-right">
+                      <button
+                        title={armed === h.ts ? "Clic para confirmar" : "Eliminar esta medición"}
+                        aria-label="Eliminar esta medición"
+                        onMouseLeave={() => setArmed(null)}
+                        onClick={() => {
+                          if (armed !== h.ts) return setArmed(h.ts);
+                          onHistory(history.filter((x) => x.ts !== h.ts));
+                          setArmed(null);
+                        }}
+                        className={`w-6 h-6 inline-grid place-items-center rounded-md hover:bg-hover ${
+                          armed === h.ts ? "text-danger" : "text-muted hover:text-danger"
+                        }`}
+                      >
+                        <Trash2 size={13} />
+                      </button>
+                    </td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
           <div className="flex justify-end mt-1">
             <button
               onMouseLeave={() => setArmed(null)}
@@ -280,7 +282,7 @@ function Iperf() {
   const r = client.result;
 
   return (
-    <div className="grid gap-4 [grid-template-columns:repeat(auto-fit,minmax(400px,1fr))]">
+    <div className="grid gap-4 [grid-template-columns:repeat(auto-fit,minmax(min(320px,100%),1fr))]">
       <Section
         title="iperf3 · cliente"
         hint={found ? `${found.version} · ${found.path}` : "Detectando…"}
@@ -303,7 +305,7 @@ function Iperf() {
             });
           }}
         >
-          <div className="grid grid-cols-2 @[36rem]:grid-cols-[1fr_90px_90px_80px] gap-2">
+          <div className="grid grid-cols-1 sm:grid-cols-2 @[36rem]:grid-cols-[1fr_90px_90px_80px] gap-2">
             <Label text="Servidor iperf3">
               <input className="field" value={host} placeholder="10.0.0.2" onChange={(e) => setHost(e.target.value)} />
             </Label>

@@ -95,7 +95,7 @@ export function DiagTool({ samples }: { samples: Record<string, Sample[]> }) {
           </Btn>
         </form>
         {pingErr && <p className="mb-2 text-[12px] text-danger">{pingErr}</p>}
-        <div className="grid grid-cols-5 gap-2 mb-3">
+        <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-5 gap-2 mb-3">
           <StatTile label="Actual" value={st.last?.ok ? fmtMs(st.last.rtt) : st.last ? "Sin resp." : "—"} tone={st.last && !st.last.ok ? "danger" : undefined} />
           <StatTile label="Promedio" value={fmtMs(st.avg)} />
           <StatTile label="Mín / máx" value={st.min == null ? "—" : `${st.min.toFixed(0)} / ${st.max!.toFixed(0)}`} />
@@ -111,7 +111,7 @@ export function DiagTool({ samples }: { samples: Record<string, Sample[]> }) {
         />
       </Section>
 
-      <div className="grid gap-4 [grid-template-columns:repeat(auto-fit,minmax(380px,1fr))]">
+      <div className="grid gap-4 [grid-template-columns:repeat(auto-fit,minmax(min(300px,100%),1fr))]">
         <Section title="Traceroute" hint="Muestra cada salto hasta el destino (sin resolver nombres).">
           <form
             className="flex gap-2 mb-3"
@@ -121,7 +121,7 @@ export function DiagTool({ samples }: { samples: Record<string, Sample[]> }) {
               else trace.start("tool_traceroute", { host: traceHost.trim() });
             }}
           >
-            <input className="field flex-1" placeholder="Destino" value={traceHost} onChange={(e) => setTraceHost(e.target.value)} />
+            <input className="field flex-1 min-w-0" placeholder="Destino" value={traceHost} onChange={(e) => setTraceHost(e.target.value)} />
             <Btn type="submit" kind={trace.running ? "default" : "primary"} disabled={!traceHost.trim()}>
               {trace.running ? "Detener" : "Trazar"}
             </Btn>
@@ -132,7 +132,7 @@ export function DiagTool({ samples }: { samples: Record<string, Sample[]> }) {
 
         <Section title="Puertos TCP" hint="Verifica si un servicio acepta conexiones. Rangos permitidos: 22,80-90.">
           <form
-            className="grid grid-cols-[1fr_1fr_auto] gap-2 mb-3"
+            className="grid grid-cols-1 sm:grid-cols-[1fr_1fr_auto] gap-2 mb-3"
             onSubmit={(e) => {
               e.preventDefault();
               scan();
@@ -145,14 +145,14 @@ export function DiagTool({ samples }: { samples: Record<string, Sample[]> }) {
               <input className="field font-mono !text-[12px]" value={portText} onChange={(e) => setPortText(e.target.value)} />
             </Label>
             <div className="self-end">
-              <Btn type="submit" kind="primary" disabled={scanning || !portHost.trim() || !parsePorts(portText).length}>
+              <Btn type="submit" kind="primary" className="w-full sm:w-auto" disabled={scanning || !portHost.trim() || !parsePorts(portText).length}>
                 {scanning ? "Revisando…" : "Revisar"}
               </Btn>
             </div>
           </form>
           {portErr && <p className="mb-2 text-[12px] text-danger">{portErr}</p>}
-          <div className="max-h-[220px] overflow-y-auto">
-            <table className="w-full text-[12px]">
+          <div className="max-h-[220px] overflow-auto">
+            <table className="w-full text-[12px] min-w-[280px]">
               <thead className="text-muted text-left">
                 <tr>
                   <th className="font-medium py-1">Puerto</th>

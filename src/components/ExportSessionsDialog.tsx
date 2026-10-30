@@ -81,21 +81,21 @@ export function ExportSessionsDialog({ sessions, folder, onClose }: Props) {
   };
 
   return (
-    <div className="fixed inset-0 z-[60] grid place-items-center bg-black/25 p-4" onMouseDown={onClose}>
+    <div className="fixed inset-0 z-[60] grid place-items-center bg-black/25 p-2 sm:p-4" onMouseDown={onClose}>
       <div
-        className="w-[560px] max-w-[96vw] max-h-[90vh] flex flex-col bg-panel border border-line rounded-xl shadow-pop overflow-hidden"
+        className="w-full sm:w-[560px] max-w-[calc(100vw-1rem)] sm:max-w-[96vw] max-h-[96vh] sm:max-h-[90vh] flex flex-col bg-panel border border-line rounded-xl shadow-pop overflow-hidden"
         onMouseDown={(e) => e.stopPropagation()}
       >
-        <header className="shrink-0 flex items-center justify-between px-5 h-12 border-b border-line">
+        <header className="shrink-0 flex items-center justify-between px-3 sm:px-5 h-12 border-b border-line">
           <h2 className="text-[14px] font-semibold">Exportar sesiones</h2>
           <button onClick={onClose} aria-label="Cerrar" className="w-7 h-7 grid place-items-center rounded-md text-muted hover:text-fg hover:bg-hover">
             <X size={16} />
           </button>
         </header>
 
-        <div className="shrink-0 px-5 pt-4 pb-2 space-y-2">
-          <div className="flex items-center gap-2">
-            <input className="field flex-1" placeholder="Filtrar por nombre, host o carpeta" value={q} onChange={(e) => setQ(e.target.value)} autoFocus />
+        <div className="shrink-0 px-3 sm:px-5 pt-3 pb-2 space-y-2">
+          <div className="flex flex-wrap sm:flex-nowrap items-center gap-2">
+            <input className="field flex-1 min-w-[140px]" placeholder="Filtrar por nombre, host o carpeta" value={q} onChange={(e) => setQ(e.target.value)} autoFocus />
             <label className="flex items-center gap-2 text-[12.5px] shrink-0">
               <input type="checkbox" className="accent-[var(--accent)]" checked={allShown} onChange={(e) => setMany(shownIds, e.target.checked)} />
               {q ? "Todas las filtradas" : "Todas"}
@@ -103,7 +103,7 @@ export function ExportSessionsDialog({ sessions, folder, onClose }: Props) {
           </div>
         </div>
 
-        <div className="flex-1 min-h-0 overflow-y-auto px-5 pb-3">
+        <div className="flex-1 min-h-0 overflow-y-auto px-3 sm:px-5 pb-3">
           {!groups.length && <p className="py-6 text-center text-[12px] text-muted">Sin sesiones que coincidan.</p>}
           {groups.map((g) => {
             const ids = g.items.map((s) => s.id);
@@ -129,21 +129,21 @@ export function ExportSessionsDialog({ sessions, folder, onClose }: Props) {
           })}
         </div>
 
-        <footer className="shrink-0 border-t border-line px-5 py-3 space-y-2">
+        <footer className="shrink-0 border-t border-line px-3 sm:px-5 py-3 space-y-2">
           <p className="text-[11.5px] text-muted">
             El XML usa el formato de SecureCRT: se abre ahí y se reimporta aquí con Importar › Desde archivo. Solo datos de
             conexión, nunca contraseñas ni comandos al conectar.
           </p>
-          <div className="flex items-center justify-end gap-2">
+          <div className="flex flex-wrap items-center justify-end gap-2">
             {msg && <span className="mr-auto text-[11.5px] text-accent truncate" title={msg}>{msg}</span>}
             <span className="text-[11.5px] text-muted">{plural(selected.size, "sesión", "sesiones")}</span>
-            <button onClick={copyJson} disabled={!selected.size} className="px-3 h-8 rounded-md border border-line hover:bg-hover disabled:opacity-40">
+            <button onClick={copyJson} disabled={!selected.size} className="px-3.5 h-10 sm:h-8 rounded-xl sm:rounded-md border border-line hover:bg-hover disabled:opacity-40 text-[13px] font-medium sm:font-normal touch-manipulation">
               Copiar JSON
             </button>
             <button
               onClick={saveXml}
               disabled={!selected.size}
-              className="flex items-center gap-1.5 px-3.5 h-8 rounded-md bg-accent text-accent-fg font-medium hover:opacity-90 disabled:opacity-40"
+              className="flex items-center gap-1.5 px-3.5 h-10 sm:h-8 rounded-xl sm:rounded-md bg-accent text-accent-fg font-medium hover:opacity-90 disabled:opacity-40 text-[13px] touch-manipulation"
             >
               <FileDown size={14} /> Guardar XML…
             </button>

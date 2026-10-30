@@ -1,29 +1,36 @@
 import { Cable, Globe, Network, Server, SquareTerminal, Zap } from "lucide-react";
 import { SessionType } from "../types";
 
-// Tonos medios: >= 3:1 (WCAG 1.4.11) tanto sobre fondos claros (blanco, hover, selección)
-// como oscuros (paneles y temas de terminal), porque la pestaña activa usa el fondo del tema
-// de terminal, que puede ser claro aunque la interfaz sea oscura (y al revés).
 const icons = {
-  local: { Icon: SquareTerminal, color: "#407bec" },
-  ssh: { Icon: Server, color: "#298f5e" },
-  telnet: { Icon: Globe, color: "#9663df" },
-  serial: { Icon: Cable, color: "#ad741f" },
-  raw: { Icon: Network, color: "#40899c" },
+  local: SquareTerminal,
+  ssh: Server,
+  telnet: Globe,
+  serial: Cable,
+  raw: Network,
 } as const;
 
-/** Rayo de conexión rápida: amarillo con borde oscuro, visible sobre fondos claros y oscuros. */
-export function QuickBolt({ size = 14, className = "" }: { size?: number; className?: string }) {
-  return <Zap size={size} strokeWidth={2.25} className={`shrink-0 fill-bolt text-bolt-edge ${className}`} aria-hidden />;
+/** Rayo de conexión rápida: sutil y visible sobre cualquier fondo. */
+export function QuickBolt({ size = 12, className = "" }: { size?: number; className?: string }) {
+  return <Zap size={size} strokeWidth={2.2} className={`shrink-0 fill-accent/80 text-accent ${className}`} aria-hidden />;
 }
 
-export function SessionIcon({ type, size = 14, quick = false }: { type: SessionType; size?: number; quick?: boolean }) {
-  const { Icon, color } = icons[type];
-  if (!quick) return <Icon size={size} color={color} className="shrink-0" />;
+export function SessionIcon({
+  type,
+  size = 14,
+  quick = false,
+  className = "",
+}: {
+  type: SessionType;
+  size?: number;
+  quick?: boolean;
+  className?: string;
+}) {
+  const Icon = icons[type] || SquareTerminal;
+  if (!quick) return <Icon size={size} className={`shrink-0 text-muted group-hover:text-fg transition-colors ${className}`} />;
   // Conexión rápida sin guardar: un rayo junto al ícono del protocolo.
   return (
-    <span className="relative shrink-0 inline-flex" title="Conexión rápida sin guardar">
-      <Icon size={size} color={color} />
+    <span className="relative shrink-0 inline-flex items-center" title="Conexión rápida sin guardar">
+      <Icon size={size} className={`shrink-0 text-muted group-hover:text-fg transition-colors ${className}`} />
       <QuickBolt size={Math.round(size * 0.75)} className="absolute -right-1.5 -bottom-1" />
     </span>
   );

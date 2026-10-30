@@ -64,11 +64,11 @@ export function HopPasswordDialog({
   };
 
   return (
-    <div className="fixed inset-0 z-50 grid place-items-center bg-black/25 p-4" onMouseDown={close}>
+    <div className="fixed inset-0 z-50 grid place-items-center bg-black/25 p-2 sm:p-4" onMouseDown={close}>
       <form
         role="dialog"
         aria-label={title}
-        className="w-[400px] max-w-full bg-panel border border-line rounded-xl shadow-pop p-5 space-y-3"
+        className="w-full sm:w-[400px] max-w-full bg-panel border border-line rounded-xl shadow-pop p-4 sm:p-5 space-y-3"
         onMouseDown={(e) => e.stopPropagation()}
         onKeyDown={(e) => {
           if (e.key === "Escape") {
@@ -84,7 +84,7 @@ export function HopPasswordDialog({
       >
         <h2 className="text-[14px] font-semibold">{title}</h2>
         {note && <p className="text-[12px] text-muted">{note}</p>}
-        <div className="grid grid-cols-[1fr_1fr] gap-2">
+        <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
           <label className="block min-w-0">
             <span className="block mb-1 text-[11.5px] font-medium text-muted">IP del vecino</span>
             <input ref={editable ? first : undefined} className="field font-mono" value={ip} readOnly={!editable} maxLength={45} placeholder="192.0.2.12" onChange={(e) => setIp(e.target.value)} />
@@ -120,7 +120,7 @@ export function HopPasswordDialog({
         {ip.trim() && !isIpLiteral(ip.trim()) && <p className="text-[11.5px] text-danger">La IP debe ser una dirección IPv4 o IPv6.</p>}
         {user.trim() && !validHopUser(user.trim()) && <p className="text-[11.5px] text-danger">Usuario no válido (sin espacios ni símbolos raros).</p>}
         {error && <p className="text-[11.5px] text-danger">{error}</p>}
-        <div className="flex justify-end gap-2">
+        <div className="flex flex-wrap justify-end gap-2">
           <button type="button" onClick={close} className="px-3.5 h-8 rounded-md border border-line hover:bg-hover">
             Cancelar
           </button>

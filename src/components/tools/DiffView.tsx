@@ -39,7 +39,7 @@ export const DiffView = memo(function DiffView({ a, b, rows }: { a: string[]; b:
               <tr key={`f${it.fold}`}>
                 <td colSpan={4} className="p-0">
                   <button
-                    className="w-full text-left px-3 h-6 text-[11px] text-muted bg-hover hover:text-fg font-sans"
+                    className="w-full text-left px-3 h-7 sm:h-6 text-[11px] text-muted bg-hover hover:text-fg font-sans active:bg-hover/80 touch-manipulation"
                     onClick={() => setOpen((o) => new Set(o).add(it.fold))}
                   >
                     ⋯ {it.count.toLocaleString("es-CL")} líneas sin cambios (clic para mostrar)
@@ -53,7 +53,7 @@ export const DiffView = memo(function DiffView({ a, b, rows }: { a: string[]; b:
         </tbody>
       </table>
       {items.more && (
-        <button className="w-full h-8 text-[12px] text-accent hover:underline font-sans" onClick={() => setLimit((l) => l + CHUNK)}>
+        <button className="w-full h-9 sm:h-8 text-[12px] text-accent hover:underline font-sans active:opacity-80 touch-manipulation" onClick={() => setLimit((l) => l + CHUNK)}>
           Mostrar {CHUNK.toLocaleString("es-CL")} filas más
         </button>
       )}
@@ -64,8 +64,8 @@ export const DiffView = memo(function DiffView({ a, b, rows }: { a: string[]; b:
 function Row({ r, a, b }: { r: DiffRow; a: string[]; b: string[] }) {
   return (
     <tr className={rowClass[r.kind]}>
-      <td className="w-12 pr-2 text-right text-muted select-none align-top">{r.a >= 0 ? r.a + 1 : ""}</td>
-      <td className="w-12 pr-2 text-right text-muted select-none align-top">{r.b >= 0 ? r.b + 1 : ""}</td>
+      <td className="w-8 sm:w-12 pr-1 sm:pr-2 text-right text-muted select-none align-top tabular-nums">{r.a >= 0 ? r.a + 1 : ""}</td>
+      <td className="w-8 sm:w-12 pr-1 sm:pr-2 text-right text-muted select-none align-top tabular-nums">{r.b >= 0 ? r.b + 1 : ""}</td>
       <td className={`w-4 select-none align-top ${r.kind === 1 ? "text-danger" : r.kind === 2 ? "text-ok" : "text-muted"}`}>{sign[r.kind]}</td>
       <td className="whitespace-pre-wrap break-all pr-3">
         {r.kind === 2 ? b[r.b] : a[r.a]}

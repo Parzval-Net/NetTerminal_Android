@@ -1,6 +1,7 @@
 import { useEffect, useState } from "react";
 import { invoke } from "@tauri-apps/api/core";
 import { Macro } from "../lib/settings";
+import { isMobile } from "../lib/platform";
 import { useDragResize } from "../lib/useDragResize";
 
 interface Props {
@@ -18,7 +19,7 @@ export function MacroModal({ initial, onSave, onClose }: Props) {
   const win = useDragResize<HTMLFormElement>("macroWindow");
 
   useEffect(() => {
-    invoke<string[]>("list_scripts").then(setScripts).catch(() => {});
+    if (!isMobile) invoke<string[]>("list_scripts").then(setScripts).catch(() => {});
     const onKey = (e: KeyboardEvent) => e.key === "Escape" && onClose();
     window.addEventListener("keydown", onKey);
     return () => window.removeEventListener("keydown", onKey);
@@ -40,20 +41,20 @@ export function MacroModal({ initial, onSave, onClose }: Props) {
   const valid = m.label.trim() && (m.kind === "send" ? m.text?.trim() : m.script);
 
   return (
-    <div className="fixed inset-0 z-50 grid place-items-center bg-black/25 p-4" onMouseDown={onClose}>
+    <div className="fixed inset-0 z-50 grid place-items-center bg-black/25 p-2 sm:p-4" onMouseDown={onClose}>
       <form
         {...win.box}
-        className="w-[460px] bg-panel border border-line rounded-xl shadow-pop resize overflow-hidden flex flex-col min-w-[360px] min-h-[260px] max-w-[96vw] max-h-[94vh]"
+        className="w-full sm:w-[460px] bg-panel border border-line rounded-xl shadow-pop sm:resize overflow-hidden flex flex-col min-w-0 sm:min-w-[360px] min-h-0 sm:min-h-[260px] max-w-[calc(100vw-1rem)] sm:max-w-[96vw] max-h-[96vh] sm:max-h-[94vh]"
         onMouseDown={(e) => e.stopPropagation()}
         onSubmit={(e) => {
           e.preventDefault();
           if (valid) onSave({ ...m, label: m.label.trim() });
         }}
       >
-        <header {...win.handle} className="shrink-0 px-5 h-12 flex items-center border-b border-line select-none">
+        <header {...win.handle} className="shrink-0 px-3 sm:px-5 h-12 flex items-center border-b border-line select-none">
           <h2 className="text-[14px] font-semibold">{initial ? "Editar botón" : "Nuevo botón"}</h2>
         </header>
-        <div className="flex-1 min-h-0 overflow-y-auto p-5 space-y-4">
+        <div className="flex-1 min-h-0 overflow-y-auto p-3 sm:p-5 space-y-4">
           <label className="block">
             <span className="block mb-1 text-[11.5px] font-medium text-muted">Etiqueta</span>
             <input
@@ -64,23 +65,25 @@ export function MacroModal({ initial, onSave, onClose }: Props) {
               onChange={(e) => setM({ ...m, label: e.target.value })}
             />
           </label>
-          <div className="grid grid-cols-2 gap-1 p-1 rounded-lg bg-hover">
-            {(
-              [
-                ["send", "Enviar texto"],
-                ["script", "Script Python"],
-              ] as const
-            ).map(([k, label]) => (
-              <button
-                key={k}
-                type="button"
-                onClick={() => setM({ ...m, kind: k })}
-                className={`h-8 rounded-md text-[12.5px] ${m.kind === k ? "bg-panel shadow-sm" : "text-muted hover:text-fg"}`}
-              >
-                {label}
-              </button>
-            ))}
-          </div>
+          {!isMobile && (
+            <div className="grid grid-cols-2 gap-1 p-1 rounded-lg bg-hover">
+              {(
+                [
+                  ["send", "Enviar texto"],
+                  ["script", "Script Python"],
+                ] as const
+              ).map(([k, label]) => (
+                <button
+                  key={k}
+                  type="button"
+                  onClick={() => setM({ ...m, kind: k })}
+                  className={`h-8 rounded-md text-[12.5px] ${m.kind === k ? "bg-panel shadow-sm" : "text-muted hover:text-fg"}`}
+                >
+                  {label}
+                </button>
+              ))}
+            </div>
+          )}
           {m.kind === "send" ? (
             <label className="block">
               <span className="block mb-1 text-[11.5px] font-medium text-muted">
@@ -97,7 +100,7 @@ export function MacroModal({ initial, onSave, onClose }: Props) {
           ) : (
             <div className="block">
               <span className="block mb-1 text-[11.5px] font-medium text-muted">Script</span>
-              <div className="flex gap-2">
+              <div className="flex flex-wrap sm:flex-nowrap gap-2">
                 <select
                   aria-label="Script"
                   className="field flex-1 min-w-0"
@@ -115,7 +118,7 @@ export function MacroModal({ initial, onSave, onClose }: Props) {
                   type="button"
                   onClick={browse}
                   title="Elegir un .py de cualquier carpeta: se copia a scripts/"
-                  className="shrink-0 px-3 h-8 rounded-md border border-line hover:bg-hover text-[12.5px]"
+                  className="w-full sm:w-auto shrink-0 px-3 h-8 rounded-md border border-line hover:bg-hover text-[12.5px]"
                 >
                   Buscar en el equipo…
                 </button>
@@ -128,14 +131,14 @@ export function MacroModal({ initial, onSave, onClose }: Props) {
             </div>
           )}
         </div>
-        <footer className="flex justify-end gap-2 px-5 py-3 border-t border-line">
-          <button type="button" onClick={onClose} className="px-3.5 h-8 rounded-md border border-line hover:bg-hover">
+        <footer className="flex flex-wrap justify-end gap-2 px-3 sm:px-5 py-3 border-t border-line">
+          <button type="button" onClick={onClose} className="px-4 sm:px-3.5 h-10 sm:h-8 rounded-xl sm:rounded-md border border-line hover:bg-hover text-[13px] font-medium sm:font-normal touch-manipulation">
             Cancelar
           </button>
           <button
             type="submit"
             disabled={!valid}
-            className="px-3.5 h-8 rounded-md bg-accent text-accent-fg font-medium hover:opacity-90 disabled:opacity-40"
+            className="px-4 sm:px-3.5 h-10 sm:h-8 rounded-xl sm:rounded-md bg-accent text-accent-fg font-medium hover:opacity-90 disabled:opacity-40 text-[13px] touch-manipulation"
           >
             Guardar
           </button>

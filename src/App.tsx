@@ -5,7 +5,7 @@ import { Sidebar } from "./components/Sidebar";
 import { TabBar, type TabBarProps } from "./components/TabBar";
 import { VerticalTabs } from "./components/VerticalTabs";
 import { StatusBar } from "./components/StatusBar";
-import { ActivityBar } from "./components/ActivityBar";
+import { ActivityBar, MobileBottomNav } from "./components/ActivityBar";
 import { HistoryMenu } from "./components/HistoryMenu";
 import { TerminalView, TermController } from "./components/TerminalView";
 import type { CredChange } from "./components/SessionModal";
@@ -31,10 +31,10 @@ import type { ScriptLaunch } from "./components/ScriptLaunchDialog";
 import type { Section } from "./components/SettingsModal";
 import type { Macro, UpdateInfo } from "./lib/settings";
 import { openUrl } from "@tauri-apps/plugin-opener";
-import { Pin, Sparkles, X as XIcon } from "lucide-react";
+import { ChevronRight, Pin, Plus, Search, Sparkles, Terminal, Wrench, X as XIcon, Zap } from "lucide-react";
 import { listen } from "@tauri-apps/api/event";
 import { ConnStatus, Session, Tab, TabState, historyKey, tabTitle } from "./types";
-import { closeAllLabel, focusLabel, historyLabel, isMac, localOsVendor, modLabel, shortcutFor } from "./lib/platform";
+import { closeAllLabel, focusLabel, historyLabel, isMac, isMobile, localOsVendor, modLabel, shortcutFor } from "./lib/platform";
 import { presets, resolvePreset, useSystemDark } from "./lib/theme";
 import { Settings, logOptions, useSettings } from "./lib/settings";
 import { useAlerts } from "./lib/alerts";
@@ -44,9 +44,10 @@ import { closeLab, isLabRunning, labOwns, openLab, useLabOpen } from "./lib/cliL
 import { persist, stored } from "./lib/prefs";
 import { SplitPanes } from "./components/SplitPanes";
 import { SplitLayout, SplitState, fillPanes, paneRect } from "./lib/split";
+import { MobileKeyBar } from "./components/MobileKeyBar";
 import logo from "./assets/logo.svg";
 import { plural } from "./lib/plural";
-import { isQuickSession } from "./components/SessionIcon";
+import { SessionIcon, isQuickSession } from "./components/SessionIcon";
 import "./App.css";
 
 // Vistas pesadas y de uso ocasional: se cargan aparte para aligerar el arranque.
@@ -96,7 +97,9 @@ const ApprovalDialog = lazyDialog(DIALOGS.approval);
 const ScriptLaunchDialog = lazyDialog(DIALOGS.script);
 const ExportSessionsDialog = lazyDialog(DIALOGS.exportSessions);
 const CliLab = lazyDialog(DIALOGS.cliLab);
-const LAZY_DIALOGS = [SessionModal, CommandPalette, QuickConnectDialog, PacksModal, CommandEditor, MacroModal, ApprovalDialog, ScriptLaunchDialog];
+const LAZY_DIALOGS = isMobile
+  ? [SessionModal, CommandPalette, QuickConnectDialog, PacksModal, CommandEditor, MacroModal]
+  : [SessionModal, CommandPalette, QuickConnectDialog, PacksModal, CommandEditor, MacroModal, ApprovalDialog, ScriptLaunchDialog];
 
 const LOCAL: Session = { id: "local", name: "Terminal local", type: "local", created_at: "" };
 
@@ -170,7 +173,16 @@ function Workspace({
   const labOpen = useLabOpen();
   /** Exportar sesiones: undefined cerrado, "" todas, o la carpeta preseleccionada. */
   const [exportFolder, setExportFolder] = useState<string | undefined>(undefined);
-  const [sidebarOpen, setSidebarOpen] = useState(() => stored("sidebar", true));
+  const [sidebarOpen, setSidebarOpen] = useState(() =>
+    stored("sidebar", typeof window !== "undefined" && window.innerWidth < 768 ? false : true),
+  );
+  const [isNarrow, setIsNarrow] = useState(() => typeof window !== "undefined" && window.innerWidth < 640);
+  useEffect(() => {
+    const onResize = () => setIsNarrow(window.innerWidth < 640);
+    window.addEventListener("resize", onResize);
+    return () => window.removeEventListener("resize", onResize);
+  }, []);
+  const [ctrlActive, setCtrlActive] = useState(false);
   const controllers = useRef(new Map<string, TermController>());
 
   useEffect(() => persist("sidebar", sidebarOpen), [sidebarOpen]);
@@ -235,8 +247,9 @@ function Workspace({
     root.style.setProperty("--term-fg", String(preset.theme.foreground));
   }, [dark, preset]);
 
-  // Servidor MCP: se (re)configura cuando cambian sus ajustes.
+  // Servidor MCP: se (re)configura cuando cambian sus ajustes (solo en escritorio).
   useEffect(() => {
+    if (isMobile) return;
     invoke<string>("mcp_configure", {
       enabled: settings.mcpEnabled,
       port: settings.mcpPort,
@@ -280,6 +293,9 @@ function Workspace({
     setTabs((t) => [...t, { id, session, ...(opts?.title ? { title: opts.title } : {}) }]);
     setStates((s) => ({ ...s, [id]: { status: "connecting", logPath: null } }));
     if (!opts?.background) setActiveId(id);
+    if (typeof window !== "undefined" && window.innerWidth < 768) {
+      setSidebarOpen(false);
+    }
     return id;
   }, []);
 
@@ -301,6 +317,7 @@ function Workspace({
   sessionsRef.current = sessions;
 
   useEffect(() => {
+    if (isMobile) return;
     const subs = [
       listen<ApprovalRequest>("mcp-approval", (e) => setApprovals((a) => [...a, e.payload])),
       listen<string>("mcp-approval-closed", (e) => setApprovals((a) => a.filter((x) => x.id !== e.payload))),
@@ -514,11 +531,15 @@ function Workspace({
   const activeCtrl = () => (activeId ? controllers.current.get(activeId) : undefined);
   const activeConnected = !!activeTab && states[activeTab.id]?.status === "connected";
 
+  useEffect(() => {
+    setCtrlActive(false);
+  }, [activeId]);
+
   // ---------- Vista dividida ----------
   const [split, setSplit] = useState<SplitState | null>(null);
   /** Panel que recibe la pestaña elegida en la barra cuando no está en ningún panel. */
   const focusPaneRef = useRef(0);
-  const splitOn = !!split && activeId !== "tools";
+  const splitOn = !isMobile && tabs.length > 0 && !!split && activeId !== "tools";
   const tabIdsKey = tabs.map((t) => t.id).join(",");
   // Pestañas cerradas dejan su panel vacío.
   useEffect(() => {
@@ -1140,8 +1161,10 @@ function Workspace({
 
   const h = useHandlers({
     // En tandas de 5 cada 1,5 s: abrir 40 sesiones de golpe satura AAA/TACACS y la CPU.
-    openMany: (list: Session[]) =>
-      list.forEach((s, i) => (i < 5 ? openTab(s) : window.setTimeout(() => openTab(s), Math.floor(i / 5) * 1500))),
+    openMany: (list: Session[]) => {
+      if (typeof window !== "undefined" && (window.innerWidth < 768 || isMobile)) setSidebarOpen(false);
+      list.forEach((s, i) => (i < 5 ? openTab(s) : window.setTimeout(() => openTab(s), Math.floor(i / 5) * 1500)));
+    },
     newSession: (folder?: string) => setModal({ folder }),
     openQuick: () => setQuickOpen(true),
     saveTabAs: (id: string) => {
@@ -1233,6 +1256,7 @@ function Workspace({
       activeCtrl()?.focus();
     },
     runCommand: (c: CatalogEntry, cmd: string) => {
+      if (typeof window !== "undefined" && (window.innerWidth < 640 || isMobile)) setCommandsOpen(false);
       // En difusión el diálogo propio confirma el riesgo con la cantidad de equipos.
       if (broadcastMode) return sendToSession(cmd, false, c.risk);
       if (c.risk === "read") return sendToSession(cmd);
@@ -1245,6 +1269,7 @@ function Workspace({
       });
     },
     typeCommand: (cmd: string) => {
+      if (typeof window !== "undefined" && (window.innerWidth < 640 || isMobile)) setCommandsOpen(false);
       const type = (text: string) => activeCtrl()?.type(text);
       if (templateVars(cmd).length) setTemplate({ text: cmd, then: type });
       else type(cmd);
@@ -1416,31 +1441,81 @@ function Workspace({
         />
   );
 
+  const goMobileTerminal = () => {
+    setSidebarOpen(false);
+    setCommandsOpen(false);
+    setNotesOpen(false);
+    closeLab();
+    if (activeId === "tools") setActiveId(lastTermRef.current);
+    activeCtrl()?.focus();
+  };
+
+  const navProps = {
+    sidebarOpen: sidebarOpen || peek,
+    floatingSessions: settings.floatingSidebar && !sidebarOpen,
+    toolsActive: activeId === "tools",
+    toolsOpen,
+    alerts: monitors.downCount,
+    labOpen: !!labOpen,
+    commandsOpen,
+    notesOpen,
+    settingsOpen,
+    cliLabEnabled: settings.cliLabEnabled,
+    onTerminal: goMobileTerminal,
+    onSessions: () => {
+      if (isNarrow) {
+        setCommandsOpen(false);
+        setNotesOpen(false);
+        closeLab();
+      }
+      h.clickSessions();
+    },
+    onSessionsEnter: h.peekEnter,
+    onSessionsLeave: h.peekLeave,
+    onTools: () => {
+      if (isNarrow && (sidebarOpen || commandsOpen || notesOpen || labOpen)) {
+        setSidebarOpen(false);
+        setCommandsOpen(false);
+        setNotesOpen(false);
+        closeLab();
+        if (activeId === "tools") return;
+      }
+      h.toggleTools();
+    },
+    onCloseTools: h.requestCloseTools,
+    onLab: () => {
+      if (isNarrow) {
+        setSidebarOpen(false);
+        setCommandsOpen(false);
+        setNotesOpen(false);
+      }
+      openLab();
+    },
+    onCommands: () => {
+      if (isNarrow) {
+        setSidebarOpen(false);
+        setNotesOpen(false);
+        closeLab();
+      }
+      h.toggleCommands();
+    },
+    onNotes: () => {
+      if (isNarrow) {
+        setSidebarOpen(false);
+        setCommandsOpen(false);
+        closeLab();
+      }
+      h.toggleNotes();
+    },
+    onSettings: h.openSettings,
+  };
+
+  const mobileSheetOpen = isNarrow && (sidebarOpen || commandsOpen || notesOpen);
+
   return (
     <div className="h-full flex bg-bg text-fg relative">
-      {!focusMode && (
-        <ActivityBar
-          sidebarOpen={sidebarOpen || peek}
-          floatingSessions={settings.floatingSidebar && !sidebarOpen}
-          toolsActive={activeId === "tools"}
-          toolsOpen={toolsOpen}
-          alerts={monitors.downCount}
-          labOpen={!!labOpen}
-          commandsOpen={commandsOpen}
-          notesOpen={notesOpen}
-          settingsOpen={settingsOpen}
-          onSessions={h.clickSessions}
-          onSessionsEnter={h.peekEnter}
-          onSessionsLeave={h.peekLeave}
-          onTools={h.toggleTools}
-          onCloseTools={h.requestCloseTools}
-          onLab={openLab}
-          onCommands={h.toggleCommands}
-          onNotes={h.toggleNotes}
-          onSettings={h.openSettings}
-        />
-      )}
-      {!focusMode && sidebarOpen && sidebarEl()}
+      {!focusMode && !isNarrow && <ActivityBar {...navProps} />}
+      {!focusMode && sidebarOpen && !isNarrow && sidebarEl()}
       {/* Barra de sesiones flotante: encima de la terminal, sin empujarla. */}
       {!focusMode && !sidebarOpen && settings.floatingSidebar && peek && (
         <div
@@ -1522,7 +1597,7 @@ function Workspace({
           </div>
         )}
         <BroadcastBar />
-        <TabBar {...tabBarProps} />
+        {(!isMobile || tabs.length > 0) && <TabBar {...tabBarProps} />}
 
         <div ref={rowRef} className="relative flex-1 min-h-0 flex">
         {settings.tabLayout === "vertical" && <VerticalTabs {...tabBarProps} />}
@@ -1548,6 +1623,8 @@ function Workspace({
               onScreenHint={h.screenHint}
               register={register}
               catalog={catalog}
+              ctrlActive={t.id === activeId && ctrlActive}
+              onConsumeCtrl={() => setCtrlActive(false)}
             />
             );
           })}
@@ -1576,13 +1653,26 @@ function Workspace({
             </Suspense>
           )}
           {tabs.length === 0 && activeId !== "tools" && (
-            <EmptyState onLocal={newLocal} onPalette={() => setPaletteOpen(true)} onQuick={h.openQuick} onNew={() => setModal({})} onTools={h.toggleTools} />
+            <EmptyState
+              onLocal={newLocal}
+              onPalette={() => setPaletteOpen(true)}
+              onQuick={h.openQuick}
+              onNew={() => setModal({})}
+              onTools={h.toggleTools}
+              sessions={sessions}
+              onOpenSession={openTab}
+            />
           )}
         </div>
+        {!focusMode && sidebarOpen && isNarrow && (
+          <div className="absolute inset-0 z-30 flex bg-chrome">
+            {sidebarEl()}
+          </div>
+        )}
         {!focusMode && commandsOpen && (
           <CommandsPanel
-            width={panelWidth}
-            overlay={panelOverlay}
+            width={isNarrow ? (typeof window !== "undefined" ? window.innerWidth : 412) : panelWidth}
+            overlay={panelOverlay || isNarrow}
             onResize={h.resizeNotes}
             catalog={catalog}
             vendor={settings.catalogVendor}
@@ -1604,8 +1694,8 @@ function Workspace({
         )}
         {!focusMode && notesOpen && (
           <NotesPanel
-            width={panelWidth}
-            overlay={panelOverlay}
+            width={isNarrow ? (typeof window !== "undefined" ? window.innerWidth : 412) : panelWidth}
+            overlay={panelOverlay || isNarrow}
             onResize={h.resizeNotes}
             onClose={h.closeNotes}
             compiled={notesRules}
@@ -1622,7 +1712,7 @@ function Workspace({
         {/* En Herramientas no hay terminal a la que enviar: la barra solo ocuparía espacio. */}
         {/* Se oculta sola sin sesión activa o sin botones (los scripts siguen en la paleta). En modo
             foco solo queda mientras corre un script, para poder detenerlo. */}
-        {settings.showButtonBar && activeId !== "tools" && !!activeTab && (settings.macros.length > 0 || barForced) && (!focusMode || !!scriptRun) && (
+        {settings.showButtonBar && !mobileSheetOpen && activeId !== "tools" && !!activeTab && (settings.macros.length > 0 || barForced) && (!focusMode || !!scriptRun) && (
           <ButtonBar
             macros={settings.macros}
             connected={activeConnected || broadcastMode}
@@ -1637,6 +1727,22 @@ function Workspace({
           />
         )}
 
+        {/* Barra de teclas táctiles para terminal (Android, pantallas táctiles o activada en ajustes) */}
+        {settings.showMobileKeyBar && !mobileSheetOpen && activeId !== "tools" && !!activeTab && (
+          <MobileKeyBar
+            activeCtrl={activeCtrl()}
+            ctrlActive={ctrlActive}
+            onToggleCtrl={() => setCtrlActive((v) => !v)}
+            onConsumeCtrl={() => setCtrlActive(false)}
+            onFind={() => h.find()}
+            onPaste={async () => {
+              const ctrl = activeCtrl();
+              if (ctrl?.paste) await ctrl.paste();
+              ctrl?.focus();
+            }}
+          />
+        )}
+
         {!focusMode && <StatusBar
           tab={activeTab}
           device={settings.lifecycleInfo && activeId ? tabDevice[activeId] : undefined}
@@ -1644,13 +1750,14 @@ function Workspace({
           onToggleLog={h.toggleLog}
           onReconnect={h.reconnect}
           onDisconnect={h.disconnect}
-          aiEnabled={settings.mcpEnabled}
+          aiEnabled={!isMobile && settings.mcpEnabled}
           onAi={h.openAi}
           onSaveAs={activeTab ? () => h.saveTabAs(activeTab.id) : undefined}
           onFind={() => h.find()}
           onHistory={() => (historyFor ? h.closeHistory() : h.openHistory())}
           historyOpen={!!historyFor}
         />}
+        {!focusMode && isNarrow && <MobileBottomNav {...navProps} />}
       </main>
 
       {modal && (
@@ -1783,7 +1890,7 @@ function Workspace({
           }}
         />
       )}
-      {labOpen && (
+      {labOpen && settings.cliLabEnabled && (
         <CliLab
           key={labOpen.n}
           // Comando de guardado según el fabricante de la pestaña activa (su resaltado), no el del catálogo.
@@ -1828,11 +1935,13 @@ function Workspace({
                 ]
               : []),
             { label: "Modo foco", detail: focusMode ? "Salir: vuelve a mostrar barras y paneles" : "Oculta barras y paneles: solo pestañas y terminal", shortcut: focusLabel, run: h.toggleFocus },
-            { label: "Agregar script desde el equipo…", detail: "Copia un .py de cualquier carpeta a la carpeta de scripts", run: h.addScript },
+            ...(!isMobile
+              ? [{ label: "Agregar script desde el equipo…", detail: "Copia un .py de cualquier carpeta a la carpeta de scripts", run: h.addScript }]
+              : []),
             ...(settings.showButtonBar
               ? [
-                  { label: "Nuevo botón de comando", detail: "Crea un botón en la barra de botones (comando o script)", run: h.newButton },
-                  ...(settings.macros.length === 0
+                  { label: "Nuevo botón de comando", detail: isMobile ? "Crea un botón rápido de comandos en la barra de botones" : "Crea un botón en la barra de botones (comando o script)", run: h.newButton },
+                  ...(!isMobile && settings.macros.length === 0
                     ? [
                         barForced
                           ? { label: "Ocultar barra de botones", detail: "Sin botones, la barra se oculta sola", run: () => setBarForced(false) }
@@ -1841,7 +1950,7 @@ function Workspace({
                     : []),
                 ]
               : []),
-            { label: "Herramientas de red", detail: activeId === "tools" ? "Volver a la última terminal (Herramientas sigue abierta)" : "Monitoreo, diagnóstico, topología, syslog, SNMP, respaldos, plugins", shortcut: `${modLabel}E`, run: h.toggleTools },
+            { label: "Herramientas de red", detail: activeId === "tools" ? "Volver a la última terminal (Herramientas sigue abierta)" : isMobile ? "Monitoreo, diagnóstico, topología, syslog, SNMP, respaldos" : "Monitoreo, diagnóstico, topología, syslog, SNMP, respaldos, plugins", shortcut: `${modLabel}E`, run: h.toggleTools },
             ...(toolsOpen ? [{ label: "Cerrar Herramientas", detail: "Cierra la vista y sus módulos (avisa si hay servidores activos)", run: h.requestCloseTools }] : []),
             { label: "Notas", detail: "Panel de notas con envío a la sesión", shortcut: `${modLabel}J`, run: h.toggleNotes },
             { label: "Catálogo de comandos", detail: "Comandos por fabricante", shortcut: `${modLabel}L`, run: h.toggleCommands },
@@ -1850,12 +1959,16 @@ function Workspace({
             { label: "Nueva terminal local", detail: "Abre una pestaña con la terminal de este equipo", shortcut: `${modLabel}T`, run: newLocal },
             { label: "Conexión rápida", detail: "SSH o Telnet sin guardar la sesión", shortcut: `${modLabel}O`, run: h.openQuick },
             { label: "Nueva sesión guardada", detail: "Crea una sesión en la barra de sesiones", shortcut: `${modLabel}N`, run: () => h.newSession() },
-            {
-              label: "CLI Lab: script multilínea",
-              detail: "Ejecuta varios comandos en orden en una o varias sesiones, leyendo cada respuesta",
-              shortcut: `${modLabel}I`,
-              run: () => openLab(),
-            },
+            ...(settings.cliLabEnabled
+              ? [
+                  {
+                    label: "CLI Lab: script multilínea",
+                    detail: "Ejecuta varios comandos en orden en una o varias sesiones, leyendo cada respuesta",
+                    shortcut: `${modLabel}I`,
+                    run: () => openLab(),
+                  },
+                ]
+              : []),
             {
               label: "Exportar sesiones",
               detail: "Elige qué sesiones: XML compatible con SecureCRT o JSON",
@@ -1893,38 +2006,216 @@ function EmptyState({
   onQuick,
   onNew,
   onTools,
+  sessions = [],
+  onOpenSession,
 }: {
   onLocal: () => void;
   onPalette: () => void;
   onQuick: () => void;
   onNew: () => void;
   onTools: () => void;
+  sessions?: Session[];
+  onOpenSession?: (s: Session) => void;
 }) {
-  const items: [React.ReactNode, string, () => void][] = [
-    ["Conexión rápida sin guardar", `${modLabel}O`, onQuick],
-    ["Buscar sesión", `${modLabel}K`, onPalette],
-    ["Nueva sesión guardada", `${modLabel}N`, onNew],
-    ["Terminal local", `${modLabel}T`, onLocal],
-    ["Herramientas de red", `${modLabel}E`, onTools],
-  ];
+  const recentSessions = useMemo(
+    () => sessions.filter((s) => s.type !== "local").slice(0, 4),
+    [sessions],
+  );
+
   return (
-    <div className="absolute inset-0 grid place-items-center">
-      <div className="w-[340px]">
-        <img src={logo} alt="" className="w-16 h-16 -ml-2 mb-2" draggable={false} />
-        <h1 className="text-[18px] font-semibold mb-1">NetTerminal</h1>
-        <p className="text-muted mb-5">SSH, Telnet y Serial sin complicaciones.</p>
-        <div className="space-y-1">
-          {items.map(([label, key, fn], i) => (
-            <button
-              key={i}
-              onClick={fn}
-              className="w-full flex items-center justify-between px-3 h-9 rounded-lg hover:bg-hover text-left"
-            >
-              {label}
-              <kbd className="text-[11px] text-muted font-sans">{key}</kbd>
-            </button>
-          ))}
+    <div className="absolute inset-0 flex flex-col bg-bg overflow-y-auto select-none">
+      <div className="w-full max-w-[420px] mx-auto px-4 py-5 sm:py-7 flex flex-col space-y-4">
+        {/* Hero Branding: Logo oficial de la app en la parte superior */}
+        <div className="flex flex-col items-center text-center pt-1 pb-1">
+          <div className="relative mb-2.5">
+            <img
+              src={logo}
+              alt="Logo de NetTerminal"
+              className="w-16 h-16 rounded-2xl"
+              draggable={false}
+            />
+          </div>
+          <h1 className="text-[20px] sm:text-[22px] font-bold text-fg tracking-tight">NetTerminal</h1>
+          <p className="text-[12px] sm:text-[12.5px] text-muted max-w-[310px] mt-1 leading-snug">
+            Acceso profesional SSH, Telnet, Serial y herramientas de diagnóstico de red.
+          </p>
         </div>
+
+        {/* Acciones principales: 2 tarjetas neutras y confortables */}
+        <div className="grid grid-cols-2 gap-2.5">
+          <button
+            onClick={onQuick}
+            type="button"
+            title="Conexión rápida sin guardar"
+            aria-label="Conexión rápida sin guardar"
+            className="flex flex-col justify-between p-3.5 rounded-2xl bg-panel border border-line hover:border-accent/40 active:bg-hover transition-all text-left group touch-manipulation min-h-[92px] shadow-xs"
+          >
+            <div className="flex items-center justify-between w-full">
+              <span className="w-8 h-8 rounded-xl bg-hover text-muted group-hover:text-fg grid place-items-center transition-colors">
+                <Zap size={17} />
+              </span>
+              <ChevronRight size={15} className="text-muted/40 group-hover:text-fg transition-colors" />
+            </div>
+            <div className="mt-2.5">
+              <div className="text-[13px] font-semibold text-fg leading-tight">
+                Conexión rápida
+              </div>
+              <div className="text-[11px] text-muted leading-tight mt-0.5">SSH o Telnet directo</div>
+            </div>
+          </button>
+
+          <button
+            onClick={onLocal}
+            type="button"
+            title="Terminal local"
+            aria-label="Terminal local"
+            className="flex flex-col justify-between p-3.5 rounded-2xl bg-panel border border-line hover:border-accent/40 active:bg-hover transition-all text-left group touch-manipulation min-h-[92px] shadow-xs"
+          >
+            <div className="flex items-center justify-between w-full">
+              <span className="w-8 h-8 rounded-xl bg-hover text-muted group-hover:text-fg grid place-items-center transition-colors">
+                <Terminal size={17} />
+              </span>
+              <ChevronRight size={15} className="text-muted/40 group-hover:text-fg transition-colors" />
+            </div>
+            <div className="mt-2.5">
+              <div className="text-[13px] font-semibold text-fg leading-tight">
+                Terminal local
+              </div>
+              <div className="text-[11px] text-muted leading-tight mt-0.5">Shell Linux nativo</div>
+            </div>
+          </button>
+        </div>
+
+        {/* Acciones secundarias en lista tonal sobria */}
+        <div className="rounded-2xl border border-line bg-panel divide-y divide-line overflow-hidden shadow-xs">
+          <button
+            onClick={onNew}
+            type="button"
+            title="Nueva sesión guardada"
+            aria-label="Nueva sesión guardada"
+            className="w-full flex items-center gap-3 px-3.5 py-3 hover:bg-hover active:bg-hover transition-colors text-left group touch-manipulation"
+          >
+            <span className="w-7.5 h-7.5 rounded-xl bg-hover text-muted group-hover:text-fg grid place-items-center shrink-0 transition-colors">
+              <Plus size={16} />
+            </span>
+            <div className="flex-1 min-w-0">
+              <div className="text-[13px] font-medium text-fg truncate">
+                Nueva sesión guardada
+              </div>
+              <div className="text-[11px] text-muted truncate">Crea una sesión con host, puerto y credenciales</div>
+            </div>
+            <ChevronRight size={15} className="text-muted/40 shrink-0" />
+          </button>
+
+          <button
+            onClick={onPalette}
+            type="button"
+            title="Buscar sesión o comando"
+            aria-label="Buscar sesión o comando"
+            className="w-full flex items-center gap-3 px-3.5 py-3 hover:bg-hover active:bg-hover transition-colors text-left group touch-manipulation"
+          >
+            <span className="w-7.5 h-7.5 rounded-xl bg-hover text-muted group-hover:text-fg grid place-items-center shrink-0 transition-colors">
+              <Search size={16} />
+            </span>
+            <div className="flex-1 min-w-0">
+              <div className="text-[13px] font-medium text-fg truncate">
+                Buscar sesión o comando
+              </div>
+              <div className="text-[11px] text-muted truncate">Paleta de búsqueda rápida y atajos ({modLabel}K)</div>
+            </div>
+            <ChevronRight size={15} className="text-muted/40 shrink-0" />
+          </button>
+
+          <button
+            onClick={onTools}
+            type="button"
+            title="Herramientas de red"
+            aria-label="Herramientas de red"
+            className="w-full flex items-center gap-3 px-3.5 py-3 hover:bg-hover active:bg-hover transition-colors text-left group touch-manipulation"
+          >
+            <span className="w-7.5 h-7.5 rounded-xl bg-hover text-muted group-hover:text-fg grid place-items-center shrink-0 transition-colors">
+              <Wrench size={16} />
+            </span>
+            <div className="flex-1 min-w-0">
+              <div className="text-[13px] font-medium text-fg truncate">
+                Herramientas de red
+              </div>
+              <div className="text-[11px] text-muted truncate">Subredes, Ping, TFTP, Syslog, SNMP y Topología</div>
+            </div>
+            <ChevronRight size={15} className="text-muted/40 shrink-0" />
+          </button>
+        </div>
+
+        {/* Sección inferior para aprovechar el espacio: Sesiones guardadas o Accesos directos de diagnóstico */}
+        {recentSessions.length > 0 ? (
+          <div className="space-y-2 pt-1">
+            <div className="flex items-center justify-between px-1">
+              <span className="text-[11px] font-medium text-muted uppercase tracking-wider">
+                Sesiones guardadas ({recentSessions.length})
+              </span>
+              <button
+                type="button"
+                onClick={onPalette}
+                className="text-[11.5px] font-medium text-muted hover:text-fg transition-colors"
+              >
+                Ver todas
+              </button>
+            </div>
+            <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
+              {recentSessions.map((s) => (
+                <button
+                  key={s.id}
+                  onClick={() => onOpenSession?.(s)}
+                  type="button"
+                  className="flex items-center gap-2.5 px-3 py-2.5 rounded-xl bg-panel border border-line hover:border-accent/40 active:bg-hover transition-all text-left touch-manipulation group shadow-xs"
+                >
+                  <span className="w-7 h-7 rounded-lg bg-hover grid place-items-center shrink-0 text-muted group-hover:text-fg transition-colors">
+                    <SessionIcon type={s.type} size={14} />
+                  </span>
+                  <div className="min-w-0 flex-1">
+                    <div className="text-[12.5px] font-medium text-fg group-hover:text-accent transition-colors truncate">
+                      {s.name}
+                    </div>
+                    <div className="text-[11px] text-muted truncate font-mono">
+                      {s.host ? `${s.host}${s.port ? `:${s.port}` : ""}` : s.type}
+                    </div>
+                  </div>
+                  <ChevronRight size={14} className="text-muted/40 shrink-0" />
+                </button>
+              ))}
+            </div>
+          </div>
+        ) : (
+          <div className="space-y-2 pt-1">
+            <div className="flex items-center justify-between px-1">
+              <span className="text-[11px] font-medium text-muted uppercase tracking-wider">
+                Utilidades de red rápidas
+              </span>
+            </div>
+            <div className="grid grid-cols-2 gap-2">
+              <button
+                type="button"
+                onClick={onTools}
+                className="flex items-center gap-2 px-3 py-2.5 rounded-xl bg-panel border border-line hover:border-accent/40 active:bg-hover transition-all text-left touch-manipulation text-[12px] font-medium text-fg shadow-xs"
+              >
+                <span className="w-6.5 h-6.5 rounded-lg bg-hover grid place-items-center shrink-0 text-muted">
+                  <Wrench size={13} />
+                </span>
+                <span className="truncate">Subredes & Ping</span>
+              </button>
+              <button
+                type="button"
+                onClick={onPalette}
+                className="flex items-center gap-2 px-3 py-2.5 rounded-xl bg-panel border border-line hover:border-accent/40 active:bg-hover transition-all text-left touch-manipulation text-[12px] font-medium text-fg shadow-xs"
+              >
+                <span className="w-6.5 h-6.5 rounded-lg bg-hover grid place-items-center shrink-0 text-muted">
+                  <Search size={13} />
+                </span>
+                <span className="truncate">Buscar comandos</span>
+              </button>
+            </div>
+          </div>
+        )}
       </div>
     </div>
   );
