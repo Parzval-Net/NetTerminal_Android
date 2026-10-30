@@ -139,19 +139,6 @@ Mediciones realizadas en hardware y emulador Android 16 (API 36 / ARM64):
 
 ---
 
-## 🛠️ Compilación y Desarrollo
-
-Puedes compilar tus propios APKs de forma gratuita mediante GitHub Actions o en tu máquina local:
-
-```bash
-# Compilación local con Tauri 2 CLI
-cargo tauri android build --apk
-```
-
-Para una guía completa paso a paso con configuración de NDK, firmas de producción con keystore y workflows automatizados en la nube, consulta el documento técnico [**ANDROID.md**](ANDROID.md).
-
----
-
 ## 📄 Licencia y Créditos
 
 - **Licencia:** Distribuido bajo la [Licencia MIT](LICENSE).
