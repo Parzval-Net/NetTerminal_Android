@@ -100,11 +100,22 @@ fn err_text(e: FtpError) -> String {
 }
 
 fn tls_connector() -> Result<RustlsConnector, String> {
-    use rustls_platform_verifier::ConfigVerifierExt;
     if rustls::crypto::CryptoProvider::get_default().is_none() {
         let _ = rustls::crypto::ring::default_provider().install_default();
     }
-    let cfg = rustls::ClientConfig::with_platform_verifier().map_err(|e| e.to_string())?;
+    #[cfg(not(target_os = "android"))]
+    let cfg = {
+        use rustls_platform_verifier::ConfigVerifierExt;
+        rustls::ClientConfig::with_platform_verifier().map_err(|e| e.to_string())?
+    };
+    #[cfg(target_os = "android")]
+    let cfg = {
+        let mut roots = rustls::RootCertStore::empty();
+        roots.add_parsable_certificates(webpki_root_certs::TLS_SERVER_ROOT_CERTS.iter().cloned());
+        rustls::ClientConfig::builder()
+            .with_root_certificates(roots)
+            .with_no_client_auth()
+    };
     Ok(RustlsConnector::from(Arc::new(cfg)))
 }
 

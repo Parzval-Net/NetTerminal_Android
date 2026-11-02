@@ -254,6 +254,20 @@ export const TerminalView = memo(function TerminalView({ id, session, active, vi
     term.loadAddon(search);
     term.loadAddon(new WebLinksAddon((_e, uri) => openUrl(uri)));
     term.open(hostRef.current!);
+    // Desactivar texto predictivo, capitalización automática y autocorrección del teclado
+    // Samsung (HoneyBoard) en One UI 6.1 (Android 14) y One UI 8.5 (Android 16)
+    if (term.textarea) {
+      const ta = term.textarea;
+      ta.setAttribute("autocomplete", "off");
+      ta.setAttribute("autocorrect", "off");
+      ta.setAttribute("autocapitalize", "none");
+      ta.setAttribute("spellcheck", "false");
+      ta.setAttribute("inputmode", "text");
+      ta.setAttribute("enterkeyhint", "send");
+      ta.setAttribute("data-gramm", "false");
+      ta.setAttribute("data-gramm_editor", "false");
+      ta.setAttribute("data-enable-grammarly", "false");
+    }
     fit.fit();
     termRef.current = term;
     fitRef.current = fit;
@@ -984,10 +998,17 @@ export const TerminalView = memo(function TerminalView({ id, session, active, vi
     const onViewportResize = () => {
       cancelAnimationFrame(frame);
       frame = requestAnimationFrame(() => {
-        if (hostRef.current && hostRef.current.offsetWidth > 0) fit.fit();
+        if (window.scrollY !== 0 || window.scrollX !== 0) {
+          window.scrollTo(0, 0);
+        }
+        if (hostRef.current && hostRef.current.offsetWidth > 0) {
+          fit.fit();
+          term.scrollToBottom();
+        }
       });
     };
     window.visualViewport?.addEventListener("resize", onViewportResize);
+    window.visualViewport?.addEventListener("scroll", onViewportResize);
 
     register(id, {
       connId: () => connIdRef.current,
@@ -1150,6 +1171,7 @@ export const TerminalView = memo(function TerminalView({ id, session, active, vi
       register(id, null);
       observer.disconnect();
       window.visualViewport?.removeEventListener("resize", onViewportResize);
+      window.visualViewport?.removeEventListener("scroll", onViewportResize);
       cancelAnimationFrame(frame);
       cancelAnimationFrame(suggestFrame);
       window.clearTimeout(hintTimer);

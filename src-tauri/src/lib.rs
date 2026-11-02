@@ -1186,6 +1186,13 @@ fn config_dir_or_fallback(
 /// (/usr/bin:/bin:/usr/sbin:/sbin) y no ve iperf3 de Homebrew ni el Python de python.org.
 /// En Linux, un lanzador de escritorio puede no incluir ~/.local/bin (pip --user, pipx).
 fn extend_path() {
+    // En Android, tauri::mobile_entry_point corre en un hilo nativo cuando ART, Binder y WebView
+    // ya están en ejecución llamando a getenv() en Bionic libc: llamar a set_var("PATH") en un
+    // proceso multihilo provoca condición de carrera/SIGSEGV. resolve_bin() ya busca directamente
+    // en /system/bin, /system/xbin y Termux sin depender de mutar PATH.
+    if cfg!(target_os = "android") || cfg!(target_os = "ios") {
+        return;
+    }
     let mut extra: Vec<std::path::PathBuf> = Vec::new();
     if cfg!(target_os = "macos") {
         extra.extend(["/opt/homebrew/bin", "/usr/local/bin", "/Library/Frameworks/Python.framework/Versions/Current/bin"].map(Into::into));
@@ -1195,19 +1202,12 @@ fn extend_path() {
             extra.push(std::path::Path::new(&home).join(".local/bin"));
         }
     }
-    if cfg!(target_os = "android") {
-        extra.extend([
-            "/system/bin",
-            "/system/xbin",
-            "/data/data/com.termux/files/usr/bin",
-        ].map(Into::into));
-    }
     let extra: Vec<_> = extra.into_iter().filter(|d| d.is_dir()).collect();
     if extra.is_empty() {
         return;
     }
     let current = std::env::var_os("PATH").unwrap_or_default();
-    // Al arrancar, antes de crear hilos: set_var es seguro en ese momento.
+    // Al arrancar en escritorio, antes de crear hilos: set_var es seguro en ese momento.
     std::env::set_var("PATH", merge_path(&current, &extra));
 }
 
@@ -1244,6 +1244,11 @@ fn disable_native_zoom(app: &tauri::AppHandle) {
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
+    // Instalar el proveedor criptográfico ring para rustls al inicio del proceso (evita panic!
+    // cuando reqwest o suppaftp construyen un cliente TLS con rustls-no-provider en Android).
+    if rustls::crypto::CryptoProvider::get_default().is_none() {
+        let _ = rustls::crypto::ring::default_provider().install_default();
+    }
     extend_path();
     let builder = tauri::Builder::default()
         .plugin(tauri_plugin_opener::init())

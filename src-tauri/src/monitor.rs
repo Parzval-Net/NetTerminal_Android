@@ -159,12 +159,17 @@ fn icmp_probe(host: &str, timeout: Duration) -> (bool, Option<f64>, Option<Strin
         }
         c
     } else {
-        let ping_bin = if cfg!(target_os = "android") && std::path::Path::new("/system/bin/ping").exists() {
+        let ping_bin = if cfg!(target_os = "android") && v6 && std::path::Path::new("/system/bin/ping6").exists() {
+            "/system/bin/ping6"
+        } else if cfg!(target_os = "android") && std::path::Path::new("/system/bin/ping").exists() {
             "/system/bin/ping"
         } else {
             "ping"
         };
         let mut c = command(ping_bin);
+        if v6 && ping_bin.ends_with("ping") {
+            c.arg("-6");
+        }
         c.args(["-c", "1", "-W", &ms.div_ceil(1000).to_string()]);
         c
     };

@@ -182,11 +182,23 @@ fn is_newer(latest: &str, current: &str) -> bool {
 
 #[cfg(any(target_os = "android", target_os = "ios"))]
 pub async fn check(_app: &AppHandle) -> Result<UpdateInfo, String> {
+    if rustls::crypto::CryptoProvider::get_default().is_none() {
+        let _ = rustls::crypto::ring::default_provider().install_default();
+    }
     let current = env!("CARGO_PKG_VERSION").to_string();
     let url = endpoint();
-    let client = reqwest::Client::builder()
+    let builder = reqwest::Client::builder()
         .timeout(Duration::from_secs(20))
-        .user_agent("NetTerminal-Updater")
+        .user_agent("NetTerminal-Updater");
+    // En Android, rustls-platform-verifier entra en panic! si no se inicializa vía JNI;
+    // usamos las raíces TLS de webpki-root-certs para evitar abortar el proceso.
+    #[cfg(target_os = "android")]
+    let builder = builder.tls_certs_only(
+        webpki_root_certs::TLS_SERVER_ROOT_CERTS
+            .iter()
+            .filter_map(|c| reqwest::Certificate::from_der(c.as_ref()).ok()),
+    );
+    let client = builder
         .build()
         .map_err(|e| format!("Error al crear cliente HTTP: {e}"))?;
 

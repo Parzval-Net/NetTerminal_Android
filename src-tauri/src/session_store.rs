@@ -49,6 +49,9 @@ pub fn restrict(path: &Path) {
 
 /// true si la app corre en modo portable (marcador `portable` o carpeta `data/` al lado).
 pub fn is_portable() -> bool {
+    if cfg!(any(target_os = "android", target_os = "ios")) {
+        return false;
+    }
     std::env::current_exe()
         .ok()
         .and_then(|exe| portable_root(&exe, std::env::var_os("APPIMAGE").map(PathBuf::from)))
@@ -56,6 +59,9 @@ pub fn is_portable() -> bool {
 }
 
 pub fn resolve_data_dir(os_config_dir: PathBuf) -> PathBuf {
+    if cfg!(any(target_os = "android", target_os = "ios")) {
+        return os_config_dir;
+    }
     let root = std::env::current_exe()
         .ok()
         .and_then(|exe| portable_root(&exe, std::env::var_os("APPIMAGE").map(PathBuf::from)));

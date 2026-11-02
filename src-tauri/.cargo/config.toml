@@ -1,0 +1,6 @@
+# Alineación de segmentos ELF a 16 KB (16384 bytes) para compatibilidad con Android 15/16+ (64-bit)
+[target.aarch64-linux-android]
+rustflags = ["-C", "link-arg=-Wl,-z,max-page-size=16384"]
+
+[target.x86_64-linux-android]
+rustflags = ["-C", "link-arg=-Wl,-z,max-page-size=16384"]

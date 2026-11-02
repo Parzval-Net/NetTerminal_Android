@@ -15,15 +15,20 @@ val tauriProperties = Properties().apply {
 }
 
 android {
-    compileSdk = 37
+    compileSdk = 36
     namespace = "cl.netterminal.app"
     defaultConfig {
-        manifestPlaceholders["usesCleartextTraffic"] = "false"
+        manifestPlaceholders["usesCleartextTraffic"] = "true"
         applicationId = "cl.netterminal.app"
         minSdk = 26
-        targetSdk = 37
+        targetSdk = 36
         versionCode = tauriProperties.getProperty("tauri.android.versionCode", "1").toInt()
         versionName = tauriProperties.getProperty("tauri.android.versionName", "1.0")
+    }
+    packaging {
+        jniLibs {
+            useLegacyPackaging = false
+        }
     }
     buildTypes {
         getByName("debug") {
@@ -39,10 +44,12 @@ android {
             }
         }
         getByName("release") {
-            optimization {
-               enable = true
-            }
+            manifestPlaceholders["usesCleartextTraffic"] = "true"
+            isMinifyEnabled = false
+            isShrinkResources = false
             proguardFiles(
+                getDefaultProguardFile("proguard-android-optimize.txt"),
+                "proguard-rules.pro",
                 *fileTree(".") {
                   include("**/*.pro")
                   exclude("build/**")

@@ -3,6 +3,7 @@ set -euo pipefail
 
 # scripts/setup-android.sh
 # Automatización de preparación, inicialización y parcheo de Android para NetTerminal
+# Optimizado para Samsung One UI 6.1 (Android 14 / API 34) y One UI 8.5 (Android 16 / API 36)
 # Repositorio: Parzval-Net/NetTerminal_Android
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
@@ -61,10 +62,10 @@ else
   echo "✔ Proyecto Android ya inicializado en $ANDROID_DIR"
 fi
 
-# 3. Parchear AndroidManifest.xml (Permisos de Red y SoftInput adjustResize)
+# 3. Parchear AndroidManifest.xml (Permisos de Red, configChanges para Samsung DeX/Multi-Window y SoftInput adjustResize)
 MANIFEST_FILE="$ANDROID_DIR/app/src/main/AndroidManifest.xml"
 if [ -f "$MANIFEST_FILE" ]; then
-  echo "→ Parcheando AndroidManifest.xml con permisos de red y windowSoftInputMode..."
+  echo "→ Parcheando AndroidManifest.xml con permisos de red, configChanges y windowSoftInputMode..."
   python3 - <<'PY'
 import os, re
 
@@ -83,10 +84,8 @@ required_permissions = [
     '<uses-permission android:name="android.permission.ACCESS_WIFI_STATE" />'
 ]
 
-# Insertar permisos si faltan
 for perm in required_permissions:
     if perm not in content:
-        # Insertar justo después de <manifest ...>
         manifest_tag = re.search(r'<manifest[^>]*>', content)
         if manifest_tag:
             insert_pos = manifest_tag.end()
@@ -97,7 +96,11 @@ for perm in required_permissions:
     else:
         print(f"  ✔ Permiso ya presente: {perm}")
 
-# Asegurar android:windowSoftInputMode="adjustResize" en MainActivity para terminal óptima con teclado virtual
+# Asegurar android:configChanges completo para evitar reinicio de MainActivity en Samsung DeX / Multi-Window / tablets
+full_config_changes = 'android:configChanges="orientation|keyboardHidden|keyboard|screenSize|locale|smallestScreenSize|screenLayout|uiMode|density|fontScale|layoutDirection|colorMode|navigation|touchscreen"'
+content = re.sub(r'android:configChanges="[^"]*"', full_config_changes, content)
+
+# Asegurar android:windowSoftInputMode="adjustResize" en MainActivity
 activity_match = re.search(r'(<activity[^>]*android:name="\.MainActivity"[^>]*)>', content)
 if activity_match:
     activity_tag = activity_match.group(1)
@@ -108,7 +111,6 @@ if activity_match:
     else:
         print("  ✔ android:windowSoftInputMode ya configurado en MainActivity")
 else:
-    # Intento alternativo por si el atributo name está antes o después
     if 'android:windowSoftInputMode="adjustResize"' not in content:
         content = content.replace(
             'android:name=".MainActivity"',
@@ -125,57 +127,144 @@ else
   echo "⚠ No se encontró $MANIFEST_FILE"
 fi
 
-# 4. Asegurar minSdkVersion 26 en app/build.gradle.kts
+# 4. Asegurar configuración segura en app/build.gradle.kts (SDK 36, packaging 16 KB, CleartextTraffic y desactivar R8 destructivo en JNI)
 BUILD_GRADLE="$ANDROID_DIR/app/build.gradle.kts"
 if [ -f "$BUILD_GRADLE" ]; then
-  echo "→ Verificando minSdkVersion en app/build.gradle.kts..."
+  echo "→ Verificando app/build.gradle.kts..."
   python3 - <<'PY'
-import os, re
+import re
 
 gradle_path = "src-tauri/gen/android/app/build.gradle.kts"
 with open(gradle_path, "r", encoding="utf-8") as f:
     gradle_content = f.read()
 
-# Actualizar minSdk a 26 si está en 24 o menor
-if "minSdk = 24" in gradle_content:
-    gradle_content = gradle_content.replace("minSdk = 24", "minSdk = 26")
-    with open(gradle_path, "w", encoding="utf-8") as f:
-        f.write(gradle_content)
-    print("  ✔ minSdk actualizado a 26 en build.gradle.kts")
-else:
-    print("  ✔ minSdk ya configurado correctamente")
+gradle_content = gradle_content.replace("minSdk = 24", "minSdk = 26")
+gradle_content = gradle_content.replace("compileSdk = 37", "compileSdk = 36")
+gradle_content = gradle_content.replace("targetSdk = 37", "targetSdk = 36")
+gradle_content = gradle_content.replace("targetSdk = 35", "targetSdk = 36")
+gradle_content = gradle_content.replace('manifestPlaceholders["usesCleartextTraffic"] = "false"', 'manifestPlaceholders["usesCleartextTraffic"] = "true"')
+
+if "useLegacyPackaging = false" not in gradle_content:
+    gradle_content = gradle_content.replace(
+        "    buildTypes {",
+        "    packaging {\n        jniLibs {\n            useLegacyPackaging = false\n        }\n    }\n    buildTypes {"
+    )
+
+# Evitar que R8 elimine las clases puente JNI de Tauri/Wry antes de que cargo genere proguard-tauri.pro
+old_opt = re.compile(r'optimization\s*\{\s*enable\s*=\s*true\s*\}', re.MULTILINE)
+if old_opt.search(gradle_content):
+    gradle_content = old_opt.sub(
+        'manifestPlaceholders["usesCleartextTraffic"] = "true"\n            isMinifyEnabled = false\n            isShrinkResources = false',
+        gradle_content
+    )
+
+with open(gradle_path, "w", encoding="utf-8") as f:
+    f.write(gradle_content)
+print("  ✔ app/build.gradle.kts verificado y actualizado")
 PY
 fi
 
-# 5. Parchear MainActivity.kt para manejar WindowInsets (systemBars + displayCutout + IME teclado)
-# En Android 15/16 (API 35/36), enableEdgeToEdge() hace que el WebView quede debajo de la barra
-# de estado (reloj/batería) y la barra de gestos inferior si no se aplican los WindowInsets al contenedor.
+# 5. Asegurar reglas de protección JNI en proguard-rules.pro
+PROGUARD_FILE="$ANDROID_DIR/app/proguard-rules.pro"
+cat > "$PROGUARD_FILE" <<'PRO'
+# Reglas de ProGuard / R8 para NetTerminal Android (Tauri 2 + Wry + JNI)
+-keepattributes Signature,InnerClasses,EnclosingMethod,RuntimeVisibleAnnotations,AnnotationDefault,SourceFile,LineNumberTable
+
+# Preservar actividades y clases generadas del paquete de la aplicación y Tauri/Wry llamadas desde Rust vía JNI
+-keep class cl.netterminal.app.** { *; }
+-keep class app.tauri.** { *; }
+-keep class * extends app.tauri.plugin.Plugin { *; }
+-keep @app.tauri.annotation.TauriPlugin class * { *; }
+-keep @app.tauri.annotation.Command class * { *; }
+-keep @app.tauri.annotation.InvokeArg class * { *; }
+
+# Preservar todos los métodos nativos JNI y puentes JavascriptInterface del WebView
+-keepclasseswithmembernames class * {
+    native <methods>;
+}
+-keepclassmembers class * {
+    @android.webkit.JavascriptInterface <methods>;
+    @app.tauri.annotation.** <fields>;
+    @app.tauri.annotation.** <methods>;
+}
+
+# Evitar advertencias de clases de escritorio no presentes en Android
+-dontwarn javax.naming.**
+-dontwarn java.awt.**
+-dontwarn rust.tls.platformverifier.**
+-keep class rust.tls.platformverifier.** { *; }
+PRO
+echo "✔ proguard-rules.pro configurado con reglas JNI de Tauri/Wry"
+
+# 6. Parchear MainActivity.kt de forma defensiva para unificar Edge-to-Edge entre One UI 6.1 (Android 14) y One UI 8.5 (Android 16)
 MAIN_ACTIVITY="$ANDROID_DIR/app/src/main/java/cl/netterminal/app/MainActivity.kt"
 if [ -f "$MAIN_ACTIVITY" ]; then
   cat > "$MAIN_ACTIVITY" <<'KT'
 package cl.netterminal.app
 
+import android.graphics.Color
+import android.os.Build
 import android.os.Bundle
+import android.view.View
+import android.view.WindowManager
 import androidx.core.view.ViewCompat
+import androidx.core.view.WindowCompat
 import androidx.core.view.WindowInsetsCompat
 
 class MainActivity : TauriActivity() {
   override fun onCreate(savedInstanceState: Bundle?) {
     super.onCreate(savedInstanceState)
-    val content = findViewById<android.view.View>(android.R.id.content)
-    ViewCompat.setOnApplyWindowInsetsListener(content) { view, insets ->
-      val bars = insets.getInsets(WindowInsetsCompat.Type.systemBars() or WindowInsetsCompat.Type.displayCutout())
-      val ime = insets.getInsets(WindowInsetsCompat.Type.ime())
-      view.setPadding(bars.left, bars.top, bars.right, maxOf(bars.bottom, ime.bottom))
-      WindowInsetsCompat.CONSUMED
+    runCatching {
+      val bgColor = Color.parseColor("#0e1116")
+      window?.let { win ->
+        // Unificar Edge-to-Edge entre Android 14 (One UI 6.1) y Android 16 (One UI 8.5)
+        WindowCompat.setDecorFitsSystemWindows(win, false)
+        @Suppress("DEPRECATION")
+        win.statusBarColor = Color.TRANSPARENT
+        @Suppress("DEPRECATION")
+        win.navigationBarColor = Color.TRANSPARENT
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
+          win.isStatusBarContrastEnforced = false
+          win.isNavigationBarContrastEnforced = false
+        }
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.P) {
+          win.attributes = win.attributes.apply {
+            layoutInDisplayCutoutMode =
+              if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.R) {
+                WindowManager.LayoutParams.LAYOUT_IN_DISPLAY_CUTOUT_MODE_ALWAYS
+              } else {
+                WindowManager.LayoutParams.LAYOUT_IN_DISPLAY_CUTOUT_MODE_SHORT_EDGES
+              }
+          }
+        }
+        win.decorView.let { decor ->
+          decor.setBackgroundColor(bgColor)
+          WindowCompat.getInsetsController(win, decor).apply {
+            isAppearanceLightStatusBars = false
+            isAppearanceLightNavigationBars = false
+          }
+        }
+      }
+      findViewById<View>(android.R.id.content)?.let { content ->
+        content.setBackgroundColor(bgColor)
+        ViewCompat.setOnApplyWindowInsetsListener(content) { view, insets ->
+          val bars = insets.getInsets(
+            WindowInsetsCompat.Type.systemBars() or WindowInsetsCompat.Type.displayCutout()
+          )
+          val ime = insets.getInsets(WindowInsetsCompat.Type.ime())
+          view.setPadding(bars.left, bars.top, bars.right, maxOf(bars.bottom, ime.bottom))
+          WindowInsetsCompat.CONSUMED
+        }
+        ViewCompat.requestApplyInsets(content)
+      }
     }
   }
 }
 KT
-  echo "✔ MainActivity.kt configurado con WindowInsets (systemBars + displayCutout + IME)"
+  echo "✔ MainActivity.kt configurado para One UI 6.1 (Android 14) y One UI 8.5 (Android 16)"
 fi
 
-# 6. Asegurar permisos de ejecución para Gradle wrapper
+# 7. Asegurar permisos de ejecución para Gradle wrapper
 if [ -f "$ANDROID_DIR/gradlew" ]; then
   chmod +x "$ANDROID_DIR/gradlew"
   echo "✔ Permisos de ejecución aplicados a gradlew"

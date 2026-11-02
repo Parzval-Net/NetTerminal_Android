@@ -138,12 +138,86 @@ impl Jobs {
             c
         } else {
             if cfg!(target_os = "android") {
-                return Err("No se encontró traceroute ni tracepath en Android. Puedes instalar traceroute mediante Termux (pkg install inetutils o traceroute).".into());
+                return self.traceroute_android_ping(app, host);
             } else {
                 return Err("No se encontró traceroute ni tracepath en el sistema".into());
             }
         };
         self.spawn(app, cmd, false)
+    }
+
+    /// Fallback nativo para ROMs Android (Samsung One UI 6.1 / 8.5) que no incluyen el binario
+    /// `traceroute` ni `tracepath`, ejecutando `/system/bin/ping -t <ttl>` salto por salto.
+    fn traceroute_android_ping(&self, app: AppHandle, host: &str) -> Result<String, String> {
+        let host = host.trim_matches(|c| c == '[' || c == ']').to_string();
+        let v6 = host.contains(':');
+        let (job, cancel, cleanup) = self.cancelable();
+        let id = job.clone();
+        std::thread::spawn(move || {
+            let ping_bin = if v6 && std::path::Path::new("/system/bin/ping6").exists() {
+                "/system/bin/ping6"
+            } else if std::path::Path::new("/system/bin/ping").exists() {
+                "/system/bin/ping"
+            } else {
+                "ping"
+            };
+            emit(&app, &id, "line", format!("traceroute to {host}, 30 hops max (via ICMP TTL)"), None);
+            for ttl in 1..=30u8 {
+                if cancel.load(Ordering::SeqCst) {
+                    break;
+                }
+                let t0 = Instant::now();
+                let mut c = command(ping_bin);
+                if v6 && ping_bin.ends_with("ping") {
+                    c.arg("-6");
+                }
+                c.args(["-n", "-c", "1", "-W", "2", "-t", &ttl.to_string(), &host]);
+                let out = match c.output() {
+                    Ok(o) => o,
+                    Err(e) => {
+                        emit(&app, &id, "error", format!("No se pudo ejecutar ping: {e}"), None);
+                        break;
+                    }
+                };
+                let elapsed_ms = t0.elapsed().as_secs_f64() * 1000.0;
+                let text = String::from_utf8_lossy(&out.stdout).to_string()
+                    + &String::from_utf8_lossy(&out.stderr);
+                let mut hop_ip: Option<String> = None;
+                let mut reached = false;
+                for line in text.lines() {
+                    let lower = line.to_ascii_lowercase();
+                    if lower.contains("bytes from ") || lower.contains("ttl=") || lower.contains("hlim=") {
+                        if let Some(after) = line.split("from ").nth(1) {
+                            let addr = after.split([':', ' ']).next().unwrap_or("").trim();
+                            if !addr.is_empty() {
+                                hop_ip = Some(addr.to_string());
+                                reached = true;
+                                break;
+                            }
+                        }
+                    } else if lower.contains("time to live exceeded") || lower.contains("hop limit") || lower.contains("exceeded") {
+                        if let Some(after) = line.split("From ").nth(1).or_else(|| line.split("from ").nth(1)) {
+                            let addr = after.split([':', ' ']).next().unwrap_or("").trim();
+                            if !addr.is_empty() {
+                                hop_ip = Some(addr.to_string());
+                                break;
+                            }
+                        }
+                    }
+                }
+                if let Some(ip) = hop_ip {
+                    emit(&app, &id, "line", format!("{ttl:2}  {ip}  {elapsed_ms:.1} ms"), None);
+                    if reached {
+                        break;
+                    }
+                } else {
+                    emit(&app, &id, "line", format!("{ttl:2}  *"), None);
+                }
+            }
+            cleanup();
+            emit(&app, &id, "done", "Finalizado (código 0)".into(), None);
+        });
+        Ok(job)
     }
 
     pub fn iperf(&self, app: AppHandle, p: IperfParams) -> Result<String, String> {
@@ -341,7 +415,9 @@ pub fn sort_ifs(list: &mut [LocalIf]) {
 pub fn local_ips() -> Vec<LocalIf> {
     // Ruta por defecto: una dirección de documentación (RFC 5737) cae en la ruta por
     // defecto del sistema; no se envía nada.
-    let default = route_source(([192, 0, 2, 1], 9).into());
+    let default = route_source(([192, 0, 2, 1], 9).into())
+        .or_else(|| route_source(([8, 8, 8, 8], 80).into()))
+        .or_else(|| route_source(([1, 1, 1, 1], 80).into()));
     let mut list: Vec<_> = if_addrs::get_if_addrs()
         .unwrap_or_default()
         .into_iter()
@@ -351,6 +427,38 @@ pub fn local_ips() -> Vec<LocalIf> {
             LocalIf { default: default.as_deref() == Some(ip.as_str()), name: i.name.clone(), ip }
         })
         .collect();
+    // En Android 14 (One UI 6.1) y Android 16 (One UI 8.5), SELinux bloquea getifaddrs()
+    // (NETLINK_ROUTE RTM_GETLINK), devolviendo lista vacía. Se obtienen las IPs activas
+    // consultando la tabla de rutas mediante sockets UDP (permitido por SELinux con INTERNET).
+    if list.is_empty() {
+        let probes: [([u8; 4], &str); 5] = [
+            ([192, 0, 2, 1], "wlan0"),
+            ([8, 8, 8, 8], "wlan0"),
+            ([192, 168, 1, 1], "lan"),
+            ([10, 0, 0, 1], "vpn"),
+            ([172, 16, 0, 1], "lan"),
+        ];
+        for (dst, label) in probes {
+            if let Some(ip) = route_source((dst, 80).into()) {
+                if !ip.starts_with("127.") && !ip.starts_with("169.254.") && !list.iter().any(|x| x.ip == ip) {
+                    let is_def = default.as_deref() == Some(ip.as_str()) || list.is_empty();
+                    list.push(LocalIf {
+                        default: is_def,
+                        name: label.to_string(),
+                        ip,
+                    });
+                }
+            }
+        }
+    } else if let Some(ref def_ip) = default {
+        if !def_ip.starts_with("127.") && !list.iter().any(|x| &x.ip == def_ip) {
+            list.push(LocalIf {
+                default: true,
+                name: if cfg!(target_os = "android") { "wlan0".into() } else { "default".into() },
+                ip: def_ip.clone(),
+            });
+        }
+    }
     sort_ifs(&mut list);
     list
 }
@@ -366,11 +474,20 @@ fn client() -> Result<reqwest::Client, String> {
     if rustls::crypto::CryptoProvider::get_default().is_none() {
         let _ = rustls::crypto::ring::default_provider().install_default();
     }
-    reqwest::Client::builder()
+    let builder = reqwest::Client::builder()
         .connect_timeout(Duration::from_secs(15))
         // Inactividad, no duración total: una bajada de 25 MB en un enlace lento sigue siendo válida.
         .read_timeout(Duration::from_secs(30))
-        .user_agent(concat!("NetTerminal/", env!("CARGO_PKG_VERSION")))
+        .user_agent(concat!("NetTerminal/", env!("CARGO_PKG_VERSION")));
+    // En Android, rustls-platform-verifier entra en panic! si no se inicializa vía JNI;
+    // se usan las raíces Mozilla embebidas (webpki-root-certs) para evitar abortar la app.
+    #[cfg(target_os = "android")]
+    let builder = builder.tls_certs_only(
+        webpki_root_certs::TLS_SERVER_ROOT_CERTS
+            .iter()
+            .filter_map(|c| reqwest::Certificate::from_der(c.as_ref()).ok()),
+    );
+    builder
         .build()
         .map_err(|e| e.to_string())
 }
@@ -379,7 +496,7 @@ fn percentile(mut v: Vec<f64>, p: f64) -> f64 {
     if v.is_empty() {
         return 0.0;
     }
-    v.sort_by(|a, b| a.partial_cmp(b).unwrap());
+    v.sort_by(|a, b| a.total_cmp(b));
     let idx = ((v.len() - 1) as f64 * p).round() as usize;
     v[idx]
 }

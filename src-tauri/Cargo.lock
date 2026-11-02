@@ -2749,7 +2749,7 @@ dependencies = [
 
 [[package]]
 name = "net-terminal"
-version = "0.9.19"
+version = "0.9.20"
 dependencies = [
  "aes 0.9.3",
  "argon2",
@@ -2783,6 +2783,7 @@ dependencies = [
  "tauri-plugin-updater",
  "tiny_http",
  "uuid",
+ "webpki-root-certs",
  "webview2-com",
  "windows-core",
  "zeroize",

@@ -1,21 +1,26 @@
-# Add project specific ProGuard rules here.
-# You can control the set of applied configuration files using the
-# proguardFiles setting in build.gradle.
-#
-# For more details, see
-#   http://developer.android.com/guide/developing/tools/proguard.html
+# Reglas de ProGuard / R8 para NetTerminal Android (Tauri 2 + Wry + JNI)
+-keepattributes Signature,InnerClasses,EnclosingMethod,RuntimeVisibleAnnotations,AnnotationDefault,SourceFile,LineNumberTable
 
-# If your project uses WebView with JS, uncomment the following
-# and specify the fully qualified class name to the JavaScript interface
-# class:
-#-keepclassmembers class fqcn.of.javascript.interface.for.webview {
-#   public *;
-#}
+# Preservar actividades y clases generadas del paquete de la aplicación y Tauri/Wry llamadas desde Rust vía JNI
+-keep class cl.netterminal.app.** { *; }
+-keep class app.tauri.** { *; }
+-keep class * extends app.tauri.plugin.Plugin { *; }
+-keep @app.tauri.annotation.TauriPlugin class * { *; }
+-keep @app.tauri.annotation.Command class * { *; }
+-keep @app.tauri.annotation.InvokeArg class * { *; }
 
-# Uncomment this to preserve the line number information for
-# debugging stack traces.
-#-keepattributes SourceFile,LineNumberTable
+# Preservar todos los métodos nativos JNI y puentes JavascriptInterface del WebView
+-keepclasseswithmembernames class * {
+    native <methods>;
+}
+-keepclassmembers class * {
+    @android.webkit.JavascriptInterface <methods>;
+    @app.tauri.annotation.** <fields>;
+    @app.tauri.annotation.** <methods>;
+}
 
-# If you keep the line number information, uncomment this to
-# hide the original source file name.
-#-renamesourcefileattribute SourceFile
+# Evitar advertencias de clases de escritorio no presentes en Android
+-dontwarn javax.naming.**
+-dontwarn java.awt.**
+-dontwarn rust.tls.platformverifier.**
+-keep class rust.tls.platformverifier.** { *; }

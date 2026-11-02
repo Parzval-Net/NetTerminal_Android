@@ -43,20 +43,20 @@ jobs:
           echo "ANDROID_HOME=$ANDROID_HOME" >> "$GITHUB_ENV"
           echo "ANDROID_SDK_ROOT=$ANDROID_HOME" >> "$GITHUB_ENV"
 
-          # Buscar NDK instalado o instalar NDK 27 si hace falta
-          NDK_DIR=$(ls -1d "$ANDROID_HOME/ndk/"* 2>/dev/null | sort -V | tail -n 1 || true)
-          if [ -z "$NDK_DIR" ] || [ ! -d "$NDK_DIR" ]; then
-            echo "Instalando NDK con sdkmanager..."
-            yes | "$ANDROID_HOME/cmdline-tools/latest/bin/sdkmanager" --install "ndk;27.2.12479018"
-            NDK_DIR="$ANDROID_HOME/ndk/27.2.12479018"
-          fi
+          # Aceptar licencias e instalar explícitamente Platform 36 (Android 16 / One UI 8.5), Build-Tools 36.0.0 y NDK 27 (alineación ELF 16 KB)
+          yes | "$ANDROID_HOME/cmdline-tools/latest/bin/sdkmanager" --licenses >/dev/null 2>&1 || true
+          yes | "$ANDROID_HOME/cmdline-tools/latest/bin/sdkmanager" --install \
+            "platforms;android-36" \
+            "build-tools;36.0.0" \
+            "ndk;27.2.12479018"
 
+          NDK_DIR="$ANDROID_HOME/ndk/27.2.12479018"
           echo "NDK_HOME=$NDK_DIR" >> "$GITHUB_ENV"
           echo "ANDROID_NDK_ROOT=$NDK_DIR" >> "$GITHUB_ENV"
           echo "NDK configurado en: $NDK_DIR"
 
-          # Agregar build-tools al PATH para apksigner y zipalign
-          BUILD_TOOLS_DIR=$(ls -1d "$ANDROID_HOME/build-tools/"* 2>/dev/null | sort -V | tail -n 1)
+          # Agregar build-tools 36.0.0 al PATH para apksigner y zipalign (-P 16)
+          BUILD_TOOLS_DIR="$ANDROID_HOME/build-tools/36.0.0"
           echo "$BUILD_TOOLS_DIR" >> "$GITHUB_PATH"
           echo "Build-tools configurado en: $BUILD_TOOLS_DIR"
 
@@ -128,9 +128,9 @@ jobs:
 
             if [[ "$base" == *"universal"* ]] || [[ "$apk" == *"universal"* ]]; then
               out_name="NetTerminal_${VERSION}_universal.apk"
-            elif [[ "$base" == *"arm64-v8a"* ]] || [[ "$apk" == *"arm64-v8a"* ]]; then
+            elif [[ "$base" == *"arm64"* ]] || [[ "$apk" == *"arm64"* ]]; then
               out_name="NetTerminal_${VERSION}_arm64-v8a.apk"
-            elif [[ "$base" == *"armeabi-v7a"* ]] || [[ "$apk" == *"armeabi-v7a"* ]]; then
+            elif [[ "$base" == *"armeabi-v7a"* ]] || [[ "$apk" == *"armeabi-v7a"* ]] || [[ "$base" == *"-arm-"* ]] || [[ "$apk" == *"/arm/"* ]]; then
               out_name="NetTerminal_${VERSION}_armeabi-v7a.apk"
             elif [[ "$base" == *"x86_64"* ]] || [[ "$apk" == *"x86_64"* ]]; then
               out_name="NetTerminal_${VERSION}_x86_64.apk"
@@ -143,23 +143,30 @@ jobs:
             target_apk="dist-android/$out_name"
             echo "Procesando $base -> $target_apk ($SIGN_TYPE)..."
 
-            # Alinear APK si zipalign está disponible
+            # Alinear APK a páginas de 16 KB (-P 16) para compatibilidad con Android 15/16+
             if command -v zipalign >/dev/null 2>&1; then
-              zipalign -p -f 4 "$apk" "$target_apk.aligned" 2>/dev/null || cp "$apk" "$target_apk.aligned"
+              zipalign -P 16 -f 4 "$apk" "$target_apk.aligned" 2>/dev/null \
+                || zipalign -p -f 4 "$apk" "$target_apk.aligned" 2>/dev/null \
+                || cp "$apk" "$target_apk.aligned"
               mv "$target_apk.aligned" "$target_apk"
             else
               cp "$apk" "$target_apk"
             fi
 
-            # Firmar con apksigner
+            # Firmar con apksigner (v1 + v2 + v3 explícitos para Android 14 / 16 y Samsung Knox; sin .idsig v4)
             apksigner sign --ks "$KS_PATH" \
               --ks-pass "pass:$KS_PASS" \
               --key-pass "pass:$KS_KEY_PASS" \
               --ks-key-alias "$KS_ALIAS" \
+              --v1-signing-enabled true \
+              --v2-signing-enabled true \
+              --v3-signing-enabled true \
+              --v4-signing-enabled false \
               --out "$target_apk" \
               "$target_apk"
 
-            # Verificar firma
+            # Verificar alineación de 16 KB y firma
+            zipalign -c -P 16 4 "$target_apk" || zipalign -c 4 "$target_apk"
             apksigner verify --verbose "$target_apk"
             echo "✔ Firmado exitosamente: $target_apk"
           done
@@ -199,7 +206,15 @@ jobs:
           done
 
           echo "Creando release $TAG con los APKs de Android..."
-          gh release create "$TAG" dist-android/*.apk dist-android/SHA256SUMS-android.txt \
-            --title "NetTerminal $TAG" \
-            --notes "Versión $TAG - Incluye paquetes de Android (.apk) para ARM64, ARMv7, x86_64 y Universal." \
-            --repo "$REPO"
+          VERSION=$(node -p "require('./package.json').version")
+          if [ -f "novedades/v${VERSION}.md" ]; then
+            gh release create "$TAG" dist-android/*.apk dist-android/SHA256SUMS-android.txt \
+              --title "NetTerminal v${VERSION} para Android (One UI 6.1 / 8.5 & Material Design 3)" \
+              --notes-file "novedades/v${VERSION}.md" \
+              --repo "$REPO"
+          else
+            gh release create "$TAG" dist-android/*.apk dist-android/SHA256SUMS-android.txt \
+              --title "NetTerminal $TAG" \
+              --notes "Versión $TAG - Incluye paquetes de Android (.apk) para ARM64, ARMv7, x86_64 y Universal." \
+              --repo "$REPO"
+          fi
