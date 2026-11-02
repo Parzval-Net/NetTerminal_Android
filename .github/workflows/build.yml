@@ -4,6 +4,7 @@ on:
   workflow_dispatch:
   push:
     tags: ["v*"]
+    tags-ignore: ["*-android"]
 
 # Mínimo privilegio: el token solo lee. El job "release" eleva a contents: write.
 permissions:

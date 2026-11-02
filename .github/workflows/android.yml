@@ -26,7 +26,6 @@ jobs:
         uses: actions/setup-node@v4
         with:
           node-version: 22
-          cache: false
 
       - name: Configurar Java 17 (Temurin)
         uses: actions/setup-java@v4
@@ -77,10 +76,10 @@ jobs:
       - name: Compilar APK Universal y Split por Arquitectura
         run: |
           echo "Compilando APK Universal..."
-          npx tauri android build --apk --target aarch64 armv7 x86_64
+          npx tauri android build --apk --target aarch64 --target armv7 --target x86_64
 
           echo "Compilando APKs split por ABI..."
-          npx tauri android build --apk --split-per-abi --target aarch64 armv7 x86_64
+          npx tauri android build --apk --split-per-abi --target aarch64 --target armv7 --target x86_64
 
       - name: Firmar y organizar APKs para distribución
         env:
